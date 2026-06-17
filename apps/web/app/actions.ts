@@ -322,6 +322,17 @@ export async function clearTmdbApiKeyAction(): Promise<PushSettingsActionResult>
   }
 }
 
+export async function savePanSouBaseUrlAction(baseURL: string): Promise<PushSettingsActionResult> {
+  try {
+    const { getWorkflowRepository, PANSOU_BASE_URL_SETTING_KEY } = await import("../lib/workflow-runtime");
+    // Empty = clear the override → falls back to env / public default.
+    await getWorkflowRepository().setSetting(PANSOU_BASE_URL_SETTING_KEY, baseURL.trim());
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
 export async function saveProwlarrConfigAction(input: {
   baseURL: string;
   apiKey: string;

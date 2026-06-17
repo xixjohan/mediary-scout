@@ -9,6 +9,7 @@ import { QualityPreferenceForm } from "../../components/quality-preference-form"
 import { LlmConfigForm } from "../../components/llm-config-form";
 import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
 import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
+import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
 import {
   getDailySweepTime,
@@ -22,6 +23,7 @@ import {
   TMDB_API_KEY_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
+  PANSOU_BASE_URL_SETTING_KEY,
 } from "../../lib/workflow-runtime";
 
 export default function SettingsPage() {
@@ -51,7 +53,7 @@ export default function SettingsPage() {
           <TmdbApiKeySection />
         </Suspense>
         <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <ProwlarrSection />
+          <ResourceProviderSection />
         </Suspense>
         <Suspense fallback={<div className="skeleton skeleton-heading" />}>
           <DailySweepSection />
@@ -150,11 +152,12 @@ async function TmdbApiKeySection() {
   );
 }
 
-async function ProwlarrSection() {
+async function ResourceProviderSection() {
   await connection();
   const repository = getWorkflowRepository();
-  const baseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
-  const apiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());
+  const pansouBaseURL = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY)) ?? "";
+  const prowlarrBaseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
+  const prowlarrApiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -162,12 +165,14 @@ async function ProwlarrSection() {
         <div>
           <h2 className="panel-title">
             <Radio size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
-            资源提供商 · Prowlarr
+            资源提供商
           </h2>
-          <p className="panel-note">可选：接入 Prowlarr 索引器聚合，扩大可搜资源（磁力走 115 秒传）</p>
+          <p className="panel-note">agent 搜资源的来源；PanSou（网盘）默认内置，Prowlarr（磁力/PT）可选加挂，二者结果合并</p>
         </div>
       </div>
-      <ProwlarrConfigForm baseURL={baseURL} apiKeySet={apiKeySet} />
+      <PanSouConfigForm baseURL={pansouBaseURL} />
+      <div style={{ height: 18 }} />
+      <ProwlarrConfigForm baseURL={prowlarrBaseURL} apiKeySet={prowlarrApiKeySet} />
     </section>
   );
 }

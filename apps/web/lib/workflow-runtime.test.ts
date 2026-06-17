@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   getLlmConfig,
+  getPanSouBaseUrl,
   getProwlarrConfig,
   getQualityPreference,
+  PANSOU_BASE_URL_SETTING_KEY,
+  DEFAULT_PANSOU_BASE_URL,
   getTmdbAccesses,
   PROWLARR_API_KEY_SETTING_KEY,
   PROWLARR_BASE_URL_SETTING_KEY,
@@ -116,5 +119,29 @@ describe("getProwlarrConfig", () => {
   it("returns undefined fields when nothing configured", async () => {
     const cfg = await getProwlarrConfig(repoMap({}), {} as unknown as NodeJS.ProcessEnv);
     expect(cfg).toEqual({ baseURL: undefined, apiKey: undefined });
+  });
+});
+
+describe("getPanSouBaseUrl", () => {
+  it("prefers the DB setting (trimmed)", async () => {
+    const url = await getPanSouBaseUrl(
+      repoMap({ [PANSOU_BASE_URL_SETTING_KEY]: " http://pansou:80 " }),
+      { PANSOU_BASE_URL: "http://env.example" } as unknown as NodeJS.ProcessEnv,
+    );
+    expect(url).toBe("http://pansou:80");
+  });
+
+  it("falls back to env when the DB setting is blank", async () => {
+    const url = await getPanSouBaseUrl(
+      repoMap({}),
+      { PANSOU_BASE_URL: "http://env.example" } as unknown as NodeJS.ProcessEnv,
+    );
+    expect(url).toBe("http://env.example");
+  });
+
+  it("falls back to the public default when nothing is configured", async () => {
+    const url = await getPanSouBaseUrl(repoMap({}), {} as unknown as NodeJS.ProcessEnv);
+    expect(url).toBe(DEFAULT_PANSOU_BASE_URL);
+    expect(DEFAULT_PANSOU_BASE_URL).toMatch(/^https?:\/\//);
   });
 });

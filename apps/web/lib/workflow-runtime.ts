@@ -1,5 +1,5 @@
 import {
-  createPanSouResourceProviderFromEnv,
+  PanSouResourceProvider,
   createProtectedPan115CookieStorageExecutorFromEnv,
   CompositeResourceProvider,
   ProwlarrResourceProvider,
@@ -287,6 +287,27 @@ export async function getTmdbAccesses(
   const proxyBase = env.TMDB_PROXY_BASE_URL?.trim() || DEFAULT_TMDB_PROXY_BASE_URL;
   accesses.push({ baseURL: proxyBase });
   return accesses;
+}
+
+export const PANSOU_BASE_URL_SETTING_KEY = "pansou_base_url";
+
+/** Default public PanSou instance (author-hosted), used when neither the DB
+ *  setting nor env overrides it. The compose stack injects PANSOU_BASE_URL to
+ *  point at the bundled `pansou` service instead. */
+export const DEFAULT_PANSOU_BASE_URL = "https://so.252035.xyz";
+
+/** The PanSou search aggregator base URL: DB setting > env PANSOU_BASE_URL >
+ *  public default. No runtime container auto-detection — compose wires the
+ *  service name and this lets a self-hoster override it by hand. */
+export async function getPanSouBaseUrl(
+  repository: { getSetting(key: string): Promise<string | null> },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
+  const dbValue = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY))?.trim();
+  if (dbValue) return dbValue;
+  const envValue = env.PANSOU_BASE_URL?.trim();
+  if (envValue) return envValue;
+  return DEFAULT_PANSOU_BASE_URL;
 }
 
 export const PROWLARR_BASE_URL_SETTING_KEY = "prowlarr_base_url";
@@ -692,7 +713,7 @@ function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber
 async function getWorkerResourceProvider(): Promise<ResourceProvider> {
   if (process.env.MEDIA_TRACK_WORKFLOW_ADAPTER === "pansou") {
     const providers: Array<{ name: string; provider: ResourceProvider }> = [
-      { name: "pansou", provider: createPanSouResourceProviderFromEnv() },
+      { name: "pansou", provider: new PanSouResourceProvider({ baseURL: await getPanSouBaseUrl(getWorkflowRepository()) }) },
     ];
     const prowlarr = await getProwlarrConfig(getWorkflowRepository());
     if (prowlarr.baseURL && prowlarr.apiKey) {

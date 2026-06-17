@@ -1,0 +1,52 @@
+"use client";
+
+import { useState, useTransition } from "react";
+import { Check, ExternalLink, LoaderCircle } from "lucide-react";
+import { savePanSouBaseUrlAction } from "../app/actions";
+
+export function PanSouConfigForm({ baseURL: initialBaseURL }: { baseURL: string }) {
+  const [isPending, startTransition] = useTransition();
+  const [baseURL, setBaseURL] = useState(initialBaseURL);
+  const [result, setResult] = useState<string | null>(null);
+
+  const handleSave = () => {
+    startTransition(async () => {
+      const res = await savePanSouBaseUrlAction(baseURL);
+      setResult(res.success ? "✅ 保存成功" : `❌ ${res.message ?? "保存失败"}`);
+      setTimeout(() => setResult(null), 3000);
+    });
+  };
+
+  return (
+    <div className="push-form">
+      <p className="panel-note" style={{ marginBottom: 6 }}>
+        PanSou 是默认的网盘资源搜索源（已内置、开箱即用）。docker compose 部署会自动指向自带的 PanSou 容器；想换成别的实例或公共域名时在此手填覆盖。留空则回退到环境变量 / 公共默认实例。
+      </p>
+      <p className="push-help" style={{ marginBottom: 12 }}>
+        了解 PanSou{" "}
+        <a href="https://github.com/fish2018/pansou" target="_blank" rel="noopener noreferrer">
+          项目主页 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
+        </a>
+      </p>
+      <div className="setting-row">
+        <input
+          type="text"
+          className="setting-control"
+          value={baseURL}
+          onChange={(event) => setBaseURL(event.target.value)}
+          placeholder="留空用默认（compose 内为 http://pansou）"
+          aria-label="PanSou Base URL"
+        />
+        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
+          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
+          保存
+        </button>
+      </div>
+      {result ? (
+        <p className="panel-note" style={{ marginTop: 10 }}>
+          {result}
+        </p>
+      ) : null}
+    </div>
+  );
+}
