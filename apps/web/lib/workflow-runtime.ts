@@ -31,6 +31,8 @@ import {
   runScheduledType3Monitoring,
   sendPushNotifications,
   createPostgresWorkflowRepositorySync,
+  migrateLegacyCookieToDefaultAccount,
+  DEFAULT_ACCOUNT_ID,
   type MediaSearchCandidate,
   type MediaTitle,
   type NotificationEvent,
@@ -155,6 +157,30 @@ export async function queueCandidateTracking(candidateId: string): Promise<Candi
  */
 export async function recoverOrphanedRuns(): Promise<number> {
   return getWorkflowRepository().requeueRunningWorkflowRuns();
+}
+
+/**
+ * §7 P0 startup migration (idempotent): move a pre-multi-account deployment's
+ * single global 115 cookie into a `connected_storages` row owned by the implicit
+ * default account, with CIDs from the env the worker used to read. Single-user
+ * deployments see no behavior change — the worker resolves the same cookie, just
+ * from the per-account connection record. Best-effort; logged, never throws.
+ */
+export async function runStartupMigrations(): Promise<void> {
+  try {
+    const result = await migrateLegacyCookieToDefaultAccount({
+      repository: getWorkflowRepository(),
+      env: process.env,
+      now: new Date().toISOString(),
+    });
+    if (result.migrated) {
+      console.log(
+        `[media-track] migrated legacy 115 cookie → ${DEFAULT_ACCOUNT_ID} connected_storage (uid ${result.providerUid})`,
+      );
+    }
+  } catch (error) {
+    console.error(`[media-track] startup migration failed: ${String(error)}`);
+  }
 }
 
 export async function runNextQueuedWorkflow() {

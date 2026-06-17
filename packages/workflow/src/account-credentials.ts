@@ -5,6 +5,7 @@
  * keeps the instance-wide uniqueness invariant and the idempotent find-or-create
  * testable without a database or a live 网盘.
  */
+import { DEFAULT_ACCOUNT_ID } from "./domain.js";
 
 export interface ConnectedStorageRow {
   id: string;
@@ -103,4 +104,72 @@ export async function provisionCategoryDirs(input: {
   const tvCid = await findOrCreate("TV", rootCid);
   const animeCid = await findOrCreate("Anime", rootCid);
   return { rootCid, moviesCid, tvCid, animeCid };
+}
+
+/** Extract the stable 115 user id from a cookie string (`UID=<digits>_...`). */
+export function parsePan115Uid(cookie: string): string | null {
+  const match = /(?:^|;|\s)UID=(\d+)/.exec(cookie);
+  return match ? match[1]! : null;
+}
+
+/** Minimal repository surface the legacy-cookie migration needs (structural, so
+ *  this file doesn't import WorkflowRepository and create a cycle). */
+export interface LegacyCookieMigrationRepo {
+  getSetting(key: string): Promise<string | null>;
+  findConnectedStorageByUid(provider: string, providerUid: string): Promise<ConnectedStorage | null>;
+  upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void>;
+}
+
+const LEGACY_COOKIE_KEY = "pan115.cookie";
+const LEGACY_COOKIE_META_KEY = "pan115.cookieMeta";
+
+/**
+ * §7 P0 migration (idempotent, startup): a pre-multi-account deployment stored
+ * the single 115 cookie in the global `app_settings`. Move it into a
+ * `connected_storages` row owned by the implicit default account, with directory
+ * CIDs backfilled from the env the worker used to read. Re-running is a no-op
+ * once the connection exists. Returns whether it created the connection.
+ *
+ * Single-user zero-change: the migrated cookie is byte-identical to the global
+ * one, so the worker (which now resolves credentials per-account) sees the same
+ * 115 session it always did.
+ */
+export async function migrateLegacyCookieToDefaultAccount(input: {
+  repository: LegacyCookieMigrationRepo;
+  env: NodeJS.ProcessEnv;
+  now: string;
+}): Promise<{ migrated: boolean; providerUid: string | null }> {
+  const cookie = (await input.repository.getSetting(LEGACY_COOKIE_KEY))?.trim();
+  if (!cookie) {
+    return { migrated: false, providerUid: null };
+  }
+  // provider_uid keys the instance-wide UNIQUE(provider, provider_uid). Parse the
+  // real 115 uid; fall back to a stable placeholder a later QR scan corrects.
+  const providerUid = parsePan115Uid(cookie) ?? "pan115_default";
+  const existing = await input.repository.findConnectedStorageByUid("pan115", providerUid);
+  if (existing) {
+    return { migrated: false, providerUid };
+  }
+  const metaRaw = await input.repository.getSetting(LEGACY_COOKIE_META_KEY);
+  let meta: { userName?: string; app?: string; connectedAt?: string } = {};
+  try {
+    meta = metaRaw ? (JSON.parse(metaRaw) as typeof meta) : {};
+  } catch {
+    meta = {};
+  }
+  const env = input.env;
+  await input.repository.upsertConnectedStorage({
+    id: `cs_${providerUid}`,
+    accountId: DEFAULT_ACCOUNT_ID,
+    provider: "pan115",
+    providerUid,
+    label: meta.userName ?? null,
+    payload: { cookie, meta },
+    rootCid: env.MEDIA_TRACK_115_TEST_ROOT_CID ?? null,
+    moviesCid: env.MEDIA_TRACK_MOVIES_PARENT_CID ?? null,
+    tvCid: env.MEDIA_TRACK_TV_PARENT_CID ?? null,
+    animeCid: env.MEDIA_TRACK_ANIME_PARENT_CID ?? null,
+    createdAt: input.now,
+  });
+  return { migrated: true, providerUid };
 }

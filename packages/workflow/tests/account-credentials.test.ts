@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { resolveStorageBinding, provisionCategoryDirs } from "../src/index.js";
+import {
+  DEFAULT_ACCOUNT_ID,
+  InMemoryWorkflowRepository,
+  migrateLegacyCookieToDefaultAccount,
+  parsePan115Uid,
+  provisionCategoryDirs,
+  resolveStorageBinding,
+} from "../src/index.js";
 
 describe("resolveStorageBinding", () => {
   const existing = { id: "cs1", accountId: "a1", provider: "pan115", providerUid: "115_X" };
@@ -41,5 +48,57 @@ describe("provisionCategoryDirs (find-or-create, idempotent)", () => {
     expect(cids.tvCid).toBe("new_TV"); // created
     expect(cids.animeCid).toBe("new_Anime"); // created
     expect(created).toEqual(["TV@rootcid", "Anime@rootcid"]);
+  });
+});
+
+describe("parsePan115Uid", () => {
+  it("extracts the numeric uid from a cookie", () => {
+    expect(parsePan115Uid("UID=100000001_A1_166...; CID=abc; SEID=def")).toBe("100000001");
+  });
+  it("returns null when absent", () => {
+    expect(parsePan115Uid("CID=abc; SEID=def")).toBeNull();
+  });
+});
+
+describe("migrateLegacyCookieToDefaultAccount", () => {
+  const env = {
+    MEDIA_TRACK_115_TEST_ROOT_CID: "ROOT",
+    MEDIA_TRACK_MOVIES_PARENT_CID: "MOV",
+    MEDIA_TRACK_TV_PARENT_CID: "TV",
+    MEDIA_TRACK_ANIME_PARENT_CID: "ANI",
+  } as unknown as NodeJS.ProcessEnv;
+
+  it("moves the legacy global cookie into a default-account connected_storage", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.setSetting("pan115.cookie", "UID=42_X; CID=c; SEID=s");
+    await repo.setSetting("pan115.cookieMeta", JSON.stringify({ userName: "alice", app: "alipaymini" }));
+
+    const result = await migrateLegacyCookieToDefaultAccount({ repository: repo, env, now: "t0" });
+
+    expect(result).toEqual({ migrated: true, providerUid: "42" });
+    const cs = await repo.findConnectedStorageByUid("pan115", "42");
+    expect(cs?.accountId).toBe(DEFAULT_ACCOUNT_ID);
+    expect(cs?.label).toBe("alice");
+    expect((cs?.payload as { cookie: string }).cookie).toBe("UID=42_X; CID=c; SEID=s");
+    expect(cs?.tvCid).toBe("TV");
+    expect(cs?.moviesCid).toBe("MOV");
+    expect(cs?.animeCid).toBe("ANI");
+    expect(cs?.rootCid).toBe("ROOT");
+  });
+
+  it("is idempotent — a second run creates nothing new", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.setSetting("pan115.cookie", "UID=42_X; CID=c");
+    await migrateLegacyCookieToDefaultAccount({ repository: repo, env, now: "t0" });
+    const second = await migrateLegacyCookieToDefaultAccount({ repository: repo, env, now: "t1" });
+    expect(second.migrated).toBe(false);
+    expect((await repo.listConnectedStorages(DEFAULT_ACCOUNT_ID)).length).toBe(1);
+  });
+
+  it("no global cookie → no-op", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const result = await migrateLegacyCookieToDefaultAccount({ repository: repo, env, now: "t0" });
+    expect(result).toEqual({ migrated: false, providerUid: null });
+    expect(await repo.listConnectedStorages(DEFAULT_ACCOUNT_ID)).toEqual([]);
   });
 });

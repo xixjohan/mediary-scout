@@ -8,7 +8,9 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") {
     return;
   }
-  console.log("[instrumentation] register() — starting in-process queue worker");
+  console.log("[instrumentation] register() — running startup migrations + worker");
+  const { runStartupMigrations } = await import("./lib/workflow-runtime");
+  await runStartupMigrations();
   const { startBackgroundWorker } = await import("./lib/background-worker");
   startBackgroundWorker();
 }
