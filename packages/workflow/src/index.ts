@@ -7,6 +7,7 @@ export * from "./season-sync.js";
 export * from "./ports.js";
 export * from "./fakes.js";
 export * from "./episode-code.js";
+export * from "./account-credentials.js";
 export * from "./repository.js";
 export * from "./postgres.js";
 export * from "./worker.js";
