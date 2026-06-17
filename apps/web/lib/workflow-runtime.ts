@@ -33,6 +33,9 @@ import {
   sendPushNotifications,
   createPostgresWorkflowRepositorySync,
   migrateLegacyCookieToDefaultAccount,
+  resolveStorageBinding,
+  provisionCategoryDirs,
+  parsePan115Uid,
   hashPassword,
   verifyPassword,
   signSession,
@@ -1236,6 +1239,112 @@ export async function getPan115ConnectionStatus(): Promise<Pan115ConnectionStatu
   return { connected: false, source: "none", userName: null, app: null, connectedAt: null };
 }
 
+/** Thrown when a QR connect targets a 115 already bound to a DIFFERENT account
+ *  (instance-wide UNIQUE(provider, provider_uid)). The route surfaces the message. */
+export class StorageOwnedByOtherAccountError extends Error {
+  constructor() {
+    super("该 115 账号已被本实例的其他用户连接，无法重复绑定。");
+    this.name = "StorageOwnedByOtherAccountError";
+  }
+}
+
+/**
+ * §7 P2: bind a freshly-exchanged 115 cookie to the CURRENT account's
+ * connected_storage, enforcing instance-wide ownership and provisioning the
+ * category directories on a genuinely new connection.
+ * - reject: the 115 (by provider_uid) already belongs to another account.
+ * - refresh: same account re-scanned → update the cookie payload, keep CIDs.
+ * - insert: new connection → provision Movies/TV/Anime (or honor env CIDs) + store.
+ */
+async function bindPan115ConnectedStorage(input: {
+  accountId: string;
+  cookie: string;
+  userName: string;
+  app: string;
+}): Promise<void> {
+  const repository = getWorkflowRepository();
+  const providerUid = parsePan115Uid(input.cookie) ?? "pan115_default";
+  const existing = await repository.findConnectedStorageByUid("pan115", providerUid);
+  const decision = resolveStorageBinding({
+    provider: "pan115",
+    providerUid,
+    accountId: input.accountId,
+    existing,
+  });
+  if (decision.action === "reject") {
+    throw new StorageOwnedByOtherAccountError();
+  }
+  const payload = {
+    cookie: input.cookie,
+    meta: { userName: input.userName, app: input.app, connectedAt: new Date().toISOString() },
+  };
+  if (decision.action === "refresh" && existing) {
+    // Keep the already-resolved directory CIDs; only refresh the cookie.
+    await repository.upsertConnectedStorage({
+      id: existing.id,
+      accountId: input.accountId,
+      provider: "pan115",
+      providerUid,
+      label: input.userName,
+      payload,
+      rootCid: existing.rootCid,
+      moviesCid: existing.moviesCid,
+      tvCid: existing.tvCid,
+      animeCid: existing.animeCid,
+      createdAt: existing.createdAt,
+    });
+    return;
+  }
+  // insert: honor env CIDs if a deploy pre-configured them, else provision a fresh
+  // media-track/ tree under the 115 root. Provisioning is best-effort — a failure
+  // still stores the connection (worker falls back to env CIDs).
+  let cids = {
+    rootCid: process.env.MEDIA_TRACK_115_TEST_ROOT_CID ?? null,
+    moviesCid: process.env.MEDIA_TRACK_MOVIES_PARENT_CID ?? null,
+    tvCid: process.env.MEDIA_TRACK_TV_PARENT_CID ?? null,
+    animeCid: process.env.MEDIA_TRACK_ANIME_PARENT_CID ?? null,
+  };
+  const hasEnvCids = Boolean(cids.tvCid && cids.moviesCid && cids.animeCid);
+  if (!hasEnvCids && process.env.MEDIA_TRACK_STORAGE_ADAPTER === "115") {
+    try {
+      const executor = createProtectedPan115CookieStorageExecutorFromEnv({
+        env: { ...process.env, PAN115_COOKIE: input.cookie },
+      });
+      const provisioned = await provisionCategoryDirs({
+        baseParentId: "0", // 115 account root
+        storage: {
+          async listChildDirs(parentId: string) {
+            const subs = await executor.listSubdirectories({ directoryId: parentId, maxDepth: 1 });
+            return subs.map((dir) => ({ name: dir.path, id: dir.id }));
+          },
+          createDirectory: (dir) => executor.createDirectory(dir),
+        },
+      });
+      cids = {
+        rootCid: provisioned.rootCid,
+        moviesCid: provisioned.moviesCid,
+        tvCid: provisioned.tvCid,
+        animeCid: provisioned.animeCid,
+      };
+    } catch (error) {
+      console.error(`[media-track] 115 directory provision failed (will use env fallback): ${String(error)}`);
+    }
+  }
+  await repository.upsertConnectedStorage({
+    id: `cs_${providerUid}`,
+    accountId: input.accountId,
+    provider: "pan115",
+    providerUid,
+    label: input.userName,
+    payload,
+    rootCid: cids.rootCid,
+    moviesCid: cids.moviesCid,
+    tvCid: cids.tvCid,
+    animeCid: cids.animeCid,
+    createdAt: new Date().toISOString(),
+  });
+}
+
 export async function completePan115QrLogin(input: {
   session: { uid: string; time: number; sign: string; qrcodeContent: string };
   app?: string;
@@ -1246,18 +1355,31 @@ export async function completePan115QrLogin(input: {
     : "alipaymini";
   const client = new Pan115QrLoginClient();
   const result = await client.exchangeCookie(input.session, app);
+  const accountId = await getCurrentAccountId();
+  // Bind to the current account's connected_storage first — this throws on an
+  // ownership conflict BEFORE we touch any global state.
+  await bindPan115ConnectedStorage({
+    accountId,
+    cookie: result.cookie,
+    userName: result.userName,
+    app: result.app,
+  });
   const repository = getWorkflowRepository();
-  await repository.setSetting(PAN115_COOKIE_KEY, result.cookie);
-  await repository.setSetting(
-    PAN115_META_KEY,
-    JSON.stringify({
-      userName: result.userName,
-      app: result.app,
-      connectedAt: new Date().toISOString(),
-    }),
-  );
-  // Take effect immediately: the 115 executor is built from process.env per call.
-  process.env.PAN115_COOKIE = result.cookie;
-  pan115CookieHydrated = true;
+  // Back-compat: single-user (default account) still mirrors the cookie into the
+  // global setting + env so the legacy env path keeps working. Multi-user accounts
+  // do NOT pollute the shared global cookie.
+  if (accountId === DEFAULT_ACCOUNT_ID) {
+    await repository.setSetting(PAN115_COOKIE_KEY, result.cookie);
+    await repository.setSetting(
+      PAN115_META_KEY,
+      JSON.stringify({
+        userName: result.userName,
+        app: result.app,
+        connectedAt: new Date().toISOString(),
+      }),
+    );
+    process.env.PAN115_COOKIE = result.cookie;
+    pan115CookieHydrated = true;
+  }
   return { userName: result.userName, app: result.app };
 }
