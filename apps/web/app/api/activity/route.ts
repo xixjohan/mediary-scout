@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { connection, NextResponse } from "next/server";
 import { getActivityView } from "../../../lib/activity-view";
 import { ensureDemoSeeded, getWorkflowRepository } from "../../../lib/workflow-runtime";
 
@@ -8,6 +8,8 @@ import { ensureDemoSeeded, getWorkflowRepository } from "../../../lib/workflow-r
  * it observed active.
  */
 export async function GET() {
+  // Request-time only: keep this out of build-time prerender (it reads the DB).
+  await connection();
   const repository = getWorkflowRepository();
   await ensureDemoSeeded(repository);
   const view = await getActivityView({ repository });

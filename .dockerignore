@@ -1,0 +1,15 @@
+node_modules
+**/node_modules
+.next
+**/.next
+**/dist
+.git
+.github
+.env
+.env.*
+!.env.example
+*.sqlite
+.media-track-*
+.DS_Store
+docs
+*.log

@@ -28,6 +28,12 @@ try {
 }
 
 const nextConfig: NextConfig = {
+  // Lean container image: a self-contained server bundle (+ traced node_modules
+  // and the @media-track/workflow workspace) the Docker runner stage copies whole.
+  output: "standalone",
+  // Trace from the monorepo root so standalone captures the workspace package +
+  // root-hoisted deps (the app is in apps/web; deps hoist to the repo root).
+  outputFileTracingRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
   transpilePackages: ["@media-track/workflow"],
   // Cache Components: PPR becomes the default rendering model. "use cache"
   // builds the static shell; runtime reads live inside Suspense holes.
@@ -39,6 +45,14 @@ const nextConfig: NextConfig = {
   // mid-acquisition regardless).
   experimental: {
     staleTimes: { dynamic: 60, static: 300 },
+  },
+  // Legacy per-season URL → the canonical one-page-per-show route. Handled at
+  // the routing layer (not a render-time redirect page, which can't prerender
+  // under cacheComponents).
+  async redirects() {
+    return [
+      { source: "/show/:tmdbId/:seasonNumber", destination: "/show/:tmdbId", permanent: false },
+    ];
   },
 };
 

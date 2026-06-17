@@ -1,0 +1,52 @@
+# media-track 自部署:一把拉起 web(Next + 进程内 worker) / Postgres / PanSou。
+#   docker compose up -d   →   打开 http://<host>:3000   →   设置页扫码连 115 即用
+# TMDB 经 §1 CF Worker 开箱即用;LLM key / 自己的 TMDB key / Prowlarr 在设置页填。
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: mediatrack
+      POSTGRES_USER: mediatrack
+      POSTGRES_PASSWORD: mediatrack
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mediatrack -d mediatrack"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+
+  pansou:
+    image: ghcr.io/fish2018/pansou-web:latest
+    restart: unless-stopped
+
+  web:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pansou:
+        condition: service_started
+    environment:
+      # App self-creates its schema on first query (CREATE TABLE IF NOT EXISTS).
+      MEDIA_TRACK_POSTGRES_URL: postgres://mediatrack:mediatrack@postgres:5432/mediatrack
+      # Bundled PanSou via the compose service name (override per-instance in 设置).
+      PANSOU_BASE_URL: http://pansou
+      MEDIA_TRACK_SEARCH_PROVIDER: tmdb
+      MEDIA_TRACK_WORKFLOW_ADAPTER: pansou
+      MEDIA_TRACK_STORAGE_ADAPTER: "115"
+      MEDIA_TRACK_AGENT_ADAPTER: real
+      MEDIA_TRACK_DEMO_SEED: "0"
+    # Optional overrides (TMDB/115/LLM/Prowlarr/CID). Missing file is fine —
+    # everything has a default or is configured in the 设置 page.
+    env_file:
+      - path: .env
+        required: false
+    # Host port configurable (WEB_PORT) in case 3000 is taken on the host.
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

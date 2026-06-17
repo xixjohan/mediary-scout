@@ -1,5 +1,5 @@
 import { connection } from "next/server";
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../../../components/acquiring-poller";
 import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
@@ -31,57 +31,81 @@ const seasonBadge = {
   complete: { label: "已完结", tone: "green" },
 } as const;
 
-export default async function ShowPage({
+export default function ShowPage({
   params,
   searchParams,
 }: {
   params: Promise<{ tmdbId: string }>;
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  // 搜索是搜索，媒体库是媒体库: the title page belongs to whichever surface
-  // the user came FROM. Entry links carry ?from=search|library; back keeps
-  // the previous list state (history.back preserves the search query).
-  const fromParam = ((await searchParams) ?? {})["from"];
-  const from = fromParam === "library" ? "library" : fromParam === "search" ? "search" : null;
-
+  // Everything here is dynamic (searchParams + params + DB), so the whole shell
+  // streams inside one Suspense — cacheComponents forbids reading uncached data
+  // outside a boundary. The fallback mirrors the shell (sidebar + hub skeleton).
   return (
     <div className="app-shell">
-      <AppSidebar active={from ?? "none"} />
-      <main className="main product-main">
-        <BackLink
-          label={from === "search" ? "返回搜索" : from === "library" ? "返回媒体库" : "返回"}
-          fallbackHref={from === "library" ? "/?tab=library" : "/?tab=search"}
-        />
-        {/* Contextual skeleton for the genuine first render (the data itself is a
-            fast DB read; this covers the dev/cold render + transport). A re-visit
-            within the staleTimes window is served from the client Router Cache, so
-            it renders instantly without this. NOT the global search skeleton — that
-            was the wrong shape on /show and was removed with app/loading.tsx. */}
-        <Suspense fallback={<HubSkeleton />}>
-          <TitleHub params={params} />
-        </Suspense>
-      </main>
+      <Suspense fallback={<ShowShell active="none" backLabel="返回" backHref="/?tab=search"><HubSkeleton /></ShowShell>}>
+        <ShowContent params={params} searchParams={searchParams} />
+      </Suspense>
     </div>
   );
 }
 
-async function TitleHub({ params }: { params: Promise<{ tmdbId: string }> }) {
+function ShowShell({
+  active,
+  backLabel,
+  backHref,
+  children,
+}: {
+  active: "search" | "library" | "none";
+  backLabel: string;
+  backHref: string;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      <AppSidebar active={active} />
+      <main className="main product-main">
+        <BackLink label={backLabel} fallbackHref={backHref} />
+        {children}
+      </main>
+    </>
+  );
+}
+
+async function ShowContent({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ tmdbId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>> | undefined;
+}) {
   await connection();
+  // 搜索是搜索，媒体库是媒体库: the title page belongs to whichever surface the
+  // user came FROM. Entry links carry ?from=search|library; back keeps the
+  // previous list state (history.back preserves the search query).
+  const fromParam = ((await searchParams) ?? {})["from"];
+  const from = fromParam === "library" ? "library" : fromParam === "search" ? "search" : null;
   const { tmdbId: tmdbIdParam } = await params;
   const tmdbId = Number(tmdbIdParam);
   const view = Number.isInteger(tmdbId) ? await getDetailView(tmdbId) : null;
 
-  if (!view) {
-    return (
-      <div className="quiet-state">
-        <TriangleAlert size={24} aria-hidden />
-        <strong>没有找到这部影片</strong>
-        <span>回到搜索页重新查找。</span>
-      </div>
-    );
-  }
-
-  return view.kind === "movie" ? <MovieHub view={view} /> : <TvHub view={view} />;
+  return (
+    <ShowShell
+      active={from ?? "none"}
+      backLabel={from === "search" ? "返回搜索" : from === "library" ? "返回媒体库" : "返回"}
+      backHref={from === "library" ? "/?tab=library" : "/?tab=search"}
+    >
+      {view ? (
+        view.kind === "movie" ? <MovieHub view={view} /> : <TvHub view={view} />
+      ) : (
+        <div className="quiet-state">
+          <TriangleAlert size={24} aria-hidden />
+          <strong>没有找到这部影片</strong>
+          <span>回到搜索页重新查找。</span>
+        </div>
+      )}
+    </ShowShell>
+  );
 }
 
 function TvHub({ view }: { view: TitleHubView }) {
