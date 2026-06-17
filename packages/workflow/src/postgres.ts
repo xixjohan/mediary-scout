@@ -97,6 +97,45 @@ const SCHEMA = `
   );
   ALTER TABLE dead_links ADD COLUMN IF NOT EXISTS permanent boolean NOT NULL DEFAULT true;
   ALTER TABLE dead_links ADD COLUMN IF NOT EXISTS expires_at text;
+  CREATE TABLE IF NOT EXISTS accounts (
+    id text PRIMARY KEY,
+    username text UNIQUE NOT NULL,
+    password_hash text NOT NULL DEFAULT '',
+    group_id text,
+    is_owner boolean NOT NULL DEFAULT false,
+    created_at text NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS sessions (
+    id text PRIMARY KEY,
+    account_id text NOT NULL,
+    expires_at text NOT NULL,
+    created_at text NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS connected_storages (
+    id text PRIMARY KEY,
+    account_id text NOT NULL,
+    provider text NOT NULL,
+    provider_uid text NOT NULL,
+    label text,
+    payload jsonb NOT NULL,
+    root_cid text,
+    movies_cid text,
+    tv_cid text,
+    anime_cid text,
+    created_at text NOT NULL,
+    UNIQUE (provider, provider_uid)
+  );
+  CREATE TABLE IF NOT EXISTS account_settings (
+    account_id text NOT NULL,
+    key text NOT NULL,
+    value text NOT NULL,
+    PRIMARY KEY (account_id, key)
+  );
+  ALTER TABLE tracked_seasons ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
+  ALTER TABLE workflow_runs ADD COLUMN IF NOT EXISTS account_id text NOT NULL DEFAULT 'acct_default';
+  INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
+    VALUES ('acct_default', 'default', '', true, now()::text)
+    ON CONFLICT (id) DO NOTHING;
 `;
 
 export async function initializeWorkflowPostgresSchema(pool: Pool): Promise<void> {
