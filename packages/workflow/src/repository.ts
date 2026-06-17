@@ -1,20 +1,28 @@
-import type {
-  AgentDecision,
-  EpisodeState,
-  MediaTitle,
-  NotificationEvent,
-  ResourceSnapshot,
-  TrackedSeason,
-  TransferAttempt,
-  WorkflowKind,
-  WorkflowRun,
-  WorkflowRunProgress,
-  WorkflowStatus,
+import {
+  DEFAULT_ACCOUNT_ID,
+  type AgentDecision,
+  type EpisodeState,
+  type MediaTitle,
+  type NotificationEvent,
+  type ResourceSnapshot,
+  type TrackedSeason,
+  type TransferAttempt,
+  type WorkflowKind,
+  type WorkflowRun,
+  type WorkflowRunProgress,
+  type WorkflowStatus,
 } from "./domain.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 import type { DeadLink, DeadLinkStore } from "./acquisition-v2/dead-links.js";
+import type {
+  ConnectedStorage,
+  UpsertConnectedStorageInput,
+} from "./account-credentials.js";
 
 export interface PersistWorkflowRunSnapshotInput {
+  /** Owning account. Optional at the call site (single-user = implicit
+   *  acct_default); the repository stamps it onto the account_id column. */
+  accountId?: string;
   title: MediaTitle;
   season: TrackedSeason;
   workflowRun: WorkflowRun;
@@ -26,11 +34,16 @@ export interface PersistWorkflowRunSnapshotInput {
 }
 
 export interface PersistedWorkflowRunSnapshot extends PersistWorkflowRunSnapshotInput {
+  /** Resolved owning account (always set — the worker uses it to load per-run
+   *  credentials when it claims the run). */
+  accountId: string;
   obtainedEpisodes: string[];
   providerAheadEpisodes: string[];
 }
 
 export interface TrackedSeasonState {
+  /** Resolved owning account of this tracking record. */
+  accountId: string;
   title: MediaTitle;
   season: TrackedSeason;
   episodes: EpisodeState[];
@@ -69,7 +82,15 @@ export type WorkflowRunReservationResult =
 export interface WorkflowRepository extends DeadLinkStore {
   saveWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): Promise<void>;
   reserveWorkflowRun(input: ReserveWorkflowRunInput): Promise<WorkflowRunReservationResult>;
-  getWorkflowRunSnapshot(workflowRunId: string): Promise<PersistedWorkflowRunSnapshot | null>;
+  /** Account-scoped: returns null if the run belongs to a different account.
+   *  Defaults to acct_default (single-user / fail-closed). */
+  getWorkflowRunSnapshot(
+    workflowRunId: string,
+    accountId?: string,
+  ): Promise<PersistedWorkflowRunSnapshot | null>;
+  /** Cross-account: the single-instance worker drains every account's queue.
+   *  The returned snapshot carries `accountId` so the worker can load that
+   *  account's credentials. */
   claimNextQueuedWorkflowRun(input: {
     kind: WorkflowKind;
     now: string;
@@ -85,9 +106,11 @@ export interface WorkflowRepository extends DeadLinkStore {
   findActiveWorkflowRun(input: {
     trackedSeasonId: string;
     kind: WorkflowKind;
+    accountId?: string;
   }): Promise<PersistedWorkflowRunSnapshot | null>;
-  /** Every queued/running run, newest first — drives the library "获取中" placeholders. */
-  listActiveWorkflowRuns(): Promise<PersistedWorkflowRunSnapshot[]>;
+  /** Every queued/running run for the account, newest first — drives the library
+   *  "获取中" placeholders. Defaults to acct_default. */
+  listActiveWorkflowRuns(accountId?: string): Promise<PersistedWorkflowRunSnapshot[]>;
   /** Lightweight mid-run update of the live agent progress shown on the activity
    *  page; `percent` is clamped monotonic so retries never rewind the bar. No-op
    *  for an unknown run. */
@@ -100,15 +123,26 @@ export interface WorkflowRepository extends DeadLinkStore {
    * claimed it (running) or it is otherwise non-queued; that race is expected.
    * Pure DB: a queued run has created no 115 directories yet.
    */
-  cancelQueuedWorkflowRun(workflowRunId: string): Promise<{ status: "cancelled" | "not_cancellable" }>;
-  getTrackedSeasonState(trackedSeasonId: string): Promise<TrackedSeasonState | null>;
-  listTrackedSeasonStates(): Promise<TrackedSeasonState[]>;
-  listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]>;
-  /** Most-recent-first notification feed across all workflow runs. */
-  listNotifications(input?: { limit?: number }): Promise<NotificationEvent[]>;
-  /** Generic app settings (e.g. the 115 cookie obtained via QR login). */
+  cancelQueuedWorkflowRun(
+    workflowRunId: string,
+    accountId?: string,
+  ): Promise<{ status: "cancelled" | "not_cancellable" }>;
+  getTrackedSeasonState(trackedSeasonId: string, accountId?: string): Promise<TrackedSeasonState | null>;
+  listTrackedSeasonStates(accountId?: string): Promise<TrackedSeasonState[]>;
+  listEpisodeStates(trackedSeasonId: string, accountId?: string): Promise<EpisodeState[]>;
+  /** Most-recent-first notification feed for the account. Defaults to acct_default. */
+  listNotifications(input?: { limit?: number; accountId?: string }): Promise<NotificationEvent[]>;
+  /** Instance-level (global) settings, e.g. the multi-account migration marker. */
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
+  /** Per-account settings: LLM/TMDB/Prowlarr/PanSou/画质/语言/push, etc. */
+  getAccountSetting(accountId: string, key: string): Promise<string | null>;
+  setAccountSetting(accountId: string, key: string, value: string): Promise<void>;
+  /** Connected network drives owned by the account (§7 multi-account). */
+  listConnectedStorages(accountId: string): Promise<ConnectedStorage[]>;
+  upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void>;
+  /** Instance-wide lookup enforcing UNIQUE(provider, provider_uid) ownership. */
+  findConnectedStorageByUid(provider: string, providerUid: string): Promise<ConnectedStorage | null>;
   // recordDeadLink + listDeadLinkKeys come from DeadLinkStore.
 }
 
@@ -116,6 +150,8 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   private readonly workflowRuns = new Map<string, PersistWorkflowRunSnapshotInput>();
   private readonly episodesBySeason = new Map<string, EpisodeState[]>();
   private readonly settings = new Map<string, string>();
+  private readonly accountSettings = new Map<string, Map<string, string>>();
+  private readonly connectedStorages = new Map<string, ConnectedStorage>();
   private readonly deadLinks = new Map<string, DeadLink>();
 
   async getSetting(key: string): Promise<string | null> {
@@ -124,6 +160,49 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async setSetting(key: string, value: string): Promise<void> {
     this.settings.set(key, value);
+  }
+
+  async getAccountSetting(accountId: string, key: string): Promise<string | null> {
+    return this.accountSettings.get(accountId)?.get(key) ?? null;
+  }
+
+  async setAccountSetting(accountId: string, key: string, value: string): Promise<void> {
+    let bucket = this.accountSettings.get(accountId);
+    if (!bucket) {
+      bucket = new Map<string, string>();
+      this.accountSettings.set(accountId, bucket);
+    }
+    bucket.set(key, value);
+  }
+
+  async listConnectedStorages(accountId: string): Promise<ConnectedStorage[]> {
+    return [...this.connectedStorages.values()]
+      .filter((storage) => storage.accountId === accountId)
+      .map((storage) => ({ ...storage }));
+  }
+
+  async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
+    this.connectedStorages.set(connectedStorageKey(row.provider, row.providerUid), {
+      id: row.id,
+      accountId: row.accountId,
+      provider: row.provider,
+      providerUid: row.providerUid,
+      label: row.label ?? null,
+      payload: row.payload,
+      rootCid: row.rootCid ?? null,
+      moviesCid: row.moviesCid ?? null,
+      tvCid: row.tvCid ?? null,
+      animeCid: row.animeCid ?? null,
+      createdAt: row.createdAt,
+    });
+  }
+
+  async findConnectedStorageByUid(
+    provider: string,
+    providerUid: string,
+  ): Promise<ConnectedStorage | null> {
+    const found = this.connectedStorages.get(connectedStorageKey(provider, providerUid));
+    return found ? { ...found } : null;
   }
 
   async recordDeadLink(input: {
@@ -162,6 +241,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     validateWorkflowRunSnapshot(input);
 
     const cloned = cloneWorkflowValue(input);
+    cloned.accountId = cloned.accountId ?? DEFAULT_ACCOUNT_ID;
     this.workflowRuns.set(cloned.workflowRun.id, cloned);
     this.episodesBySeason.set(cloned.season.id, cloneWorkflowValue(cloned.episodes));
   }
@@ -172,9 +252,11 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     this.expireStaleActiveWorkflowRuns(input);
 
     if (input.blockIfTitleHasActiveRun === true) {
+      const reservingAccountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
       const titleActive = Array.from(this.workflowRuns.values())
         .filter(
           (stored) =>
+            (stored.accountId ?? DEFAULT_ACCOUNT_ID) === reservingAccountId &&
             stored.season.mediaTitleId === snapshot.season.mediaTitleId &&
             isActiveWorkflowStatus(stored.workflowRun.status),
         )
@@ -190,6 +272,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const activeRun = await this.findActiveWorkflowRun({
       trackedSeasonId: snapshot.season.id,
       kind: snapshot.workflowRun.kind,
+      accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
     });
     if (activeRun) {
       return {
@@ -207,6 +290,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     }
 
     const cloned = cloneWorkflowValue(snapshot);
+    cloned.accountId = cloned.accountId ?? DEFAULT_ACCOUNT_ID;
     this.workflowRuns.set(cloned.workflowRun.id, cloned);
     this.episodesBySeason.set(cloned.season.id, cloneWorkflowValue(cloned.episodes));
 
@@ -216,9 +300,12 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     };
   }
 
-  async getWorkflowRunSnapshot(workflowRunId: string): Promise<PersistedWorkflowRunSnapshot | null> {
+  async getWorkflowRunSnapshot(
+    workflowRunId: string,
+    accountId: string = DEFAULT_ACCOUNT_ID,
+  ): Promise<PersistedWorkflowRunSnapshot | null> {
     const stored = this.workflowRuns.get(workflowRunId);
-    if (!stored) {
+    if (!stored || (stored.accountId ?? DEFAULT_ACCOUNT_ID) !== accountId) {
       return null;
     }
 
@@ -263,10 +350,13 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   async findActiveWorkflowRun(input: {
     trackedSeasonId: string;
     kind: WorkflowKind;
+    accountId?: string;
   }): Promise<PersistedWorkflowRunSnapshot | null> {
+    const accountId = input.accountId ?? DEFAULT_ACCOUNT_ID;
     const activeRuns = Array.from(this.workflowRuns.values())
       .filter(
         (snapshot) =>
+          (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId &&
           snapshot.workflowRun.trackedSeasonId === input.trackedSeasonId &&
           snapshot.workflowRun.kind === input.kind &&
           isActiveWorkflowStatus(snapshot.workflowRun.status),
@@ -276,9 +366,15 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return latest ? withDerivedEpisodeSummaries(cloneWorkflowValue(latest)) : null;
   }
 
-  async listActiveWorkflowRuns(): Promise<PersistedWorkflowRunSnapshot[]> {
+  async listActiveWorkflowRuns(
+    accountId: string = DEFAULT_ACCOUNT_ID,
+  ): Promise<PersistedWorkflowRunSnapshot[]> {
     return Array.from(this.workflowRuns.values())
-      .filter((snapshot) => isActiveWorkflowStatus(snapshot.workflowRun.status))
+      .filter(
+        (snapshot) =>
+          (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId &&
+          isActiveWorkflowStatus(snapshot.workflowRun.status),
+      )
       .sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt))
       .map((snapshot) => withDerivedEpisodeSummaries(cloneWorkflowValue(snapshot)));
   }
@@ -300,9 +396,14 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async cancelQueuedWorkflowRun(
     workflowRunId: string,
+    accountId: string = DEFAULT_ACCOUNT_ID,
   ): Promise<{ status: "cancelled" | "not_cancellable" }> {
     const stored = this.workflowRuns.get(workflowRunId);
-    if (!stored || stored.workflowRun.status !== "queued") {
+    if (
+      !stored ||
+      (stored.accountId ?? DEFAULT_ACCOUNT_ID) !== accountId ||
+      stored.workflowRun.status !== "queued"
+    ) {
       return { status: "not_cancellable" };
     }
     const seasonId = stored.season.id;
@@ -316,26 +417,36 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return { status: "cancelled" };
   }
 
-  async getTrackedSeasonState(trackedSeasonId: string): Promise<TrackedSeasonState | null> {
+  async getTrackedSeasonState(
+    trackedSeasonId: string,
+    accountId: string = DEFAULT_ACCOUNT_ID,
+  ): Promise<TrackedSeasonState | null> {
     const latestSnapshot = Array.from(this.workflowRuns.values())
-      .filter((snapshot) => snapshot.season.id === trackedSeasonId)
+      .filter(
+        (snapshot) =>
+          snapshot.season.id === trackedSeasonId &&
+          (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId,
+      )
       .sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt))[0];
     if (!latestSnapshot) {
       return null;
     }
 
     return cloneWorkflowValue({
+      accountId: latestSnapshot.accountId ?? DEFAULT_ACCOUNT_ID,
       title: latestSnapshot.title,
       season: latestSnapshot.season,
       episodes: this.episodesBySeason.get(trackedSeasonId) ?? latestSnapshot.episodes,
     });
   }
 
-  async listTrackedSeasonStates(): Promise<TrackedSeasonState[]> {
+  async listTrackedSeasonStates(
+    accountId: string = DEFAULT_ACCOUNT_ID,
+  ): Promise<TrackedSeasonState[]> {
     const latestBySeason = new Map<string, PersistWorkflowRunSnapshotInput>();
-    const snapshots = Array.from(this.workflowRuns.values()).sort((a, b) =>
-      b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt),
-    );
+    const snapshots = Array.from(this.workflowRuns.values())
+      .filter((snapshot) => (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId)
+      .sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt));
     for (const snapshot of snapshots) {
       if (!latestBySeason.has(snapshot.season.id)) {
         latestBySeason.set(snapshot.season.id, snapshot);
@@ -345,6 +456,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return Array.from(latestBySeason.values())
       .map((snapshot) =>
         cloneWorkflowValue({
+          accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
           title: snapshot.title,
           season: snapshot.season,
           episodes: this.episodesBySeason.get(snapshot.season.id) ?? snapshot.episodes,
@@ -353,14 +465,31 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       .sort(compareTrackedSeasonStates);
   }
 
-  async listEpisodeStates(trackedSeasonId: string): Promise<EpisodeState[]> {
+  async listEpisodeStates(
+    trackedSeasonId: string,
+    accountId: string = DEFAULT_ACCOUNT_ID,
+  ): Promise<EpisodeState[]> {
+    // Episodes inherit ownership from their season — only return them if the
+    // season belongs to the requesting account.
+    const ownerMatches = Array.from(this.workflowRuns.values()).some(
+      (snapshot) =>
+        snapshot.season.id === trackedSeasonId &&
+        (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId,
+    );
+    if (!ownerMatches) {
+      return [];
+    }
     return cloneWorkflowValue(this.episodesBySeason.get(trackedSeasonId) ?? []);
   }
 
-  async listNotifications(input?: { limit?: number }): Promise<NotificationEvent[]> {
-    const all = [...this.workflowRuns.values()].flatMap((snapshot) =>
-      snapshot.notifications.map((notification) => ({ ...notification })),
-    );
+  async listNotifications(input?: {
+    limit?: number;
+    accountId?: string;
+  }): Promise<NotificationEvent[]> {
+    const accountId = input?.accountId ?? DEFAULT_ACCOUNT_ID;
+    const all = [...this.workflowRuns.values()]
+      .filter((snapshot) => (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId)
+      .flatMap((snapshot) => snapshot.notifications.map((notification) => ({ ...notification })));
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return all.slice(0, input?.limit ?? 100);
   }
@@ -460,6 +589,7 @@ export function validateWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInp
 export function withDerivedEpisodeSummaries(input: PersistWorkflowRunSnapshotInput): PersistedWorkflowRunSnapshot {
   return {
     ...input,
+    accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
     obtainedEpisodes: input.episodes
       .filter((episode) => episode.obtained)
       .map((episode) => episode.episodeCode),
@@ -467,6 +597,11 @@ export function withDerivedEpisodeSummaries(input: PersistWorkflowRunSnapshotInp
       .filter((episode) => episode.obtained && episode.metadataStatus === "provider_ahead")
       .map((episode) => episode.episodeCode),
   };
+}
+
+/** Instance-wide key for the UNIQUE(provider, provider_uid) ownership index. */
+export function connectedStorageKey(provider: string, providerUid: string): string {
+  return `${provider}:${providerUid}`;
 }
 
 export function cloneWorkflowValue<T>(value: T): T {

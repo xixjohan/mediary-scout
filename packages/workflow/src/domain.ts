@@ -1,3 +1,11 @@
+/**
+ * The implicit account that owns all data in a single-user (multi-user disabled)
+ * deployment, and the fail-closed default everywhere an account is not explicitly
+ * supplied. §7 multi-account scopes tracking data by account_id; single-user is
+ * simply "one account, auto-logged-in" — there is no separate code path.
+ */
+export const DEFAULT_ACCOUNT_ID = "acct_default";
+
 export type MediaType = "movie" | "tv" | "anime";
 export type SeasonStatus = "active" | "completed";
 export type LatestAiredSource = "metadata" | "manual" | "unknown";

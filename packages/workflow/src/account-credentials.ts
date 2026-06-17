@@ -13,6 +13,37 @@ export interface ConnectedStorageRow {
   providerUid: string;
 }
 
+/** A network drive bound to an account (full persisted shape). */
+export interface ConnectedStorage {
+  id: string;
+  accountId: string;
+  provider: string;
+  providerUid: string;
+  label: string | null;
+  /** Opaque per-provider credentials, e.g. { cookie, cookieMeta, app, userName }. */
+  payload: unknown;
+  rootCid: string | null;
+  moviesCid: string | null;
+  tvCid: string | null;
+  animeCid: string | null;
+  createdAt: string;
+}
+
+/** Upsert payload — nullable directory CIDs are optional at call sites. */
+export interface UpsertConnectedStorageInput {
+  id: string;
+  accountId: string;
+  provider: string;
+  providerUid: string;
+  label?: string | null;
+  payload: unknown;
+  rootCid?: string | null;
+  moviesCid?: string | null;
+  tvCid?: string | null;
+  animeCid?: string | null;
+  createdAt: string;
+}
+
 export type StorageBindingDecision =
   | { action: "insert" }
   | { action: "refresh"; storageId: string }
