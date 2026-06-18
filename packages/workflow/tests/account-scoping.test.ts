@@ -105,6 +105,16 @@ describe("account scoping (InMemory)", () => {
     expect(a1.map((n) => n.id)).toEqual(["notif_a1"]);
   });
 
+  it("listRecentNotificationsWithAccount tags each notification with its owning account (cross-account, for per-account push)", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.saveWorkflowRunSnapshot(snapshotFor("acct_a1", "a1"));
+    await repo.saveWorkflowRunSnapshot(snapshotFor("acct_a2", "a2"));
+    const tagged = await repo.listRecentNotificationsWithAccount();
+    const byNotif = new Map(tagged.map((entry) => [entry.notification.id, entry.accountId]));
+    expect(byNotif.get("notif_a1")).toBe("acct_a1");
+    expect(byNotif.get("notif_a2")).toBe("acct_a2");
+  });
+
   it("omitting accountId falls back to the default account (single-user, fail-closed)", async () => {
     const repo = new InMemoryWorkflowRepository();
     await repo.saveWorkflowRunSnapshot(snapshotFor(DEFAULT_ACCOUNT_ID, "d"));

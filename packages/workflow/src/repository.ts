@@ -138,6 +138,12 @@ export interface WorkflowRepository extends DeadLinkStore {
   listEpisodeStates(trackedSeasonId: string, accountId?: string): Promise<EpisodeState[]>;
   /** Most-recent-first notification feed for the account. Defaults to acct_default. */
   listNotifications(input?: { limit?: number; accountId?: string }): Promise<NotificationEvent[]>;
+  /** Cross-account recent notifications, each tagged with its run's owning account
+   *  — drives the worker's outbound push, which must deliver each user's events to
+   *  THAT user's channels. Newest first. */
+  listRecentNotificationsWithAccount(input?: {
+    limit?: number;
+  }): Promise<Array<{ accountId: string; notification: NotificationEvent }>>;
   /** Instance-level (global) settings, e.g. the multi-account migration marker. */
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
@@ -587,6 +593,19 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       .filter((snapshot) => (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId)
       .flatMap((snapshot) => snapshot.notifications.map((notification) => ({ ...notification })));
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return all.slice(0, input?.limit ?? 100);
+  }
+
+  async listRecentNotificationsWithAccount(input?: {
+    limit?: number;
+  }): Promise<Array<{ accountId: string; notification: NotificationEvent }>> {
+    const all = [...this.workflowRuns.values()].flatMap((snapshot) =>
+      snapshot.notifications.map((notification) => ({
+        accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
+        notification: { ...notification },
+      })),
+    );
+    all.sort((left, right) => right.notification.createdAt.localeCompare(left.notification.createdAt));
     return all.slice(0, input?.limit ?? 100);
   }
 

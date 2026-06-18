@@ -473,6 +473,22 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     return all.slice(0, input?.limit ?? 100);
   }
 
+  async listRecentNotificationsWithAccount(input?: {
+    limit?: number;
+  }): Promise<Array<{ accountId: string; notification: NotificationEvent }>> {
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      "SELECT n.payload AS payload, wr.account_id AS account_id FROM notifications n " +
+        "JOIN workflow_runs wr ON n.workflow_run_id = wr.id",
+    );
+    const rows = result.rows.map((row) => ({
+      accountId: (row.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID,
+      notification: row.payload as NotificationEvent,
+    }));
+    rows.sort((left, right) => right.notification.createdAt.localeCompare(left.notification.createdAt));
+    return rows.slice(0, input?.limit ?? 100);
+  }
+
   async getSetting(key: string): Promise<string | null> {
     await this.ensureSchema();
     const result = await this.pool.query("SELECT value FROM app_settings WHERE key = $1", [key]);

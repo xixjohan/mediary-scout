@@ -184,18 +184,19 @@ export async function savePushSettingsAction(
   settings: Record<string, string>,
 ): Promise<PushSettingsActionResult> {
   try {
-    const { getWorkflowRepository } = await import("../lib/workflow-runtime");
+    const { getWorkflowRepository, getCurrentAccountId } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
 
     const keys = ["bark", "serverchan", "wecom", "webhook"];
     for (const key of keys) {
       const value = settings[key]?.trim();
       // Only write channels the user actually typed into. An empty field means
       // "leave unchanged" — the saved key stays masked and intact, never wiped.
-      // NOTE push stays instance-global (notify.ts reads it globally); per-account
-      // push is a follow-up.
+      // Per-account (the worker reads each notification's account push config via
+      // the scoped facade: account → global → env).
       if (value) {
-        await repository.setSetting(`push_${key}`, value);
+        await repository.setAccountSetting(accountId, `push_${key}`, value);
       }
     }
     
@@ -217,8 +218,8 @@ export async function clearPushChannelAction(key: string): Promise<PushSettingsA
     return { success: false, message: "未知的推送渠道" };
   }
   try {
-    const { getWorkflowRepository } = await import("../lib/workflow-runtime");
-    await getWorkflowRepository().setSetting(`push_${key}`, "");
+    const { getWorkflowRepository, getCurrentAccountId } = await import("../lib/workflow-runtime");
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), `push_${key}`, "");
     return { success: true };
   } catch (error) {
     return { success: false, message: `清除失败：${String(error)}` };
@@ -378,16 +379,18 @@ export async function testPushNotificationAction(
 ): Promise<PushSettingsActionResult> {
   try {
     const { sendPushNotifications } = await import("@media-track/workflow");
-    const { getWorkflowRepository } = await import("../lib/workflow-runtime");
-    
-    const repository = getWorkflowRepository();
+    const { getAccountScopedSettings, getCurrentAccountId } = await import("../lib/workflow-runtime");
+
+    // Per-account: read THIS account's saved push config (account → global), and
+    // send through the same scoped source so the test matches real delivery.
+    const repository = getAccountScopedSettings(await getCurrentAccountId());
     const configFromDb: Record<string, string> = {};
     for (const key of ["bark", "serverchan", "wecom", "webhook"]) {
       const dbValue = await repository.getSetting(`push_${key}`);
       const formValue = settings[key]?.trim();
       configFromDb[key] = formValue || dbValue || "";
     }
-    
+
     const sentTo = await sendPushNotifications({
       repository,
       notification: {

@@ -683,45 +683,57 @@ async function pushNotificationsSince(
   sinceIso: string,
 ): Promise<void> {
   try {
-    const recent = (await targetRepository.listNotifications({ limit: 50 })).filter(
-      (notification) => notification.createdAt >= sinceIso,
+    // Cross-account: the drain/sweep may have completed runs for several accounts.
+    // Each notification is tagged with its owning account so it goes to THAT
+    // user's channels (push config resolved per-account: account → global → env).
+    const recent = (await targetRepository.listRecentNotificationsWithAccount({ limit: 100 })).filter(
+      (entry) => entry.notification.createdAt >= sinceIso,
     );
     if (recent.length === 0) {
       return;
     }
 
-    // A scheduled sweep touches many shows; collapse its notifications into one
-    // digest push instead of one message per show. User-triggered events stay
-    // per-resource — each is its own message.
-    const scheduled = recent.filter((notification) => notification.trigger === "scheduled");
-    const individual = recent.filter((notification) => notification.trigger !== "scheduled");
-
-    for (const notification of individual) {
-      try {
-        await sendPushNotifications({ repository: targetRepository, notification });
-      } catch (error) {
-        console.error(
-          `[media-track] push for ${notification.id} failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
+    const byAccount = new Map<string, NotificationEvent[]>();
+    for (const { accountId, notification } of recent) {
+      const list = byAccount.get(accountId) ?? [];
+      list.push(notification);
+      byAccount.set(accountId, list);
     }
 
-    if (scheduled.length > 0) {
-      const digest: NotificationEvent = {
-        id: `digest_${sinceIso}`,
-        workflowRunId: scheduled[0]!.workflowRunId,
-        kind: "daily_digest",
-        title: "每日巡检",
-        body: formatDailyDigestPushText(scheduled),
-        createdAt: new Date().toISOString(),
-        trigger: "scheduled",
-      };
-      try {
-        await sendPushNotifications({ repository: targetRepository, notification: digest });
-      } catch (error) {
-        console.error(
-          `[media-track] digest push failed: ${error instanceof Error ? error.message : String(error)}`,
-        );
+    for (const [accountId, notifications] of byAccount) {
+      const settings = getAccountScopedSettings(accountId);
+      // A scheduled sweep touches many shows; collapse this account's into ONE
+      // digest. User-triggered events stay per-resource — each its own message.
+      const scheduled = notifications.filter((notification) => notification.trigger === "scheduled");
+      const individual = notifications.filter((notification) => notification.trigger !== "scheduled");
+
+      for (const notification of individual) {
+        try {
+          await sendPushNotifications({ repository: settings, notification });
+        } catch (error) {
+          console.error(
+            `[media-track] push for ${notification.id} failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+
+      if (scheduled.length > 0) {
+        const digest: NotificationEvent = {
+          id: `digest_${accountId}_${sinceIso}`,
+          workflowRunId: scheduled[0]!.workflowRunId,
+          kind: "daily_digest",
+          title: "每日巡检",
+          body: formatDailyDigestPushText(scheduled),
+          createdAt: new Date().toISOString(),
+          trigger: "scheduled",
+        };
+        try {
+          await sendPushNotifications({ repository: settings, notification: digest });
+        } catch (error) {
+          console.error(
+            `[media-track] digest push failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
     }
   } catch (error) {

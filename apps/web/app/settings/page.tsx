@@ -272,7 +272,7 @@ async function DailySweepSection() {
 
 async function PushNotificationSection() {
   await connection();
-  const repository = getWorkflowRepository();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
 
   // Only whether each channel is configured — the plaintext key is never sent
   // to the client.
