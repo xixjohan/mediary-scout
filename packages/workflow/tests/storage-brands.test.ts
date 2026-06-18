@@ -45,4 +45,11 @@ describe("storage brand registry", () => {
   it("unknown provider throws", () => {
     expect(() => getStorageBrand("baidu")).toThrowError(/unknown storage brand/i);
   });
+
+  it("brandSupportsProwlarr: 115 yes, quark no, unknown safely false", async () => {
+    const { brandSupportsProwlarr } = await import("../src/index.js");
+    expect(brandSupportsProwlarr("pan115")).toBe(true);
+    expect(brandSupportsProwlarr("quark")).toBe(false);
+    expect(brandSupportsProwlarr("baidu")).toBe(false);
+  });
 });

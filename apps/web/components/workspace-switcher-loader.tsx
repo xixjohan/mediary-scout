@@ -1,4 +1,4 @@
-import { switcherItems } from "@media-track/workflow";
+import { switcherItems, isRegisteredStorageProvider } from "@media-track/workflow";
 import { getAccountConnectedStorages } from "../lib/workflow-runtime";
 import { WorkspaceSwitcher } from "./workspace-switcher";
 
@@ -10,8 +10,8 @@ import { WorkspaceSwitcher } from "./workspace-switcher";
  * static shell (cacheComponents-safe).
  */
 export async function WorkspaceSwitcherLoader() {
-  const storages = (await getAccountConnectedStorages()).filter(
-    (storage) => storage.provider === "pan115",
+  const storages = (await getAccountConnectedStorages()).filter((storage) =>
+    isRegisteredStorageProvider(storage.provider),
   );
   if (storages.length < 2) {
     return null;
@@ -21,6 +21,7 @@ export async function WorkspaceSwitcherLoader() {
     storages.map((storage) => ({
       id: storage.id,
       label: storage.label,
+      provider: storage.provider,
       providerUid: storage.providerUid,
       createdAt: storage.createdAt,
       status: storage.status,

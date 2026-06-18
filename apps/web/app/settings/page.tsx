@@ -2,7 +2,7 @@ import { connection } from "next/server";
 import { Suspense } from "react";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, Languages, Radio, ShieldCheck, TriangleAlert } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
-import { Pan115QrConnect } from "../../components/pan115-qr-connect";
+import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../components/test-connection-button";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
@@ -29,6 +29,7 @@ import {
   PROWLARR_API_KEY_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
 } from "../../lib/workflow-runtime";
+import { brandSupportsProwlarr } from "@media-track/workflow";
 
 export default function SettingsPage() {
   return (
@@ -162,6 +163,11 @@ async function ResourceProviderSection() {
   const pansouBaseURL = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrBaseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrApiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());
+  // Prowlarr (磁力/PT) only works for brands that support magnet (115). Hide it
+  // when every connected drive is 夸克 (no magnet API). Shown for legacy/env-only
+  // setups (no connected_storages rows) so we never hide it from a working 115.
+  const drives = await getAccountConnectedStorages();
+  const showProwlarr = drives.length === 0 || drives.some((drive) => brandSupportsProwlarr(drive.provider));
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -171,12 +177,19 @@ async function ResourceProviderSection() {
             <Radio size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
             资源提供商
           </h2>
-          <p className="panel-note">agent 搜资源的来源；PanSou（网盘）默认内置，Prowlarr（磁力/PT）可选加挂，二者结果合并</p>
+          <p className="panel-note">
+            agent 搜资源的来源；PanSou（网盘）默认内置
+            {showProwlarr ? "，Prowlarr（磁力/PT）可选加挂，二者结果合并" : "（夸克盘不支持磁力，已隐藏 Prowlarr）"}
+          </p>
         </div>
       </div>
       <PanSouConfigForm baseURL={pansouBaseURL} />
-      <div style={{ height: 18 }} />
-      <ProwlarrConfigForm baseURL={prowlarrBaseURL} apiKeySet={prowlarrApiKeySet} />
+      {showProwlarr ? (
+        <>
+          <div style={{ height: 18 }} />
+          <ProwlarrConfigForm baseURL={prowlarrBaseURL} apiKeySet={prowlarrApiKeySet} />
+        </>
+      ) : null}
     </section>
   );
 }
@@ -192,9 +205,9 @@ async function Pan115Section() {
         <div>
           <h2 className="panel-title">
             <Cable size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
-            115 网盘
+            网盘连接
           </h2>
-          <p className="panel-note">扫码登录后 cookie 持久化到数据库，自动用于后续转存</p>
+          <p className="panel-note">连接 115（扫码）或夸克（粘贴 cookie）；凭证持久化到数据库，自动用于后续转存。每块盘是独立工作区</p>
         </div>
         {status.connected ? (
           <span className="hub-badge tone-green">
@@ -229,7 +242,7 @@ async function Pan115Section() {
             {drives.map((drive) => (
               <li key={drive.id} className="setting-row" style={{ justifyContent: "space-between" }}>
                 <span>
-                  {drive.provider === "pan115" ? "115" : drive.provider}
+                  {drive.provider === "pan115" ? "115" : drive.provider === "quark" ? "夸克" : drive.provider}
                   {drive.label ? ` · ${drive.label}` : ""}
                   <span className="push-help"> · 账号 {drive.providerUid}</span>
                   {drive.connectedAt ? <span className="push-help"> · {drive.connectedAt.slice(0, 16).replace("T", " ")}</span> : null}
@@ -254,12 +267,14 @@ async function Pan115Section() {
       ) : null}
 
       <p className="panel-note" style={{ marginBottom: 8 }}>
-        {drives.length > 0 ? "再扫一个码可添加另一个 115（不同账号即新增一块独立网盘；扫到已绑的会自动刷新登录）" : "扫码连接你的 115"}
+        {drives.length > 0
+          ? "添加另一块网盘（115 或夸克）——不同账号即新增一块独立工作区；绑到已连的同一账号会自动刷新登录"
+          : "添加你的第一块网盘"}
       </p>
-      <Pan115QrConnect />
+      <AddDriveBrandTabs />
 
       <p className="panel-note" style={{ marginTop: 12 }}>
-        ⚠️ 请勿在多个账号或多个实例上绑定同一个 115 账号，易触发 115 风控。每个 115 账号在本实例内只能归属一个用户。
+        ⚠️ 请勿在多个账号或多个实例上绑定同一个网盘账号，易触发风控。每个网盘账号在本实例内只能归属一个用户。
       </p>
     </section>
   );

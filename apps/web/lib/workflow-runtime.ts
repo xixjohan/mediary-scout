@@ -39,6 +39,8 @@ import {
   createExecutorForBrand,
   getStorageBrand,
   isRegisteredStorageProvider,
+  brandSupportsProwlarr,
+  parseQuarkUid,
   type ResolveAccountWorkerContext,
   hashPassword,
   verifyPassword,
@@ -1574,7 +1576,7 @@ export async function getAccountConnectedStorages(): Promise<ConnectedStorageVie
  *  (instance-wide UNIQUE(provider, provider_uid)). The route surfaces the message. */
 export class StorageOwnedByOtherAccountError extends Error {
   constructor() {
-    super("该 115 账号已被本实例的其他用户连接，无法重复绑定。");
+    super("该网盘账号已被本实例的其他用户连接，无法重复绑定。");
     this.name = "StorageOwnedByOtherAccountError";
   }
 }
@@ -1712,4 +1714,85 @@ export async function completePan115QrLogin(input: {
     pan115CookieHydrated = true;
   }
   return { userName: result.userName, app: result.app };
+}
+
+/**
+ * Tree model: bind a pasted 夸克 cookie to the current account as a new drive
+ * (brand "quark"). 夸克 QR-login is not cleanly automatable and the browser
+ * automation skill forbids auto-reading cookies, so v1 takes the cookie the user
+ * copies from their Network request header (Copy as cURL). Enforces instance-wide
+ * ownership (same uid can't belong to two accounts) and provisions the
+ * media-track/{Movies,TV,Anime} tree on a genuinely new connection (best-effort).
+ */
+export async function connectQuarkCookie(rawCookie: string): Promise<{ providerUid: string }> {
+  const cookie = rawCookie.trim();
+  if (!cookie) {
+    throw new Error("请粘贴夸克 cookie。");
+  }
+  const providerUid = parseQuarkUid(cookie);
+  if (!providerUid) {
+    throw new Error(
+      "无法从该 cookie 解析夸克账号（需包含 __uid 或 __kps）；请从浏览器 Network 请求头复制完整 Cookie（Copy as cURL 最省事）。",
+    );
+  }
+  const accountId = await getCurrentAccountId();
+  const repository = getWorkflowRepository();
+  const existing = await repository.findConnectedStorageByUid("quark", providerUid);
+  const decision = resolveStorageBinding({ provider: "quark", providerUid, accountId, existing });
+  if (decision.action === "reject") {
+    throw new StorageOwnedByOtherAccountError();
+  }
+  const payload = { cookie, meta: { connectedAt: new Date().toISOString() } };
+  if (decision.action === "refresh" && existing) {
+    // Same account re-bind → refresh the cookie, keep the resolved CIDs.
+    await repository.upsertConnectedStorage({
+      id: existing.id,
+      accountId,
+      provider: "quark",
+      providerUid,
+      label: existing.label,
+      payload,
+      rootCid: existing.rootCid,
+      moviesCid: existing.moviesCid,
+      tvCid: existing.tvCid,
+      animeCid: existing.animeCid,
+      createdAt: existing.createdAt,
+    });
+    return { providerUid };
+  }
+  // insert: provision the category tree under the 夸克 root ("0"). Best-effort —
+  // a failure still stores the connection (worker falls back to env CIDs / none).
+  let cids: { rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null } = {
+    rootCid: null,
+    moviesCid: null,
+    tvCid: null,
+    animeCid: null,
+  };
+  try {
+    const executor = createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] });
+    cids = await provisionCategoryDirs({
+      baseParentId: "0", // 夸克 account root
+      storage: {
+        listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
+        createDirectory: (dir) => executor.createDirectory(dir),
+      },
+    });
+  } catch (error) {
+    console.error(`[media-track] 夸克 directory provision failed (will store without CIDs): ${String(error)}`);
+  }
+  const idSuffix = providerUid.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
+  await repository.upsertConnectedStorage({
+    id: `cs_quark_${idSuffix}`,
+    accountId,
+    provider: "quark",
+    providerUid,
+    label: null,
+    payload,
+    rootCid: cids.rootCid,
+    moviesCid: cids.moviesCid,
+    tvCid: cids.tvCid,
+    animeCid: cids.animeCid,
+    createdAt: new Date().toISOString(),
+  });
+  return { providerUid };
 }

@@ -60,3 +60,13 @@ export function getStorageBrand(provider: string): StorageBrand {
 export function isRegisteredStorageProvider(provider: string): provider is StorageProvider {
   return STORAGE_BRANDS.some((b) => b.provider === provider);
 }
+
+/** Whether a brand can use Prowlarr (磁力/PT) — 115 yes, 夸克 no (no magnet API).
+ *  Settings hides the Prowlarr block when no connected drive supports it. Safe on
+ *  unknown providers (returns false, never throws). */
+export function brandSupportsProwlarr(provider: string): boolean {
+  return (
+    isRegisteredStorageProvider(provider) &&
+    getStorageBrand(provider).resourceProviderKinds.includes("prowlarr")
+  );
+}

@@ -20,6 +20,23 @@ export async function testStorageConnectionAction(
   return result;
 }
 
+export interface ConnectQuarkActionResult {
+  ok: boolean;
+  message: string;
+}
+
+/** Settings "添加网盘 → 夸克": bind a pasted 夸克 cookie as a new drive. */
+export async function connectQuarkAction(cookie: string): Promise<ConnectQuarkActionResult> {
+  try {
+    const { connectQuarkCookie } = await import("../lib/workflow-runtime");
+    const { providerUid } = await connectQuarkCookie(cookie);
+    revalidatePath("/settings");
+    return { ok: true, message: `夸克网盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 export interface RequestTrackingActionResult {
   status: "requested" | "already_tracked" | "active_workflow" | "reserved" | "unsupported";
   message: string;

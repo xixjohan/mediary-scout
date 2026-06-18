@@ -85,6 +85,7 @@ export function switcherItems(
   storages: ReadonlyArray<{
     id: string;
     label: string | null;
+    provider?: string;
     providerUid: string;
     createdAt: string;
     status: "active" | "frozen";
@@ -105,7 +106,9 @@ export function switcherItems(
     return {
       id: storage.id,
       href,
-      label: storage.label?.trim() || `115 …${storage.providerUid.slice(-4)}`,
+      label:
+        storage.label?.trim() ||
+        `${storage.provider === "quark" ? "夸克" : "115"} …${storage.providerUid.slice(-4)}`,
       isActive,
       frozen: storage.status === "frozen",
     };
