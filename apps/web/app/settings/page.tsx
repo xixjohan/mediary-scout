@@ -12,6 +12,7 @@ import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
 import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
 import {
+  getAccountConnectedStorages,
   getDailySweepTime,
   getPan115ConnectionStatus,
   getWorkflowRepository,
@@ -180,6 +181,7 @@ async function ResourceProviderSection() {
 async function Pan115Section() {
   await connection();
   const status = await getPan115ConnectionStatus();
+  const drives = await getAccountConnectedStorages();
 
   return (
     <section className="panel" style={{ maxWidth: 720 }}>
@@ -214,6 +216,27 @@ async function Pan115Section() {
       ) : (
         <p className="qr-hint">还没有可用的 115 cookie，扫码连接后即可开始获取资源。</p>
       )}
+
+      {drives.length > 0 ? (
+        <div style={{ margin: "14px 0" }}>
+          <p className="panel-note" style={{ marginBottom: 8 }}>本账号已连接的网盘</p>
+          <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
+            {drives.map((drive) => (
+              <li key={drive.id} className="setting-row" style={{ justifyContent: "space-between" }}>
+                <span>
+                  {drive.provider === "pan115" ? "115" : drive.provider}
+                  {drive.label ? ` · ${drive.label}` : ""}
+                  <span className="push-help"> · 账号 {drive.providerUid}</span>
+                  {drive.connectedAt ? <span className="push-help"> · {drive.connectedAt.slice(0, 16).replace("T", " ")}</span> : null}
+                </span>
+                <span className={`hub-badge ${drive.provisioned ? "tone-green" : "tone-amber"}`}>
+                  {drive.provisioned ? "目录已就绪" : "目录待建"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       <Pan115QrConnect />
 

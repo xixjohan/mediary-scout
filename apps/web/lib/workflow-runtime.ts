@@ -1273,6 +1273,36 @@ export async function getPan115ConnectionStatus(): Promise<Pan115ConnectionStatu
   return { connected: false, source: "none", userName: null, app: null, connectedAt: null };
 }
 
+export interface ConnectedStorageView {
+  id: string;
+  provider: string;
+  providerUid: string;
+  label: string | null;
+  connectedAt: string | null;
+  /** True once category directories are provisioned (CIDs stored). */
+  provisioned: boolean;
+}
+
+/**
+ * §7 P2: the CURRENT account's connected network drives, sanitized for the
+ * settings UI — the cookie/payload is NEVER exposed, only display metadata.
+ */
+export async function getAccountConnectedStorages(): Promise<ConnectedStorageView[]> {
+  const accountId = await getCurrentAccountId();
+  const rows = await getWorkflowRepository().listConnectedStorages(accountId);
+  return rows.map((row) => {
+    const meta = (row.payload as { meta?: { connectedAt?: string } } | null)?.meta;
+    return {
+      id: row.id,
+      provider: row.provider,
+      providerUid: row.providerUid,
+      label: row.label,
+      connectedAt: meta?.connectedAt ?? null,
+      provisioned: Boolean(row.tvCid && row.moviesCid && row.animeCid),
+    };
+  });
+}
+
 /** Thrown when a QR connect targets a 115 already bound to a DIFFERENT account
  *  (instance-wide UNIQUE(provider, provider_uid)). The route surfaces the message. */
 export class StorageOwnedByOtherAccountError extends Error {
