@@ -131,6 +131,10 @@ export interface WorkflowRepository extends DeadLinkStore {
   ): Promise<{ status: "cancelled" | "not_cancellable" }>;
   getTrackedSeasonState(trackedSeasonId: string, accountId?: string): Promise<TrackedSeasonState | null>;
   listTrackedSeasonStates(accountId?: string): Promise<TrackedSeasonState[]>;
+  /** EVERY account's tracked seasons (cross-account), each carrying its own
+   *  accountId — drives the daily sweep, which patrols all users' shows and runs
+   *  each under its owner's credentials. */
+  listAllTrackedSeasonStates(): Promise<TrackedSeasonState[]>;
   listEpisodeStates(trackedSeasonId: string, accountId?: string): Promise<EpisodeState[]>;
   /** Most-recent-first notification feed for the account. Defaults to acct_default. */
   listNotifications(input?: { limit?: number; accountId?: string }): Promise<NotificationEvent[]>;
@@ -514,6 +518,28 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       }
     }
 
+    return Array.from(latestBySeason.values())
+      .map((snapshot) =>
+        cloneWorkflowValue({
+          accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
+          title: snapshot.title,
+          season: snapshot.season,
+          episodes: this.episodesBySeason.get(snapshot.season.id) ?? snapshot.episodes,
+        }),
+      )
+      .sort(compareTrackedSeasonStates);
+  }
+
+  async listAllTrackedSeasonStates(): Promise<TrackedSeasonState[]> {
+    const latestBySeason = new Map<string, PersistWorkflowRunSnapshotInput>();
+    const snapshots = Array.from(this.workflowRuns.values()).sort((a, b) =>
+      b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt),
+    );
+    for (const snapshot of snapshots) {
+      if (!latestBySeason.has(snapshot.season.id)) {
+        latestBySeason.set(snapshot.season.id, snapshot);
+      }
+    }
     return Array.from(latestBySeason.values())
       .map((snapshot) =>
         cloneWorkflowValue({

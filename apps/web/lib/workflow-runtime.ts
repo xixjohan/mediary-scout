@@ -36,6 +36,7 @@ import {
   resolveStorageBinding,
   provisionCategoryDirs,
   parsePan115Uid,
+  type ResolveAccountWorkerContext,
   hashPassword,
   verifyPassword,
   signSession,
@@ -292,6 +293,7 @@ export async function queueCandidateTracking(candidateId: string): Promise<Candi
       title: movie.title,
       keyword: movie.keyword,
       repository: getWorkflowRepository(),
+      accountId: await getCurrentAccountId(),
     });
     return {
       status: request.status === "queued" ? "queued" : request.status,
@@ -313,6 +315,7 @@ export async function queueCandidateTracking(candidateId: string): Promise<Candi
     season: target.season,
     keyword: target.keyword,
     repository: getWorkflowRepository(),
+    accountId: await getCurrentAccountId(),
   });
   const status = request.status === "completed" ? "queued" : request.status;
 
@@ -356,12 +359,32 @@ export async function runStartupMigrations(): Promise<void> {
   }
 }
 
+/**
+ * §7 form B: resolve the per-account worker context for a CLAIMED run. The worker
+ * drains a cross-account queue; for each run it calls this with the run's owner so
+ * the acquisition transfers to THAT account's 115 (cookie + landing CIDs), not a
+ * shared one. model/resourceProvider/language stay global (shared author LLM/
+ * PanSou) for v1 — per-account LLM/Prowlarr is a later refinement.
+ */
+function buildAccountContextResolver(): ResolveAccountWorkerContext {
+  return async (accountId: string) => {
+    const parents = await getWorkerStorageParents(accountId);
+    return {
+      storage: await getWorkerStorageExecutor(accountId),
+      storageParentDirectoryId: parents.tv,
+      animeStorageParentDirectoryId: parents.anime,
+      moviesParentDirectoryId: parents.movies,
+    };
+  };
+}
+
 export async function runNextQueuedWorkflow() {
   const repository = getWorkflowRepository();
-  // §7 P0: single-instance worker, single (default) account. P1 multi-account
-  // restructures this to claim-first then resolve the claimed run's account; for
-  // now the queue is one account's, so resolve its credentials up front.
-  const accountId = await getCurrentAccountId();
+  // §7 form B: the worker resolves each CLAIMED run's account credentials via
+  // resolveAccountContext (claim-first), so bob's acquisition lands in bob's 115.
+  // The base deps below are the default account's, used as the fallback the
+  // resolver overrides per run.
+  const accountId = DEFAULT_ACCOUNT_ID;
   await hydratePan115CookieFromDb();
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
@@ -371,6 +394,7 @@ export async function runNextQueuedWorkflow() {
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
   const storage = await getWorkerStorageExecutor(accountId);
   const parents = await getWorkerStorageParents(accountId);
+  const resolveAccountContext = buildAccountContextResolver();
   const startedAt = new Date().toISOString();
   const type2 = await runQueuedType2Workflow({
     repository,
@@ -381,6 +405,7 @@ export async function runNextQueuedWorkflow() {
     ...quality,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
+    resolveAccountContext,
   });
   if (type2.status !== "idle") {
     await pushNotificationsSince(repository, startedAt);
@@ -395,6 +420,7 @@ export async function runNextQueuedWorkflow() {
     ...quality,
     storageParentDirectoryId: parents.tv,
     animeStorageParentDirectoryId: parents.anime,
+    resolveAccountContext,
   });
   if (series.status !== "idle") {
     await pushNotificationsSince(repository, startedAt);
@@ -408,6 +434,7 @@ export async function runNextQueuedWorkflow() {
     ...language,
     ...quality,
     moviesParentDirectoryId: parents.movies,
+    resolveAccountContext,
   });
   if (movie.status !== "idle") {
     await pushNotificationsSince(repository, startedAt);
@@ -603,7 +630,11 @@ export async function reserveCandidate(candidateId: string): Promise<CandidateRe
   if (!movie) {
     return { status: "unsupported", message: "无法获取该电影的信息。" };
   }
-  const request = await reserveMovie({ title: movie.title, repository: getWorkflowRepository() });
+  const request = await reserveMovie({
+    title: movie.title,
+    repository: getWorkflowRepository(),
+    accountId: await getCurrentAccountId(),
+  });
   return { status: request.status, trackedSeasonId: `${movie.title.id}_movie` };
 }
 
@@ -679,6 +710,7 @@ export async function queueCandidateSeries(candidateId: string): Promise<Candida
       seasons: target.seasons,
       keyword: target.keyword,
       repository: getWorkflowRepository(),
+      accountId: await getCurrentAccountId(),
     });
     return {
       status: request.status === "queued" ? "queued" : request.status,
@@ -709,6 +741,7 @@ export async function queueCandidateSeries(candidateId: string): Promise<Candida
     })),
     keyword: candidate.title.trim(), // quality NEVER in the keyword (search-methodology law)
     repository: getWorkflowRepository(),
+    accountId: await getCurrentAccountId(),
   });
   return {
     status: request.status === "queued" ? "queued" : request.status,
@@ -785,6 +818,7 @@ export async function runScheduledType3(options?: { force?: boolean }): Promise<
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
       staleActiveRunTimeoutMs: 30 * 60 * 1000,
+      resolveAccountContext: buildAccountContextResolver(),
       ...(sync ? { syncSeasonMetadata: sync } : {}),
     });
     await pushNotificationsSince(repository, startedAt);

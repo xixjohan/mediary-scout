@@ -36,6 +36,8 @@ export async function queueTrackingInitialization(input: {
   season: TrackedSeason;
   keyword: string;
   repository: WorkflowRepository;
+  /** Owning account (§7). Omitted → default account (single-user). */
+  accountId?: string;
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
@@ -52,6 +54,7 @@ export async function queueTrackingInitialization(input: {
   });
 
   const reservation = await input.repository.reserveWorkflowRun({
+    ...(input.accountId ? { accountId: input.accountId } : {}),
     title: input.title,
     season: input.season,
     workflowRun: {
@@ -169,6 +172,8 @@ export async function queueSeriesInitialization(input: {
   seasons: AcquisitionSeasonScope[];
   keyword: string;
   repository: WorkflowRepository;
+  /** Owning account (§7). Omitted → default account (single-user). */
+  accountId?: string;
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
@@ -194,6 +199,7 @@ export async function queueSeriesInitialization(input: {
   };
 
   const reservation = await input.repository.reserveWorkflowRun({
+    ...(input.accountId ? { accountId: input.accountId } : {}),
     title: input.title,
     season: lockSeason,
     workflowRun: {
@@ -250,6 +256,8 @@ export async function queueMovieAcquisition(input: {
   title: MediaTitle;
   keyword: string;
   repository: WorkflowRepository;
+  /** Owning account (§7). Omitted → default account (single-user). */
+  accountId?: string;
   createWorkflowRunId?: () => string;
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
@@ -265,6 +273,7 @@ export async function queueMovieAcquisition(input: {
   });
 
   const reservation = await input.repository.reserveWorkflowRun({
+    ...(input.accountId ? { accountId: input.accountId } : {}),
     title: input.title,
     season,
     workflowRun: {
@@ -319,6 +328,8 @@ export interface MovieReservationResult {
 export async function reserveMovie(input: {
   title: MediaTitle;
   repository: WorkflowRepository;
+  /** Owning account (§7). Omitted → default account (single-user). */
+  accountId?: string;
   createWorkflowRunId?: () => string;
   now?: () => string;
 }): Promise<MovieReservationResult> {
@@ -340,6 +351,7 @@ export async function reserveMovie(input: {
   });
 
   const reservation = await input.repository.reserveWorkflowRun({
+    ...(input.accountId ? { accountId: input.accountId } : {}),
     title: input.title,
     season,
     workflowRun: {

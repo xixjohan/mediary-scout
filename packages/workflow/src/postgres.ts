@@ -424,6 +424,23 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     return states.sort(compareTrackedSeasonStates);
   }
 
+  async listAllTrackedSeasonStates(): Promise<TrackedSeasonState[]> {
+    await this.ensureSchema();
+    const result = await this.pool.query("SELECT payload, account_id FROM tracked_seasons");
+    const states: TrackedSeasonState[] = [];
+    for (const row of result.rows) {
+      const season = row.payload as TrackedSeason;
+      const accountId = (row.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
+      states.push({
+        accountId,
+        title: await this.requireTitle(this.pool, season),
+        season,
+        episodes: await this.selectEpisodeStates(this.pool, season.id),
+      });
+    }
+    return states.sort(compareTrackedSeasonStates);
+  }
+
   async listEpisodeStates(
     trackedSeasonId: string,
     accountId: string = DEFAULT_ACCOUNT_ID,

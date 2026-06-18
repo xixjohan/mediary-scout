@@ -31,6 +31,9 @@ interface TvV2Common {
   storage: StorageExecutor;
   model: LanguageModel;
   repository: WorkflowRepository;
+  /** §7: owning account, stamped onto the persisted tracking record so a
+   *  multi-user acquisition stays owned by the user who triggered it. */
+  accountId?: string;
   workflowRun: WorkflowRunMetadata;
   searchBudget?: number;
   maxSteps?: number;
@@ -72,9 +75,11 @@ async function persistSingleSeason(input: {
   bridged: BridgedV2Result;
   workflowRun: WorkflowRunMetadata;
   repository: WorkflowRepository;
+  accountId?: string;
 }): Promise<void> {
   const seasonResult = input.bridged.seasons[0]!;
   await input.repository.saveWorkflowRunSnapshot({
+    ...(input.accountId ? { accountId: input.accountId } : {}),
     title: input.title,
     season: seasonResult.season,
     workflowRun: {
@@ -133,6 +138,7 @@ export async function runType2InitializationV2AndPersist(
     // be the real completion time, not the claim time.
     workflowRun: { ...input.workflowRun, finishedAt: now() },
     repository: input.repository,
+    ...(input.accountId ? { accountId: input.accountId } : {}),
   });
   return bridged;
 }
@@ -176,6 +182,7 @@ export async function runType3MonitoringV2AndPersist(
     bridged,
     workflowRun: { ...input.workflowRun, finishedAt: now() },
     repository: input.repository,
+    ...(input.accountId ? { accountId: input.accountId } : {}),
   });
   return bridged;
 }
@@ -225,6 +232,7 @@ export async function runSeriesInitializationV2AndPersist(
   for (const [index, seasonResult] of bridged.seasons.entries()) {
     const seasonRunId = `${input.workflowRun.id}_s${seasonResult.season.seasonNumber}`;
     await input.repository.saveWorkflowRunSnapshot({
+      ...(input.accountId ? { accountId: input.accountId } : {}),
       title: input.title,
       season: seasonResult.season,
       workflowRun: {
@@ -263,6 +271,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   storage: StorageExecutor;
   model: LanguageModel;
   repository: WorkflowRepository;
+  /** §7: owning account for the persisted record (see TvV2Common.accountId). */
+  accountId?: string;
   workflowRun: WorkflowRunMetadata;
   searchBudget?: number;
   maxSteps?: number;
@@ -294,6 +304,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   });
 
   await input.repository.saveWorkflowRunSnapshot({
+    ...(input.accountId ? { accountId: input.accountId } : {}),
     title: input.title,
     season: result.season,
     workflowRun: {

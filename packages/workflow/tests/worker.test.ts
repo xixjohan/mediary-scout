@@ -44,6 +44,40 @@ function throwingModel() {
 }
 
 describe("runQueuedType2Workflow (V2 engine)", () => {
+  it("resolves the CLAIMED run's account context (per-account 115 creds) — §7 form B", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture();
+    await queueTrackingInitialization({
+      title,
+      season,
+      keyword: "Show 4K",
+      repository,
+      accountId: "acct_bob",
+      createWorkflowRunId: () => "run_bob_type2",
+      now: fixedNow,
+    });
+
+    const bobStorage = new FakeStorageExecutor();
+    const seenAccountIds: string[] = [];
+    await runQueuedType2Workflow({
+      repository,
+      // Base deps (the "default account" fallback) — must NOT decide bob's run.
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: noCoverageModel(),
+      storageParentDirectoryId: "default_root",
+      resolveAccountContext: async (accountId) => {
+        seenAccountIds.push(accountId);
+        return { storage: bobStorage, storageParentDirectoryId: "bob_root" };
+      },
+    });
+
+    // The resolver was called with the queued run's OWNER, not the default account.
+    expect(seenAccountIds).toEqual(["acct_bob"]);
+    const snapshot = await repository.getWorkflowRunSnapshot("run_bob_type2", "acct_bob");
+    expect(snapshot?.accountId).toBe("acct_bob");
+  });
+
   it("returns idle when no queued type2 run exists", async () => {
     const result = await runQueuedType2Workflow({
       repository: new InMemoryWorkflowRepository(),
