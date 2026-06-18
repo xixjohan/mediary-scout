@@ -37,6 +37,7 @@ import type {
   Session,
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
+import { normalizeScope, type ScopeArg } from "./workflow-scope.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 
 type Queryable = Pool | PoolClient;
@@ -245,12 +246,13 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     const snapshot = cloneWorkflowValue(workflowSnapshotFromReservation(input));
     validateWorkflowRunSnapshot(snapshot);
     const accountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
+    const connectedStorageId = snapshot.connectedStorageId ?? null;
 
     return this.withTransaction(async (client) => {
       await this.expireStaleActiveWorkflowRuns(client, input);
 
       if (input.blockIfTitleHasActiveRun === true) {
-        const titleActive = (await this.selectWorkflowRunsForTitle(client, snapshot.season.mediaTitleId, accountId))
+        const titleActive = (await this.selectWorkflowRunsForTitle(client, snapshot.season.mediaTitleId, accountId, connectedStorageId))
           .filter((workflowRun) => isActiveWorkflowStatus(workflowRun.status))
           .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
         if (titleActive) {
@@ -262,7 +264,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         }
       }
 
-      const activeRun = (await this.selectWorkflowRuns(client, snapshot.season.id))
+      const activeRun = (await this.selectWorkflowRuns(client, snapshot.season.id, connectedStorageId))
         .filter(
           (workflowRun) =>
             workflowRun.kind === snapshot.workflowRun.kind && isActiveWorkflowStatus(workflowRun.status),
@@ -291,10 +293,15 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async getWorkflowRunSnapshot(
     workflowRunId: string,
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<PersistedWorkflowRunSnapshot | null> {
+    const scope = normalizeScope(scopeArg);
     const snapshot = await this.loadWorkflowRunSnapshot(this.pool, workflowRunId);
-    if (!snapshot || snapshot.accountId !== accountId) {
+    if (
+      !snapshot ||
+      snapshot.accountId !== scope.accountId ||
+      (scope.connectedStorageId != null && snapshot.connectedStorageId !== scope.connectedStorageId)
+    ) {
       return null;
     }
     return snapshot;
@@ -336,24 +343,32 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     trackedSeasonId: string;
     kind: WorkflowKind;
     accountId?: string;
+    connectedStorageId?: string | null;
   }): Promise<PersistedWorkflowRunSnapshot | null> {
-    const accountId = input.accountId ?? DEFAULT_ACCOUNT_ID;
-    const latest = (await this.selectWorkflowRunsForAccount(this.pool, input.trackedSeasonId, accountId))
+    const scope = normalizeScope(
+      input.accountId === undefined
+        ? undefined
+        : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
+    );
+    const latest = (await this.selectWorkflowRunsForAccount(this.pool, input.trackedSeasonId, scope.accountId))
       .filter((workflowRun) => workflowRun.kind === input.kind && isActiveWorkflowStatus(workflowRun.status))
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
-    return latest ? this.getWorkflowRunSnapshot(latest.id, accountId) : null;
+    // getWorkflowRunSnapshot applies the storage filter (drops cross-storage).
+    return latest ? this.getWorkflowRunSnapshot(latest.id, scope) : null;
   }
 
   async listActiveWorkflowRuns(
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<PersistedWorkflowRunSnapshot[]> {
-    const runs = (await this.allWorkflowRunsForAccount(this.pool, accountId))
+    const scope = normalizeScope(scopeArg);
+    const runs = (await this.allWorkflowRunsForAccount(this.pool, scope.accountId))
       .filter((workflowRun) => isActiveWorkflowStatus(workflowRun.status))
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     const snapshots: PersistedWorkflowRunSnapshot[] = [];
     for (const run of runs) {
       try {
-        const snapshot = await this.getWorkflowRunSnapshot(run.id, accountId);
+        // Full scope drops runs on other storages of the same account.
+        const snapshot = await this.getWorkflowRunSnapshot(run.id, scope);
         if (snapshot) {
           snapshots.push(snapshot);
         }
@@ -384,17 +399,24 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async cancelQueuedWorkflowRun(
     workflowRunId: string,
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<{ status: "cancelled" | "not_cancellable" }> {
+    const scope = normalizeScope(scopeArg);
     return this.withTransaction(async (client) => {
       await this.ensureSchema();
       const row = await client.query(
-        "SELECT payload, account_id FROM workflow_runs WHERE id = $1",
+        "SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE id = $1",
         [workflowRunId],
       );
       const run = (row.rows[0]?.payload as WorkflowRun | undefined) ?? null;
       const owner = (row.rows[0]?.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
-      if (!run || owner !== accountId || run.status !== "queued") {
+      const ownerStorage = (row.rows[0]?.connected_storage_id as string | null | undefined) ?? null;
+      if (
+        !run ||
+        owner !== scope.accountId ||
+        (scope.connectedStorageId != null && ownerStorage !== scope.connectedStorageId) ||
+        run.status !== "queued"
+      ) {
         return { status: "not_cancellable" as const };
       }
       const seasonId = run.trackedSeasonId;
@@ -436,32 +458,46 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async getTrackedSeasonState(
     trackedSeasonId: string,
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<TrackedSeasonState | null> {
-    const season = await this.selectOne<TrackedSeason>(
-      this.pool,
-      "SELECT payload FROM tracked_seasons WHERE id = $1 AND account_id = $2",
-      [trackedSeasonId, accountId],
+    const scope = normalizeScope(scopeArg);
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      "SELECT payload, connected_storage_id FROM tracked_seasons " +
+        "WHERE id = $1 AND account_id = $2 AND ($3::text IS NULL OR connected_storage_id = $3)",
+      [trackedSeasonId, scope.accountId, scope.connectedStorageId],
     );
-    if (!season) {
+    const row = result.rows[0];
+    if (!row) {
       return null;
     }
+    const season = row.payload as TrackedSeason;
     const title = await this.requireTitle(this.pool, season);
-    return { accountId, title, season, episodes: await this.selectEpisodeStates(this.pool, season.id) };
+    return {
+      accountId: scope.accountId,
+      connectedStorageId: (row.connected_storage_id as string | null | undefined) ?? null,
+      title,
+      season,
+      episodes: await this.selectEpisodeStates(this.pool, season.id),
+    };
   }
 
   async listTrackedSeasonStates(
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<TrackedSeasonState[]> {
-    const seasons = await this.selectMany<TrackedSeason>(
-      this.pool,
-      "SELECT payload FROM tracked_seasons WHERE account_id = $1",
-      [accountId],
+    const scope = normalizeScope(scopeArg);
+    await this.ensureSchema();
+    const result = await this.pool.query(
+      "SELECT payload, connected_storage_id FROM tracked_seasons " +
+        "WHERE account_id = $1 AND ($2::text IS NULL OR connected_storage_id = $2)",
+      [scope.accountId, scope.connectedStorageId],
     );
     const states: TrackedSeasonState[] = [];
-    for (const season of seasons) {
+    for (const row of result.rows) {
+      const season = row.payload as TrackedSeason;
       states.push({
-        accountId,
+        accountId: scope.accountId,
+        connectedStorageId: (row.connected_storage_id as string | null | undefined) ?? null,
         title: await this.requireTitle(this.pool, season),
         season,
         episodes: await this.selectEpisodeStates(this.pool, season.id),
@@ -472,13 +508,16 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async listAllTrackedSeasonStates(): Promise<TrackedSeasonState[]> {
     await this.ensureSchema();
-    const result = await this.pool.query("SELECT payload, account_id FROM tracked_seasons");
+    const result = await this.pool.query(
+      "SELECT payload, account_id, connected_storage_id FROM tracked_seasons",
+    );
     const states: TrackedSeasonState[] = [];
     for (const row of result.rows) {
       const season = row.payload as TrackedSeason;
       const accountId = (row.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
       states.push({
         accountId,
+        connectedStorageId: (row.connected_storage_id as string | null | undefined) ?? null,
         title: await this.requireTitle(this.pool, season),
         season,
         episodes: await this.selectEpisodeStates(this.pool, season.id),
@@ -489,16 +528,18 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async listEpisodeStates(
     trackedSeasonId: string,
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<EpisodeState[]> {
-    // Episodes inherit ownership from their season (no account_id column of their
-    // own) — join the season and gate on its account.
+    // Episodes inherit ownership from their season (no scope columns of their
+    // own) — join the season and gate on its (account, storage).
+    const scope = normalizeScope(scopeArg);
     const episodes = await this.selectMany<EpisodeState>(
       this.pool,
       "SELECT e.payload AS payload FROM episode_states e " +
         "JOIN tracked_seasons ts ON e.tracked_season_id = ts.id " +
-        "WHERE e.tracked_season_id = $1 AND ts.account_id = $2",
-      [trackedSeasonId, accountId],
+        "WHERE e.tracked_season_id = $1 AND ts.account_id = $2 " +
+        "AND ($3::text IS NULL OR ts.connected_storage_id = $3)",
+      [trackedSeasonId, scope.accountId, scope.connectedStorageId],
     );
     return episodes.sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
   }
@@ -506,14 +547,19 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   async listNotifications(input?: {
     limit?: number;
     accountId?: string;
+    connectedStorageId?: string | null;
   }): Promise<NotificationEvent[]> {
-    const accountId = input?.accountId ?? DEFAULT_ACCOUNT_ID;
+    const scope = normalizeScope(
+      input?.accountId === undefined
+        ? undefined
+        : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
+    );
     const all = await this.selectMany<NotificationEvent>(
       this.pool,
       "SELECT n.payload AS payload FROM notifications n " +
         "JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
-        "WHERE wr.account_id = $1",
-      [accountId],
+        "WHERE wr.account_id = $1 AND ($2::text IS NULL OR wr.connected_storage_id = $2)",
+      [scope.accountId, scope.connectedStorageId],
     );
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return all.slice(0, input?.limit ?? 100);
@@ -753,7 +799,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
   ): Promise<PersistedWorkflowRunSnapshot | null> {
     await this.ensureSchema();
     const runRow = await executor.query(
-      "SELECT payload, account_id FROM workflow_runs WHERE id = $1",
+      "SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE id = $1",
       [workflowRunId],
     );
     const workflowRun = (runRow.rows[0]?.payload as WorkflowRun | undefined) ?? null;
@@ -761,6 +807,8 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       return null;
     }
     const accountId = (runRow.rows[0]?.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
+    const connectedStorageId =
+      (runRow.rows[0]?.connected_storage_id as string | null | undefined) ?? null;
     const season = await this.selectOne<TrackedSeason>(
       executor,
       "SELECT payload FROM tracked_seasons WHERE id = $1",
@@ -772,6 +820,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     const title = await this.requireTitle(executor, season);
     return withDerivedEpisodeSummaries({
       accountId,
+      connectedStorageId,
       title,
       season,
       workflowRun,
@@ -804,9 +853,10 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     snapshot: PersistWorkflowRunSnapshotInput,
   ): Promise<void> {
     const accountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
+    const connectedStorageId = snapshot.connectedStorageId ?? null;
     await this.upsert(client, "media_titles", "(id, payload)", [snapshot.title.id, json(snapshot.title)], "$1, $2::jsonb");
-    await this.upsertTrackedSeason(client, snapshot.season, accountId);
-    await this.upsertWorkflowRun(client, snapshot.workflowRun, accountId);
+    await this.upsertTrackedSeason(client, snapshot.season, accountId, connectedStorageId);
+    await this.upsertWorkflowRun(client, snapshot.workflowRun, accountId, connectedStorageId);
     await this.deleteWorkflowRunChildren(client, snapshot.workflowRun.id, snapshot.season.id);
 
     for (const [ordinal, episode] of snapshot.episodes.entries()) {
@@ -848,13 +898,14 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     client: PoolClient,
     season: TrackedSeason,
     accountId: string = DEFAULT_ACCOUNT_ID,
+    connectedStorageId: string | null = null,
   ): Promise<void> {
-    // account_id is set on first insert and PRESERVED on conflict (ownership is
-    // immutable; re-saves only update the payload).
+    // account_id / connected_storage_id are set on first insert and PRESERVED on
+    // conflict (ownership + workspace are immutable; re-saves only update payload).
     await client.query(
-      "INSERT INTO tracked_seasons (id, media_title_id, account_id, payload) VALUES ($1, $2, $3, $4::jsonb) " +
+      "INSERT INTO tracked_seasons (id, media_title_id, account_id, connected_storage_id, payload) VALUES ($1, $2, $3, $4, $5::jsonb) " +
         "ON CONFLICT (id) DO UPDATE SET media_title_id = EXCLUDED.media_title_id, payload = EXCLUDED.payload",
-      [season.id, season.mediaTitleId, accountId, json(season)],
+      [season.id, season.mediaTitleId, accountId, connectedStorageId, json(season)],
     );
   }
 
@@ -862,13 +913,14 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     client: PoolClient,
     workflowRun: WorkflowRun,
     accountId: string = DEFAULT_ACCOUNT_ID,
+    connectedStorageId: string | null = null,
   ): Promise<void> {
-    // account_id set on insert, preserved on conflict — so claim/requeue/progress
-    // updates (which don't know the owner) never clobber it.
+    // account_id / connected_storage_id set on insert, preserved on conflict — so
+    // claim/requeue/progress updates (which don't know the owner) never clobber it.
     await client.query(
-      "INSERT INTO workflow_runs (id, tracked_season_id, account_id, payload) VALUES ($1, $2, $3, $4::jsonb) " +
+      "INSERT INTO workflow_runs (id, tracked_season_id, account_id, connected_storage_id, payload) VALUES ($1, $2, $3, $4, $5::jsonb) " +
         "ON CONFLICT (id) DO UPDATE SET tracked_season_id = EXCLUDED.tracked_season_id, payload = EXCLUDED.payload",
-      [workflowRun.id, workflowRun.trackedSeasonId, accountId, json(workflowRun)],
+      [workflowRun.id, workflowRun.trackedSeasonId, accountId, connectedStorageId, json(workflowRun)],
     );
   }
 
@@ -939,11 +991,16 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     return episodes.sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
   }
 
-  private async selectWorkflowRuns(executor: Queryable, trackedSeasonId: string): Promise<WorkflowRun[]> {
+  private async selectWorkflowRuns(
+    executor: Queryable,
+    trackedSeasonId: string,
+    connectedStorageId: string | null = null,
+  ): Promise<WorkflowRun[]> {
     return this.selectMany<WorkflowRun>(
       executor,
-      "SELECT payload FROM workflow_runs WHERE tracked_season_id = $1",
-      [trackedSeasonId],
+      "SELECT payload FROM workflow_runs WHERE tracked_season_id = $1 " +
+        "AND ($2::text IS NULL OR connected_storage_id = $2)",
+      [trackedSeasonId, connectedStorageId],
     );
   }
 
@@ -963,15 +1020,18 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     executor: Queryable,
     mediaTitleId: string,
     accountId: string,
+    connectedStorageId: string | null = null,
   ): Promise<WorkflowRun[]> {
     // media_titles is global (shared cache); ownership lives on tracked_seasons —
-    // so the title-level active-run lock must be scoped to the reserving account.
+    // so the title-level active-run lock must be scoped to the reserving
+    // (account, storage): two drives may each track the same title independently.
     return this.selectMany<WorkflowRun>(
       executor,
       "SELECT wr.payload AS payload FROM workflow_runs wr " +
         "JOIN tracked_seasons ts ON wr.tracked_season_id = ts.id " +
-        "WHERE ts.media_title_id = $1 AND wr.account_id = $2",
-      [mediaTitleId, accountId],
+        "WHERE ts.media_title_id = $1 AND wr.account_id = $2 " +
+        "AND ($3::text IS NULL OR wr.connected_storage_id = $3)",
+      [mediaTitleId, accountId, connectedStorageId],
     );
   }
 

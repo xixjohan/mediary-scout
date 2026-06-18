@@ -20,11 +20,17 @@ import type {
   Session,
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
+import { normalizeScope, scopeMatches, type ScopeArg } from "./workflow-scope.js";
 
 export interface PersistWorkflowRunSnapshotInput {
   /** Owning account. Optional at the call site (single-user = implicit
    *  acct_default); the repository stamps it onto the account_id column. */
   accountId?: string;
+  /** Owning connected storage (workspace/drive). Optional at the call site
+   *  (single-drive = null until backfill/binding); stamped onto the
+   *  connected_storage_id column. The tree model isolates data by (account,
+   *  storage). */
+  connectedStorageId?: string | null;
   title: MediaTitle;
   season: TrackedSeason;
   workflowRun: WorkflowRun;
@@ -39,6 +45,10 @@ export interface PersistedWorkflowRunSnapshot extends PersistWorkflowRunSnapshot
   /** Resolved owning account (always set — the worker uses it to load per-run
    *  credentials when it claims the run). */
   accountId: string;
+  /** Resolved owning connected storage (workspace/drive); null for legacy/
+   *  single-drive rows before backfill. The worker resolves the run's 网盘
+   *  credentials from this. */
+  connectedStorageId: string | null;
   obtainedEpisodes: string[];
   providerAheadEpisodes: string[];
 }
@@ -46,6 +56,9 @@ export interface PersistedWorkflowRunSnapshot extends PersistWorkflowRunSnapshot
 export interface TrackedSeasonState {
   /** Resolved owning account of this tracking record. */
   accountId: string;
+  /** Resolved owning connected storage (workspace/drive); null for legacy rows.
+   *  The cross-(account,storage) patrol resolves per-drive credentials from it. */
+  connectedStorageId: string | null;
   title: MediaTitle;
   season: TrackedSeason;
   episodes: EpisodeState[];
@@ -84,11 +97,12 @@ export type WorkflowRunReservationResult =
 export interface WorkflowRepository extends DeadLinkStore {
   saveWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): Promise<void>;
   reserveWorkflowRun(input: ReserveWorkflowRunInput): Promise<WorkflowRunReservationResult>;
-  /** Account-scoped: returns null if the run belongs to a different account.
-   *  Defaults to acct_default (single-user / fail-closed). */
+  /** (account, storage)-scoped: returns null if the run belongs to a different
+   *  account, or to a different storage when the scope pins one. Accepts a bare
+   *  accountId (account-only, legacy) or a WorkflowScope. fail-closed. */
   getWorkflowRunSnapshot(
     workflowRunId: string,
-    accountId?: string,
+    scope?: ScopeArg,
   ): Promise<PersistedWorkflowRunSnapshot | null>;
   /** Cross-account: the single-instance worker drains every account's queue.
    *  The returned snapshot carries `accountId` so the worker can load that
@@ -109,10 +123,11 @@ export interface WorkflowRepository extends DeadLinkStore {
     trackedSeasonId: string;
     kind: WorkflowKind;
     accountId?: string;
+    connectedStorageId?: string | null;
   }): Promise<PersistedWorkflowRunSnapshot | null>;
-  /** Every queued/running run for the account, newest first — drives the library
-   *  "获取中" placeholders. Defaults to acct_default. */
-  listActiveWorkflowRuns(accountId?: string): Promise<PersistedWorkflowRunSnapshot[]>;
+  /** Every queued/running run for the (account, storage) scope, newest first —
+   *  drives the library "获取中" placeholders. Accepts accountId or WorkflowScope. */
+  listActiveWorkflowRuns(scope?: ScopeArg): Promise<PersistedWorkflowRunSnapshot[]>;
   /** Lightweight mid-run update of the live agent progress shown on the activity
    *  page; `percent` is clamped monotonic so retries never rewind the bar. No-op
    *  for an unknown run. */
@@ -127,17 +142,21 @@ export interface WorkflowRepository extends DeadLinkStore {
    */
   cancelQueuedWorkflowRun(
     workflowRunId: string,
-    accountId?: string,
+    scope?: ScopeArg,
   ): Promise<{ status: "cancelled" | "not_cancellable" }>;
-  getTrackedSeasonState(trackedSeasonId: string, accountId?: string): Promise<TrackedSeasonState | null>;
-  listTrackedSeasonStates(accountId?: string): Promise<TrackedSeasonState[]>;
+  getTrackedSeasonState(trackedSeasonId: string, scope?: ScopeArg): Promise<TrackedSeasonState | null>;
+  listTrackedSeasonStates(scope?: ScopeArg): Promise<TrackedSeasonState[]>;
   /** EVERY account's tracked seasons (cross-account), each carrying its own
    *  accountId — drives the daily sweep, which patrols all users' shows and runs
    *  each under its owner's credentials. */
   listAllTrackedSeasonStates(): Promise<TrackedSeasonState[]>;
-  listEpisodeStates(trackedSeasonId: string, accountId?: string): Promise<EpisodeState[]>;
-  /** Most-recent-first notification feed for the account. Defaults to acct_default. */
-  listNotifications(input?: { limit?: number; accountId?: string }): Promise<NotificationEvent[]>;
+  listEpisodeStates(trackedSeasonId: string, scope?: ScopeArg): Promise<EpisodeState[]>;
+  /** Most-recent-first notification feed for the (account, storage) scope. */
+  listNotifications(input?: {
+    limit?: number;
+    accountId?: string;
+    connectedStorageId?: string | null;
+  }): Promise<NotificationEvent[]>;
   /** Cross-account recent notifications, each tagged with its run's owning account
    *  — drives the worker's outbound push, which must deliver each user's events to
    *  THAT user's channels. Newest first. */
@@ -327,6 +346,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
     const cloned = cloneWorkflowValue(input);
     cloned.accountId = cloned.accountId ?? DEFAULT_ACCOUNT_ID;
+    cloned.connectedStorageId = cloned.connectedStorageId ?? null;
     this.workflowRuns.set(cloned.workflowRun.id, cloned);
     this.episodesBySeason.set(cloned.season.id, cloneWorkflowValue(cloned.episodes));
   }
@@ -336,12 +356,17 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     validateWorkflowRunSnapshot(snapshot);
     this.expireStaleActiveWorkflowRuns(input);
 
+    const reservingScope = {
+      accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
+      connectedStorageId: snapshot.connectedStorageId ?? null,
+    };
     if (input.blockIfTitleHasActiveRun === true) {
-      const reservingAccountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
       const titleActive = Array.from(this.workflowRuns.values())
         .filter(
           (stored) =>
-            (stored.accountId ?? DEFAULT_ACCOUNT_ID) === reservingAccountId &&
+            // Title-level mutual exclusion is per (account, storage): two
+            // different drives may each track the same title independently.
+            scopeMatches(reservingScope, stored.accountId, stored.connectedStorageId) &&
             stored.season.mediaTitleId === snapshot.season.mediaTitleId &&
             isActiveWorkflowStatus(stored.workflowRun.status),
         )
@@ -357,7 +382,8 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const activeRun = await this.findActiveWorkflowRun({
       trackedSeasonId: snapshot.season.id,
       kind: snapshot.workflowRun.kind,
-      accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
+      accountId: reservingScope.accountId,
+      connectedStorageId: reservingScope.connectedStorageId,
     });
     if (activeRun) {
       return {
@@ -376,6 +402,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
     const cloned = cloneWorkflowValue(snapshot);
     cloned.accountId = cloned.accountId ?? DEFAULT_ACCOUNT_ID;
+    cloned.connectedStorageId = cloned.connectedStorageId ?? null;
     this.workflowRuns.set(cloned.workflowRun.id, cloned);
     this.episodesBySeason.set(cloned.season.id, cloneWorkflowValue(cloned.episodes));
 
@@ -387,10 +414,11 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async getWorkflowRunSnapshot(
     workflowRunId: string,
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<PersistedWorkflowRunSnapshot | null> {
+    const scope = normalizeScope(scopeArg);
     const stored = this.workflowRuns.get(workflowRunId);
-    if (!stored || (stored.accountId ?? DEFAULT_ACCOUNT_ID) !== accountId) {
+    if (!stored || !scopeMatches(scope, stored.accountId, stored.connectedStorageId)) {
       return null;
     }
 
@@ -436,12 +464,17 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     trackedSeasonId: string;
     kind: WorkflowKind;
     accountId?: string;
+    connectedStorageId?: string | null;
   }): Promise<PersistedWorkflowRunSnapshot | null> {
-    const accountId = input.accountId ?? DEFAULT_ACCOUNT_ID;
+    const scope = normalizeScope(
+      input.accountId === undefined
+        ? undefined
+        : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
+    );
     const activeRuns = Array.from(this.workflowRuns.values())
       .filter(
         (snapshot) =>
-          (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId &&
+          scopeMatches(scope, snapshot.accountId, snapshot.connectedStorageId) &&
           snapshot.workflowRun.trackedSeasonId === input.trackedSeasonId &&
           snapshot.workflowRun.kind === input.kind &&
           isActiveWorkflowStatus(snapshot.workflowRun.status),
@@ -452,12 +485,13 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   }
 
   async listActiveWorkflowRuns(
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<PersistedWorkflowRunSnapshot[]> {
+    const scope = normalizeScope(scopeArg);
     return Array.from(this.workflowRuns.values())
       .filter(
         (snapshot) =>
-          (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId &&
+          scopeMatches(scope, snapshot.accountId, snapshot.connectedStorageId) &&
           isActiveWorkflowStatus(snapshot.workflowRun.status),
       )
       .sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt))
@@ -481,12 +515,13 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async cancelQueuedWorkflowRun(
     workflowRunId: string,
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<{ status: "cancelled" | "not_cancellable" }> {
+    const scope = normalizeScope(scopeArg);
     const stored = this.workflowRuns.get(workflowRunId);
     if (
       !stored ||
-      (stored.accountId ?? DEFAULT_ACCOUNT_ID) !== accountId ||
+      !scopeMatches(scope, stored.accountId, stored.connectedStorageId) ||
       stored.workflowRun.status !== "queued"
     ) {
       return { status: "not_cancellable" };
@@ -504,13 +539,14 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async getTrackedSeasonState(
     trackedSeasonId: string,
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<TrackedSeasonState | null> {
+    const scope = normalizeScope(scopeArg);
     const latestSnapshot = Array.from(this.workflowRuns.values())
       .filter(
         (snapshot) =>
           snapshot.season.id === trackedSeasonId &&
-          (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId,
+          scopeMatches(scope, snapshot.accountId, snapshot.connectedStorageId),
       )
       .sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt))[0];
     if (!latestSnapshot) {
@@ -519,6 +555,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
     return cloneWorkflowValue({
       accountId: latestSnapshot.accountId ?? DEFAULT_ACCOUNT_ID,
+      connectedStorageId: latestSnapshot.connectedStorageId ?? null,
       title: latestSnapshot.title,
       season: latestSnapshot.season,
       episodes: this.episodesBySeason.get(trackedSeasonId) ?? latestSnapshot.episodes,
@@ -526,11 +563,12 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   }
 
   async listTrackedSeasonStates(
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<TrackedSeasonState[]> {
+    const scope = normalizeScope(scopeArg);
     const latestBySeason = new Map<string, PersistWorkflowRunSnapshotInput>();
     const snapshots = Array.from(this.workflowRuns.values())
-      .filter((snapshot) => (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId)
+      .filter((snapshot) => scopeMatches(scope, snapshot.accountId, snapshot.connectedStorageId))
       .sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt));
     for (const snapshot of snapshots) {
       if (!latestBySeason.has(snapshot.season.id)) {
@@ -542,6 +580,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       .map((snapshot) =>
         cloneWorkflowValue({
           accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
+          connectedStorageId: snapshot.connectedStorageId ?? null,
           title: snapshot.title,
           season: snapshot.season,
           episodes: this.episodesBySeason.get(snapshot.season.id) ?? snapshot.episodes,
@@ -564,6 +603,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       .map((snapshot) =>
         cloneWorkflowValue({
           accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
+          connectedStorageId: snapshot.connectedStorageId ?? null,
           title: snapshot.title,
           season: snapshot.season,
           episodes: this.episodesBySeason.get(snapshot.season.id) ?? snapshot.episodes,
@@ -574,14 +614,15 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
   async listEpisodeStates(
     trackedSeasonId: string,
-    accountId: string = DEFAULT_ACCOUNT_ID,
+    scopeArg: ScopeArg = undefined,
   ): Promise<EpisodeState[]> {
     // Episodes inherit ownership from their season — only return them if the
-    // season belongs to the requesting account.
+    // season belongs to the requesting (account, storage) scope.
+    const scope = normalizeScope(scopeArg);
     const ownerMatches = Array.from(this.workflowRuns.values()).some(
       (snapshot) =>
         snapshot.season.id === trackedSeasonId &&
-        (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId,
+        scopeMatches(scope, snapshot.accountId, snapshot.connectedStorageId),
     );
     if (!ownerMatches) {
       return [];
@@ -592,10 +633,15 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   async listNotifications(input?: {
     limit?: number;
     accountId?: string;
+    connectedStorageId?: string | null;
   }): Promise<NotificationEvent[]> {
-    const accountId = input?.accountId ?? DEFAULT_ACCOUNT_ID;
+    const scope = normalizeScope(
+      input?.accountId === undefined
+        ? undefined
+        : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
+    );
     const all = [...this.workflowRuns.values()]
-      .filter((snapshot) => (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) === accountId)
+      .filter((snapshot) => scopeMatches(scope, snapshot.accountId, snapshot.connectedStorageId))
       .flatMap((snapshot) => snapshot.notifications.map((notification) => ({ ...notification })));
     all.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
     return all.slice(0, input?.limit ?? 100);
@@ -710,6 +756,7 @@ export function withDerivedEpisodeSummaries(input: PersistWorkflowRunSnapshotInp
   return {
     ...input,
     accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
+    connectedStorageId: input.connectedStorageId ?? null,
     obtainedEpisodes: input.episodes
       .filter((episode) => episode.obtained)
       .map((episode) => episode.episodeCode),
