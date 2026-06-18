@@ -110,6 +110,20 @@ export class QuarkCookieClient {
     return listFrom(data);
   }
 
+  /** A single file/directory's identity incl. its immediate parent (pdir_fid).
+   *  Quark has no one-shot breadcrumb, so the executor walks pdir_fid up to a
+   *  write-scope root with these calls. */
+  async getFileInfo(fid: string): Promise<{ fid: string; file_name: string; pdir_fid: string; dir: boolean }> {
+    const response = await this.getJson("/1/clouddrive/file/info", [["fid", fid]]);
+    const data = unwrap(response, "QUARK_FILE_INFO_FAILED");
+    return {
+      fid: stringValue(recordValue(data, "fid")),
+      file_name: stringValue(recordValue(data, "file_name")),
+      pdir_fid: stringValue(recordValue(data, "pdir_fid")),
+      dir: recordValue(data, "dir") === true,
+    };
+  }
+
   async createFolder(input: { name: string; parentId: string }): Promise<string> {
     const response = await this.postJson("/1/clouddrive/file", {
       pdir_fid: input.parentId,

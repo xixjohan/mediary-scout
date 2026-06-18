@@ -192,6 +192,25 @@ describe("QuarkCookieClient", () => {
     expect(JSON.parse(requests[0]!.body)).toEqual({ fid: "f1", file_name: "new.mkv" });
   });
 
+  it("getFileInfo returns fid/name/pdir_fid/dir for ancestry walks", async () => {
+    const requests: RecordedRequest[] = [];
+    const client = new QuarkCookieClient({
+      cookie: "__uid=u",
+      fetchJson: record(requests, async () => ({
+        code: 0,
+        data: { fid: "F", file_name: "Season 1", pdir_fid: "PARENT", dir: true },
+      })),
+    });
+    await expect(client.getFileInfo("F")).resolves.toEqual({
+      fid: "F",
+      file_name: "Season 1",
+      pdir_fid: "PARENT",
+      dir: true,
+    });
+    expect(requests[0]?.url).toContain("/1/clouddrive/file/info");
+    expect(requests[0]?.url).toContain("fid=F");
+  });
+
   it("a dead cookie (code 31001 / require login) → QuarkAuthError", async () => {
     const client = new QuarkCookieClient({
       cookie: "__uid=dead",
