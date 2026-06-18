@@ -68,10 +68,14 @@ async function HomeSurface({
   const activeTab = stringParam(params.tab) === "library" ? "library" : "search";
   const mediaType = stringParam(params.type) || "all";
   const filter = stringParam(params.filter) || "all";
+  // Tree model: keep searches inside the ACTIVE workspace so an acquisition lands
+  // on the drive you're viewing — not silently on the primary drive. Root route
+  // (no storageId) posts to "/" as before.
+  const basePath = storageId ? `/w/${storageId}` : "/";
 
   return (
     <div className="app-shell">
-      <AppSidebar active={activeTab} searchQuery={query} />
+      <AppSidebar active={activeTab} searchQuery={query} basePath={basePath} />
 
       <main className="main product-main">
         {activeTab === "search" ? (
@@ -82,7 +86,7 @@ async function HomeSurface({
                 <h1>搜索</h1>
                 <p>找到目标后发起获取，后台会处理资源判断、转存和验证。</p>
               </div>
-              <form className="search-form" action="/" role="search">
+              <form className="search-form" action={basePath} role="search">
                 <input type="hidden" name="tab" value="search" />
                 <label className="search-box search-box-large">
                   <Search size={18} aria-hidden />
@@ -109,7 +113,7 @@ async function HomeSurface({
 }
 
 async function SearchResults({ query, storageId }: { query: string; storageId?: string | undefined }) {
-  const searchView = await getSearchView(query);
+  const searchView = await getSearchView(query, storageId);
   // Library awareness on results: a tracked title shows WHICH seasons are
   // obtained and routes to the same title page as the library — search must
   // anticipate re-searching something already obtained. Scoped to the active
@@ -178,6 +182,7 @@ async function SearchResults({ query, storageId }: { query: string; storageId?: 
                   trackedSeasonNumbers={(trackedByTmdbId.get(candidate.tmdbId) ?? []).map(
                     (state) => state.season.seasonNumber,
                   )}
+                  storageId={storageId}
                   key={`${candidate.mediaType}_${candidate.tmdbId}`}
                 />
               ))}
@@ -239,6 +244,7 @@ function CandidateCard({
   acquiring,
   trackedLabel,
   trackedSeasonNumbers,
+  storageId,
 }: {
   candidate: SearchCandidateCard;
   /** This title has a queued/running acquisition — show 获取中, not its
@@ -246,6 +252,8 @@ function CandidateCard({
   acquiring: boolean;
   trackedLabel: string | null;
   trackedSeasonNumbers: number[];
+  /** Tree model: the active workspace drive — acquisition lands HERE. */
+  storageId?: string | undefined;
 }) {
   const isTv = candidate.mediaType === "tv";
   const trackedSet = new Set(trackedSeasonNumbers);
@@ -288,6 +296,7 @@ function CandidateCard({
                 allLabel={
                   trackedLabel !== null ? `获取剩余 ${untrackedSeasons.length} 季` : "获取所有季"
                 }
+                storageId={storageId}
               />
             ) : null}
             {/* The clickable title is the detail entry already. Only surface an
@@ -304,6 +313,7 @@ function CandidateCard({
                 actionState={candidate.action.state}
                 disabled={candidate.action.disabled}
                 label={candidate.action.label}
+                storageId={storageId}
               />
             ) : null}
           </div>

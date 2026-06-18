@@ -26,15 +26,18 @@ export function RememberQuery({ query }: { query: string }) {
 export function SearchNavLink({
   active,
   knownQuery = "",
+  basePath = "/",
 }: {
   active: boolean;
   knownQuery?: string;
+  /** Tree model: the active workspace path ("/w/<id>" or "/") so search stays in it. */
+  basePath?: string;
 }) {
   const router = useRouter();
   return (
     <Link
       className={`nav-item ${active ? "is-active" : ""}`}
-      href={`/?tab=search&q=${encodeURIComponent(knownQuery)}`}
+      href={`${basePath}?tab=search&q=${encodeURIComponent(knownQuery)}`}
       onClick={(event) => {
         if (knownQuery) {
           return; // server-known query already in href
@@ -47,7 +50,7 @@ export function SearchNavLink({
         }
         if (remembered) {
           event.preventDefault();
-          router.push(`/?tab=search&q=${encodeURIComponent(remembered)}`);
+          router.push(`${basePath}?tab=search&q=${encodeURIComponent(remembered)}`);
         }
       }}
     >

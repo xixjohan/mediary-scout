@@ -22,6 +22,7 @@ export function SeasonRequestMenu({
   seasonNumbers,
   totalSeasonCount,
   allLabel = "获取所有季",
+  storageId,
 }: {
   tmdbId: number;
   /** Seasons still available to request (untracked only). */
@@ -32,6 +33,8 @@ export function SeasonRequestMenu({
   totalSeasonCount: number;
   /** Pill label for the all-remaining scope. */
   allLabel?: string;
+  /** Tree model: the active workspace drive — acquisition lands HERE. */
+  storageId?: string | undefined;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -48,8 +51,8 @@ export function SeasonRequestMenu({
       setOpen(false);
       setResult(
         selected === "all"
-          ? await requestRemainingAction({ tmdbId })
-          : await requestSeasonAction({ tmdbId, seasonNumber: selected }),
+          ? await requestRemainingAction({ tmdbId, ...(storageId ? { storageId } : {}) })
+          : await requestSeasonAction({ tmdbId, seasonNumber: selected, ...(storageId ? { storageId } : {}) }),
       );
       // Re-fetch so the queued run mounts the AcquiringPoller; once it finishes,
       // the acquired season leaves untrackedSeasons and this menu unmounts.

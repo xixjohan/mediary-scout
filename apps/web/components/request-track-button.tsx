@@ -23,11 +23,14 @@ export function RequestTrackButton({
   actionState = "can_request",
   label = "获取",
   disabled = false,
+  storageId,
 }: {
   candidateId?: string;
   actionState?: SearchActionState;
   label?: string;
   disabled?: boolean;
+  /** Tree model: the active workspace drive — acquisition lands HERE, not the primary. */
+  storageId?: string | undefined;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -87,6 +90,7 @@ export function RequestTrackButton({
               await requestTrackingAction({
                 ...(candidateId ? { candidateId } : {}),
                 currentState: actionState,
+                ...(storageId ? { storageId } : {}),
               }),
             );
             // Re-fetch so the now-queued run mounts the AcquiringPoller, which

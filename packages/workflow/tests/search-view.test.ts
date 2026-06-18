@@ -182,6 +182,76 @@ describe("getSearchPageView", () => {
     });
   });
 
+  it("a movie obtained on one drive is still 获取-able on ANOTHER drive's workspace (tree-model scope)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title: MediaTitle = {
+      id: "tmdb_movie_872585",
+      tmdbId: 872585,
+      type: "movie",
+      title: "奥本海默",
+      originalTitle: "Oppenheimer",
+      year: 2023,
+      aliases: [],
+    };
+    const season: TrackedSeason = {
+      id: "tmdb_movie_872585_movie",
+      mediaTitleId: title.id,
+      seasonNumber: 1,
+      status: "active",
+      qualityPreference: "4K",
+      storageDirectoryId: "dir_movie",
+      totalEpisodes: 1,
+      latestAiredEpisode: 1,
+      latestAiredSource: "metadata",
+    };
+    // Acquired on drive A only.
+    await repository.saveWorkflowRunSnapshot({
+      accountId: "acct_1",
+      connectedStorageId: "driveA",
+      title,
+      season,
+      workflowRun: {
+        id: "run_movie_A",
+        kind: "movie_init",
+        status: "succeeded",
+        trackedSeasonId: season.id,
+        startedAt: "2026-06-12T00:00:00.000Z",
+        finishedAt: "2026-06-12T00:02:00.000Z",
+        auditEvents: [],
+      },
+      episodes: createEpisodeStates({
+        trackedSeasonId: season.id,
+        seasonNumber: 1,
+        totalEpisodes: 1,
+        latestAiredEpisode: 1,
+      }).map((episode) => ({ ...episode, obtained: true })),
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+
+    // Drive A's workspace → already obtained.
+    const onA = await getSearchPageView({
+      query: "奥本海默",
+      provider: countingSearchProvider([oppenheimerCandidate()]),
+      cache: new InMemoryMediaSearchCache(),
+      repository,
+      scope: { accountId: "acct_1", connectedStorageId: "driveA" },
+    });
+    expect(onA.candidates[0]?.action).toMatchObject({ label: "已获取", disabled: true });
+
+    // Drive B's workspace (same account, different drive) → still acquirable.
+    const onB = await getSearchPageView({
+      query: "奥本海默",
+      provider: countingSearchProvider([oppenheimerCandidate()]),
+      cache: new InMemoryMediaSearchCache(),
+      repository,
+      scope: { accountId: "acct_1", connectedStorageId: "driveB" },
+    });
+    expect(onB.candidates[0]?.action).toMatchObject({ state: "can_request", label: "获取", disabled: false });
+  });
+
   it("keeps the TV card season-agnostic even while a season's workflow is running", async () => {
     // A TV season mid-acquisition is already tracked, so the UI drops it from
     // untrackedSeasons and surfaces it via trackedLabel — the duplicate-request

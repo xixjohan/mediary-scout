@@ -7,9 +7,13 @@ import { NotificationsNavBadge } from "./notifications-nav-badge";
 export function AppSidebar({
   active,
   searchQuery = "",
+  basePath = "/",
 }: {
   active: "search" | "library" | "notifications" | "activity" | "settings" | "none";
   searchQuery?: string;
+  /** Tree model: the active workspace path ("/w/<id>" or "/") so the search/library
+   *  tabs keep you in the workspace you're viewing. Other links stay global. */
+  basePath?: string;
 }) {
   return (
     <aside className="sidebar">
@@ -26,12 +30,12 @@ export function AppSidebar({
       <nav aria-label="主导航">
         <ul className="nav-list">
           <li>
-            <SearchNavLink active={active === "search"} knownQuery={searchQuery} />
+            <SearchNavLink active={active === "search"} knownQuery={searchQuery} basePath={basePath} />
           </li>
           <li>
             <Link
               className={`nav-item ${active === "library" ? "is-active" : ""}`}
-              href="/?tab=library"
+              href={`${basePath}?tab=library`}
             >
               <Library size={16} aria-hidden />
               媒体库

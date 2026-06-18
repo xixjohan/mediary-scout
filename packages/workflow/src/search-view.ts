@@ -1,6 +1,7 @@
 import { isMovieUnreleased } from "./domain.js";
 import type { EpisodeState, MediaType, TrackedSeason, WorkflowKind } from "./domain.js";
 import type { WorkflowRepository } from "./repository.js";
+import { normalizeScope, type ScopeArg } from "./workflow-scope.js";
 
 export type SearchPageState = "empty" | "ready";
 export type SearchCacheStatus = "none" | "hit" | "miss";
@@ -94,6 +95,10 @@ export async function getSearchPageView(input: {
   repository: WorkflowRepository;
   /** Clock for the movie reserve air-time gate (预定 vs 获取). */
   now?: () => string;
+  /** Tree model: the active workspace (account, drive). A movie's 已获取/获取
+   *  state is per-drive — obtained on drive A must still be 获取-able on drive B.
+   *  Undefined = account-wide (legacy / single-drive). */
+  scope?: ScopeArg;
 }): Promise<SearchPageView> {
   const now = input.now ?? (() => new Date().toISOString());
   const query = normalizeSearchQuery(input.query);
@@ -116,7 +121,9 @@ export async function getSearchPageView(input: {
     query,
     state: "ready",
     cacheStatus: cached ? "hit" : "miss",
-    candidates: await Promise.all(candidates.map((candidate) => toCandidateCard(candidate, input.repository, now()))),
+    candidates: await Promise.all(
+      candidates.map((candidate) => toCandidateCard(candidate, input.repository, now(), input.scope)),
+    ),
   };
 }
 
@@ -128,6 +135,7 @@ async function toCandidateCard(
   candidate: MediaSearchCandidate,
   repository: WorkflowRepository,
   now: string,
+  scope?: ScopeArg,
 ): Promise<SearchCandidateCard> {
   // The search card is SEASON-AGNOSTIC for a TV show: it never pre-picks a
   // season. The user chooses one (or all remaining) via SeasonRequestMenu, and
@@ -159,10 +167,13 @@ async function toCandidateCard(
         ? // A movie tracks as a degenerate one-"episode" anchor season; once it
           // is acquired (or acquiring) it must NOT be re-requestable in search.
           // An UNRELEASED film offers 预定 (reserve) instead of 获取 (acquire).
-          await actionForTrackedSeason(repository, movieTrackedSeasonId(candidate.tmdbId), "movie_init", {
-            releaseDate: candidate.releaseDate,
-            now,
-          })
+          await actionForTrackedSeason(
+            repository,
+            movieTrackedSeasonId(candidate.tmdbId),
+            "movie_init",
+            { releaseDate: candidate.releaseDate, now },
+            scope,
+          )
         : canRequestAction(),
   };
 }
@@ -173,10 +184,15 @@ async function actionForTrackedSeason(
   kind: WorkflowKind,
   // Movie reserve air-time gate: an unreleased film offers 预定 instead of 获取.
   reserveGate?: { releaseDate: string | null | undefined; now: string },
+  // Tree model: scope the obtained/active-run check to the active drive so a
+  // movie obtained on another drive stays 获取-able here.
+  scope?: ScopeArg,
 ): Promise<SearchCandidateAction> {
+  const scoped = scope === undefined ? undefined : normalizeScope(scope);
   const activeRun = await repository.findActiveWorkflowRun({
     trackedSeasonId: trackedSeasonIdValue,
     kind,
+    ...(scoped ? { accountId: scoped.accountId, connectedStorageId: scoped.connectedStorageId } : {}),
   });
   if (activeRun) {
     return {
@@ -188,7 +204,7 @@ async function actionForTrackedSeason(
   }
 
   const unreleased = reserveGate ? isMovieUnreleased(reserveGate.releaseDate, reserveGate.now) : false;
-  const state = await repository.getTrackedSeasonState(trackedSeasonIdValue);
+  const state = await repository.getTrackedSeasonState(trackedSeasonIdValue, scope);
   if (!state || state.episodes.length === 0) {
     // Not tracked yet: an unreleased film is reservable (预定), not acquirable.
     return unreleased ? reserveAction() : canRequestAction();

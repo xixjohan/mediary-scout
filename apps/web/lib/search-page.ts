@@ -10,6 +10,7 @@ import { PostgresMediaSearchCache } from "./tmdb-cache";
 import {
   ensureDemoSeeded,
   getAccountScopedSettings,
+  getActiveWorkspaceScope,
   getCurrentAccountId,
   getTmdbAccesses,
   getWorkflowRepository,
@@ -19,14 +20,18 @@ import {
 let demoSearchCache: InMemoryMediaSearchCache | null = null;
 let durableSearchCache: PostgresMediaSearchCache | null = null;
 
-export async function getSearchView(query: string): Promise<SearchPageView> {
+export async function getSearchView(query: string, storageId?: string): Promise<SearchPageView> {
   const repository = getWorkflowRepository();
   await ensureDemoSeeded(repository);
+  // Tree model: scope a movie's 已获取/获取 state to the active drive — obtained on
+  // one drive must stay acquirable on another's workspace.
+  const scope = await getActiveWorkspaceScope(storageId);
   return getSearchPageView({
     query,
     provider: await getMediaSearchProvider(),
     cache: getSearchCache(),
     repository,
+    scope,
   });
 }
 

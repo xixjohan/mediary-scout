@@ -45,6 +45,8 @@ export interface RequestTrackingActionResult {
 export async function requestTrackingAction(input?: {
   candidateId?: string;
   currentState?: "can_request" | "already_tracked" | "active_workflow" | "can_reserve" | "reserved";
+  /** Tree model: the active workspace drive — acquisition lands HERE, not the primary. */
+  storageId?: string;
 }): Promise<RequestTrackingActionResult> {
   if (input?.currentState === "already_tracked") {
     return {
@@ -69,7 +71,7 @@ export async function requestTrackingAction(input?: {
 
   // 预定 an unreleased film — track it without running the agent now.
   if (input?.currentState === "can_reserve" && input?.candidateId) {
-    const request = await reserveCandidate(input.candidateId);
+    const request = await reserveCandidate(input.candidateId, input.storageId);
     if (request.status === "unsupported") {
       return { status: "unsupported", message: request.message };
     }
@@ -84,7 +86,7 @@ export async function requestTrackingAction(input?: {
   }
 
   if (input?.candidateId) {
-    const request = await queueCandidateTracking(input.candidateId);
+    const request = await queueCandidateTracking(input.candidateId, input.storageId);
     if (request.status === "already_tracked") {
       return {
         status: "already_tracked",
@@ -119,8 +121,9 @@ export async function requestTrackingAction(input?: {
 
 export async function requestSeriesAction(input: {
   candidateId: string;
+  storageId?: string;
 }): Promise<RequestTrackingActionResult> {
-  const request = await queueCandidateSeries(input.candidateId);
+  const request = await queueCandidateSeries(input.candidateId, input.storageId);
   if (request.status === "already_tracked") {
     return { status: "already_tracked", message: "全剧已追踪，后台会继续按缺集状态检查。" };
   }
@@ -172,9 +175,10 @@ export async function importForeignWorkAction(input: {
 export async function requestSeasonAction(input: {
   tmdbId: number;
   seasonNumber: number;
+  storageId?: string;
 }): Promise<RequestTrackingActionResult> {
   const { queueSeasonTracking } = await import("../lib/title-hub");
-  const request = await queueSeasonTracking(input.tmdbId, input.seasonNumber);
+  const request = await queueSeasonTracking(input.tmdbId, input.seasonNumber, input.storageId);
   if (request.status === "already_tracked") {
     return { status: "already_tracked", message: "本季已追踪。" };
   }
@@ -191,9 +195,10 @@ export async function requestSeasonAction(input: {
 
 export async function requestRemainingAction(input: {
   tmdbId: number;
+  storageId?: string;
 }): Promise<RequestTrackingActionResult> {
   const { queueRemainingSeasons } = await import("../lib/title-hub");
-  const request = await queueRemainingSeasons(input.tmdbId);
+  const request = await queueRemainingSeasons(input.tmdbId, input.storageId);
   if (request.status === "already_tracked") {
     return { status: "already_tracked", message: "所有季都已在追踪。" };
   }

@@ -313,8 +313,10 @@ function movieHubViewFromTitle(
 export async function queueSeasonTracking(
   tmdbId: number,
   seasonNumber: number,
+  storageId?: string,
 ): Promise<CandidateTrackingRequestResult> {
-  return queueCandidateTracking(`tmdb_tv_${tmdbId}_s${seasonNumber}`);
+  const scope = await getActiveWorkspaceScope(storageId);
+  return queueCandidateTracking(`tmdb_tv_${tmdbId}_s${seasonNumber}`, scope.connectedStorageId);
 }
 
 /**
