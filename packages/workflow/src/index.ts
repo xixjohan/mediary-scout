@@ -22,6 +22,7 @@ export * from "./resource-hints.js";
 export * from "./tmdb-provider.js";
 export * from "./storage-115-executor.js";
 export * from "./pan115-cookie-client.js";
+export * from "./quark-cookie-client.js";
 export * from "./pan115-storage-factory.js";
 export * from "./queries.js";
 export * from "./search-view.js";
