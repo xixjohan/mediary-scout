@@ -169,6 +169,10 @@ export interface WorkflowRepository extends DeadLinkStore {
   /** Per-account settings: LLM/TMDB/Prowlarr/PanSou/画质/语言/push, etc. */
   getAccountSetting(accountId: string, key: string): Promise<string | null>;
   setAccountSetting(accountId: string, key: string, value: string): Promise<void>;
+  /** One-shot idempotent migration: pin legacy tracked_seasons/workflow_runs rows
+   *  whose connected_storage_id is null to their account's earliest (primary)
+   *  drive. Accounts with no drive are skipped. Returns how many rows were filled. */
+  backfillConnectedStorageId(): Promise<number>;
   /** Connected network drives owned by the account (§7 multi-account). */
   listConnectedStorages(accountId: string): Promise<ConnectedStorage[]>;
   upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void>;
@@ -223,6 +227,31 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       this.accountSettings.set(accountId, bucket);
     }
     bucket.set(key, value);
+  }
+
+  async backfillConnectedStorageId(): Promise<number> {
+    // Earliest-created drive per account = its primary (root) workspace.
+    const primaryByAccount = new Map<string, string>();
+    for (const storage of [...this.connectedStorages.values()].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt),
+    )) {
+      if (!primaryByAccount.has(storage.accountId)) {
+        primaryByAccount.set(storage.accountId, storage.id);
+      }
+    }
+    let filled = 0;
+    for (const [id, snapshot] of this.workflowRuns) {
+      if (snapshot.connectedStorageId != null) {
+        continue;
+      }
+      const primary = primaryByAccount.get(snapshot.accountId ?? DEFAULT_ACCOUNT_ID);
+      if (!primary) {
+        continue; // account has no drive — leave the legacy row untouched
+      }
+      this.workflowRuns.set(id, { ...snapshot, connectedStorageId: primary });
+      filled += 1;
+    }
+    return filled;
   }
 
   async listConnectedStorages(accountId: string): Promise<ConnectedStorage[]> {

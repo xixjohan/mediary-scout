@@ -613,6 +613,29 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     );
   }
 
+  async backfillConnectedStorageId(): Promise<number> {
+    await this.ensureSchema();
+    // Each account's earliest-created drive is its primary (root) workspace; pin
+    // every legacy null-storage row to it. Accounts with no drive are skipped
+    // (no matching row in the primary CTE). Idempotent: only null rows are touched.
+    const primaryCte =
+      "WITH primary_drive AS (" +
+      "SELECT DISTINCT ON (account_id) account_id, id FROM connected_storages " +
+      "ORDER BY account_id, created_at" +
+      ") ";
+    const ts = await this.pool.query(
+      primaryCte +
+        "UPDATE tracked_seasons t SET connected_storage_id = p.id FROM primary_drive p " +
+        "WHERE t.account_id = p.account_id AND t.connected_storage_id IS NULL",
+    );
+    const wr = await this.pool.query(
+      primaryCte +
+        "UPDATE workflow_runs w SET connected_storage_id = p.id FROM primary_drive p " +
+        "WHERE w.account_id = p.account_id AND w.connected_storage_id IS NULL",
+    );
+    return (ts.rowCount ?? 0) + (wr.rowCount ?? 0);
+  }
+
   async listConnectedStorages(accountId: string): Promise<ConnectedStorage[]> {
     await this.ensureSchema();
     const result = await this.pool.query(

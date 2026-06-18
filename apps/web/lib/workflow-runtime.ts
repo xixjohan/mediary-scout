@@ -379,6 +379,13 @@ export async function runStartupMigrations(): Promise<void> {
         `[media-track] migrated legacy 115 cookie → ${DEFAULT_ACCOUNT_ID} connected_storage (uid ${result.providerUid})`,
       );
     }
+    // Tree model: pin legacy tracked rows (null connected_storage_id) to each
+    // account's primary drive. Runs after the cookie migration so acct_default
+    // has its drive. Idempotent — already-pinned rows are untouched.
+    const filled = await getWorkflowRepository().backfillConnectedStorageId();
+    if (filled > 0) {
+      console.log(`[media-track] backfilled connected_storage_id on ${filled} legacy row(s)`);
+    }
   } catch (error) {
     console.error(`[media-track] startup migration failed: ${String(error)}`);
   }
