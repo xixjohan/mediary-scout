@@ -220,16 +220,19 @@ export class QuarkCookieClient {
     return false;
   }
 
-  /** Delete files (action_type:2 = move to recycle bin, same as 115's rb/delete). */
+  /** Delete files (action_type:2 = move to recycle bin, same as 115's rb/delete).
+   *  Async on quark — returns a task_id we poll to completion. */
   async deleteFiles(fids: string[]): Promise<void> {
     const response = await this.postJson("/1/clouddrive/file/delete", {
       action_type: 2,
       filelist: fids,
       exclude_fids: [],
     });
-    unwrap(response, "QUARK_DELETE_FAILED");
+    await this.awaitTaskFrom(response, "QUARK_DELETE_FAILED");
   }
 
+  /** Move files. Async on quark — returns a task_id we poll to completion so the
+   *  move is reflected before the caller re-reads the destination. */
   async moveFiles(input: { fids: string[]; to: string }): Promise<void> {
     const response = await this.postJson("/1/clouddrive/file/move", {
       filelist: input.fids,
@@ -237,7 +240,16 @@ export class QuarkCookieClient {
       exclude_fids: [],
       action_type: 1,
     });
-    unwrap(response, "QUARK_MOVE_FAILED");
+    await this.awaitTaskFrom(response, "QUARK_MOVE_FAILED");
+  }
+
+  /** Unwrap a task-returning response and poll its task_id to completion (if any). */
+  private async awaitTaskFrom(response: unknown, genericPrefix: string): Promise<void> {
+    const data = unwrap(response, genericPrefix);
+    const taskId = stringValue(recordValue(data, "task_id"));
+    if (taskId) {
+      await this.pollTask(taskId);
+    }
   }
 
   async renameFile(input: { fid: string; name: string }): Promise<void> {

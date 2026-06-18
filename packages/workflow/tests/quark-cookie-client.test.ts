@@ -155,11 +155,13 @@ describe("QuarkCookieClient", () => {
     await expect(client.pollTask("T1", { maxAttempts: 3 })).resolves.toBe(false);
   });
 
-  it("deleteFiles posts file/delete with action_type 2", async () => {
+  it("deleteFiles posts file/delete with action_type 2, then polls the task", async () => {
     const requests: RecordedRequest[] = [];
     const client = new QuarkCookieClient({
       cookie: "__uid=u",
-      fetchJson: record(requests, async () => ({ code: 0, data: { task_id: "D" } })),
+      sleep: async () => {},
+      // shared response: the delete returns task_id, the subsequent poll reads status 2
+      fetchJson: record(requests, async () => ({ code: 0, data: { task_id: "D", status: 2 } })),
     });
     await client.deleteFiles(["f1", "f2"]);
     expect(requests[0]?.url).toContain("/1/clouddrive/file/delete");
@@ -168,17 +170,20 @@ describe("QuarkCookieClient", () => {
       filelist: ["f1", "f2"],
       exclude_fids: [],
     });
+    expect(requests.some((r) => r.url.includes("/1/clouddrive/task"))).toBe(true); // polled
   });
 
-  it("moveFiles posts file/move", async () => {
+  it("moveFiles posts file/move, then polls the task to completion", async () => {
     const requests: RecordedRequest[] = [];
     const client = new QuarkCookieClient({
       cookie: "__uid=u",
-      fetchJson: record(requests, async () => ({ code: 0, data: { task_id: "M" } })),
+      sleep: async () => {},
+      fetchJson: record(requests, async () => ({ code: 0, data: { task_id: "M", status: 2 } })),
     });
     await client.moveFiles({ fids: ["f1"], to: "dst" });
     expect(requests[0]?.url).toContain("/1/clouddrive/file/move");
     expect(JSON.parse(requests[0]!.body)).toMatchObject({ filelist: ["f1"], to_pdir_fid: "dst" });
+    expect(requests.some((r) => r.url.includes("/1/clouddrive/task"))).toBe(true); // polled
   });
 
   it("renameFile posts file/rename", async () => {
