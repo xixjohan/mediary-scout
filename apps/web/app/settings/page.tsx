@@ -3,6 +3,7 @@ import { Suspense } from "react";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, Languages, Radio, ShieldCheck, TriangleAlert } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { Pan115QrConnect } from "../../components/pan115-qr-connect";
+import { TestConnectionButton } from "../../components/test-connection-button";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
@@ -221,7 +222,9 @@ async function Pan115Section() {
 
       {drives.length > 0 ? (
         <div style={{ margin: "14px 0" }}>
-          <p className="panel-note" style={{ marginBottom: 8 }}>本账号已连接的网盘</p>
+          <p className="panel-note" style={{ marginBottom: 8 }}>
+            本账号已连接的网盘{drives.length >= 2 ? "（左下角可切换工作区，每块盘各自独立）" : ""}
+          </p>
           <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 8 }}>
             {drives.map((drive) => (
               <li key={drive.id} className="setting-row" style={{ justifyContent: "space-between" }}>
@@ -231,8 +234,18 @@ async function Pan115Section() {
                   <span className="push-help"> · 账号 {drive.providerUid}</span>
                   {drive.connectedAt ? <span className="push-help"> · {drive.connectedAt.slice(0, 16).replace("T", " ")}</span> : null}
                 </span>
-                <span className={`hub-badge ${drive.provisioned ? "tone-green" : "tone-amber"}`}>
-                  {drive.provisioned ? "目录已就绪" : "目录待建"}
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                  {drive.status === "frozen" ? (
+                    <span className="hub-badge tone-amber" title="cookie 已失效，重新扫码绑定同一个 115 即可恢复">
+                      <TriangleAlert size={12} aria-hidden />
+                      掉线
+                    </span>
+                  ) : (
+                    <span className={`hub-badge ${drive.provisioned ? "tone-green" : "tone-amber"}`}>
+                      {drive.provisioned ? "目录已就绪" : "目录待建"}
+                    </span>
+                  )}
+                  <TestConnectionButton storageId={drive.id} />
                 </span>
               </li>
             ))}
@@ -240,6 +253,9 @@ async function Pan115Section() {
         </div>
       ) : null}
 
+      <p className="panel-note" style={{ marginBottom: 8 }}>
+        {drives.length > 0 ? "再扫一个码可添加另一个 115（不同账号即新增一块独立网盘；扫到已绑的会自动刷新登录）" : "扫码连接你的 115"}
+      </p>
       <Pan115QrConnect />
 
       <p className="panel-note" style={{ marginTop: 12 }}>

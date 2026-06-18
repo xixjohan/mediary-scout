@@ -3,6 +3,23 @@
 import { revalidatePath } from "next/cache";
 import { queueCandidateSeries, queueCandidateTracking, reserveCandidate } from "../lib/workflow-runtime";
 
+export interface TestStorageConnectionResult {
+  ok: boolean;
+  status: "active" | "frozen";
+  message: string;
+}
+
+/** Settings "测试连接": probe a drive's cookie. A dead cookie freezes the drive
+ *  (no acquisition/patrol until re-bound); a healthy one reactivates it. */
+export async function testStorageConnectionAction(
+  storageId: string,
+): Promise<TestStorageConnectionResult> {
+  const { testConnection, getCurrentAccountId } = await import("../lib/workflow-runtime");
+  const result = await testConnection(await getCurrentAccountId(), storageId);
+  revalidatePath("/settings");
+  return result;
+}
+
 export interface RequestTrackingActionResult {
   status: "requested" | "already_tracked" | "active_workflow" | "reserved" | "unsupported";
   message: string;
