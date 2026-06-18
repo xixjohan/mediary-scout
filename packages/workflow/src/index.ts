@@ -25,6 +25,7 @@ export * from "./pan115-cookie-client.js";
 export * from "./quark-cookie-client.js";
 export * from "./quark-storage-executor.js";
 export * from "./storage-brands.js";
+export * from "./storage-executor-factory.js";
 export * from "./pan115-storage-factory.js";
 export * from "./queries.js";
 export * from "./search-view.js";

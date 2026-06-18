@@ -36,6 +36,9 @@ import {
   resolveStorageBinding,
   provisionCategoryDirs,
   parsePan115Uid,
+  createExecutorForBrand,
+  getStorageBrand,
+  isRegisteredStorageProvider,
   type ResolveAccountWorkerContext,
   hashPassword,
   verifyPassword,
@@ -274,7 +277,9 @@ export async function getActiveWorkspaceScope(storageId?: string): Promise<Workf
   const accountId = await getCurrentAccountId();
   const storages = await getWorkflowRepository().listConnectedStorages(accountId);
   const connectedStorageId = pickWorkspaceStorageId(
-    storages.filter((storage) => storage.provider === "pan115"),
+    // Tree model: a workspace is any registered brand's drive (115 or quark), not
+    // just 115 — so a quark drive shows up as its own switchable workspace.
+    storages.filter((storage) => isRegisteredStorageProvider(storage.provider)),
     storageId,
   );
   return { accountId, connectedStorageId };
@@ -1100,6 +1105,8 @@ async function getWorkerResourceProvider(
  *  (then the worker falls back to the legacy env cookie / env CIDs). */
 interface AccountStorageCredentials {
   id: string;
+  /** The drive's brand — drives executor/probe/resource dispatch (tree model). */
+  provider: string;
   status: "active" | "frozen";
   cookie: string;
   rootCid: string | null;
@@ -1115,26 +1122,30 @@ async function getAccountStorageCredentials(
   try {
     const storages = await getWorkflowRepository().listConnectedStorages(accountId);
     // Tree model: when a specific drive is pinned (the run's connected_storage_id),
-    // resolve THAT drive; otherwise the account's first pan115 drive (single-drive
-    // / primary). Never silently fall through to another drive.
-    const pan115 = connectedStorageId
-      ? storages.find((storage) => storage.id === connectedStorageId && storage.provider === "pan115")
-      : storages.find((storage) => storage.provider === "pan115");
-    const cookie = (pan115?.payload as { cookie?: string } | null)?.cookie?.trim();
-    if (!pan115 || !cookie) {
+    // resolve THAT drive; otherwise the account's first registered-brand drive
+    // (single-drive / primary). Brand-agnostic — 115 or quark. Never silently fall
+    // through to another drive.
+    const drive = connectedStorageId
+      ? storages.find(
+          (storage) => storage.id === connectedStorageId && isRegisteredStorageProvider(storage.provider),
+        )
+      : storages.find((storage) => isRegisteredStorageProvider(storage.provider));
+    const cookie = (drive?.payload as { cookie?: string } | null)?.cookie?.trim();
+    if (!drive || !cookie) {
       return null;
     }
     return {
-      id: pan115.id,
-      status: pan115.status,
+      id: drive.id,
+      provider: drive.provider,
+      status: drive.status,
       cookie,
-      rootCid: pan115.rootCid,
-      moviesCid: pan115.moviesCid,
-      tvCid: pan115.tvCid,
-      animeCid: pan115.animeCid,
+      rootCid: drive.rootCid,
+      moviesCid: drive.moviesCid,
+      tvCid: drive.tvCid,
+      animeCid: drive.animeCid,
     };
   } catch (error) {
-    console.error(`[media-track] failed to load 115 credentials for ${accountId}: ${String(error)}`);
+    console.error(`[media-track] failed to load storage credentials for ${accountId}: ${String(error)}`);
     return null;
   }
 }
@@ -1159,7 +1170,7 @@ async function resolveQueueStorage(
 ): Promise<{ id: string | null; frozen: boolean }> {
   try {
     const storages = (await getWorkflowRepository().listConnectedStorages(accountId))
-      .filter((storage) => storage.provider === "pan115")
+      .filter((storage) => isRegisteredStorageProvider(storage.provider))
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     const chosen = explicitConnectedStorageId
       ? storages.find((storage) => storage.id === explicitConnectedStorageId)
@@ -1203,20 +1214,41 @@ export async function testConnection(
   if (!creds) {
     return { ok: false, status: "frozen", message: "找不到该网盘的凭证。" };
   }
-  const { Pan115CookieClient, isPan115AuthError } = await import("@media-track/workflow");
-  const client = new Pan115CookieClient({ cookie: creds.cookie, listPageDelayMs: 0 });
+  const brand = getStorageBrand(creds.provider);
   try {
-    await client.getDirectoryInfo({ directoryId: creds.rootCid ?? "0" });
+    await probeStorageConnection(creds.provider, creds.cookie, creds.rootCid);
     await getWorkflowRepository().setConnectedStorageStatus(creds.id, "active", null, null);
     return { ok: true, status: "active", message: "连接正常。" };
   } catch (error) {
-    if (isPan115AuthError(error)) {
-      await freezeConnectedStorage(creds.id, error.message);
-      return { ok: false, status: "frozen", message: "网盘登录已失效，请重新扫码绑定同一个 115。" };
+    // The brand's own dead-cookie signal → freeze; anything else (network/
+    // transient) is NOT a reason to freeze.
+    if (brand.isAuthError(error)) {
+      await freezeConnectedStorage(creds.id, error instanceof Error ? error.message : String(error));
+      return { ok: false, status: "frozen", message: `网盘登录已失效，请重新绑定同一个${brand.label}。` };
     }
-    // A non-auth error (network/transient) is NOT a reason to freeze.
     return { ok: false, status: creds.status, message: `连接检测失败：${String(error)}` };
   }
+}
+
+/** A cheap brand-specific read used to probe whether a drive's cookie is alive.
+ *  Throws the brand's auth error on a dead cookie (caller freezes). */
+async function probeStorageConnection(
+  provider: string,
+  cookie: string,
+  rootCid: string | null,
+): Promise<void> {
+  const { Pan115CookieClient, QuarkCookieClient } = await import("@media-track/workflow");
+  if (provider === "quark") {
+    await new QuarkCookieClient({ cookie }).listItems({ directoryId: rootCid ?? "0" });
+    return;
+  }
+  if (provider === "pan115") {
+    await new Pan115CookieClient({ cookie, listPageDelayMs: 0 }).getDirectoryInfo({
+      directoryId: rootCid ?? "0",
+    });
+    return;
+  }
+  throw new Error(`unknown storage brand: ${provider}`);
 }
 
 async function getWorkerStorageExecutor(
@@ -1224,22 +1256,25 @@ async function getWorkerStorageExecutor(
   connectedStorageId?: string | null,
 ): Promise<StorageExecutor> {
   const adapter = process.env.MEDIA_TRACK_STORAGE_ADAPTER ?? "fake";
+  // "115" is the legacy name for "real storage mode"; the actual brand now comes
+  // from the resolved drive's provider, so a quark drive works under the same gate.
   if (adapter === "115") {
     const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
     if (creds) {
-      // Scope writes to THIS account's own provisioned dirs — not the global env
-      // CIDs (which belong to the default account's drive). Without this, a
-      // non-default account's worker would violate the write scope on its drive.
+      // Scope writes to THIS drive's own provisioned dirs — not the global env CIDs
+      // (which belong to the default account's drive). Dispatch by the drive's
+      // brand: 115 → Storage115Executor, quark → QuarkStorageExecutor.
       const scopeCids = [creds.rootCid, creds.moviesCid, creds.tvCid, creds.animeCid].filter(
         (cid): cid is string => Boolean(cid),
       );
-      const env = {
-        ...process.env,
-        PAN115_COOKIE: creds.cookie,
-        ...(scopeCids.length > 0 ? { MEDIA_TRACK_115_WRITE_SCOPE_CIDS: scopeCids.join(",") } : {}),
-      };
-      return createProtectedPan115CookieStorageExecutorFromEnv({ env });
+      return createExecutorForBrand({
+        provider: creds.provider,
+        cookie: creds.cookie,
+        scopeCids,
+        env: process.env,
+      });
     }
+    // No drive bound yet → legacy env-cookie 115 path (fresh deploy bootstrap).
     return createProtectedPan115CookieStorageExecutorFromEnv({ env: process.env });
   }
   if (adapter !== "fake") {
