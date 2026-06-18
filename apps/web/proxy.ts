@@ -1,8 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * §7 P1 auth gate. Only active when MEDIA_TRACK_MULTI_USER=1; otherwise every
- * request passes through (single-user, no login — P0 behavior).
+ * §7 P1 auth gate (Next 16 "proxy" convention, formerly middleware). Only active
+ * when MEDIA_TRACK_MULTI_USER=1; otherwise every request passes through
+ * (single-user, no login — P0 behavior).
  *
  * This does cheap PRESENCE gating for the redirect UX (runs on the Edge runtime,
  * no DB access). The authoritative check — signature + session row + expiry — is
@@ -11,7 +12,7 @@ import { NextResponse, type NextRequest } from "next/server";
  */
 const SESSION_COOKIE_NAME = "mt_session";
 
-export function middleware(request: NextRequest): NextResponse {
+export function proxy(request: NextRequest): NextResponse {
   if (process.env.MEDIA_TRACK_MULTI_USER !== "1") {
     return NextResponse.next();
   }
