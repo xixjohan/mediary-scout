@@ -45,7 +45,9 @@ import {
   generateSessionId,
   DuplicateUsernameError,
   DEFAULT_ACCOUNT_ID,
+  pickWorkspaceStorageId,
   type Account,
+  type WorkflowScope,
   type MediaSearchCandidate,
   type MediaTitle,
   type NotificationEvent,
@@ -258,6 +260,24 @@ export function getAccountScopedSettings(accountId: string): { getSetting(key: s
       return repository.getSetting(key);
     },
   };
+}
+
+/**
+ * Tree model: resolve the active workspace scope {accountId, connectedStorageId}
+ * for a page/data read. `storageId` is the /w/<storageId> route param (undefined
+ * on root routes → the account's primary drive). Throws WorkspaceNotFoundError
+ * when the param names a drive the account does not own — the route layer maps
+ * that to a 404. With no drives bound yet, connectedStorageId is null (single-user
+ * fresh; reads then fall back to account-only, unchanged behavior).
+ */
+export async function getActiveWorkspaceScope(storageId?: string): Promise<WorkflowScope> {
+  const accountId = await getCurrentAccountId();
+  const storages = await getWorkflowRepository().listConnectedStorages(accountId);
+  const connectedStorageId = pickWorkspaceStorageId(
+    storages.filter((storage) => storage.provider === "pan115"),
+    storageId,
+  );
+  return { accountId, connectedStorageId };
 }
 
 export async function getCurrentAccountId(): Promise<string> {

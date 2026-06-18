@@ -13,7 +13,7 @@ import {
   type InProgressTitle,
   type LibraryWallEntry,
 } from "../lib/title-hub";
-import { ensureDemoSeeded, getCurrentAccountId, getWorkflowRepository } from "../lib/workflow-runtime";
+import { ensureDemoSeeded, getActiveWorkspaceScope, getWorkflowRepository } from "../lib/workflow-runtime";
 import type { SearchCandidateCard, TrackedSeasonState } from "@media-track/workflow";
 
 export default function Page({
@@ -21,13 +21,28 @@ export default function Page({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  return <HomeView searchParams={searchParams} />;
+}
+
+/**
+ * Shared home surface for both the root route (storageId undefined → the
+ * account's primary drive) and the /w/<storageId> workspace route (a specific
+ * drive). The library + search awareness are scoped to that workspace.
+ */
+export function HomeView({
+  searchParams,
+  storageId,
+}: {
+  searchParams?: Promise<Record<string, string | string[] | undefined>> | undefined;
+  storageId?: string | undefined;
+}) {
   // searchParams is a dynamic input. Reading it inside a Suspense boundary lets
   // the static app shell prerender instead of the whole route blocking on it —
   // this is what silences the cacheComponents "blocking-route" warning. The await
   // resolves from the request URL (no I/O), so the fallback is effectively instant.
   return (
     <Suspense fallback={<HomeShell />}>
-      <HomeSurface searchParams={searchParams} />
+      <HomeSurface searchParams={searchParams} storageId={storageId} />
     </Suspense>
   );
 }
@@ -43,8 +58,10 @@ function HomeShell() {
 
 async function HomeSurface({
   searchParams,
+  storageId,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>> | undefined;
+  storageId?: string | undefined;
 }) {
   const params = (await searchParams) ?? {};
   const query = stringParam(params.q);
@@ -78,12 +95,12 @@ async function HomeSurface({
               </form>
             </div>
             <Suspense key={`search-${query}`} fallback={<SearchResultsSkeleton />}>
-              <SearchResults query={query} />
+              <SearchResults query={query} storageId={storageId} />
             </Suspense>
           </section>
         ) : (
           <Suspense fallback={<LibrarySurfaceSkeleton />}>
-            <LibrarySurface mediaType={mediaType} filter={filter} />
+            <LibrarySurface mediaType={mediaType} filter={filter} storageId={storageId} />
           </Suspense>
         )}
       </main>
@@ -91,15 +108,17 @@ async function HomeSurface({
   );
 }
 
-async function SearchResults({ query }: { query: string }) {
+async function SearchResults({ query, storageId }: { query: string; storageId?: string | undefined }) {
   const searchView = await getSearchView(query);
   // Library awareness on results: a tracked title shows WHICH seasons are
   // obtained and routes to the same title page as the library — search must
-  // anticipate re-searching something already obtained.
+  // anticipate re-searching something already obtained. Scoped to the active
+  // workspace (drive), so "已获取" reflects THIS drive.
   const repository = getWorkflowRepository();
   await ensureDemoSeeded(repository);
+  const scope = await getActiveWorkspaceScope(storageId);
   const trackedByTmdbId = new Map<number, TrackedSeasonState[]>();
-  for (const state of await repository.listTrackedSeasonStates(await getCurrentAccountId())) {
+  for (const state of await repository.listTrackedSeasonStates(scope)) {
     // Season-awareness covers anything tracked with seasons — TV AND anime
     // (anime is a TV-shaped title routed to its own library). Only movies, which
     // have no season menu, are excluded. (Was `!== "tv"`, which wrongly hid every
@@ -116,7 +135,7 @@ async function SearchResults({ query }: { query: string }) {
   // flight, mount the poller so the card flips 已请求 → 已获取 the moment the run
   // finishes, with no manual refresh. (Previously only the library mounted it,
   // so a result acquired from search stayed stuck on 已请求.)
-  const inProgress = await getInProgressTitles();
+  const inProgress = await getInProgressTitles(storageId);
   const inProgressIds = new Set(inProgress.map((title) => title.tmdbId));
 
   return (
@@ -305,8 +324,8 @@ function CandidateCard({
   );
 }
 
-async function LibrarySurface({ mediaType, filter }: { mediaType: string; filter: string }) {
-  const [rawWall, inProgress] = await Promise.all([getLibraryWall(), getInProgressTitles()]);
+async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: string; filter: string; storageId?: string | undefined }) {
+  const [rawWall, inProgress] = await Promise.all([getLibraryWall(storageId), getInProgressTitles(storageId)]);
   const inProgressIds = new Set(inProgress.map((title) => title.tmdbId));
   // A title still being fetched shows as a 获取中 placeholder, not (yet) a card.
   const wall = rawWall.filter((entry) => !inProgressIds.has(entry.tmdbId));

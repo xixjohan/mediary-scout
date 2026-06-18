@@ -22,6 +22,7 @@ import { PostgresMediaSearchCache } from "./tmdb-cache";
 import {
   ensureDemoSeeded,
   getAccountScopedSettings,
+  getActiveWorkspaceScope,
   getCurrentAccountId,
   getTmdbAccesses,
   getWorkflowRepository,
@@ -158,11 +159,11 @@ async function seriesTargetFor(tmdbId: number): Promise<PreparedSeriesTarget | n
   };
 }
 
-export async function getTitleHubView(tmdbId: number): Promise<TitleHubView | null> {
+export async function getTitleHubView(tmdbId: number, storageId?: string): Promise<TitleHubView | null> {
   const repository = getWorkflowRepository();
-  const accountId = await getCurrentAccountId();
+  const scope = await getActiveWorkspaceScope(storageId);
   await ensureDemoSeeded(repository);
-  const trackedStates = (await repository.listTrackedSeasonStates(accountId)).filter(
+  const trackedStates = (await repository.listTrackedSeasonStates(scope)).filter(
     // tv AND anime are season-shaped detail pages; only movies are excluded.
     (state) => state.title.tmdbId === tmdbId && state.title.type !== "movie",
   );
@@ -230,7 +231,7 @@ export async function getTitleHubView(tmdbId: number): Promise<TitleHubView | nu
   const aggregate = aggregateStateFromSeasons(seasons);
   const airing = aggregateAiring(seasons);
 
-  const acquiring = (await repository.listActiveWorkflowRuns(accountId)).some(
+  const acquiring = (await repository.listActiveWorkflowRuns(scope)).some(
     (snapshot) => snapshot.title.tmdbId === tmdbId,
   );
 
@@ -253,18 +254,18 @@ export async function getTitleHubView(tmdbId: number): Promise<TitleHubView | nu
  * TMDB round-trip; an untracked title falls through to the TV hub, then to a
  * TMDB movie lookup.
  */
-export async function getDetailView(tmdbId: number): Promise<DetailView | null> {
+export async function getDetailView(tmdbId: number, storageId?: string): Promise<DetailView | null> {
   const repository = getWorkflowRepository();
-  const accountId = await getCurrentAccountId();
+  const scope = await getActiveWorkspaceScope(storageId);
   await ensureDemoSeeded(repository);
   const now = new Date().toISOString();
 
-  const trackedForTitle = (await repository.listTrackedSeasonStates(accountId)).filter(
+  const trackedForTitle = (await repository.listTrackedSeasonStates(scope)).filter(
     (state) => state.title.tmdbId === tmdbId,
   );
   const movieState = trackedForTitle.find((state) => state.title.type === "movie");
   if (movieState) {
-    const acquiring = (await repository.listActiveWorkflowRuns(accountId)).some(
+    const acquiring = (await repository.listActiveWorkflowRuns(scope)).some(
       (snapshot) => snapshot.title.tmdbId === tmdbId,
     );
     const obtained = movieState.episodes.some((episode) => episode.obtained);
@@ -324,16 +325,17 @@ export async function queueSeasonTracking(
  */
 export async function queueRemainingSeasons(
   tmdbId: number,
+  storageId?: string,
 ): Promise<CandidateTrackingRequestResult> {
   const repository = getWorkflowRepository();
-  const accountId = await getCurrentAccountId();
+  const scope = await getActiveWorkspaceScope(storageId);
   await ensureDemoSeeded(repository);
   const target = await seriesTargetFor(tmdbId);
   if (!target) {
     return { status: "unsupported", message: "无法获取该剧的季信息。" };
   }
   const trackedSeasonNumbers = new Set(
-    (await repository.listTrackedSeasonStates(accountId))
+    (await repository.listTrackedSeasonStates(scope))
       .filter((state) => state.title.tmdbId === tmdbId && state.title.type !== "movie")
       .map((state) => state.season.seasonNumber),
   );
@@ -352,6 +354,8 @@ export async function queueRemainingSeasons(
     seasons: remaining,
     keyword: target.keyword,
     repository,
+    accountId: scope.accountId,
+    connectedStorageId: scope.connectedStorageId,
   });
   return {
     status: request.status === "queued" ? "queued" : request.status,
@@ -386,12 +390,12 @@ export interface LibraryTypeCounts {
 }
 
 /** Poster-wall view of every tracked title. */
-export async function getLibraryWall(): Promise<LibraryWallEntry[]> {
+export async function getLibraryWall(storageId?: string): Promise<LibraryWallEntry[]> {
   const repository = getWorkflowRepository();
-  const accountId = await getCurrentAccountId();
+  const scope = await getActiveWorkspaceScope(storageId);
   await ensureDemoSeeded(repository);
   const now = new Date().toISOString();
-  const states = await repository.listTrackedSeasonStates(accountId);
+  const states = await repository.listTrackedSeasonStates(scope);
   const byTitle = new Map<number, typeof states>();
   for (const state of states) {
     const list = byTitle.get(state.title.tmdbId) ?? [];
@@ -454,10 +458,10 @@ export interface InProgressTitle {
  * library as non-clickable "获取中" poster placeholders until the run finishes
  * and the title materializes as a real card.
  */
-export async function getInProgressTitles(): Promise<InProgressTitle[]> {
+export async function getInProgressTitles(storageId?: string): Promise<InProgressTitle[]> {
   const repository = getWorkflowRepository();
-  const accountId = await getCurrentAccountId();
-  const active = await repository.listActiveWorkflowRuns(accountId);
+  const scope = await getActiveWorkspaceScope(storageId);
+  const active = await repository.listActiveWorkflowRuns(scope);
   const byTmdb = new Map<number, InProgressTitle>();
   for (const snapshot of active) {
     const title = snapshot.title;
