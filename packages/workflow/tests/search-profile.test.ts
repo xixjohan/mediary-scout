@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getQualityGuidance, getSearchRecipe, searchProfile } from "../src/index.js";
+import { getQualityGuidance, getSearchRecipe, searchProfile, SEARCH_PROFILES } from "../src/index.js";
 
 describe("getSearchRecipe — post-deep-research recipe", () => {
   it("us-tv leads with 裸中文名 (NOT the old 别裸搜/+美剧), and forbids +美剧", () => {
@@ -106,5 +106,25 @@ describe("getQualityGuidance", () => {
     expect(g).toContain("1080");
     expect(g).toContain("覆盖");
     expect(g).toMatch(/不进搜索|不进关键词|召回后/);
+  });
+
+  it("medium has a CEILING — avoid 4K/2160p/REMUX/原盘 by title token before transfer", () => {
+    // Live bug: quality=medium still 秒传'd a 74.9GB 4K REMUX into a 15GB drive.
+    // Root cause was an asymmetric (floor-only) medium guidance: it told the agent
+    // to prefer 1080p but never to AVOID over-spec 4K/remux. medium must mirror
+    // high's two-sidedness — a ceiling so the agent skips 2160p/4K/REMUX/原盘 by
+    // reading the candidate TITLE *before* transferring (so the giant file is
+    // never 秒传'd → no recycle-bin accumulation).
+    for (const p of SEARCH_PROFILES) {
+      const g = getQualityGuidance(p, "medium");
+      // names the over-spec tokens to avoid
+      expect(g).toMatch(/2160p|4K/);
+      expect(g).toContain("REMUX");
+      expect(g).toMatch(/原盘|ISO|BDMV/);
+      // frames them as something to AVOID/不取, not to prefer
+      expect(g).toMatch(/避免|别选|不取|跳过/);
+      // the decision is by-title, pre-transfer (no delete-and-redo)
+      expect(g).toMatch(/转存前|落盘前|读标题|看标题/);
+    }
   });
 });
