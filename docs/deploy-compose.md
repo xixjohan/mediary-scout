@@ -38,5 +38,6 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
 ## 注意
 
-- 本项目只走**自部署**,作者不托管(见 `docs/distribution-and-legal-positioning.md`)。别在公网裸暴露 `:3000`(无鉴权;多用户/登录是 roadmap §7)。
+- 本项目只走**自部署**,作者不托管(见 `docs/distribution-and-legal-positioning.md`)。默认单用户、无登录;想多人合用同一实例(各绑各的 115、各看各的库)设环境变量 `MEDIA_TRACK_MULTI_USER=1` 开多用户模式(出注册/登录页)。无论开不开,都别在公网裸暴露 `:3000`。
+- **国内构建拉不动镜像**:Docker Hub / ghcr 在国内常连不上,首次 `docker compose up` 构建/拉取会卡住。给 Docker 配 registry mirror(如 `https://docker.1ms.run`,写进 `/etc/docker/daemon.json` 的 `registry-mirrors` 后 `systemctl restart docker`);构建 web 镜像时换 npm 源:`docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com`。作者实测在带镜像加速的软路由(iStoreOS)上一把过。
 - 升级:`git pull && docker compose up -d --build`。
