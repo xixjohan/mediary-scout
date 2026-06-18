@@ -25,6 +25,9 @@ export interface PanSouResourceProviderOptions {
   searchPollMs?: number;
   /** Injectable sleep (tests pass a no-op). */
   wait?: (ms: number) => Promise<void>;
+  /** Restrict returned candidates to these link types (per-brand: a quark drive
+   *  gets ["quark"], a 115 drive ["115","magnet"]). Undefined = no filter. */
+  allowedTypes?: ResourceType[];
 }
 
 interface PanSouLinkFact {
@@ -44,6 +47,7 @@ export class PanSouResourceProvider implements ResourceProvider {
   private readonly maxSearchAttempts: number;
   private readonly searchPollMs: number;
   private readonly wait: (ms: number) => Promise<void>;
+  private readonly allowedTypes: Set<ResourceType> | null;
 
   constructor(options: PanSouResourceProviderOptions) {
     this.baseURL = options.baseURL.replace(/\/+$/, "");
@@ -52,6 +56,7 @@ export class PanSouResourceProvider implements ResourceProvider {
     this.maxSearchAttempts = options.maxSearchAttempts ?? 4;
     this.searchPollMs = options.searchPollMs ?? 2500;
     this.wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.allowedTypes = options.allowedTypes ? new Set(options.allowedTypes) : null;
   }
 
   private async fetchFacts(keyword: string): Promise<PanSouLinkFact[]> {
@@ -63,7 +68,10 @@ export class PanSouResourceProvider implements ResourceProvider {
       },
       body: JSON.stringify({ kw: keyword, res: "all" }),
     });
-    return isPanSouSuccessResponse(response) ? collectLinkFacts(response.data.results) : [];
+    const facts = isPanSouSuccessResponse(response) ? collectLinkFacts(response.data.results) : [];
+    // Per-brand filter: a quark drive only sees quark links; a 115 drive only
+    // sees 115/magnet. Keeps a candidate set that its executor can actually transfer.
+    return this.allowedTypes ? facts.filter((fact) => this.allowedTypes!.has(fact.type)) : facts;
   }
 
   async search(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {
@@ -191,6 +199,9 @@ function collectLinkFacts(results: unknown[]): PanSouLinkFact[] {
 function normalizeResourceType(rawType: string, url: string): ResourceType | null {
   if (rawType === "115") {
     return "115";
+  }
+  if (rawType === "quark" || url.includes("pan.quark.cn/s/")) {
+    return "quark";
   }
   if (url.startsWith("magnet:")) {
     return "magnet";

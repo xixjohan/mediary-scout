@@ -105,6 +105,47 @@ describe("PanSouResourceProvider", () => {
     ]);
   });
 
+  it("recognizes quark links and filters candidates by allowedTypes (per-brand)", async () => {
+    const fetchJson = async () => ({
+      code: 0,
+      data: {
+        results: [
+          {
+            title: "片 1080p",
+            channel: "c",
+            links: [
+              { type: "115", url: "https://115.com/s/a" },
+              { type: "quark", url: "https://pan.quark.cn/s/abc", password: "p" },
+              { type: "magnet", url: "magnet:?xt=urn:btih:z" },
+            ],
+          },
+        ],
+      },
+    });
+
+    // quark drive → only quark links
+    const quarkOnly = new PanSouResourceProvider({
+      baseURL: "https://pansou.example",
+      maxSearchAttempts: 1,
+      allowedTypes: ["quark"],
+      fetchJson,
+    });
+    const qs = await quarkOnly.search({ keyword: "k" });
+    expect(qs.candidates.map((c) => c.type)).toEqual(["quark"]);
+    expect(qs.candidates[0]?.providerPayload.url).toBe("https://pan.quark.cn/s/abc");
+    expect(qs.candidates[0]?.providerPayload.password).toBe("p");
+
+    // 115 drive → only 115 + magnet (quark hidden)
+    const pan115 = new PanSouResourceProvider({
+      baseURL: "https://pansou.example",
+      maxSearchAttempts: 1,
+      allowedTypes: ["115", "magnet"],
+      fetchJson,
+    });
+    const ps = await pan115.search({ keyword: "k" });
+    expect(ps.candidates.map((c) => c.type).sort()).toEqual(["115", "magnet"]);
+  });
+
   it("returns an empty snapshot when PanSou reports a non-zero code", async () => {
     const provider = new PanSouResourceProvider({
       baseURL: "https://pansou.example",

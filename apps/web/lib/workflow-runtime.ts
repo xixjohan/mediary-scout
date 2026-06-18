@@ -55,6 +55,7 @@ import {
   type MediaTitle,
   type NotificationEvent,
   type ResourceProvider,
+  type ResourceType,
   type SeasonMetadataSync,
   type StorageExecutor,
   type TrackedSeason,
@@ -444,9 +445,13 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId, connectedStorageId);
     const { model, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
+    // The run's drive brand selects its resource sources (quark→PanSou quark-only;
+    // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
+    const driveProvider =
+      (await getAccountStorageCredentials(accountId, connectedStorageId))?.provider ?? "pan115";
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
-      resourceProvider: await getWorkerResourceProvider(scoped),
+      resourceProvider: await getWorkerResourceProvider(scoped, driveProvider),
       model,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
@@ -1063,17 +1068,31 @@ function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber
 
 async function getWorkerResourceProvider(
   settings: { getSetting(key: string): Promise<string | null> } = getWorkflowRepository(),
+  provider: string = "pan115",
 ): Promise<ResourceProvider> {
   if (process.env.MEDIA_TRACK_WORKFLOW_ADAPTER === "pansou") {
+    // Per-brand assembly: a quark drive gets PanSou restricted to quark links and
+    // NO Prowlarr (磁力 115-only); a 115 drive gets PanSou(115/magnet) + Prowlarr.
+    const kinds: readonly string[] = isRegisteredStorageProvider(provider)
+      ? getStorageBrand(provider).resourceProviderKinds
+      : ["pansou-115", "prowlarr"];
+    const allowedTypes: ResourceType[] = kinds.includes("pansou-quark")
+      ? ["quark"]
+      : ["115", "magnet"];
     const providers: Array<{ name: string; provider: ResourceProvider }> = [
-      { name: "pansou", provider: new PanSouResourceProvider({ baseURL: await getPanSouBaseUrl(settings) }) },
+      {
+        name: "pansou",
+        provider: new PanSouResourceProvider({ baseURL: await getPanSouBaseUrl(settings), allowedTypes }),
+      },
     ];
-    const prowlarr = await getProwlarrConfig(settings);
-    if (prowlarr.baseURL && prowlarr.apiKey) {
-      providers.push({
-        name: "prowlarr",
-        provider: new ProwlarrResourceProvider({ baseURL: prowlarr.baseURL, apiKey: prowlarr.apiKey }),
-      });
+    if (kinds.includes("prowlarr")) {
+      const prowlarr = await getProwlarrConfig(settings);
+      if (prowlarr.baseURL && prowlarr.apiKey) {
+        providers.push({
+          name: "prowlarr",
+          provider: new ProwlarrResourceProvider({ baseURL: prowlarr.baseURL, apiKey: prowlarr.apiKey }),
+        });
+      }
     }
     return providers.length > 1
       ? new CompositeResourceProvider({ providers })
