@@ -1485,6 +1485,10 @@ export interface ConnectedStorageView {
   providerUid: string;
   label: string | null;
   connectedAt: string | null;
+  /** Bind time — orders drives (earliest = primary workspace). */
+  createdAt: string;
+  /** active = usable; frozen = cookie died (re-bind to recover). */
+  status: "active" | "frozen";
   /** True once category directories are provisioned (CIDs stored). */
   provisioned: boolean;
 }
@@ -1504,6 +1508,8 @@ export async function getAccountConnectedStorages(): Promise<ConnectedStorageVie
       providerUid: row.providerUid,
       label: row.label,
       connectedAt: meta?.connectedAt ?? null,
+      createdAt: row.createdAt,
+      status: row.status,
       provisioned: Boolean(row.tvCid && row.moviesCid && row.animeCid),
     };
   });

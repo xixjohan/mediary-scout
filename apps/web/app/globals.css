@@ -2735,3 +2735,61 @@ select.setting-control {
   padding: 1px 6px;
   border-radius: 999px;
 }
+
+/* Tree model: bottom-left drive switcher (only shown at ≥2 connected drives). */
+.workspace-switcher {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 12px;
+  background: rgba(20, 22, 28, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(8px);
+  max-width: 220px;
+}
+.workspace-switcher .ws-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.7);
+  text-decoration: none;
+  transition: background 0.15s, color 0.15s;
+}
+.workspace-switcher .ws-tab:hover {
+  background: rgba(255, 255, 255, 0.06);
+  color: #fff;
+}
+.workspace-switcher .ws-tab.is-active {
+  background: rgba(99, 102, 241, 0.18);
+  color: #fff;
+}
+.workspace-switcher .ws-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.35);
+  flex: none;
+}
+.workspace-switcher .ws-tab.is-active .ws-dot {
+  background: #6366f1;
+}
+.workspace-switcher .ws-tab.is-frozen .ws-dot {
+  background: #f59e0b;
+}
+.workspace-switcher .ws-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-switcher .ws-frozen {
+  margin-left: auto;
+  color: #f59e0b;
+}

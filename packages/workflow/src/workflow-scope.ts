@@ -66,6 +66,52 @@ export function pickWorkspaceStorageId(
   return storageIdParam;
 }
 
+export interface WorkspaceSwitcherItem {
+  id: string;
+  href: string;
+  label: string;
+  isActive: boolean;
+  frozen: boolean;
+}
+
+/**
+ * Build the workspace switcher tabs (pure, testable). The earliest-created drive
+ * is primary and routes to "/"; the rest route to /w/<id>. The active tab is the
+ * one matching the current pathname (/w/<id>), else the primary (root and any
+ * non-workspace page like /settings). Label falls back to a uid tail.
+ * The caller renders nothing when fewer than 2 drives exist.
+ */
+export function switcherItems(
+  storages: ReadonlyArray<{
+    id: string;
+    label: string | null;
+    providerUid: string;
+    createdAt: string;
+    status: "active" | "frozen";
+  }>,
+  pathname: string,
+): WorkspaceSwitcherItem[] {
+  const sorted = [...storages].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const activeWorkspaceId = (() => {
+    const match = /^\/w\/([^/]+)/.exec(pathname);
+    return match ? match[1]! : null;
+  })();
+  return sorted.map((storage, index) => {
+    const isPrimary = index === 0;
+    const href = isPrimary ? "/" : `/w/${storage.id}`;
+    const isActive = activeWorkspaceId
+      ? storage.id === activeWorkspaceId
+      : isPrimary; // root / non-workspace page → primary is active
+    return {
+      id: storage.id,
+      href,
+      label: storage.label?.trim() || `115 …${storage.providerUid.slice(-4)}`,
+      isActive,
+      frozen: storage.status === "frozen",
+    };
+  });
+}
+
 /** True when a stored row belongs to the scope: account must match; storage only
  *  filters when the scope pins one (connectedStorageId != null). fail-closed. */
 export function scopeMatches(
