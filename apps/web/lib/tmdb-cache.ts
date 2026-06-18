@@ -1,7 +1,11 @@
 import "server-only";
 import pg from "pg";
 import type { Pool } from "pg";
-import type { MediaSearchCache, MediaSearchCandidate } from "@media-track/workflow";
+import {
+  WORKFLOW_SCHEMA_ADVISORY_LOCK_KEY,
+  type MediaSearchCache,
+  type MediaSearchCandidate,
+} from "@media-track/workflow";
 
 const DEFAULT_TTL_MS = 6 * 60 * 60 * 1000; // 6h: TMDB search results barely change
 const SWEEP_INTERVAL_MS = 10 * 60 * 1000; // reclaim dead rows at most every 10 min
@@ -97,16 +101,37 @@ export class PostgresMediaSearchCache implements MediaSearchCache {
   }
 
   private ensureSchema(): Promise<void> {
-    return (this.schemaReady ??= this.pool
-      .query(
+    return (this.schemaReady ??= this.createSchema());
+  }
+
+  // Same first-boot hazard as the workflow schema: concurrent `CREATE TABLE/INDEX
+  // IF NOT EXISTS` against an empty DB races on the system catalogs (deadlock /
+  // pg_type unique-violation). Serialize through the SAME advisory lock the
+  // workflow schema uses, so every DDL path on this database is mutually ordered.
+  private async createSchema(): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock($1)", [WORKFLOW_SCHEMA_ADVISORY_LOCK_KEY]);
+      await client.query(
         `CREATE TABLE IF NOT EXISTS tmdb_search_cache (
            cache_key text PRIMARY KEY,
            payload jsonb NOT NULL,
            expires_at timestamptz NOT NULL
          );
          CREATE INDEX IF NOT EXISTS tmdb_search_cache_expires_at_idx ON tmdb_search_cache (expires_at);`,
-      )
-      .then(() => undefined));
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {
+        // Surface the original DDL error, not a secondary rollback failure.
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   // Active eviction: drop rows no reader will ever expire lazily. Time-guarded

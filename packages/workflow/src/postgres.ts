@@ -146,8 +146,49 @@ const SCHEMA = `
     ON CONFLICT (id) DO NOTHING;
 `;
 
+/**
+ * Fixed key for the Postgres advisory lock that serializes schema creation. Any
+ * stable arbitrary value works; every DDL path against this database must agree
+ * on it (see also the TMDB cache in apps/web, which reuses this key) so all
+ * first-boot schema creation is mutually serialized through one lock.
+ */
+export const WORKFLOW_SCHEMA_ADVISORY_LOCK_KEY = 4_011_989_141;
+
+/**
+ * Create the schema, serialized across connections AND processes by a Postgres
+ * advisory lock.
+ *
+ * `CREATE TABLE IF NOT EXISTS` (and the other IF-NOT-EXISTS DDL here) is NOT
+ * concurrency-safe: two connections running this against a brand-new database at
+ * once race on the system catalogs and one fails with a deadlock (40P01) or a
+ * `pg_type`/`pg_class` unique-violation (23505). That only bites on the very
+ * first boot of an empty DB — exactly the docker-compose first-run, where the
+ * in-process worker and the first HTTP requests (possibly living in separate
+ * Next bundles, each with its own pool) all trigger schema init together.
+ *
+ * `pg_advisory_xact_lock` makes it deterministic: the first connection takes the
+ * lock and runs the DDL; the rest block on the lock and, once it's released at
+ * COMMIT, run the same idempotent IF-NOT-EXISTS statements against the
+ * now-existing schema (cheap no-ops). The lock is transaction-scoped, so it is
+ * always released — even if the DDL throws and we roll back.
+ */
 export async function initializeWorkflowPostgresSchema(pool: Pool): Promise<void> {
-  await pool.query(SCHEMA);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock($1)", [WORKFLOW_SCHEMA_ADVISORY_LOCK_KEY]);
+    await client.query(SCHEMA);
+    await client.query("COMMIT");
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // Surface the original DDL error, not a secondary rollback failure.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 export async function createPostgresWorkflowRepository(options: {
