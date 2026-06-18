@@ -39,10 +39,16 @@ export default function LoginPage() {
         <div className="panel-header">
           <h1 className="panel-title">{mode === "login" ? "登录" : "创建账号"}</h1>
         </div>
-        <p className="panel-note" style={{ marginBottom: 16 }}>
-          {mode === "login"
-            ? "登录以访问你的媒体库。"
-            : "创建一个本地账号；账号之间数据相互隔离。"}
+        <p className="panel-note" style={{ marginBottom: 16, lineHeight: 1.6 }}>
+          {mode === "login" ? (
+            "登录以访问你的媒体库。"
+          ) : (
+            <>
+              账号不是「注册会员」，而是让<strong>同一个自部署实例容纳多个用户</strong>——每人各绑各自的
+              115 网盘、各管各的媒体库，彼此不可见。默认一个实例只服务一个 115；开启多用户后，你和家人
+              或朋友合用一台实例，各注册一个账号、各连各的网盘即可，从此不再受「一实例只能用一个 115」的限制。
+            </>
+          )}
         </p>
         <form
           onSubmit={(event) => {
@@ -76,7 +82,12 @@ export default function LoginPage() {
               {error}
             </p>
           ) : null}
-          <button type="submit" className="primary-button" disabled={isPending} style={{ width: "100%" }}>
+          <button
+            type="submit"
+            className="primary-button"
+            disabled={isPending}
+            style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
             {isPending ? (
               <LoaderCircle size={14} className="spin" aria-hidden />
             ) : mode === "login" ? (
