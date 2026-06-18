@@ -21,6 +21,7 @@ import {
 import { PostgresMediaSearchCache } from "./tmdb-cache";
 import {
   ensureDemoSeeded,
+  getAccountScopedSettings,
   getCurrentAccountId,
   getTmdbAccesses,
   getWorkflowRepository,
@@ -117,7 +118,7 @@ async function seriesTargetFor(tmdbId: number): Promise<PreparedSeriesTarget | n
       const value = await prepareSeriesTarget({
         tmdbId,
         qualityPreference: process.env.MEDIA_TRACK_DEFAULT_QUALITY ?? "4K",
-        metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getWorkflowRepository())),
+        metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()))),
       });
       seriesTargetCache.set(tmdbId, { value, expiresAt: Date.now() + SERIES_TARGET_TTL_MS });
       await durable.setJson(`series-target:${tmdbId}`, value, SERIES_TARGET_TTL_MS);

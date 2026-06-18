@@ -13,6 +13,8 @@ import { PanSouConfigForm } from "../../components/pansou-config-form";
 import { DailySweepForm } from "../../components/daily-sweep-form";
 import {
   getAccountConnectedStorages,
+  getAccountScopedSettings,
+  getCurrentAccountId,
   getDailySweepTime,
   getPan115ConnectionStatus,
   getWorkflowRepository,
@@ -69,7 +71,7 @@ export default function SettingsPage() {
 
 async function PreferredLanguageSection() {
   await connection();
-  const repository = getWorkflowRepository();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
   const initial = (await repository.getSetting(PREFERRED_LANGUAGE_SETTING_KEY)) ?? "中文";
 
   return (
@@ -90,7 +92,7 @@ async function PreferredLanguageSection() {
 
 async function QualityPreferenceSection() {
   await connection();
-  const repository = getWorkflowRepository();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
   const initial = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY)) ?? "any";
 
   return (
@@ -111,7 +113,7 @@ async function QualityPreferenceSection() {
 
 async function LlmConfigSection() {
   await connection();
-  const repository = getWorkflowRepository();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
   const baseURL = (await repository.getSetting(LLM_BASE_URL_SETTING_KEY)) ?? "";
   const modelId = (await repository.getSetting(LLM_MODEL_ID_SETTING_KEY)) ?? "";
   const apiKeySet = Boolean((await repository.getSetting(LLM_API_KEY_SETTING_KEY))?.trim());
@@ -134,7 +136,7 @@ async function LlmConfigSection() {
 
 async function TmdbApiKeySection() {
   await connection();
-  const repository = getWorkflowRepository();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
   const apiKeySet = Boolean((await repository.getSetting(TMDB_API_KEY_SETTING_KEY))?.trim());
 
   return (
@@ -155,7 +157,7 @@ async function TmdbApiKeySection() {
 
 async function ResourceProviderSection() {
   await connection();
-  const repository = getWorkflowRepository();
+  const repository = getAccountScopedSettings(await getCurrentAccountId());
   const pansouBaseURL = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrBaseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrApiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());

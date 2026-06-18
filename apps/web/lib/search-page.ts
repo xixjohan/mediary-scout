@@ -10,6 +10,7 @@ import { demoMediaSearchProvider } from "./demo-candidates";
 import { PostgresMediaSearchCache } from "./tmdb-cache";
 import {
   ensureDemoSeeded,
+  getAccountScopedSettings,
   getCurrentAccountId,
   getTmdbAccesses,
   getWorkflowRepository,
@@ -24,7 +25,6 @@ export interface ProductPageData {
 
 let demoSearchCache: InMemoryMediaSearchCache | null = null;
 let durableSearchCache: PostgresMediaSearchCache | null = null;
-let tmdbSearchProvider: MediaSearchProvider | null = null;
 
 export async function getProductPageData(query: string): Promise<ProductPageData> {
   const [search, dashboard] = await Promise.all([getSearchView(query), getLibraryDashboard()]);
@@ -128,6 +128,7 @@ async function getMediaSearchProvider(): Promise<MediaSearchProvider> {
   if (process.env.MEDIA_TRACK_SEARCH_PROVIDER !== "tmdb") {
     return demoMediaSearchProvider;
   }
-  tmdbSearchProvider ??= createTmdbSearchProvider(await getTmdbAccesses(getWorkflowRepository()));
-  return tmdbSearchProvider;
+  // Built per-call scoped to the current account (its TMDB key → global → proxy),
+  // not module-cached — a singleton would lock to the first account's key.
+  return createTmdbSearchProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId())));
 }

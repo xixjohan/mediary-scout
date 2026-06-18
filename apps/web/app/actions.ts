@@ -186,12 +186,14 @@ export async function savePushSettingsAction(
   try {
     const { getWorkflowRepository } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
-    
+
     const keys = ["bark", "serverchan", "wecom", "webhook"];
     for (const key of keys) {
       const value = settings[key]?.trim();
       // Only write channels the user actually typed into. An empty field means
       // "leave unchanged" — the saved key stays masked and intact, never wiped.
+      // NOTE push stays instance-global (notify.ts reads it globally); per-account
+      // push is a follow-up.
       if (value) {
         await repository.setSetting(`push_${key}`, value);
       }
@@ -244,11 +246,11 @@ export async function savePreferredLanguageAction(
   language: string,
 ): Promise<PushSettingsActionResult> {
   try {
-    const { getWorkflowRepository, PREFERRED_LANGUAGE_SETTING_KEY } = await import(
+    const { getWorkflowRepository, getCurrentAccountId, PREFERRED_LANGUAGE_SETTING_KEY } = await import(
       "../lib/workflow-runtime"
     );
     const repository = getWorkflowRepository();
-    await repository.setSetting(PREFERRED_LANGUAGE_SETTING_KEY, language.trim());
+    await repository.setAccountSetting(await getCurrentAccountId(), PREFERRED_LANGUAGE_SETTING_KEY, language.trim());
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
@@ -259,11 +261,11 @@ export async function saveQualityPreferenceAction(
   quality: string,
 ): Promise<PushSettingsActionResult> {
   try {
-    const { getWorkflowRepository, QUALITY_PREFERENCE_SETTING_KEY } = await import(
+    const { getWorkflowRepository, getCurrentAccountId, QUALITY_PREFERENCE_SETTING_KEY } = await import(
       "../lib/workflow-runtime"
     );
     const repository = getWorkflowRepository();
-    await repository.setSetting(QUALITY_PREFERENCE_SETTING_KEY, quality.trim());
+    await repository.setAccountSetting(await getCurrentAccountId(), QUALITY_PREFERENCE_SETTING_KEY, quality.trim());
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
@@ -278,18 +280,20 @@ export async function saveLlmConfigAction(input: {
   try {
     const {
       getWorkflowRepository,
+      getCurrentAccountId,
       LLM_BASE_URL_SETTING_KEY,
       LLM_MODEL_ID_SETTING_KEY,
       LLM_API_KEY_SETTING_KEY,
     } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
-    await repository.setSetting(LLM_BASE_URL_SETTING_KEY, input.baseURL.trim());
-    await repository.setSetting(LLM_MODEL_ID_SETTING_KEY, input.modelId.trim());
+    const accountId = await getCurrentAccountId();
+    await repository.setAccountSetting(accountId, LLM_BASE_URL_SETTING_KEY, input.baseURL.trim());
+    await repository.setAccountSetting(accountId, LLM_MODEL_ID_SETTING_KEY, input.modelId.trim());
     // Only overwrite the key when the user actually typed a new one — a blank
     // submit keeps the stored key (the form never echoes it back).
     const apiKey = input.apiKey.trim();
     if (apiKey) {
-      await repository.setSetting(LLM_API_KEY_SETTING_KEY, apiKey);
+      await repository.setAccountSetting(accountId, LLM_API_KEY_SETTING_KEY, apiKey);
     }
     return { success: true };
   } catch (error) {
@@ -299,12 +303,12 @@ export async function saveLlmConfigAction(input: {
 
 export async function saveTmdbApiKeyAction(apiKey: string): Promise<PushSettingsActionResult> {
   try {
-    const { getWorkflowRepository, TMDB_API_KEY_SETTING_KEY } = await import("../lib/workflow-runtime");
+    const { getWorkflowRepository, getCurrentAccountId, TMDB_API_KEY_SETTING_KEY } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     // Blank submit keeps the stored key (the form never echoes it back).
     const trimmed = apiKey.trim();
     if (trimmed) {
-      await repository.setSetting(TMDB_API_KEY_SETTING_KEY, trimmed);
+      await repository.setAccountSetting(await getCurrentAccountId(), TMDB_API_KEY_SETTING_KEY, trimmed);
     }
     return { success: true };
   } catch (error) {
@@ -314,8 +318,8 @@ export async function saveTmdbApiKeyAction(apiKey: string): Promise<PushSettings
 
 export async function clearTmdbApiKeyAction(): Promise<PushSettingsActionResult> {
   try {
-    const { getWorkflowRepository, TMDB_API_KEY_SETTING_KEY } = await import("../lib/workflow-runtime");
-    await getWorkflowRepository().setSetting(TMDB_API_KEY_SETTING_KEY, "");
+    const { getWorkflowRepository, getCurrentAccountId, TMDB_API_KEY_SETTING_KEY } = await import("../lib/workflow-runtime");
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), TMDB_API_KEY_SETTING_KEY, "");
     return { success: true };
   } catch (error) {
     return { success: false, message: `清除失败：${String(error)}` };
@@ -324,9 +328,9 @@ export async function clearTmdbApiKeyAction(): Promise<PushSettingsActionResult>
 
 export async function savePanSouBaseUrlAction(baseURL: string): Promise<PushSettingsActionResult> {
   try {
-    const { getWorkflowRepository, PANSOU_BASE_URL_SETTING_KEY } = await import("../lib/workflow-runtime");
+    const { getWorkflowRepository, getCurrentAccountId, PANSOU_BASE_URL_SETTING_KEY } = await import("../lib/workflow-runtime");
     // Empty = clear the override → falls back to env / public default.
-    await getWorkflowRepository().setSetting(PANSOU_BASE_URL_SETTING_KEY, baseURL.trim());
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), PANSOU_BASE_URL_SETTING_KEY, baseURL.trim());
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
@@ -338,14 +342,15 @@ export async function saveProwlarrConfigAction(input: {
   apiKey: string;
 }): Promise<PushSettingsActionResult> {
   try {
-    const { getWorkflowRepository, PROWLARR_BASE_URL_SETTING_KEY, PROWLARR_API_KEY_SETTING_KEY } = await import(
+    const { getWorkflowRepository, getCurrentAccountId, PROWLARR_BASE_URL_SETTING_KEY, PROWLARR_API_KEY_SETTING_KEY } = await import(
       "../lib/workflow-runtime"
     );
     const repository = getWorkflowRepository();
-    await repository.setSetting(PROWLARR_BASE_URL_SETTING_KEY, input.baseURL.trim());
+    const accountId = await getCurrentAccountId();
+    await repository.setAccountSetting(accountId, PROWLARR_BASE_URL_SETTING_KEY, input.baseURL.trim());
     const apiKey = input.apiKey.trim();
     if (apiKey) {
-      await repository.setSetting(PROWLARR_API_KEY_SETTING_KEY, apiKey);
+      await repository.setAccountSetting(accountId, PROWLARR_API_KEY_SETTING_KEY, apiKey);
     }
     return { success: true };
   } catch (error) {
@@ -355,12 +360,13 @@ export async function saveProwlarrConfigAction(input: {
 
 export async function clearProwlarrConfigAction(): Promise<PushSettingsActionResult> {
   try {
-    const { getWorkflowRepository, PROWLARR_BASE_URL_SETTING_KEY, PROWLARR_API_KEY_SETTING_KEY } = await import(
+    const { getWorkflowRepository, getCurrentAccountId, PROWLARR_BASE_URL_SETTING_KEY, PROWLARR_API_KEY_SETTING_KEY } = await import(
       "../lib/workflow-runtime"
     );
     const repository = getWorkflowRepository();
-    await repository.setSetting(PROWLARR_BASE_URL_SETTING_KEY, "");
-    await repository.setSetting(PROWLARR_API_KEY_SETTING_KEY, "");
+    const accountId = await getCurrentAccountId();
+    await repository.setAccountSetting(accountId, PROWLARR_BASE_URL_SETTING_KEY, "");
+    await repository.setAccountSetting(accountId, PROWLARR_API_KEY_SETTING_KEY, "");
     return { success: true };
   } catch (error) {
     return { success: false, message: `清除失败：${String(error)}` };

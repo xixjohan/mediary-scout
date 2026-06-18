@@ -75,9 +75,10 @@ let repository: WorkflowRepository | null = null;
 let demoSeedPromise: Promise<void> | null = null;
 let fakeResourceProvider: ResourceProvider | null = null;
 let fakeStorageExecutor: StorageExecutor | null = null;
-let agentModel:
-  | { signature: string; model: ReturnType<typeof createAgentModelFromEnv> }
-  | null = null;
+// Per-signature model cache (keyed by adapter|baseURL|modelId|apiKey) so multiple
+// accounts with different LLM configs each keep their own built model — a single
+// slot would thrash between accounts in multi-user mode.
+const agentModelCache = new Map<string, ReturnType<typeof createAgentModelFromEnv>>();
 
 /** The Postgres connection string for durable dev/prod state. SQLite has been
  *  retired — dev runs on OrbStack Postgres. */
@@ -235,6 +236,30 @@ export async function resolveSessionAccountId(signedCookie: string): Promise<str
  * cookie in a request context; absent/invalid session falls back to the
  * no-data sentinel (fail-closed; middleware redirects to /login first).
  */
+/**
+ * §7 per-account settings facade. Every settings reader (getLlmConfig,
+ * getQualityPreference, getTmdbAccesses, …) takes a `{ getSetting }` source and
+ * already falls back to env. Wrapping the repo so `getSetting(key)` resolves
+ * `account_settings[account] → global app_settings → (reader's env fallback)`
+ * makes ALL of them per-account with ZERO change to the readers themselves:
+ * an account's own saved value wins; otherwise the instance-global value (the
+ * operator's shared default) applies; otherwise env. acct_default (single-user)
+ * has no per-key account_settings, so it reads exactly the global values it
+ * always did — single-user behavior is unchanged.
+ */
+export function getAccountScopedSettings(accountId: string): { getSetting(key: string): Promise<string | null> } {
+  const repository = getWorkflowRepository();
+  return {
+    async getSetting(key: string): Promise<string | null> {
+      const own = await repository.getAccountSetting(accountId, key);
+      if (own !== null && own !== "") {
+        return own;
+      }
+      return repository.getSetting(key);
+    },
+  };
+}
+
 export async function getCurrentAccountId(): Promise<string> {
   if (!isMultiUserEnabled()) {
     return DEFAULT_ACCOUNT_ID;
@@ -368,9 +393,19 @@ export async function runStartupMigrations(): Promise<void> {
  */
 function buildAccountContextResolver(): ResolveAccountWorkerContext {
   return async (accountId: string) => {
+    // Per-account settings (account_settings → global → env) drive the agent
+    // model, resource providers, language and quality — so each user's
+    // acquisition searches with THEIR config (operator's global/env is the
+    // shared fallback when an account hasn't set its own).
+    const scoped = getAccountScopedSettings(accountId);
     const parents = await getWorkerStorageParents(accountId);
+    const { model, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
     return {
       storage: await getWorkerStorageExecutor(accountId),
+      resourceProvider: await getWorkerResourceProvider(scoped),
+      model,
+      ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
+      ...(qualityPreference === undefined ? {} : { qualityPreference }),
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
@@ -588,7 +623,7 @@ export async function movieTargetFromTmdbId(
     return prepareMovieTarget({
       tmdbId,
       qualityPreference: defaultQuality(),
-      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getWorkflowRepository())),
+      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()))),
     });
   }
   const candidate = findDemoCandidateByTmdbId(tmdbId);
@@ -703,7 +738,7 @@ export async function queueCandidateSeries(candidateId: string): Promise<Candida
     const target = await prepareSeriesTarget({
       tmdbId: parsed.tmdbId,
       qualityPreference: defaultQuality(),
-      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getWorkflowRepository())),
+      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()))),
     });
     const request = await queueSeriesInitialization({
       title: target.title,
@@ -854,7 +889,7 @@ function tmdbSeasonMetadataSync(): SeasonMetadataSync | undefined {
       mediaType: "tv",
       seasonNumber,
       qualityPreference: defaultQuality(),
-      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getWorkflowRepository())),
+      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()))),
     });
     return {
       latestAiredEpisode: target.season.latestAiredEpisode,
@@ -888,7 +923,7 @@ async function trackingTargetFromCandidateId(candidateId: string): Promise<{
       seasonNumber: parsed.seasonNumber,
       qualityPreference: defaultQuality(),
       storageDirectoryId: storageDirectoryIdForCandidate(candidateId),
-      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getWorkflowRepository())),
+      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()))),
     });
   }
 
@@ -951,12 +986,14 @@ function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber
   };
 }
 
-async function getWorkerResourceProvider(): Promise<ResourceProvider> {
+async function getWorkerResourceProvider(
+  settings: { getSetting(key: string): Promise<string | null> } = getWorkflowRepository(),
+): Promise<ResourceProvider> {
   if (process.env.MEDIA_TRACK_WORKFLOW_ADAPTER === "pansou") {
     const providers: Array<{ name: string; provider: ResourceProvider }> = [
-      { name: "pansou", provider: new PanSouResourceProvider({ baseURL: await getPanSouBaseUrl(getWorkflowRepository()) }) },
+      { name: "pansou", provider: new PanSouResourceProvider({ baseURL: await getPanSouBaseUrl(settings) }) },
     ];
-    const prowlarr = await getProwlarrConfig(getWorkflowRepository());
+    const prowlarr = await getProwlarrConfig(settings);
     if (prowlarr.baseURL && prowlarr.apiKey) {
       providers.push({
         name: "prowlarr",
@@ -1099,16 +1136,15 @@ async function getAgentModel(repository: {
     ...(baseURL === undefined ? {} : { baseURL }),
     ...(modelId === undefined ? {} : { modelId }),
   };
-  // Rebuild the cached model whenever adapter OR resolved config changes (so a
-  // Settings edit takes effect without a restart).
+  // Cache per resolved config signature (so a Settings edit takes effect without
+  // a restart AND different accounts' models coexist).
   const signature = `${adapter}|${baseURL ?? ""}|${modelId ?? ""}|${apiKey ?? ""}`;
-  if (agentModel?.signature !== signature) {
-    agentModel = {
-      signature,
-      model: adapter === "vercel-ai" ? createAgentModel(resolved) : createStubAcquisitionModel(),
-    };
+  let model = agentModelCache.get(signature);
+  if (!model) {
+    model = adapter === "vercel-ai" ? createAgentModel(resolved) : createStubAcquisitionModel();
+    agentModelCache.set(signature, model);
   }
-  return { model: agentModel.model, preferredLanguage, qualityPreference };
+  return { model, preferredLanguage, qualityPreference };
 }
 
 function fakeTransferOutcomes() {
