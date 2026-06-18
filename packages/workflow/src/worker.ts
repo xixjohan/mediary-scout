@@ -42,6 +42,7 @@ function storageParentForTitle(
 async function resolveWorkerDeps(
   resolve: ResolveAccountWorkerContext | undefined,
   accountId: string,
+  connectedStorageId: string | null,
   base: AccountWorkerContext & {
     storage: StorageExecutor;
     resourceProvider: ResourceProvider;
@@ -57,7 +58,7 @@ async function resolveWorkerDeps(
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
 }> {
-  const ctx = resolve ? await resolve(accountId) : {};
+  const ctx = resolve ? await resolve(accountId, connectedStorageId) : {};
   return {
     storage: ctx.storage ?? base.storage,
     resourceProvider: ctx.resourceProvider ?? base.resourceProvider,
@@ -99,7 +100,10 @@ export interface AccountWorkerContext {
   moviesParentDirectoryId?: string;
 }
 
-export type ResolveAccountWorkerContext = (accountId: string) => Promise<AccountWorkerContext>;
+export type ResolveAccountWorkerContext = (
+  accountId: string,
+  connectedStorageId?: string | null,
+) => Promise<AccountWorkerContext>;
 
 export type QueuedType2WorkerResult =
   | {
@@ -138,7 +142,7 @@ export async function runQueuedType2Workflow(input: {
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, input);
+  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
 
   try {
     const result = await runType2InitializationV2AndPersist({
@@ -255,7 +259,7 @@ export async function runScheduledType3Monitoring(input: {
   const trackedStates = await input.repository.listAllTrackedSeasonStates();
 
   for (const state of trackedStates) {
-    const deps = await resolveWorkerDeps(input.resolveAccountContext, state.accountId, input);
+    const deps = await resolveWorkerDeps(input.resolveAccountContext, state.accountId, state.connectedStorageId, input);
     // Patrol dispatches by title.type: a film needs the MOVIE agent, not the
     // TV/anime agent (different semantics). (未上映/reserved films aren't tracked
     // yet; the air-time gate lands with that product state.)
@@ -547,7 +551,7 @@ export async function runQueuedMovieAcquisition(input: {
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, input);
+  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
 
   try {
     const result = await runMovieAcquisitionV2AndPersist({
@@ -609,7 +613,7 @@ export async function runQueuedSeriesInitialization(input: {
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, input);
+  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
 
   const queuedEvent = claimed.workflowRun.auditEvents.find((event) => event.type === "series_init_queued");
   const seasons = (queuedEvent?.data?.["seasons"] ?? []) as AcquisitionSeasonScope[];

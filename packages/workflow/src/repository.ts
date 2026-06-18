@@ -398,7 +398,13 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
     const cloned = cloneWorkflowValue(input);
     cloned.accountId = cloned.accountId ?? DEFAULT_ACCOUNT_ID;
-    cloned.connectedStorageId = cloned.connectedStorageId ?? null;
+    // Mirror Postgres' upsert (connected_storage_id set on insert, PRESERVED on
+    // conflict): a re-persist that omits the storage (the worker finalize path
+    // doesn't re-thread it) must keep the storage the run was queued onto, not
+    // null it out. This is the storage analogue of §7's account-ownership lesson.
+    const existing = this.workflowRuns.get(cloned.workflowRun.id);
+    cloned.connectedStorageId =
+      cloned.connectedStorageId ?? existing?.connectedStorageId ?? null;
     this.workflowRuns.set(cloned.workflowRun.id, cloned);
     this.episodesBySeason.set(cloned.season.id, cloneWorkflowValue(cloned.episodes));
   }

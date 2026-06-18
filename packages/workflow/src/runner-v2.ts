@@ -34,6 +34,9 @@ interface TvV2Common {
   /** §7: owning account, stamped onto the persisted tracking record so a
    *  multi-user acquisition stays owned by the user who triggered it. */
   accountId?: string;
+  /** Tree model: owning connected storage (drive/workspace), stamped alongside
+   *  accountId so the record stays pinned to the drive it landed on. */
+  connectedStorageId?: string | null;
   workflowRun: WorkflowRunMetadata;
   searchBudget?: number;
   maxSteps?: number;
@@ -76,10 +79,12 @@ async function persistSingleSeason(input: {
   workflowRun: WorkflowRunMetadata;
   repository: WorkflowRepository;
   accountId?: string;
+  connectedStorageId?: string | null;
 }): Promise<void> {
   const seasonResult = input.bridged.seasons[0]!;
   await input.repository.saveWorkflowRunSnapshot({
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
     title: input.title,
     season: seasonResult.season,
     workflowRun: {
@@ -139,6 +144,7 @@ export async function runType2InitializationV2AndPersist(
     workflowRun: { ...input.workflowRun, finishedAt: now() },
     repository: input.repository,
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
   });
   return bridged;
 }
@@ -183,6 +189,7 @@ export async function runType3MonitoringV2AndPersist(
     workflowRun: { ...input.workflowRun, finishedAt: now() },
     repository: input.repository,
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
   });
   return bridged;
 }
@@ -233,6 +240,7 @@ export async function runSeriesInitializationV2AndPersist(
     const seasonRunId = `${input.workflowRun.id}_s${seasonResult.season.seasonNumber}`;
     await input.repository.saveWorkflowRunSnapshot({
       ...(input.accountId ? { accountId: input.accountId } : {}),
+      ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
       title: input.title,
       season: seasonResult.season,
       workflowRun: {
@@ -273,6 +281,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   repository: WorkflowRepository;
   /** §7: owning account for the persisted record (see TvV2Common.accountId). */
   accountId?: string;
+  /** Tree model: owning connected storage (see TvV2Common.connectedStorageId). */
+  connectedStorageId?: string | null;
   workflowRun: WorkflowRunMetadata;
   searchBudget?: number;
   maxSteps?: number;
@@ -305,6 +315,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
 
   await input.repository.saveWorkflowRunSnapshot({
     ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
     title: input.title,
     season: result.season,
     workflowRun: {

@@ -399,16 +399,18 @@ export async function runStartupMigrations(): Promise<void> {
  * PanSou) for v1 — per-account LLM/Prowlarr is a later refinement.
  */
 function buildAccountContextResolver(): ResolveAccountWorkerContext {
-  return async (accountId: string) => {
+  return async (accountId: string, connectedStorageId?: string | null) => {
     // Per-account settings (account_settings → global → env) drive the agent
     // model, resource providers, language and quality — so each user's
     // acquisition searches with THEIR config (operator's global/env is the
-    // shared fallback when an account hasn't set its own).
+    // shared fallback when an account hasn't set its own). The 115 storage +
+    // landing CIDs are resolved per (account, storage) so the run lands on the
+    // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
-    const parents = await getWorkerStorageParents(accountId);
+    const parents = await getWorkerStorageParents(accountId, connectedStorageId);
     const { model, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
     return {
-      storage: await getWorkerStorageExecutor(accountId),
+      storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
       resourceProvider: await getWorkerResourceProvider(scoped),
       model,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
@@ -1048,6 +1050,8 @@ async function getWorkerResourceProvider(
  *  connected_storages record. null when the account hasn't connected a 115 yet
  *  (then the worker falls back to the legacy env cookie / env CIDs). */
 interface AccountStorageCredentials {
+  id: string;
+  status: "active" | "frozen";
   cookie: string;
   rootCid: string | null;
   moviesCid: string | null;
@@ -1057,15 +1061,23 @@ interface AccountStorageCredentials {
 
 async function getAccountStorageCredentials(
   accountId: string,
+  connectedStorageId?: string | null,
 ): Promise<AccountStorageCredentials | null> {
   try {
     const storages = await getWorkflowRepository().listConnectedStorages(accountId);
-    const pan115 = storages.find((storage) => storage.provider === "pan115");
+    // Tree model: when a specific drive is pinned (the run's connected_storage_id),
+    // resolve THAT drive; otherwise the account's first pan115 drive (single-drive
+    // / primary). Never silently fall through to another drive.
+    const pan115 = connectedStorageId
+      ? storages.find((storage) => storage.id === connectedStorageId && storage.provider === "pan115")
+      : storages.find((storage) => storage.provider === "pan115");
     const cookie = (pan115?.payload as { cookie?: string } | null)?.cookie?.trim();
     if (!pan115 || !cookie) {
       return null;
     }
     return {
+      id: pan115.id,
+      status: pan115.status,
       cookie,
       rootCid: pan115.rootCid,
       moviesCid: pan115.moviesCid,
@@ -1087,10 +1099,11 @@ async function getAccountStorageCredentials(
  */
 async function getWorkerStorageExecutor(
   accountId: string = DEFAULT_ACCOUNT_ID,
+  connectedStorageId?: string | null,
 ): Promise<StorageExecutor> {
   const adapter = process.env.MEDIA_TRACK_STORAGE_ADAPTER ?? "fake";
   if (adapter === "115") {
-    const creds = await getAccountStorageCredentials(accountId);
+    const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
     if (creds) {
       // Scope writes to THIS account's own provisioned dirs — not the global env
       // CIDs (which belong to the default account's drive). Without this, a
@@ -1121,14 +1134,17 @@ async function getWorkerStorageExecutor(
  * connected_storage (set at connect-time directory provision); falls back to the
  * env CIDs when the account has no 115 connection or the adapter is fake.
  */
-async function getWorkerStorageParents(accountId: string = DEFAULT_ACCOUNT_ID): Promise<{
+async function getWorkerStorageParents(
+  accountId: string = DEFAULT_ACCOUNT_ID,
+  connectedStorageId?: string | null,
+): Promise<{
   tv: string;
   anime: string;
   movies: string;
 }> {
   const creds =
     process.env.MEDIA_TRACK_STORAGE_ADAPTER === "115"
-      ? await getAccountStorageCredentials(accountId)
+      ? await getAccountStorageCredentials(accountId, connectedStorageId)
       : null;
   return {
     tv: creds?.tvCid || storageParentDirectoryId(),
