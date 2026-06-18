@@ -517,13 +517,19 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
     await this.ensureSchema();
+    // Instance-wide UNIQUE(provider, provider_uid) ownership: on conflict NEVER
+    // reassign account_id, and only refresh the row when the SAME account owns it
+    // (the WHERE makes a cross-account conflict a no-op — it can't steal or
+    // overwrite another account's 网盘). The binding path rejects first; this is
+    // the DB-level backstop.
     await this.pool.query(
       "INSERT INTO connected_storages " +
         "(id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, created_at) " +
         "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, $11) " +
         "ON CONFLICT (provider, provider_uid) DO UPDATE SET " +
-        "account_id = EXCLUDED.account_id, label = EXCLUDED.label, payload = EXCLUDED.payload, " +
-        "root_cid = EXCLUDED.root_cid, movies_cid = EXCLUDED.movies_cid, tv_cid = EXCLUDED.tv_cid, anime_cid = EXCLUDED.anime_cid",
+        "label = EXCLUDED.label, payload = EXCLUDED.payload, " +
+        "root_cid = EXCLUDED.root_cid, movies_cid = EXCLUDED.movies_cid, tv_cid = EXCLUDED.tv_cid, anime_cid = EXCLUDED.anime_cid " +
+        "WHERE connected_storages.account_id = EXCLUDED.account_id",
       [
         row.id,
         row.accountId,

@@ -207,7 +207,16 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   }
 
   async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
-    this.connectedStorages.set(connectedStorageKey(row.provider, row.providerUid), {
+    const key = connectedStorageKey(row.provider, row.providerUid);
+    const existing = this.connectedStorages.get(key);
+    // Instance-wide UNIQUE(provider, provider_uid) ownership: a different account
+    // can NEVER take over (or overwrite) a 网盘 already bound to someone else.
+    // The binding path (resolveStorageBinding) rejects first; this is the DB-level
+    // backstop so the primitive itself can't be used to steal ownership.
+    if (existing && existing.accountId !== row.accountId) {
+      return;
+    }
+    this.connectedStorages.set(key, {
       id: row.id,
       accountId: row.accountId,
       provider: row.provider,

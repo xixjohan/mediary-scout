@@ -1,9 +1,16 @@
-// §7 form B — REAL end-to-end acquisition e2e (fully automated, no dev server).
+// §7 form B — REAL acquisition / multi-account-invariant e2e (fully automated).
 // Drives the REAL worker (runNextQueuedWorkflow) against the REAL 115 / PanSou /
 // agent, ONLY touching the TEST 115 roots (env MEDIA_TRACK_*_PARENT_CID).
 //
-//   npx tsx scripts/multi-account-acquire-e2e.mts single   # single-user (acct_default)
-//   npx tsx scripts/multi-account-acquire-e2e.mts multi     # bob uses bob's own 115 creds
+//   npx tsx scripts/multi-account-acquire-e2e.mts single   # single-user real acquisition
+//   npx tsx scripts/multi-account-acquire-e2e.mts multi     # multi-account 唯一性 invariant
+//
+// NOTE on "multi": the spec forbids two accounts binding the SAME physical 115
+// (UNIQUE(provider, provider_uid); 他账号已绑=拒绝). With only ONE 115 account a
+// second account therefore CANNOT bind it and CANNOT acquire — so this mode
+// verifies the REJECTION invariant + the DB ownership backstop (the things that
+// ARE provable with one 115). A real second-account transfer needs a SECOND
+// physical 115 account → user-driven.
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import pg from "pg";
@@ -46,16 +53,13 @@ async function cleanupTitle(titleId: string) {
   await pool.query("DELETE FROM tracked_seasons WHERE media_title_id=$1", [titleId]);
 }
 
-/** Drive the real worker until the target run reaches a terminal status. */
 async function driveUntilTerminal(runId: string, accountId: string, label: string) {
   for (let i = 0; i < 4; i++) {
     const result = await rt.runNextQueuedWorkflow();
     console.log(`  [${label}] worker tick ${i + 1}: ${JSON.stringify(result)}`);
     const snap = await repo.getWorkflowRunSnapshot(runId, accountId);
     const status = snap?.workflowRun.status;
-    if (status && status !== "queued" && status !== "running") {
-      return snap;
-    }
+    if (status && status !== "queued" && status !== "running") return snap;
     if (result.status === "idle") break;
   }
   return repo.getWorkflowRunSnapshot(runId, accountId);
@@ -78,46 +82,39 @@ if (mode === "single") {
   ok("run reached terminal status", !!snap && snap.workflowRun.status !== "queued" && snap.workflowRun.status !== "running");
   ok("movie actually obtained (real 115 transfer)", (snap?.obtainedEpisodes.length ?? 0) > 0);
 } else {
-  console.log("=== MULTI-USER real acquisition (bob uses bob's 115 creds) ===");
+  console.log("=== MULTI-ACCOUNT 唯一性 invariant (one physical 115) ===");
   const bobId = "acct_bob_e2e";
   const cookie = (await repo.getSetting("pan115.cookie"))?.trim();
-  if (!cookie) throw new Error("no 115 cookie in DB to seed bob with");
+  if (!cookie) throw new Error("no 115 cookie in DB");
+  const realUid = wf.parsePan115Uid(cookie) ?? "pan115_default";
+
+  // acct_default already owns this physical 115 (from the startup migration) —
+  // that's the setup that makes the invariant testable with ONE 115 account.
+  const ownerConn = await repo.findConnectedStorageByUid("pan115", realUid);
+  ok(`acct_default owns the only physical 115 (uid ${realUid})`, ownerConn?.accountId === "acct_default");
+
   // fresh bob
-  await pool.query("DELETE FROM connected_storages WHERE account_id=$1 OR provider_uid=$2", [bobId, "bob_e2e_uid"]);
+  await pool.query("DELETE FROM connected_storages WHERE account_id=$1", [bobId]);
   await pool.query("DELETE FROM accounts WHERE id=$1", [bobId]);
   await repo.createAccount({ id: bobId, username: "bob_e2e", passwordHash: "", groupId: null, isOwner: false, createdAt: new Date().toISOString() });
-  // bob's connected 115: SAME real cookie (distinct test uid to dodge the global
-  // uniqueness already held by acct_default), TEST CIDs as landing dirs.
-  await repo.upsertConnectedStorage({
-    id: "cs_bob_e2e", accountId: bobId, provider: "pan115", providerUid: "bob_e2e_uid",
-    payload: { cookie }, createdAt: new Date().toISOString(),
-    rootCid: process.env.MEDIA_TRACK_115_TEST_ROOT_CID ?? null,
-    moviesCid: process.env.MEDIA_TRACK_MOVIES_PARENT_CID ?? null,
-    tvCid: process.env.MEDIA_TRACK_TV_PARENT_CID ?? null,
-    animeCid: process.env.MEDIA_TRACK_ANIME_PARENT_CID ?? null,
-  });
-  ok("bob has a pan115 connection with real cookie", ((await repo.listConnectedStorages(bobId))[0] as { payload?: { cookie?: string } })?.payload?.cookie === cookie);
 
-  const id = await tmdbId("movie", "流浪地球");
-  const titleId = `tmdb_movie_${id}`;
-  await cleanupTitle(titleId);
-  const target = await rt.movieTargetFromTmdbId(id);
-  if (!target) throw new Error("movie target resolve failed");
-  // Queue OWNED BY BOB (the worker must resolve bob's creds for it).
-  const runId = `run_bob_e2e_${id}`;
-  const queued = await wf.queueMovieAcquisition({ title: target.title, keyword: target.keyword, repository: repo, accountId: bobId, createWorkflowRunId: () => runId });
-  console.log("queued (bob) →", queued);
-  ok("queued under bob", queued.status === "queued");
+  // INVARIANT 1 — binding decision REJECTS bob binding the same physical 115.
+  const decision = wf.resolveStorageBinding({ provider: "pan115", providerUid: realUid, accountId: bobId, existing: ownerConn });
+  ok("binding decision rejects bob (他账号已绑=拒绝)", decision.action === "reject" && (decision as { ownerAccountId?: string }).ownerAccountId === "acct_default");
 
-  const snap = await driveUntilTerminal(runId, bobId, "multi");
-  console.log("final:", { accountId: snap?.accountId, status: snap?.workflowRun.status, obtained: snap?.obtainedEpisodes });
-  ok("run owned by bob (not default)", snap?.accountId === bobId);
-  ok("default account cannot see bob's run", (await repo.getWorkflowRunSnapshot(runId, "acct_default")) === null);
-  ok("run reached terminal status", !!snap && snap.workflowRun.status !== "queued" && snap.workflowRun.status !== "running");
-  ok("movie obtained via bob's creds (real 115 transfer)", (snap?.obtainedEpisodes.length ?? 0) > 0);
+  // INVARIANT 2 — DB backstop: even calling the repo primitive directly, bob can
+  // NOT steal ownership or overwrite acct_default's cookie.
+  await repo.upsertConnectedStorage({ id: "cs_bob_steal", accountId: bobId, provider: "pan115", providerUid: realUid, payload: { cookie: "EVIL" }, createdAt: new Date().toISOString() });
+  const after = await repo.findConnectedStorageByUid("pan115", realUid);
+  ok("repo primitive does NOT let bob steal ownership", after?.accountId === "acct_default");
+  ok("repo primitive does NOT overwrite owner's cookie", (after?.payload as { cookie?: string })?.cookie === cookie);
+  ok("bob ends up with zero connected drives (bind refused)", (await repo.listConnectedStorages(bobId)).length === 0);
 
-  // cleanup bob (leave the global media_title; remove bob's account/conn/runs)
-  await cleanupTitle(titleId);
+  console.log("\nNOTE: a REAL second-account ACQUISITION needs a SECOND physical 115 account.");
+  console.log("The same 115 can never be bound twice (proven above). With one 115 the");
+  console.log("invariant + ownership backstop are verified here; data isolation by");
+  console.log("verify-multi-user-flow.mjs; per-account credential RESOLUTION by worker.test.");
+
   await pool.query("DELETE FROM connected_storages WHERE account_id=$1", [bobId]);
   await pool.query("DELETE FROM accounts WHERE id=$1", [bobId]);
   console.log("(bob cleaned up)");

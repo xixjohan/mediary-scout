@@ -122,6 +122,41 @@ describe("account scoping (InMemory)", () => {
     expect(await repo.getAccountSetting("acct_a1", "missing")).toBeNull();
   });
 
+  it("upsertConnectedStorage never lets a second account steal an existing 网盘 (UNIQUE provider,uid)", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.upsertConnectedStorage({
+      id: "cs_a",
+      accountId: "a1",
+      provider: "pan115",
+      providerUid: "U",
+      payload: { cookie: "c1" },
+      createdAt: "t",
+    });
+    // a2 tries to bind the SAME physical 网盘 (same provider+uid) → must NOT steal
+    // ownership or overwrite a1's cookie (spec: 他账号已绑 = 拒绝).
+    await repo.upsertConnectedStorage({
+      id: "cs_b",
+      accountId: "a2",
+      provider: "pan115",
+      providerUid: "U",
+      payload: { cookie: "c2" },
+      createdAt: "t2",
+    });
+    const found = await repo.findConnectedStorageByUid("pan115", "U");
+    expect(found?.accountId).toBe("a1");
+    expect((found?.payload as { cookie: string }).cookie).toBe("c1");
+    // a1 re-scanning its OWN 网盘 still refreshes the cookie.
+    await repo.upsertConnectedStorage({
+      id: "cs_a",
+      accountId: "a1",
+      provider: "pan115",
+      providerUid: "U",
+      payload: { cookie: "c3" },
+      createdAt: "t",
+    });
+    expect(((await repo.findConnectedStorageByUid("pan115", "U"))?.payload as { cookie: string }).cookie).toBe("c3");
+  });
+
   it("connected storage uniqueness: lookup by (provider, uid) returns the owner", async () => {
     const repo = new InMemoryWorkflowRepository();
     await repo.upsertConnectedStorage({
