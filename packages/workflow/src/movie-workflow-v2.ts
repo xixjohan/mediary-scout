@@ -44,6 +44,8 @@ export interface RunMovieAcquisitionV2Request {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
+  storageProvider?: string;
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
@@ -84,6 +86,7 @@ export async function runMovieAcquisitionV2(
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
+    ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });

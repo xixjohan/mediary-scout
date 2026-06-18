@@ -56,6 +56,26 @@ transferCandidate returns the TRUE materialized files (the system rereads for yo
   - Does not cover → treat it as a dead candidate, clean its staging residue with deleteFiles, try the next.
 - For an ongoing show's just-aired episode, a black-box resource whose publish time predates that episode's air time almost certainly does NOT contain it — do not bet on it.`;
 
+const DEAD_LINKS_BLACK_BOX_QUARK = `# Dead links, 转存, and black-box resources (夸克网盘)
+
+## How transfer works on THIS drive (夸克)
+The drive is 夸克网盘. Every candidate is a 夸克分享链 (pan.quark.cn/s/<id>) — a 转存分享 (the 115-秒传 equivalent): the system exchanges the share token, lists the share, and saves its files into staging. transferCandidate returns the TRUE materialized files (the system rereads for you). Trust THAT, not your prediction.
+
+## 无磁力 (this is the key difference from 115)
+夸克 has NO magnet / offline-download web API. So there are NO magnet candidates here (the resource provider only surfaces 夸克分享链), and a magnet would fail LOUD ("QUARK_NO_MAGNET") if ever forced. There is therefore NO "magnet silently fails / wait for download" nuance at all — every candidate is an instant 转存分享 that either lands or fails loud.
+
+## Fail-loud (a dead / expired / wrong share)
+A 夸克分享 fails LOUD with a clear reason — switch to another covering candidate:
+- "分享不存在" (code 41006), "分享已取消 / 已失效 / 已过期", "提取码错误 / 需要提取码". All = dead.
+A dead link is the NORM, never a reason to give up — try the next 夸克分享 that covers the need. For a movie, transferUntilLanded over your ranked 夸克分享 burns through the dead ones automatically (it relies on this loud failure, exactly like the 115 path).
+
+## Black-box gate (same discipline as 115)
+"Transparent" = the title states size / resolution / episodes / release group. "Black-box / opaque" = a bare name or a vague bundle.
+- If a TRANSPARENT 夸克分享 clearly covers the need, select ONLY it and STOP. Do NOT also transfer opaque ones "just in case".
+- ONLY when ZERO transparent candidate covers may you fall back to a black-box one. When you do, your VERY NEXT step after it lands MUST be inspectStaging to VERIFY it actually holds the target — black-box coverage is UNPROVEN until you read the real files.
+  - Verified to cover → process it (move / dedup / mark) and finish. Do NOT keep searching for a "better" one.
+  - Does not cover → treat it as a dead candidate, clean its staging residue with deleteFiles, try the next.`;
+
 const DEDUP = `# Deduplication (keep the larger, by real size)
 
 Overlapping ranges (1-10, 8-13) or a fuller pack on top of what a season already has WILL create duplicate episodes once you extract. When the same episode has more than one file:
@@ -177,9 +197,29 @@ export type SkillSectionName = keyof typeof SECTIONS;
 
 export const SKILL_SECTION_NAMES = Object.keys(SECTIONS) as SkillSectionName[];
 
-/** Read one section of the skill manual on demand. Unknown name → a clear error
- *  string the agent can read and recover from (lists the valid sections). */
-export function readSkillSection(section: string): string {
+/**
+ * The brand-specific transfer / dead-links / black-box manual. The transfer model
+ * differs by drive brand (115 秒传/magnet vs 夸克 转存分享链/无磁力), so the
+ * "dead-links-black-box" section the agent reads is selected by the run's drive
+ * provider. Used both as that on-demand section and as a standalone export.
+ */
+export function getStorageSkill(provider: string): string {
+  if (provider === "quark") {
+    return DEAD_LINKS_BLACK_BOX_QUARK;
+  }
+  if (provider === "pan115") {
+    return DEAD_LINKS_BLACK_BOX;
+  }
+  throw new Error(`unknown storage brand: ${provider}`);
+}
+
+/** Read one section of the skill manual on demand, for the run's drive brand
+ *  (defaults to 115). The "dead-links-black-box" section is brand-specific; the
+ *  rest are shared. Unknown name → a clear error string the agent can recover from. */
+export function readSkillSection(section: string, provider: string = "pan115"): string {
+  if (section === "dead-links-black-box") {
+    return getStorageSkill(provider);
+  }
   const body = (SECTIONS as Record<string, string>)[section];
   if (body === undefined) {
     return `Unknown skill section "${section}". Available sections: ${SKILL_SECTION_NAMES.join(", ")}.`;

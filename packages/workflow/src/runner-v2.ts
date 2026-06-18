@@ -43,6 +43,8 @@ interface TvV2Common {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
+  storageProvider?: string;
   /**
    * Wall clock for the run. Drives the engine's timestamps (including the
    * terminal notification's `createdAt`) AND the persisted `finishedAt`, which
@@ -63,12 +65,14 @@ function passthrough(input: TvV2Common): {
   maxSteps?: number;
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  storageProvider?: string;
 } {
   return {
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
+    ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
   };
 }
 
@@ -289,6 +293,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   preferredLanguage?: string;
   /** Global quality preference ("high"/"medium"); undefined = 不限 (no guidance). */
   qualityPreference?: "high" | "medium";
+  /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
+  storageProvider?: string;
   /** See TvV2Common.now — finishedAt is stamped post-run from this clock. */
   now?: () => string;
 }): Promise<MovieWorkflowResult> {
@@ -311,6 +317,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
     ...(input.preferredLanguage === undefined ? {} : { preferredLanguage: input.preferredLanguage }),
     ...(input.qualityPreference === undefined ? {} : { qualityPreference: input.qualityPreference }),
+    ...(input.storageProvider === undefined ? {} : { storageProvider: input.storageProvider }),
   });
 
   await input.repository.saveWorkflowRunSnapshot({

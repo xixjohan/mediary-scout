@@ -452,6 +452,7 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
       resourceProvider: await getWorkerResourceProvider(scoped, driveProvider),
+      storageProvider: driveProvider,
       model,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),

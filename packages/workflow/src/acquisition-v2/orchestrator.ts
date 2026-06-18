@@ -49,6 +49,8 @@ export interface RunAcquisitionV2Request {
   searchHints?: string;
   /** Rendered quality-preference guidance (召回后选片优先级), injected into the prompt. */
   qualityGuidance?: string;
+  /** The run's drive brand — selects the brand transfer model + dead-links section. */
+  storageProvider?: string;
   /** Filters known-dead candidates from search results before the agent sees them,
    *  and records newly-proven-dead links from failed transfers (#15). */
   deadLinkStore?: DeadLinkStore;
@@ -104,6 +106,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
+    ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   };
 

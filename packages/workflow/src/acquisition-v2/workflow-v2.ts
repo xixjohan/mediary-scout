@@ -44,6 +44,8 @@ export interface RunAcquisitionV2WorkflowRequest {
   preferredLanguage?: string;
   searchHints?: string;
   qualityGuidance?: string;
+  /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
+  storageProvider?: string;
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
 }
@@ -128,6 +130,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
+    ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });

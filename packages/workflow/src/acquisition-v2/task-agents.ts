@@ -56,6 +56,17 @@ export interface TaskAgentPromptOptions {
   /** Rendered quality-preference guidance (召回后选片优先级, from getQualityGuidance);
    *  "" / undefined = 不限 → no quality block injected. */
   qualityGuidance?: string;
+  /** The run's drive brand ("pan115" | "quark") — selects the brand transfer model
+   *  in the prompt and the brand-specific dead-links skill section. Default 115. */
+  storageProvider?: string;
+}
+
+/** A brand-specific transfer-model note. 夸克 differs from 115 (转存分享链 / 无磁力),
+ *  so make that explicit; 115 keeps the existing in-prompt guidance (no extra line). */
+function transferModelLine(options: TaskAgentPromptOptions): string {
+  return options.storageProvider === "quark"
+    ? `\nTRANSFER MODEL — 夸克网盘 (this drive): every candidate is a 夸克分享链 (转存分享链, the 秒传 equivalent). 夸克 has NO magnet / offline-download API, so there are NO magnet candidates and a magnet would fail loud (QUARK_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已取消 / 已过期 / 提取码错误) — switch to the next covering 夸克分享. Read the "dead-links-black-box" skill section: on this drive it is the 夸克 version.`
+    : "";
 }
 
 function languageLine(options: TaskAgentPromptOptions): string {
@@ -99,6 +110,7 @@ Dead links & resource quality: a 115 share that transfers WITHOUT error has land
 
 Opaque (black-box) titles are a LAST resort — prefer candidates whose titles transparently state episodes/quality. For an ongoing show's just-aired episode, a black-box resource whose PUBLISH TIME predates that episode's air time almost certainly does NOT contain it; do not bet on it.
 ${languageLine(options)}
+${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}
 ${LOOP_GUIDANCE}`;
@@ -116,6 +128,7 @@ Single video: reject packs, collections, multi-part, box sets, or anything struc
 
 Dead links are the norm — many 115 shares are expired/cancelled (链接已过期 / 分享已取消 / 错误的链接). When you have RANKED several 115-share candidates that are all the SAME target film (best resource first), hand that ORDERED list to transferUntilLanded({candidateIds:[...]}): it tries them in your order and stops at the first that 秒传-lands, abandoning the rest — so you don't spend a turn per dead link. It is 115-shares ONLY and the SET must be your vetted choice (a keyword search mixes in same-named DIFFERENT works — e.g. a variety show or an unrelated cartoon — which you must exclude FIRST). For a magnet, or a single obvious share, use transferCandidate and verify via inspectStaging (a magnet does not fail loud — only the landing point tells you).
 ${languageLine(options)}
+${transferModelLine(options)}
 ${searchHintsBlock(options)}
 ${qualityGuidanceBlock(options)}
 Your loop (you drive it; the system only orchestrates the tool calls). A MOVIE is simple — there is NO season distribution and NO separate staging to discard (the film lands in the movie directory and flattenMovie cleans the wrapper in place). At EVERY decision point lay out Evidence → Facts → Decision (read your skill's "protocol" section); once a transfer has LANDED, do NOT keep searching/transferring — verify and finish.
@@ -184,6 +197,7 @@ If one pack covers multiple seasons, distribute its files in ONE plan with a mov
     model,
     system: buildTvAnimeSystemPrompt(promptOptions),
     prompt,
+    ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
   });
@@ -200,6 +214,7 @@ Find the one correct film, transfer it, keep the directory clean, mark it presen
     system: buildMovieSystemPrompt(promptOptions),
     prompt,
     movie: true,
+    ...(promptOptions.storageProvider === undefined ? {} : { storageProvider: promptOptions.storageProvider }),
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
   });

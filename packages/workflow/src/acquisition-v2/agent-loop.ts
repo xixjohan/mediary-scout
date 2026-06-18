@@ -85,15 +85,20 @@ function wrapTools(
  *  coverage). */
 export function buildSandboxToolSet(
   sandbox: TaskSandbox,
-  options: { movie?: boolean; onToolCall?: (toolName: string, args: Record<string, unknown>) => void } = {},
+  options: {
+    movie?: boolean;
+    onToolCall?: (toolName: string, args: Record<string, unknown>) => void;
+    /** The run's drive brand — selects the brand-specific dead-links section. */
+    storageProvider?: string;
+  } = {},
 ): ToolSet {
   const tools: Record<string, unknown> = {
     readSkill: {
       description:
-        "Read a section of your domain skill manual ON DEMAND — the hard-won playbook for HOW to act. Sections: protocol, dead-links-black-box, dedup, movie, tv, mistakes. Read your sections before you act, and re-read the relevant one the moment its situation arises. Acting from memory instead of the skill is how the old agent hammered 115 and corrupted libraries.",
+        "Read a section of your domain skill manual ON DEMAND — the hard-won playbook for HOW to act. Sections: protocol, dead-links-black-box, dedup, movie, tv, mistakes. Read your sections before you act, and re-read the relevant one the moment its situation arises. Acting from memory instead of the skill is how the old agent hammered the drive and corrupted libraries.",
       inputSchema: z.object({ section: z.string() }),
       execute: (args: { section: string }) =>
-        Promise.resolve({ section: args.section, body: readSkillSection(args.section) }),
+        Promise.resolve({ section: args.section, body: readSkillSection(args.section, options.storageProvider) }),
     },
     searchResources: {
       description:
@@ -193,6 +198,8 @@ export interface AcquisitionAgentRequest {
   maxSteps?: number;
   /** Movie task → expose the movie-only transferUntilLanded tool. */
   movie?: boolean;
+  /** The run's drive brand — selects the brand-specific dead-links skill section. */
+  storageProvider?: string;
   /** Per-tool-call live progress for the activity page (cleaned activity + phase
    *  + raw name/args). Best-effort; absent in tests/headless. */
   onProgress?: (event: AgentToolEvent) => void;
@@ -214,6 +221,7 @@ export async function runAcquisitionAgent(
   const onProgress = request.onProgress;
   const tools = buildSandboxToolSet(request.sandbox, {
     movie: request.movie ?? false,
+    ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(onProgress
       ? {
           onToolCall: (toolName: string, args: Record<string, unknown>) =>

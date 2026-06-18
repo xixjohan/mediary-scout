@@ -54,6 +54,7 @@ async function resolveWorkerDeps(
   model: LanguageModel;
   preferredLanguage: string | undefined;
   qualityPreference: "high" | "medium" | undefined;
+  storageProvider: string | undefined;
   storageParentDirectoryId: string | undefined;
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
@@ -65,6 +66,7 @@ async function resolveWorkerDeps(
     model: ctx.model ?? base.model,
     preferredLanguage: ctx.preferredLanguage ?? base.preferredLanguage,
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
+    storageProvider: ctx.storageProvider ?? base.storageProvider,
     storageParentDirectoryId: ctx.storageParentDirectoryId ?? base.storageParentDirectoryId,
     animeStorageParentDirectoryId: ctx.animeStorageParentDirectoryId ?? base.animeStorageParentDirectoryId,
     moviesParentDirectoryId: ctx.moviesParentDirectoryId ?? base.moviesParentDirectoryId,
@@ -95,6 +97,8 @@ export interface AccountWorkerContext {
   model?: LanguageModel;
   preferredLanguage?: string;
   qualityPreference?: "high" | "medium";
+  /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
+  storageProvider?: string;
   storageParentDirectoryId?: string;
   animeStorageParentDirectoryId?: string;
   moviesParentDirectoryId?: string;
@@ -158,6 +162,7 @@ export async function runQueuedType2Workflow(input: {
       accountId: claimed.accountId,
       ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
       ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -351,6 +356,7 @@ export async function runScheduledType3Monitoring(input: {
         accountId: state.accountId,
         ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
         ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -413,6 +419,7 @@ async function patrolMovie(args: {
     model: LanguageModel;
     preferredLanguage: string | undefined;
     qualityPreference: "high" | "medium" | undefined;
+    storageProvider: string | undefined;
     moviesParentDirectoryId: string | undefined;
   };
   state: { accountId: string; title: MediaTitle; season: TrackedSeason; episodes: EpisodeState[] };
@@ -474,6 +481,7 @@ async function patrolMovie(args: {
       accountId: state.accountId,
       ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
       ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });
@@ -564,6 +572,7 @@ export async function runQueuedMovieAcquisition(input: {
       accountId: claimed.accountId,
       ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
       ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
       workflowRun: { id: claimed.workflowRun.id, startedAt: claimed.workflowRun.startedAt, finishedAt: null },
       now,
     });
@@ -636,6 +645,7 @@ export async function runQueuedSeriesInitialization(input: {
       accountId: claimed.accountId,
       ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
       ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,

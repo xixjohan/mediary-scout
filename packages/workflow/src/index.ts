@@ -37,6 +37,7 @@ export * from "./acquisition-v2/fake-provider.js";
 export * from "./acquisition-v2/sandbox.js";
 export * from "./acquisition-v2/agent-loop.js";
 export * from "./acquisition-v2/task-agents.js";
+export * from "./acquisition-v2/skill.js";
 export * from "./acquisition-v2/interrogation.js";
 export * from "./acquisition-v2/dead-links.js";
 export * from "./acquisition-v2/search-profile.js";
