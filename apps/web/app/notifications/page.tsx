@@ -51,11 +51,31 @@ const statusMeta: Record<NotificationReportStatus, { label: string; tone: string
   no_coverage: { label: "暂无资源", tone: "amber", icon: CircleSlash },
 };
 
-export default async function NotificationsPage({
+// `searchParams` (the active drive `?w`) is a dynamic input + a DB read; reading it
+// inside a Suspense boundary lets the static app shell prerender instead of the
+// whole route blocking on it (cacheComponents "blocking-route"). Mirrors page.tsx.
+export default function NotificationsPage({
   searchParams,
 }: {
   searchParams: Promise<{ w?: string }>;
 }) {
+  return (
+    <Suspense fallback={<NotificationsShell />}>
+      <NotificationsSurface searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+function NotificationsShell() {
+  return (
+    <div className="app-shell">
+      <AppSidebar active="notifications" />
+      <main className="main product-main" aria-busy="true" />
+    </div>
+  );
+}
+
+async function NotificationsSurface({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return (

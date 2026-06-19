@@ -1,12 +1,33 @@
+import { Suspense } from "react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { ActivityFeed } from "../../components/activity-feed";
 import { resolveGlobalWorkspace } from "../../lib/workflow-runtime";
 
-export default async function ActivityPage({
+// `searchParams` (the active drive `?w`) is a dynamic input + a DB read. Reading it
+// inside a Suspense boundary lets the static app shell prerender instead of the
+// whole route blocking on it (cacheComponents "blocking-route"). Mirrors page.tsx.
+export default function ActivityPage({
   searchParams,
 }: {
   searchParams: Promise<{ w?: string }>;
 }) {
+  return (
+    <Suspense fallback={<ActivityShell />}>
+      <ActivitySurface searchParams={searchParams} />
+    </Suspense>
+  );
+}
+
+function ActivityShell() {
+  return (
+    <div className="app-shell">
+      <AppSidebar active="activity" />
+      <main className="main product-main" aria-busy="true" />
+    </div>
+  );
+}
+
+async function ActivitySurface({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return (

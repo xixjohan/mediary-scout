@@ -28,13 +28,23 @@ import {
   PROWLARR_BASE_URL_SETTING_KEY,
   PROWLARR_API_KEY_SETTING_KEY,
   PANSOU_BASE_URL_SETTING_KEY,
+  resolveGlobalWorkspace,
 } from "../../lib/workflow-runtime";
 import { brandSupportsProwlarr } from "@media-track/workflow";
 
-export default function SettingsPage() {
+export default function SettingsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ w?: string }>;
+}) {
   return (
     <div className="app-shell">
-      <AppSidebar active="settings" />
+      {/* Only the sidebar depends on the active drive (`?w`); wrap just it in
+          Suspense so the static shell + per-section streaming stay intact and the
+          route still prerenders (cacheComponents). Fallback = primary sidebar. */}
+      <Suspense fallback={<AppSidebar active="settings" />}>
+        <SettingsSidebar searchParams={searchParams} />
+      </Suspense>
       <main className="main product-main">
         <div className="section-heading library-heading">
           <div>
@@ -69,6 +79,12 @@ export default function SettingsPage() {
       </main>
     </div>
   );
+}
+
+async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
+  const { w } = await searchParams;
+  const workspace = await resolveGlobalWorkspace(w);
+  return <AppSidebar active="settings" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />;
 }
 
 async function PreferredLanguageSection() {
