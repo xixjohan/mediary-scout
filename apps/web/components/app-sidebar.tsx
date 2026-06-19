@@ -1,9 +1,11 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { Activity, Bell, Film, Library, Settings } from "lucide-react";
 import { globalNavHref } from "@media-track/workflow";
 import { SearchNavLink } from "./search-memory";
 import { ActivityNavBadge } from "./activity-nav-badge";
 import { NotificationsNavBadge } from "./notifications-nav-badge";
+import { WorkspaceSwitcherLoader } from "./workspace-switcher-loader";
 
 export function AppSidebar({
   active,
@@ -31,6 +33,12 @@ export function AppSidebar({
           <span>115 library ops</span>
         </span>
       </div>
+
+      {/* Drive switcher (≥2 drives). In Suspense so its DB read never blocks the
+          static shell, and so the client switcher's useSearchParams() is allowed. */}
+      <Suspense fallback={null}>
+        <WorkspaceSwitcherLoader />
+      </Suspense>
 
       <nav aria-label="主导航">
         <ul className="nav-list">
