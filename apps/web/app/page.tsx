@@ -13,7 +13,12 @@ import {
   type InProgressTitle,
   type LibraryWallEntry,
 } from "../lib/title-hub";
-import { ensureDemoSeeded, getActiveWorkspaceScope, getWorkflowRepository } from "../lib/workflow-runtime";
+import {
+  ensureDemoSeeded,
+  getActiveWorkspaceScope,
+  getRegisteredDriveCount,
+  getWorkflowRepository,
+} from "../lib/workflow-runtime";
 import type { SearchCandidateCard, TrackedSeasonState } from "@media-track/workflow";
 
 export default function Page({
@@ -72,6 +77,7 @@ async function HomeSurface({
   // on the drive you're viewing — not silently on the primary drive. Root route
   // (no storageId) posts to "/" as before.
   const basePath = storageId ? `/w/${storageId}` : "/";
+  const driveCount = await getRegisteredDriveCount();
 
   return (
     <div className="app-shell">
@@ -80,7 +86,7 @@ async function HomeSurface({
       <main className="main product-main">
         {activeTab === "search" ? (
           <section className="search-surface">
-            <RememberQuery query={query} />
+            <RememberQuery query={query} basePath={basePath} />
             <div className="search-hero">
               <div>
                 <h1>搜索</h1>
@@ -98,6 +104,11 @@ async function HomeSurface({
                 </button>
               </form>
             </div>
+            {driveCount >= 2 ? (
+              <p className="panel-note" style={{ marginTop: -4, marginBottom: 4 }}>
+                搜索与获取按网盘隔离 —— 想为某块盘获取资源，请切到该盘后在它的搜索页操作。
+              </p>
+            ) : null}
             <Suspense key={`search-${query}`} fallback={<SearchResultsSkeleton />}>
               <SearchResults query={query} storageId={storageId} />
             </Suspense>

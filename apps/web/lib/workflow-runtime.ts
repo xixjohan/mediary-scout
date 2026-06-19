@@ -307,6 +307,14 @@ export async function resolveGlobalWorkspace(w: string | undefined): Promise<{
   return { accountId, ...resolveWorkspaceFromParam(storages, w) };
 }
 
+/** Count the account's registered drives (115/quark). Used to gate multi-drive
+ *  UI like the search isolation note (only meaningful at ≥2 drives). */
+export async function getRegisteredDriveCount(): Promise<number> {
+  const accountId = await getCurrentAccountId();
+  const storages = await getWorkflowRepository().listConnectedStorages(accountId);
+  return storages.filter((storage) => isRegisteredStorageProvider(storage.provider)).length;
+}
+
 export async function getCurrentAccountId(): Promise<string> {
   if (!isMultiUserEnabled()) {
     return DEFAULT_ACCOUNT_ID;
