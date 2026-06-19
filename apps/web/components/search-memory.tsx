@@ -4,24 +4,23 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { lastQueryKey } from "@media-track/workflow";
 
-const STORAGE_KEY = "media-track.lastQuery";
-
-/** Persists the current search query so navigation can restore it. */
-export function RememberQuery({ query }: { query: string }) {
+/** Persists the current search query (per drive) so navigation can restore it. */
+export function RememberQuery({ query, basePath = "/" }: { query: string; basePath?: string }) {
   useEffect(() => {
     try {
-      sessionStorage.setItem(STORAGE_KEY, query);
+      sessionStorage.setItem(lastQueryKey(basePath), query);
     } catch {
       // storage unavailable — nothing to remember
     }
-  }, [query]);
+  }, [query, basePath]);
   return null;
 }
 
 /**
- * 搜索 nav entry that restores the last query: leaving for 媒体库/通知 and
- * coming back must not reset the result list.
+ * 搜索 nav entry that restores the last query (per drive): leaving for 媒体库/通知
+ * and coming back must not reset the result list.
  */
 export function SearchNavLink({
   active,
@@ -44,7 +43,7 @@ export function SearchNavLink({
         }
         let remembered = "";
         try {
-          remembered = sessionStorage.getItem(STORAGE_KEY) ?? "";
+          remembered = sessionStorage.getItem(lastQueryKey(basePath)) ?? "";
         } catch {
           remembered = "";
         }
