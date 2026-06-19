@@ -67,9 +67,12 @@ async function resolveWorkerDeps(
     preferredLanguage: ctx.preferredLanguage ?? base.preferredLanguage,
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
     storageProvider: ctx.storageProvider ?? base.storageProvider,
-    storageParentDirectoryId: ctx.storageParentDirectoryId ?? base.storageParentDirectoryId,
-    animeStorageParentDirectoryId: ctx.animeStorageParentDirectoryId ?? base.animeStorageParentDirectoryId,
-    moviesParentDirectoryId: ctx.moviesParentDirectoryId ?? base.moviesParentDirectoryId,
+    storageParentDirectoryId:
+      ctx.storageParentDirectoryId ?? base.storageParentDirectoryId,
+    animeStorageParentDirectoryId:
+      ctx.animeStorageParentDirectoryId ?? base.animeStorageParentDirectoryId,
+    moviesParentDirectoryId:
+      ctx.moviesParentDirectoryId ?? base.moviesParentDirectoryId,
   };
 }
 
@@ -114,10 +117,10 @@ export type QueuedType2WorkerResult =
       status: "idle";
     }
   | {
-    status: "ran";
-    workflowRunId: string;
-    workflowStatus: WorkflowStatus;
-  }
+      status: "ran";
+      workflowRunId: string;
+      workflowStatus: WorkflowStatus;
+    }
   | {
       status: "failed";
       workflowRunId: string;
@@ -146,23 +149,39 @@ export async function runQueuedType2Workflow(input: {
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
+  const deps = await resolveWorkerDeps(
+    input.resolveAccountContext,
+    claimed.accountId,
+    claimed.connectedStorageId,
+    input,
+  );
 
   try {
     const result = await runType2InitializationV2AndPersist({
       title: claimed.title,
       season: claimed.season,
       categoryParentId: requireCategoryParent(
-        storageParentForTitle(claimed.title, deps.storageParentDirectoryId, deps.animeStorageParentDirectoryId),
+        storageParentForTitle(
+          claimed.title,
+          deps.storageParentDirectoryId,
+          deps.animeStorageParentDirectoryId,
+        ),
       ),
       resourceProvider: deps.resourceProvider,
       storage: deps.storage,
       model: deps.model,
       repository: input.repository,
       accountId: claimed.accountId,
-      ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
-      ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
-      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
+      connectedStorageId: claimed.connectedStorageId,
+      ...(deps.preferredLanguage === undefined
+        ? {}
+        : { preferredLanguage: deps.preferredLanguage }),
+      ...(deps.qualityPreference === undefined
+        ? {}
+        : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined
+        ? {}
+        : { storageProvider: deps.storageProvider }),
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -179,9 +198,11 @@ export async function runQueuedType2Workflow(input: {
       workflowStatus: result.status,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+    const errorMessage =
+      error instanceof Error ? error.message : "Workflow failed";
     await input.repository.saveWorkflowRunSnapshot({
       accountId: claimed.accountId,
+      connectedStorageId: claimed.connectedStorageId,
       title: claimed.title,
       season: claimed.season,
       workflowRun: {
@@ -264,7 +285,12 @@ export async function runScheduledType3Monitoring(input: {
   const trackedStates = await input.repository.listAllTrackedSeasonStates();
 
   for (const state of trackedStates) {
-    const deps = await resolveWorkerDeps(input.resolveAccountContext, state.accountId, state.connectedStorageId, input);
+    const deps = await resolveWorkerDeps(
+      input.resolveAccountContext,
+      state.accountId,
+      state.connectedStorageId,
+      input,
+    );
     // Patrol dispatches by title.type: a film needs the MOVIE agent, not the
     // TV/anime agent (different semantics). (未上映/reserved films aren't tracked
     // yet; the air-time gate lands with that product state.)
@@ -307,10 +333,14 @@ export async function runScheduledType3Monitoring(input: {
 
     const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
     const startedAt = now();
-    const staleActiveRunStartedBefore = staleStartedBefore(startedAt, input.staleActiveRunTimeoutMs);
+    const staleActiveRunStartedBefore = staleStartedBefore(
+      startedAt,
+      input.staleActiveRunTimeoutMs,
+    );
 
     const reservation = await input.repository.reserveWorkflowRun({
       accountId: state.accountId,
+      connectedStorageId: state.connectedStorageId,
       title: state.title,
       season,
       workflowRun: {
@@ -347,16 +377,27 @@ export async function runScheduledType3Monitoring(input: {
         season,
         episodes,
         categoryParentId: requireCategoryParent(
-          storageParentForTitle(state.title, deps.storageParentDirectoryId, deps.animeStorageParentDirectoryId),
+          storageParentForTitle(
+            state.title,
+            deps.storageParentDirectoryId,
+            deps.animeStorageParentDirectoryId,
+          ),
         ),
         resourceProvider: deps.resourceProvider,
         storage: deps.storage,
         model: deps.model,
         repository: input.repository,
         accountId: state.accountId,
-        ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
-        ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
-      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
+        connectedStorageId: state.connectedStorageId,
+        ...(deps.preferredLanguage === undefined
+          ? {}
+          : { preferredLanguage: deps.preferredLanguage }),
+        ...(deps.qualityPreference === undefined
+          ? {}
+          : { qualityPreference: deps.qualityPreference }),
+        ...(deps.storageProvider === undefined
+          ? {}
+          : { storageProvider: deps.storageProvider }),
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -367,9 +408,11 @@ export async function runScheduledType3Monitoring(input: {
         workflowStatus: result.status,
       });
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+      const errorMessage =
+        error instanceof Error ? error.message : "Workflow failed";
       await input.repository.saveWorkflowRunSnapshot({
         accountId: state.accountId,
+        connectedStorageId: state.connectedStorageId,
         title: state.title,
         season: state.season,
         workflowRun: {
@@ -380,7 +423,10 @@ export async function runScheduledType3Monitoring(input: {
           startedAt,
           finishedAt: now(),
           auditEvents: [
-            { type: "type3_scheduled", message: "Scheduled Type 3 monitoring reserved" },
+            {
+              type: "type3_scheduled",
+              message: "Scheduled Type 3 monitoring reserved",
+            },
             { type: "workflow_failed", message: errorMessage },
           ],
         },
@@ -422,7 +468,13 @@ async function patrolMovie(args: {
     storageProvider: string | undefined;
     moviesParentDirectoryId: string | undefined;
   };
-  state: { accountId: string; title: MediaTitle; season: TrackedSeason; episodes: EpisodeState[] };
+  state: {
+    accountId: string;
+    connectedStorageId: string | null;
+    title: MediaTitle;
+    season: TrackedSeason;
+    episodes: EpisodeState[];
+  };
   now: () => string;
 }): Promise<ScheduledType3Outcome | null> {
   const { input, deps, state, now } = args;
@@ -443,9 +495,13 @@ async function patrolMovie(args: {
 
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
   const startedAt = now();
-  const staleActiveRunStartedBefore = staleStartedBefore(startedAt, input.staleActiveRunTimeoutMs);
+  const staleActiveRunStartedBefore = staleStartedBefore(
+    startedAt,
+    input.staleActiveRunTimeoutMs,
+  );
   const reservation = await input.repository.reserveWorkflowRun({
     accountId: state.accountId,
+    connectedStorageId: state.connectedStorageId,
     title: state.title,
     season: state.season,
     workflowRun: {
@@ -455,7 +511,12 @@ async function patrolMovie(args: {
       trackedSeasonId: state.season.id,
       startedAt,
       finishedAt: null,
-      auditEvents: [{ type: "movie_patrol_scheduled", message: "Scheduled movie patrol reserved" }],
+      auditEvents: [
+        {
+          type: "movie_patrol_scheduled",
+          message: "Scheduled movie patrol reserved",
+        },
+      ],
     },
     episodes: state.episodes,
     resourceSnapshots: [],
@@ -479,17 +540,31 @@ async function patrolMovie(args: {
       model: deps.model,
       repository: input.repository,
       accountId: state.accountId,
-      ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
-      ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
-      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
+      connectedStorageId: state.connectedStorageId,
+      ...(deps.preferredLanguage === undefined
+        ? {}
+        : { preferredLanguage: deps.preferredLanguage }),
+      ...(deps.qualityPreference === undefined
+        ? {}
+        : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined
+        ? {}
+        : { storageProvider: deps.storageProvider }),
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });
-    return { trackedSeasonId: state.season.id, status: "ran", workflowRunId, workflowStatus: result.status };
+    return {
+      trackedSeasonId: state.season.id,
+      status: "ran",
+      workflowRunId,
+      workflowStatus: result.status,
+    };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+    const errorMessage =
+      error instanceof Error ? error.message : "Workflow failed";
     await input.repository.saveWorkflowRunSnapshot({
       accountId: state.accountId,
+      connectedStorageId: state.connectedStorageId,
       title: state.title,
       season: state.season,
       workflowRun: {
@@ -500,7 +575,10 @@ async function patrolMovie(args: {
         startedAt,
         finishedAt: now(),
         auditEvents: [
-          { type: "movie_patrol_scheduled", message: "Scheduled movie patrol reserved" },
+          {
+            type: "movie_patrol_scheduled",
+            message: "Scheduled movie patrol reserved",
+          },
           { type: "workflow_failed", message: errorMessage },
         ],
       },
@@ -510,11 +588,19 @@ async function patrolMovie(args: {
       transferAttempts: [],
       notifications: [],
     });
-    return { trackedSeasonId: state.season.id, status: "failed", workflowRunId, errorMessage };
+    return {
+      trackedSeasonId: state.season.id,
+      status: "failed",
+      workflowRunId,
+      errorMessage,
+    };
   }
 }
 
-function staleStartedBefore(nowIso: string, timeoutMs: number | undefined): string | null {
+function staleStartedBefore(
+  nowIso: string,
+  timeoutMs: number | undefined,
+): string | null {
   if (timeoutMs === undefined) {
     return null;
   }
@@ -555,39 +641,68 @@ export async function runQueuedMovieAcquisition(input: {
   resolveAccountContext?: ResolveAccountWorkerContext;
 }): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
-  const claimed = await input.repository.claimNextQueuedWorkflowRun({ kind: "movie_init", now: now() });
+  const claimed = await input.repository.claimNextQueuedWorkflowRun({
+    kind: "movie_init",
+    now: now(),
+  });
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
+  const deps = await resolveWorkerDeps(
+    input.resolveAccountContext,
+    claimed.accountId,
+    claimed.connectedStorageId,
+    input,
+  );
 
   try {
     const result = await runMovieAcquisitionV2AndPersist({
       title: claimed.title,
-      categoryParentId: deps.moviesParentDirectoryId ?? input.moviesParentDirectoryId,
+      categoryParentId:
+        deps.moviesParentDirectoryId ?? input.moviesParentDirectoryId,
       resourceProvider: deps.resourceProvider,
       storage: deps.storage,
       model: deps.model,
       repository: input.repository,
       accountId: claimed.accountId,
-      ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
-      ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
-      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
-      workflowRun: { id: claimed.workflowRun.id, startedAt: claimed.workflowRun.startedAt, finishedAt: null },
+      connectedStorageId: claimed.connectedStorageId,
+      ...(deps.preferredLanguage === undefined
+        ? {}
+        : { preferredLanguage: deps.preferredLanguage }),
+      ...(deps.qualityPreference === undefined
+        ? {}
+        : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined
+        ? {}
+        : { storageProvider: deps.storageProvider }),
+      workflowRun: {
+        id: claimed.workflowRun.id,
+        startedAt: claimed.workflowRun.startedAt,
+        finishedAt: null,
+      },
       now,
     });
-    return { status: "ran", workflowRunId: claimed.workflowRun.id, workflowStatus: result.status };
+    return {
+      status: "ran",
+      workflowRunId: claimed.workflowRun.id,
+      workflowStatus: result.status,
+    };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+    const errorMessage =
+      error instanceof Error ? error.message : "Workflow failed";
     await input.repository.saveWorkflowRunSnapshot({
       accountId: claimed.accountId,
+      connectedStorageId: claimed.connectedStorageId,
       title: claimed.title,
       season: claimed.season,
       workflowRun: {
         ...claimed.workflowRun,
         status: "failed",
         finishedAt: now(),
-        auditEvents: [...claimed.workflowRun.auditEvents, { type: "workflow_failed", message: errorMessage }],
+        auditEvents: [
+          ...claimed.workflowRun.auditEvents,
+          { type: "workflow_failed", message: errorMessage },
+        ],
       },
       episodes: [],
       resourceSnapshots: [],
@@ -595,7 +710,11 @@ export async function runQueuedMovieAcquisition(input: {
       transferAttempts: [],
       notifications: [],
     });
-    return { status: "failed", workflowRunId: claimed.workflowRun.id, errorMessage };
+    return {
+      status: "failed",
+      workflowRunId: claimed.workflowRun.id,
+      errorMessage,
+    };
   }
 }
 
@@ -622,20 +741,34 @@ export async function runQueuedSeriesInitialization(input: {
   if (!claimed) {
     return { status: "idle" };
   }
-  const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
+  const deps = await resolveWorkerDeps(
+    input.resolveAccountContext,
+    claimed.accountId,
+    claimed.connectedStorageId,
+    input,
+  );
 
-  const queuedEvent = claimed.workflowRun.auditEvents.find((event) => event.type === "series_init_queued");
-  const seasons = (queuedEvent?.data?.["seasons"] ?? []) as AcquisitionSeasonScope[];
+  const queuedEvent = claimed.workflowRun.auditEvents.find(
+    (event) => event.type === "series_init_queued",
+  );
+  const seasons = (queuedEvent?.data?.["seasons"] ??
+    []) as AcquisitionSeasonScope[];
 
   try {
     if (seasons.length === 0) {
-      throw new Error("Queued series initialization run is missing its season metadata");
+      throw new Error(
+        "Queued series initialization run is missing its season metadata",
+      );
     }
     const result = await runSeriesInitializationV2AndPersist({
       title: claimed.title,
       seasons,
       categoryParentId: requireCategoryParent(
-        storageParentForTitle(claimed.title, deps.storageParentDirectoryId, deps.animeStorageParentDirectoryId),
+        storageParentForTitle(
+          claimed.title,
+          deps.storageParentDirectoryId,
+          deps.animeStorageParentDirectoryId,
+        ),
       ),
       seasonQualityRecord: claimed.season.qualityPreference,
       resourceProvider: deps.resourceProvider,
@@ -643,9 +776,16 @@ export async function runQueuedSeriesInitialization(input: {
       model: deps.model,
       repository: input.repository,
       accountId: claimed.accountId,
-      ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
-      ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
-      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
+      connectedStorageId: claimed.connectedStorageId,
+      ...(deps.preferredLanguage === undefined
+        ? {}
+        : { preferredLanguage: deps.preferredLanguage }),
+      ...(deps.qualityPreference === undefined
+        ? {}
+        : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined
+        ? {}
+        : { storageProvider: deps.storageProvider }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
@@ -658,13 +798,17 @@ export async function runQueuedSeriesInitialization(input: {
     const firstSeason = result.seasons[0];
     await input.repository.saveWorkflowRunSnapshot({
       accountId: claimed.accountId,
+      connectedStorageId: claimed.connectedStorageId,
       title: claimed.title,
       season: firstSeason?.season ?? claimed.season,
       workflowRun: {
         ...claimed.workflowRun,
         status: result.status,
         finishedAt: now(),
-        auditEvents: [...claimed.workflowRun.auditEvents, ...result.auditEvents],
+        auditEvents: [
+          ...claimed.workflowRun.auditEvents,
+          ...result.auditEvents,
+        ],
       },
       episodes: firstSeason?.episodes ?? [],
       resourceSnapshots: [],
@@ -678,9 +822,11 @@ export async function runQueuedSeriesInitialization(input: {
       workflowStatus: result.status,
     };
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : "Workflow failed";
+    const errorMessage =
+      error instanceof Error ? error.message : "Workflow failed";
     await input.repository.saveWorkflowRunSnapshot({
       accountId: claimed.accountId,
+      connectedStorageId: claimed.connectedStorageId,
       title: claimed.title,
       season: claimed.season,
       workflowRun: {
@@ -698,6 +844,10 @@ export async function runQueuedSeriesInitialization(input: {
       transferAttempts: [],
       notifications: [],
     });
-    return { status: "failed", workflowRunId: claimed.workflowRun.id, errorMessage };
+    return {
+      status: "failed",
+      workflowRunId: claimed.workflowRun.id,
+      errorMessage,
+    };
   }
 }
