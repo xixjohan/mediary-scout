@@ -4,7 +4,7 @@ import Link from "next/link";
 import { Search } from "lucide-react";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { lastQueryKey } from "@media-track/workflow";
+import { lastQueryKey } from "@media-track/workflow/scope";
 
 /** Persists the current search query (per drive) so navigation can restore it. */
 export function RememberQuery({ query, basePath = "/" }: { query: string; basePath?: string }) {

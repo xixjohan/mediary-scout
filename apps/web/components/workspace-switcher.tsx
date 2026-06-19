@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
-import { lastQueryKey, switcherTabHref, workspaceSection } from "@media-track/workflow";
+import { lastQueryKey, switcherTabHref, workspaceSection } from "@media-track/workflow/scope";
 
 export interface WorkspaceTab {
   id: string;
