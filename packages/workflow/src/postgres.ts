@@ -28,6 +28,7 @@ import {
   withDerivedEpisodeSummaries,
   workflowSnapshotFromReservation,
   DuplicateUsernameError,
+  UNSCOPED_STORAGE,
   type WorkflowRunReservationResult,
   type WorkflowRepository,
 } from "./repository.js";
@@ -303,7 +304,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     const snapshot = cloneWorkflowValue(workflowSnapshotFromReservation(input));
     validateWorkflowRunSnapshot(snapshot);
     const accountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
-    const connectedStorageId = snapshot.connectedStorageId ?? null;
+    const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
 
     return this.withTransaction(async (client) => {
       await this.expireStaleActiveWorkflowRuns(client, input);
@@ -335,7 +336,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         return { status: "already_active", snapshot: activeSnapshot };
       }
 
-      const existingEpisodes = await this.selectEpisodeStates(client, snapshot.season.id);
+      const existingEpisodes = await this.selectEpisodeStates(client, snapshot.season.id, connectedStorageId);
       if (input.blockIfEpisodeStatesExist === true && existingEpisodes.length > 0) {
         return { status: "already_has_episode_state", episodes: existingEpisodes };
       }
@@ -477,6 +478,8 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         return { status: "not_cancellable" as const };
       }
       const seasonId = run.trackedSeasonId;
+      // Tree model: the (season, drive) being torn down — never touch another drive.
+      const storageValue = ownerStorage ?? UNSCOPED_STORAGE;
       // The run's own children.
       await client.query("DELETE FROM notifications WHERE workflow_run_id = $1", [workflowRunId]);
       await client.query("DELETE FROM transfer_attempts WHERE workflow_run_id = $1", [workflowRunId]);
@@ -484,21 +487,28 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       await client.query("DELETE FROM resource_snapshots WHERE workflow_run_id = $1", [workflowRunId]);
       await client.query("DELETE FROM workflow_runs WHERE id = $1", [workflowRunId]);
 
-      // Only tear down the tracking when no OTHER run still references the season
-      // (a queued init is the sole run for its fresh season → it's torn down,
-      // vanishing from the library; a re-queued run beside acquired history is not).
+      // Only tear down the tracking when no OTHER run on the SAME (season, drive)
+      // still references it (a queued init is the sole run for its fresh season →
+      // torn down, vanishing from the library; a re-queued run beside acquired
+      // history is not). Scoped to this drive so another drive's tracking survives.
       const others = await client.query(
-        "SELECT 1 FROM workflow_runs WHERE tracked_season_id = $1 LIMIT 1",
-        [seasonId],
+        "SELECT 1 FROM workflow_runs WHERE tracked_season_id = $1 AND connected_storage_id = $2 LIMIT 1",
+        [seasonId, storageValue],
       );
       if (others.rowCount === 0) {
-        await client.query("DELETE FROM episode_states WHERE tracked_season_id = $1", [seasonId]);
+        await client.query(
+          "DELETE FROM episode_states WHERE tracked_season_id = $1 AND connected_storage_id = $2",
+          [seasonId, storageValue],
+        );
         const season = await this.selectOne<TrackedSeason>(
           client,
-          "SELECT payload FROM tracked_seasons WHERE id = $1",
-          [seasonId],
+          "SELECT payload FROM tracked_seasons WHERE id = $1 AND connected_storage_id = $2",
+          [seasonId, storageValue],
         );
-        await client.query("DELETE FROM tracked_seasons WHERE id = $1", [seasonId]);
+        await client.query("DELETE FROM tracked_seasons WHERE id = $1 AND connected_storage_id = $2", [
+          seasonId,
+          storageValue,
+        ]);
         if (season) {
           const siblingSeasons = await client.query(
             "SELECT 1 FROM tracked_seasons WHERE media_title_id = $1 LIMIT 1",
@@ -535,7 +545,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       connectedStorageId: (row.connected_storage_id as string | null | undefined) ?? null,
       title,
       season,
-      episodes: await this.selectEpisodeStates(this.pool, season.id),
+      episodes: await this.selectEpisodeStates(this.pool, season.id, (row.connected_storage_id as string | null) ?? UNSCOPED_STORAGE),
     };
   }
 
@@ -557,7 +567,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         connectedStorageId: (row.connected_storage_id as string | null | undefined) ?? null,
         title: await this.requireTitle(this.pool, season),
         season,
-        episodes: await this.selectEpisodeStates(this.pool, season.id),
+        episodes: await this.selectEpisodeStates(this.pool, season.id, (row.connected_storage_id as string | null) ?? UNSCOPED_STORAGE),
       });
     }
     return states.sort(compareTrackedSeasonStates);
@@ -577,7 +587,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         connectedStorageId: (row.connected_storage_id as string | null | undefined) ?? null,
         title: await this.requireTitle(this.pool, season),
         season,
-        episodes: await this.selectEpisodeStates(this.pool, season.id),
+        episodes: await this.selectEpisodeStates(this.pool, season.id, (row.connected_storage_id as string | null) ?? UNSCOPED_STORAGE),
       });
     }
     return states.sort(compareTrackedSeasonStates);
@@ -587,15 +597,16 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     trackedSeasonId: string,
     scopeArg: ScopeArg = undefined,
   ): Promise<EpisodeState[]> {
-    // Episodes inherit ownership from their season (no scope columns of their
-    // own) — join the season and gate on its (account, storage).
+    // Episodes carry their own connected_storage_id now; join the season on BOTH
+    // (id, storage) so each episode attributes to its own drive's season row, then
+    // gate the account (episode_states has no account column) and optional storage.
     const scope = normalizeScope(scopeArg);
     const episodes = await this.selectMany<EpisodeState>(
       this.pool,
       "SELECT e.payload AS payload FROM episode_states e " +
-        "JOIN tracked_seasons ts ON e.tracked_season_id = ts.id " +
+        "JOIN tracked_seasons ts ON e.tracked_season_id = ts.id AND e.connected_storage_id = ts.connected_storage_id " +
         "WHERE e.tracked_season_id = $1 AND ts.account_id = $2 " +
-        "AND ($3::text IS NULL OR ts.connected_storage_id = $3)",
+        "AND ($3::text IS NULL OR e.connected_storage_id = $3)",
       [trackedSeasonId, scope.accountId, scope.connectedStorageId],
     );
     return episodes.sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
@@ -917,7 +928,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       title,
       season,
       workflowRun,
-      episodes: await this.selectEpisodeStates(executor, season.id),
+      episodes: await this.selectEpisodeStates(executor, season.id, connectedStorageId ?? UNSCOPED_STORAGE),
       resourceSnapshots: await this.selectMany<ResourceSnapshot>(
         executor,
         "SELECT payload FROM resource_snapshots WHERE workflow_run_id = $1 ORDER BY ordinal",
@@ -946,17 +957,17 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     snapshot: PersistWorkflowRunSnapshotInput,
   ): Promise<void> {
     const accountId = snapshot.accountId ?? DEFAULT_ACCOUNT_ID;
-    const connectedStorageId = snapshot.connectedStorageId ?? null;
+    const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
     await this.upsert(client, "media_titles", "(id, payload)", [snapshot.title.id, json(snapshot.title)], "$1, $2::jsonb");
     await this.upsertTrackedSeason(client, snapshot.season, accountId, connectedStorageId);
     await this.upsertWorkflowRun(client, snapshot.workflowRun, accountId, connectedStorageId);
-    await this.deleteWorkflowRunChildren(client, snapshot.workflowRun.id, snapshot.season.id);
+    await this.deleteWorkflowRunChildren(client, snapshot.workflowRun.id, snapshot.season.id, connectedStorageId);
 
     for (const [ordinal, episode] of snapshot.episodes.entries()) {
       void ordinal;
       await client.query(
-        "INSERT INTO episode_states (tracked_season_id, episode_code, payload) VALUES ($1, $2, $3::jsonb)",
-        [snapshot.season.id, episode.episodeCode, json(episode)],
+        "INSERT INTO episode_states (tracked_season_id, connected_storage_id, episode_code, payload) VALUES ($1, $2, $3, $4::jsonb)",
+        [snapshot.season.id, connectedStorageId, episode.episodeCode, json(episode)],
       );
     }
     // Snapshot ids are content-addressed and can legitimately recur; keep
@@ -997,7 +1008,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     // conflict (ownership + workspace are immutable; re-saves only update payload).
     await client.query(
       "INSERT INTO tracked_seasons (id, media_title_id, account_id, connected_storage_id, payload) VALUES ($1, $2, $3, $4, $5::jsonb) " +
-        "ON CONFLICT (id) DO UPDATE SET media_title_id = EXCLUDED.media_title_id, payload = EXCLUDED.payload",
+        "ON CONFLICT (id, connected_storage_id) DO UPDATE SET media_title_id = EXCLUDED.media_title_id, payload = EXCLUDED.payload",
       [season.id, season.mediaTitleId, accountId, connectedStorageId, json(season)],
     );
   }
@@ -1034,12 +1045,17 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     client: PoolClient,
     workflowRunId: string,
     trackedSeasonId: string,
+    connectedStorageId: string,
   ): Promise<void> {
     await client.query("DELETE FROM notifications WHERE workflow_run_id = $1", [workflowRunId]);
     await client.query("DELETE FROM transfer_attempts WHERE workflow_run_id = $1", [workflowRunId]);
     await client.query("DELETE FROM agent_decisions WHERE workflow_run_id = $1", [workflowRunId]);
     await client.query("DELETE FROM resource_snapshots WHERE workflow_run_id = $1", [workflowRunId]);
-    await client.query("DELETE FROM episode_states WHERE tracked_season_id = $1", [trackedSeasonId]);
+    // Scope to THIS drive's episodes — never wipe another drive's episodes for the same season.
+    await client.query(
+      "DELETE FROM episode_states WHERE tracked_season_id = $1 AND connected_storage_id = $2",
+      [trackedSeasonId, connectedStorageId],
+    );
   }
 
   private async expireStaleActiveWorkflowRuns(
@@ -1050,7 +1066,10 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       return;
     }
     const snapshot = workflowSnapshotFromReservation(input);
-    const staleRuns = (await this.selectWorkflowRuns(client, snapshot.season.id)).filter(
+    // Only expire stale runs on the SAME drive being reserved, and clear only that
+    // drive's episodes — never touch another drive's runs/episodes for the season.
+    const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
+    const staleRuns = (await this.selectWorkflowRuns(client, snapshot.season.id, connectedStorageId)).filter(
       (workflowRun) =>
         workflowRun.kind === snapshot.workflowRun.kind &&
         isActiveWorkflowStatus(workflowRun.status) &&
@@ -1059,7 +1078,10 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     for (const staleRun of staleRuns) {
       const expiredRun = expireWorkflowRun(staleRun, input.staleFinishedAt ?? snapshot.workflowRun.startedAt);
       await this.upsertWorkflowRun(client, expiredRun);
-      await client.query("DELETE FROM episode_states WHERE tracked_season_id = $1", [snapshot.season.id]);
+      await client.query(
+        "DELETE FROM episode_states WHERE tracked_season_id = $1 AND connected_storage_id = $2",
+        [snapshot.season.id, connectedStorageId],
+      );
     }
   }
 
@@ -1075,11 +1097,15 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     return title;
   }
 
-  private async selectEpisodeStates(executor: Queryable, trackedSeasonId: string): Promise<EpisodeState[]> {
+  private async selectEpisodeStates(
+    executor: Queryable,
+    trackedSeasonId: string,
+    connectedStorageId: string,
+  ): Promise<EpisodeState[]> {
     const episodes = await this.selectMany<EpisodeState>(
       executor,
-      "SELECT payload FROM episode_states WHERE tracked_season_id = $1",
-      [trackedSeasonId],
+      "SELECT payload FROM episode_states WHERE tracked_season_id = $1 AND connected_storage_id = $2",
+      [trackedSeasonId, connectedStorageId],
     );
     return episodes.sort((a, b) => episodeNumberFromCode(a.episodeCode) - episodeNumberFromCode(b.episodeCode));
   }
