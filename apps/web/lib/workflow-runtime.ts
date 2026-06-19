@@ -51,6 +51,7 @@ import {
   DuplicateUsernameError,
   DEFAULT_ACCOUNT_ID,
   pickWorkspaceStorageId,
+  resolveWorkspaceFromParam,
   type Account,
   type WorkflowScope,
   type MediaSearchCandidate,
@@ -286,6 +287,24 @@ export async function getActiveWorkspaceScope(storageId?: string): Promise<Workf
     storageId,
   );
   return { accountId, connectedStorageId };
+}
+
+/** Resolve a global page's (通知/活动/设置) active workspace from its `?w` param.
+ *  Returns the scope to filter content by, the basePath for the sidebar's
+ *  library/search links, and the activeStorageId for the sidebar's global links
+ *  (undefined = primary → those links stay `?w`-free). A stale `w` falls back to
+ *  primary (never 404). */
+export async function resolveGlobalWorkspace(w: string | undefined): Promise<{
+  accountId: string;
+  connectedStorageId: string | null;
+  basePath: string;
+  activeStorageId: string | undefined;
+}> {
+  const accountId = await getCurrentAccountId();
+  const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter((storage) =>
+    isRegisteredStorageProvider(storage.provider),
+  );
+  return { accountId, ...resolveWorkspaceFromParam(storages, w) };
 }
 
 export async function getCurrentAccountId(): Promise<string> {
