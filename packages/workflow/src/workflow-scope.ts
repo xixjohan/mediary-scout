@@ -156,3 +156,59 @@ export function resolveWorkspaceFromParam(
     activeStorageId: isPrimary ? undefined : resolved!,
   };
 }
+
+/** Which top-level section a path is in — drives switcher "keep same section". */
+export type WorkspaceSection =
+  | "search"
+  | "library"
+  | "notifications"
+  | "activity"
+  | "settings"
+  | "other";
+
+/** Classify the current location into a section. Content routes ("/" or "/w/<id>")
+ *  are search by default, library when ?tab=library. Unknown routes → "other". */
+export function workspaceSection(pathname: string, tabParam: string | null): WorkspaceSection {
+  if (pathname.startsWith("/notifications")) return "notifications";
+  if (pathname.startsWith("/activity")) return "activity";
+  if (pathname.startsWith("/settings")) return "settings";
+  if (pathname === "/" || /^\/w\/[^/]+\/?$/.test(pathname)) {
+    return tabParam === "library" ? "library" : "search";
+  }
+  return "other";
+}
+
+/** Where a drive tab should go to KEEP the current section (not always search).
+ *  Content sections route to the target drive's content path (primary → "/", else
+ *  "/w/<id>"); global sections carry the drive as `?w` (primary omits it). The
+ *  search section's `&q=` is injected client-side from per-drive memory, so this
+ *  returns the q-less base. */
+export function switcherTabHref(
+  section: WorkspaceSection,
+  targetDriveId: string,
+  primaryDriveId: string,
+): string {
+  const isPrimary = targetDriveId === primaryDriveId;
+  const basePath = isPrimary ? "/" : `/w/${targetDriveId}`;
+  const activeId = isPrimary ? undefined : targetDriveId;
+  switch (section) {
+    case "library":
+      return `${basePath}?tab=library`;
+    case "search":
+      return `${basePath}?tab=search`;
+    case "notifications":
+      return globalNavHref("/notifications", activeId);
+    case "activity":
+      return globalNavHref("/activity", activeId);
+    case "settings":
+      return globalNavHref("/settings", activeId);
+    default:
+      return basePath;
+  }
+}
+
+/** sessionStorage key for the last search query, scoped per drive by its basePath
+ *  ("/" = primary, "/w/<id>" = others) so each drive remembers its own search. */
+export function lastQueryKey(basePath: string): string {
+  return `media-track.lastQuery.${basePath}`;
+}

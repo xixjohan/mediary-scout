@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_ACCOUNT_ID } from "../src/domain.js";
 import {
   globalNavHref,
+  lastQueryKey,
   resolveWorkspaceFromParam,
   scopeFromAccount,
+  switcherTabHref,
+  workspaceSection,
   type WorkflowScope,
 } from "../src/workflow-scope.js";
 
@@ -71,5 +74,50 @@ describe("resolveWorkspaceFromParam", () => {
       basePath: "/",
       activeStorageId: undefined,
     });
+  });
+});
+
+describe("workspaceSection", () => {
+  it("content root/workspace → search by default, library when tab=library", () => {
+    expect(workspaceSection("/", null)).toBe("search");
+    expect(workspaceSection("/", "library")).toBe("library");
+    expect(workspaceSection("/w/cs_x", "search")).toBe("search");
+    expect(workspaceSection("/w/cs_x", "library")).toBe("library");
+  });
+  it("global pages map by pathname", () => {
+    expect(workspaceSection("/notifications", null)).toBe("notifications");
+    expect(workspaceSection("/activity", null)).toBe("activity");
+    expect(workspaceSection("/settings", null)).toBe("settings");
+  });
+  it("unknown paths → other", () => {
+    expect(workspaceSection("/show/123", null)).toBe("other");
+    expect(workspaceSection("/foreign-work/abc", null)).toBe("other");
+  });
+});
+
+describe("switcherTabHref", () => {
+  const primary = "cs_primary";
+  it("library/search keep the tab, on the target drive's content path", () => {
+    expect(switcherTabHref("library", "cs_quark", primary)).toBe("/w/cs_quark?tab=library");
+    expect(switcherTabHref("search", "cs_quark", primary)).toBe("/w/cs_quark?tab=search");
+    expect(switcherTabHref("library", primary, primary)).toBe("/?tab=library");
+    expect(switcherTabHref("search", primary, primary)).toBe("/?tab=search");
+  });
+  it("global sections keep the section, carry ?w (primary omits it)", () => {
+    expect(switcherTabHref("notifications", "cs_quark", primary)).toBe("/notifications?w=cs_quark");
+    expect(switcherTabHref("activity", "cs_quark", primary)).toBe("/activity?w=cs_quark");
+    expect(switcherTabHref("settings", primary, primary)).toBe("/settings");
+  });
+  it("other → target drive workspace root", () => {
+    expect(switcherTabHref("other", "cs_quark", primary)).toBe("/w/cs_quark");
+    expect(switcherTabHref("other", primary, primary)).toBe("/");
+  });
+});
+
+describe("lastQueryKey", () => {
+  it("keys search memory by basePath (per-drive)", () => {
+    expect(lastQueryKey("/")).toBe("media-track.lastQuery./");
+    expect(lastQueryKey("/w/cs_quark")).toBe("media-track.lastQuery./w/cs_quark");
+    expect(lastQueryKey("/")).not.toBe(lastQueryKey("/w/cs_quark"));
   });
 });
