@@ -202,11 +202,11 @@ async function ResourceProviderSection() {
       <PanSouConfigForm baseURL={pansouBaseURL} />
       {showProwlarr ? (
         <>
+          <div style={{ height: 18 }} />
+          <ProwlarrConfigForm baseURL={prowlarrBaseURL} apiKeySet={prowlarrApiKeySet} />
           <p className="push-help" style={{ margin: "10px 0 0" }}>
             注：夸克网盘 API 不支持磁力，Prowlarr 仅对 115 盘生效；若你只用夸克，无需配置 Prowlarr。
           </p>
-          <div style={{ height: 18 }} />
-          <ProwlarrConfigForm baseURL={prowlarrBaseURL} apiKeySet={prowlarrApiKeySet} />
         </>
       ) : null}
     </section>

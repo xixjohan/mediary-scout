@@ -28,19 +28,22 @@ export function PanSouConfigForm({ baseURL: initialBaseURL }: { baseURL: string 
           项目主页 <ExternalLink size={12} style={{ verticalAlign: "-1px" }} />
         </a>
       </p>
-      <div className="setting-row">
-        <input
-          type="text"
-          className="setting-control"
-          value={baseURL}
-          onChange={(event) => setBaseURL(event.target.value)}
-          placeholder="留空用默认（compose 内为 http://pansou）"
-          aria-label="PanSou Base URL"
-        />
-        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
-          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
-          保存
-        </button>
+      <div className="push-field">
+        <label className="push-label">服务地址（网盘搜索源）</label>
+        <div className="setting-row">
+          <input
+            type="text"
+            className="setting-control"
+            value={baseURL}
+            onChange={(event) => setBaseURL(event.target.value)}
+            placeholder="形如 http://host:port，留空用默认实例"
+            aria-label="PanSou Base URL"
+          />
+          <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
+            {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
+            保存
+          </button>
+        </div>
       </div>
       {result ? (
         <p className="panel-note" style={{ marginTop: 10 }}>

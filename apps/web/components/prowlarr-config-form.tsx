@@ -47,36 +47,39 @@ export function ProwlarrConfigForm({ baseURL: initialBaseURL, apiKeySet }: { bas
         </a>
       </p>
       <div className="push-field">
-        <label className="push-label">Base URL</label>
+        <label className="push-label">Base URL（Prowlarr 实例地址）</label>
         <input
           type="text"
           className="setting-control"
           value={baseURL}
           onChange={(event) => setBaseURL(event.target.value)}
-          placeholder="http://192.168.x.x:9696"
+          placeholder="形如 http://192.168.x.x:9696"
           aria-label="Prowlarr Base URL"
         />
       </div>
-      <div className="setting-row">
-        <input
-          type="password"
-          className="setting-control"
-          value={apiKey}
-          onChange={(event) => setApiKey(event.target.value)}
-          placeholder={hasKey ? "已设置(留空不改)" : "Prowlarr API Key"}
-          aria-label="Prowlarr API Key"
-          autoComplete="off"
-        />
-        <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
-          {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
-          保存
-        </button>
-        {hasKey ? (
-          <button type="button" className="secondary-button" onClick={handleClear} disabled={isPending}>
-            <Trash2 size={14} aria-hidden />
-            清除
+      <div className="push-field">
+        <label className="push-label">API Key（Prowlarr 设置 → General 里获取）</label>
+        <div className="setting-row">
+          <input
+            type="password"
+            className="setting-control"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            placeholder={hasKey ? "已设置(留空不改)" : "粘贴 Prowlarr API Key"}
+            aria-label="Prowlarr API Key"
+            autoComplete="off"
+          />
+          <button type="button" className="primary-button" onClick={handleSave} disabled={isPending}>
+            {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <Check size={14} aria-hidden />}
+            保存
           </button>
-        ) : null}
+          {hasKey ? (
+            <button type="button" className="secondary-button" onClick={handleClear} disabled={isPending}>
+              <Trash2 size={14} aria-hidden />
+              清除
+            </button>
+          ) : null}
+        </div>
       </div>
       {result ? (
         <p className="panel-note" style={{ marginTop: 10 }}>
