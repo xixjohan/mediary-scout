@@ -132,4 +132,10 @@ describe("showHref", () => {
     expect(showHref(278, "library", "cs_100000002")).toBe("/show/278?from=library&w=cs_100000002");
     expect(showHref(37165, "search", "cs_quark")).toBe("/show/37165?from=search&w=cs_quark");
   });
+  it("carries &t=type hint so untracked titles resolve the right TMDB namespace (movie≠tv id)", () => {
+    expect(showHref(278, "search", undefined, "movie")).toBe("/show/278?from=search&t=movie");
+    expect(showHref(278, "library", "cs_x", "movie")).toBe("/show/278?from=library&w=cs_x&t=movie");
+    expect(showHref(1399, "search", undefined, "tv")).toBe("/show/1399?from=search&t=tv");
+    expect(showHref(123, "library", undefined, "anime")).toBe("/show/123?from=library&t=anime");
+  });
 });

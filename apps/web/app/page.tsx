@@ -275,7 +275,7 @@ function CandidateCard({
   );
   return (
     <article className="candidate-card">
-      <Link className="candidate-poster" href={showHref(candidate.tmdbId, "search", storageId)} aria-hidden tabIndex={-1}>
+      <Link className="candidate-poster" href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType)} aria-hidden tabIndex={-1}>
         {candidate.posterPath ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={`https://image.tmdb.org/t/p/w342${candidate.posterPath}`} alt="" loading="lazy" />
@@ -287,7 +287,7 @@ function CandidateCard({
         <div className="candidate-title-row">
           <div>
             <h3>
-              <Link href={showHref(candidate.tmdbId, "search", storageId)}>{candidate.title}</Link>
+              <Link href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType)}>{candidate.title}</Link>
             </h3>
             <p>
               {candidate.year} · {isTv ? "剧集" : "电影"}
@@ -315,7 +315,7 @@ function CandidateCard({
                 explicit 查看详情 when the show is FULLY tracked (no 获取 action
                 left) — never crammed next to a 获取 button. */}
             {!acquiring && isTv && trackedLabel !== null && untrackedSeasons.length === 0 ? (
-              <Link className="primary-button" href={showHref(candidate.tmdbId, "search", storageId)}>
+              <Link className="primary-button" href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType)}>
                 查看详情
               </Link>
             ) : null}
@@ -556,7 +556,7 @@ function PosterCard({ entry, activeStorageId }: { entry: LibraryWallEntry; activ
             ];
 
   return (
-    <Link className="wall-card" href={showHref(entry.tmdbId, "library", activeStorageId)}>
+    <Link className="wall-card" href={showHref(entry.tmdbId, "library", activeStorageId, entry.type)}>
       <span className="wall-poster">
         {entry.posterPath ? (
           // eslint-disable-next-line @next/next/no-img-element

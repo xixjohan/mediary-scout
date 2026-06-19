@@ -97,7 +97,7 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
       ? `已确认 ${run.progress.obtained ?? 0} / ${run.progress.needed} 集`
       : null;
   return (
-    <Link className="act-row act-row-active" href={showHref(run.tmdbId, "library", storageId)}>
+    <Link className="act-row act-row-active" href={showHref(run.tmdbId, "library", storageId, run.type)}>
       {poster(run.posterPath, run.title, "info")}
       <div className="act-row-body">
         <div className="act-row-head">

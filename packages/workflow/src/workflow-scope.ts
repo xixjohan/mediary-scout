@@ -223,7 +223,17 @@ export function showHref(
   tmdbId: number,
   from: "search" | "library",
   activeStorageId: string | undefined,
+  type?: "movie" | "tv" | "anime",
 ): string {
-  const base = `/show/${tmdbId}?from=${from}`;
-  return activeStorageId ? `${base}&w=${encodeURIComponent(activeStorageId)}` : base;
+  let href = `/show/${tmdbId}?from=${from}`;
+  if (activeStorageId) {
+    href += `&w=${encodeURIComponent(activeStorageId)}`;
+  }
+  // `t` disambiguates TMDB's separate movie/tv id namespaces for an UNTRACKED
+  // title (the card knows the type; the detail page can't guess it). Tracked
+  // titles resolve by DB type and ignore this.
+  if (type) {
+    href += `&t=${type}`;
+  }
+  return href;
 }

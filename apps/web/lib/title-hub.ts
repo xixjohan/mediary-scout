@@ -254,7 +254,11 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
  * TMDB round-trip; an untracked title falls through to the TV hub, then to a
  * TMDB movie lookup.
  */
-export async function getDetailView(tmdbId: number, storageId?: string): Promise<DetailView | null> {
+export async function getDetailView(
+  tmdbId: number,
+  storageId?: string,
+  typeHint?: "movie" | "tv" | "anime",
+): Promise<DetailView | null> {
   const repository = getWorkflowRepository();
   const scope = await getActiveWorkspaceScope(storageId);
   await ensureDemoSeeded(repository);
@@ -274,20 +278,34 @@ export async function getDetailView(tmdbId: number, storageId?: string): Promise
     return movieHubViewFromTitle(movieState.title, state, acquiring);
   }
 
-  // Not a tracked movie: try the season-shaped (tv/anime) hub — same drive scope.
+  // Untracked title: TMDB's movie/tv id namespaces collide (movie 278 ≠ tv 278).
+  // The detail page can't guess which; the card carries `typeHint`. When it says
+  // movie, resolve the MOVIE namespace FIRST — otherwise the season-shaped hub's
+  // TMDB tv lookup spuriously matches an unrelated show with the same numeric id.
+  const untrackedMovie = async (): Promise<DetailView | null> => {
+    const movieTarget = await movieTargetFromTmdbId(tmdbId);
+    if (!movieTarget) {
+      return null;
+    }
+    const reserved = isMovieUnreleased(movieTarget.title.releaseDate, now);
+    return movieHubViewFromTitle(movieTarget.title, reserved ? "reserved" : "untracked", false);
+  };
+
+  if (typeHint === "movie") {
+    const movie = await untrackedMovie();
+    if (movie) {
+      return movie;
+    }
+  }
+
+  // Season-shaped (tv/anime) hub — same drive scope. Covers tracked tv + TMDB tv target.
   const tv = await getTitleHubView(tmdbId, storageId);
   if (tv) {
     return tv;
   }
 
-  // Untracked: it may still be a movie known to TMDB (clicked from search before
-  // acquisition). Show its info with an "untracked" status.
-  const movieTarget = await movieTargetFromTmdbId(tmdbId);
-  if (movieTarget) {
-    const reserved = isMovieUnreleased(movieTarget.title.releaseDate, now);
-    return movieHubViewFromTitle(movieTarget.title, reserved ? "reserved" : "untracked", false);
-  }
-  return null;
+  // Last resort: a movie known to TMDB (e.g. no typeHint).
+  return untrackedMovie();
 }
 
 function movieHubViewFromTitle(

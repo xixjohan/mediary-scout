@@ -98,10 +98,15 @@ async function ShowContent({
   const wParam = params0["w"];
   const w = Array.isArray(wParam) ? wParam[0] : wParam;
   const workspace = await resolveGlobalWorkspace(w);
+  // `t` (the card's media type) disambiguates TMDB's movie/tv id namespaces for an
+  // untracked title — without it a movie id can resolve to an unrelated tv show.
+  const tParam = params0["t"];
+  const tRaw = Array.isArray(tParam) ? tParam[0] : tParam;
+  const typeHint = tRaw === "movie" || tRaw === "tv" || tRaw === "anime" ? tRaw : undefined;
   const { tmdbId: tmdbIdParam } = await params;
   const tmdbId = Number(tmdbIdParam);
   const view = Number.isInteger(tmdbId)
-    ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined)
+    ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
     : null;
 
   return (
