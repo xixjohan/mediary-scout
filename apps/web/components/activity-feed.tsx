@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, TriangleAlert, X } from "lucide-react";
+import { showHref } from "@media-track/workflow/scope";
 import type { ActivityActiveRun, ActivityCompletedItem, ActivityView } from "../lib/activity-view";
 
 const POLL_MS = 2600;
@@ -53,7 +54,7 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
         {running.length === 0 ? (
           <p className="act-empty">当前没有正在处理的任务。</p>
         ) : (
-          running.map((run) => <RunningRow run={run} key={run.runId} />)
+          running.map((run) => <RunningRow run={run} storageId={storageId} key={run.runId} />)
         )}
       </section>
 
@@ -89,14 +90,14 @@ function seasonLabel(run: ActivityActiveRun): string {
   return run.type === "movie" || run.seasonNumber === null ? "" : `第 ${run.seasonNumber} 季`;
 }
 
-function RunningRow({ run }: { run: ActivityActiveRun }) {
+function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: string | undefined }) {
   const percent = Math.max(3, Math.min(100, run.progress?.percent ?? 3));
   const headline =
     run.progress?.needed && run.progress.needed > 0
       ? `已确认 ${run.progress.obtained ?? 0} / ${run.progress.needed} 集`
       : null;
   return (
-    <Link className="act-row act-row-active" href={`/show/${run.tmdbId}?from=library`}>
+    <Link className="act-row act-row-active" href={showHref(run.tmdbId, "library", storageId)}>
       {poster(run.posterPath, run.title, "info")}
       <div className="act-row-body">
         <div className="act-row-head">

@@ -212,3 +212,18 @@ export function switcherTabHref(
 export function lastQueryKey(basePath: string): string {
   return `media-track.lastQuery.${basePath}`;
 }
+
+/** Link to a title's detail page, carrying the originating surface (`from`) AND the
+ *  active drive (`?w`). The drive is REQUIRED for correctness, not just nav: the
+ *  detail page resolves the title against this drive's tracked state, and TMDB's
+ *  movie/TV id namespaces collide (movie 278 ≠ tv 278) — without the drive a
+ *  non-primary title falls back to the primary scope and renders an unrelated
+ *  show. Primary (activeStorageId undefined) omits `?w`, matching the rest. */
+export function showHref(
+  tmdbId: number,
+  from: "search" | "library",
+  activeStorageId: string | undefined,
+): string {
+  const base = `/show/${tmdbId}?from=${from}`;
+  return activeStorageId ? `${base}&w=${encodeURIComponent(activeStorageId)}` : base;
+}

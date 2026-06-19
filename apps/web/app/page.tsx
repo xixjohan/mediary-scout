@@ -19,6 +19,7 @@ import {
   getRegisteredDriveCount,
   getWorkflowRepository,
 } from "../lib/workflow-runtime";
+import { showHref } from "@media-track/workflow";
 import type { SearchCandidateCard, TrackedSeasonState } from "@media-track/workflow";
 
 export default function Page({
@@ -274,7 +275,7 @@ function CandidateCard({
   );
   return (
     <article className="candidate-card">
-      <Link className="candidate-poster" href={`/show/${candidate.tmdbId}?from=search`} aria-hidden tabIndex={-1}>
+      <Link className="candidate-poster" href={showHref(candidate.tmdbId, "search", storageId)} aria-hidden tabIndex={-1}>
         {candidate.posterPath ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={`https://image.tmdb.org/t/p/w342${candidate.posterPath}`} alt="" loading="lazy" />
@@ -286,7 +287,7 @@ function CandidateCard({
         <div className="candidate-title-row">
           <div>
             <h3>
-              <Link href={`/show/${candidate.tmdbId}?from=search`}>{candidate.title}</Link>
+              <Link href={showHref(candidate.tmdbId, "search", storageId)}>{candidate.title}</Link>
             </h3>
             <p>
               {candidate.year} · {isTv ? "剧集" : "电影"}
@@ -314,7 +315,7 @@ function CandidateCard({
                 explicit 查看详情 when the show is FULLY tracked (no 获取 action
                 left) — never crammed next to a 获取 button. */}
             {!acquiring && isTv && trackedLabel !== null && untrackedSeasons.length === 0 ? (
-              <Link className="primary-button" href={`/show/${candidate.tmdbId}?from=search`}>
+              <Link className="primary-button" href={showHref(candidate.tmdbId, "search", storageId)}>
                 查看详情
               </Link>
             ) : null}
@@ -382,9 +383,9 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
         {inProgress.length > 0 ? <AcquiringPoller /> : null}
         <InProgressRow titles={inProgress} />
 
-        <CategoryRow label="电影" type="movie" {...byType("movie")} />
-        <CategoryRow label="电视剧" type="tv" {...byType("tv")} />
-        <CategoryRow label="动漫" type="anime" {...byType("anime")} />
+        <CategoryRow label="电影" type="movie" {...byType("movie")} storageId={storageId} />
+        <CategoryRow label="电视剧" type="tv" {...byType("tv")} storageId={storageId} />
+        <CategoryRow label="动漫" type="anime" {...byType("anime")} storageId={storageId} />
       </section>
     );
   }
@@ -453,7 +454,7 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
 
       <div className="poster-wall">
         {filteredWall.map((entry) => (
-          <PosterCard entry={entry} key={entry.tmdbId} />
+          <PosterCard entry={entry} activeStorageId={storageId} key={entry.tmdbId} />
         ))}
       </div>
     </section>
@@ -465,11 +466,13 @@ function CategoryRow({
   type,
   inProgressTitles,
   wallEntries,
+  storageId,
 }: {
   label: string;
   type: string;
   inProgressTitles: InProgressTitle[];
   wallEntries: LibraryWallEntry[];
+  storageId?: string | undefined;
 }) {
   const count = inProgressTitles.length + wallEntries.length;
   if (count === 0) {
@@ -488,7 +491,7 @@ function CategoryRow({
           <InProgressCard title={title} key={`ip_${title.tmdbId}`} />
         ))}
         {wallEntries.map((entry) => (
-          <PosterCard entry={entry} key={entry.tmdbId} />
+          <PosterCard entry={entry} activeStorageId={storageId} key={entry.tmdbId} />
         ))}
       </div>
     </div>
@@ -536,7 +539,7 @@ function InProgressCard({ title }: { title: InProgressTitle }) {
   );
 }
 
-function PosterCard({ entry }: { entry: LibraryWallEntry }) {
+function PosterCard({ entry, activeStorageId }: { entry: LibraryWallEntry; activeStorageId?: string | undefined }) {
   // Completeness and "still airing" are orthogonal: a 缺集 title whose latest
   // season is still releasing shows BOTH ⚠️有缺集 and 追更中 (斗破苍穹), so the
   // blue/indigo "在更" signal isn't swallowed by the warning (parity with 达顿牧场).
@@ -553,7 +556,7 @@ function PosterCard({ entry }: { entry: LibraryWallEntry }) {
             ];
 
   return (
-    <Link className="wall-card" href={`/show/${entry.tmdbId}?from=library`}>
+    <Link className="wall-card" href={showHref(entry.tmdbId, "library", activeStorageId)}>
       <span className="wall-poster">
         {entry.posterPath ? (
           // eslint-disable-next-line @next/next/no-img-element

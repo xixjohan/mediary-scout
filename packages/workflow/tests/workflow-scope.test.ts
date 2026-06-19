@@ -5,6 +5,7 @@ import {
   lastQueryKey,
   resolveWorkspaceFromParam,
   scopeFromAccount,
+  showHref,
   switcherTabHref,
   workspaceSection,
   type WorkflowScope,
@@ -119,5 +120,16 @@ describe("lastQueryKey", () => {
     expect(lastQueryKey("/")).toBe("media-track.lastQuery./");
     expect(lastQueryKey("/w/cs_quark")).toBe("media-track.lastQuery./w/cs_quark");
     expect(lastQueryKey("/")).not.toBe(lastQueryKey("/w/cs_quark"));
+  });
+});
+
+describe("showHref", () => {
+  it("omits ?w on primary (undefined) — link stays scope-free", () => {
+    expect(showHref(278, "library", undefined)).toBe("/show/278?from=library");
+    expect(showHref(278, "search", undefined)).toBe("/show/278?from=search");
+  });
+  it("carries &w for a non-primary drive so the detail page resolves the right drive", () => {
+    expect(showHref(278, "library", "cs_100000002")).toBe("/show/278?from=library&w=cs_100000002");
+    expect(showHref(37165, "search", "cs_quark")).toBe("/show/37165?from=search&w=cs_quark");
   });
 });

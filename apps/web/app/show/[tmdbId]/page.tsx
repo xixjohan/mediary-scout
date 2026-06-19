@@ -15,6 +15,7 @@ import {
   type TitleHubSeason,
   type TitleHubView,
 } from "../../../lib/title-hub";
+import { resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
 import { seasonBadgeState } from "../../../lib/title-aggregate";
 
 const aggregateBadge = {
@@ -54,16 +55,20 @@ function ShowShell({
   active,
   backLabel,
   backHref,
+  basePath = "/",
+  activeStorageId,
   children,
 }: {
   active: "search" | "library" | "none";
   backLabel: string;
   backHref: string;
+  basePath?: string;
+  activeStorageId?: string | undefined;
   children: ReactNode;
 }) {
   return (
     <>
-      <AppSidebar active={active} />
+      <AppSidebar active={active} basePath={basePath} activeStorageId={activeStorageId} />
       <main className="main product-main">
         <BackLink label={backLabel} fallbackHref={backHref} />
         {children}
@@ -83,17 +88,31 @@ async function ShowContent({
   // 搜索是搜索，媒体库是媒体库: the title page belongs to whichever surface the
   // user came FROM. Entry links carry ?from=search|library; back keeps the
   // previous list state (history.back preserves the search query).
-  const fromParam = ((await searchParams) ?? {})["from"];
+  const params0 = (await searchParams) ?? {};
+  const fromParam = params0["from"];
   const from = fromParam === "library" ? "library" : fromParam === "search" ? "search" : null;
+  // The title page is a global route (/show/<id>); it must resolve against the
+  // drive the user came FROM (?w), NOT the primary drive — otherwise a non-primary
+  // title isn't found in the (wrong) scope and falls back to a TMDB lookup of the
+  // same numeric id in the OTHER namespace (movie 278 ≠ tv 278 = unrelated show).
+  const wParam = params0["w"];
+  const w = Array.isArray(wParam) ? wParam[0] : wParam;
+  const workspace = await resolveGlobalWorkspace(w);
   const { tmdbId: tmdbIdParam } = await params;
   const tmdbId = Number(tmdbIdParam);
-  const view = Number.isInteger(tmdbId) ? await getDetailView(tmdbId) : null;
+  const view = Number.isInteger(tmdbId)
+    ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined)
+    : null;
 
   return (
     <ShowShell
       active={from ?? "none"}
       backLabel={from === "search" ? "返回搜索" : from === "library" ? "返回媒体库" : "返回"}
-      backHref={from === "library" ? "/?tab=library" : "/?tab=search"}
+      backHref={
+        from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`
+      }
+      basePath={workspace.basePath}
+      activeStorageId={workspace.activeStorageId}
     >
       {view ? (
         view.kind === "movie" ? <MovieHub view={view} /> : <TvHub view={view} />

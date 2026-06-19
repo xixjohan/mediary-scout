@@ -274,8 +274,8 @@ export async function getDetailView(tmdbId: number, storageId?: string): Promise
     return movieHubViewFromTitle(movieState.title, state, acquiring);
   }
 
-  // Not a tracked movie: try the season-shaped (tv/anime) hub.
-  const tv = await getTitleHubView(tmdbId);
+  // Not a tracked movie: try the season-shaped (tv/anime) hub — same drive scope.
+  const tv = await getTitleHubView(tmdbId, storageId);
   if (tv) {
     return tv;
   }
