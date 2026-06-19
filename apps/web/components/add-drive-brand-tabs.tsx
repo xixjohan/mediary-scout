@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { Pan115QrConnect } from "./pan115-qr-connect";
+import { QuarkQrConnect } from "./quark-qr-connect";
 import { QuarkCookieConnect } from "./quark-cookie-connect";
 
 type Brand = "pan115" | "quark";
 
-/** Settings "添加网盘": pick a brand, then connect it. 115 = QR scan; 夸克 = cookie
- *  paste. Each bound drive becomes its own isolated workspace (tree model). */
+/** Settings "添加网盘": pick a brand, then connect it. Both brands scan a QR; 夸克
+ *  keeps a collapsed cookie-paste fallback (the QR cookie-exchange is the fragile
+ *  hop). Each bound drive becomes its own isolated workspace (tree model). */
 export function AddDriveBrandTabs() {
   const [brand, setBrand] = useState<Brand>("pan115");
 
@@ -31,7 +33,21 @@ export function AddDriveBrandTabs() {
           夸克网盘
         </button>
       </div>
-      {brand === "pan115" ? <Pan115QrConnect /> : <QuarkCookieConnect />}
+      {brand === "pan115" ? (
+        <Pan115QrConnect />
+      ) : (
+        <div>
+          <QuarkQrConnect />
+          <details style={{ marginTop: 12 }}>
+            <summary className="panel-note" style={{ cursor: "pointer" }}>
+              扫码不行？手动粘 cookie
+            </summary>
+            <div style={{ marginTop: 10 }}>
+              <QuarkCookieConnect />
+            </div>
+          </details>
+        </div>
+      )}
     </div>
   );
 }
