@@ -1796,3 +1796,14 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
   });
   return { providerUid };
 }
+
+/**
+ * 夸克扫码登录:用 CAS service_ticket 兑换 drive cookie,再走与 cookie 粘贴**完全
+ * 相同**的绑定/provision(connectQuarkCookie 即那条核心,接收 cookie 串)。最终凭证
+ * 有效性由用户真机扫码确认;兑换失败时设置页折叠的 cookie 粘贴是回退。
+ */
+export async function completeQuarkQrLogin(serviceTicket: string): Promise<{ providerUid: string }> {
+  const { QuarkQrLoginClient } = await import("@media-track/workflow");
+  const { cookie } = await new QuarkQrLoginClient().exchangeCookie(serviceTicket);
+  return connectQuarkCookie(cookie);
+}
