@@ -75,7 +75,7 @@ async function HomeSurface({
 
   return (
     <div className="app-shell">
-      <AppSidebar active={activeTab} searchQuery={query} basePath={basePath} />
+      <AppSidebar active={activeTab} searchQuery={query} basePath={basePath} activeStorageId={storageId} />
 
       <main className="main product-main">
         {activeTab === "search" ? (

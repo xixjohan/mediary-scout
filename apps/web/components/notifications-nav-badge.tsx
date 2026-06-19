@@ -5,14 +5,17 @@ import { getLastSeen } from "../lib/notifications-seen";
 
 /** Unread count on the 通知 nav: notifications newer than this browser's last-seen
  *  watermark. Clears when the 通知 page is opened (which advances the watermark). */
-export function NotificationsNavBadge() {
+export function NotificationsNavBadge({ storageId }: { storageId?: string | undefined }) {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
     let alive = true;
     const poll = async () => {
       try {
-        const res = await fetch("/api/notifications/meta", { cache: "no-store" });
+        const url = storageId
+          ? `/api/notifications/meta?w=${encodeURIComponent(storageId)}`
+          : "/api/notifications/meta";
+        const res = await fetch(url, { cache: "no-store" });
         if (!res.ok) return;
         const data = (await res.json()) as { createdAts?: string[] };
         const lastSeen = getLastSeen();
@@ -28,7 +31,7 @@ export function NotificationsNavBadge() {
       alive = false;
       clearInterval(id);
     };
-  }, []);
+  }, [storageId]);
 
   if (count === 0) {
     return null;

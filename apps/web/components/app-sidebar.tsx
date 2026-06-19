@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Activity, Bell, Film, Library, Settings } from "lucide-react";
+import { globalNavHref } from "@media-track/workflow";
 import { SearchNavLink } from "./search-memory";
 import { ActivityNavBadge } from "./activity-nav-badge";
 import { NotificationsNavBadge } from "./notifications-nav-badge";
@@ -8,12 +9,16 @@ export function AppSidebar({
   active,
   searchQuery = "",
   basePath = "/",
+  activeStorageId,
 }: {
   active: "search" | "library" | "notifications" | "activity" | "settings" | "none";
   searchQuery?: string;
   /** Tree model: the active workspace path ("/w/<id>" or "/") so the search/library
-   *  tabs keep you in the workspace you're viewing. Other links stay global. */
+   *  tabs keep you in the workspace you're viewing. */
   basePath?: string;
+  /** The active non-primary drive id (undefined = primary). Global links
+   *  (通知/活动/设置) carry it as `?w` so leaving a workspace keeps the drive. */
+  activeStorageId?: string | undefined;
 }) {
   return (
     <aside className="sidebar">
@@ -44,11 +49,11 @@ export function AppSidebar({
           <li>
             <Link
               className={`nav-item ${active === "notifications" ? "is-active" : ""}`}
-              href="/notifications"
+              href={globalNavHref("/notifications", activeStorageId)}
             >
               <Bell size={16} aria-hidden />
               通知
-              <NotificationsNavBadge />
+              <NotificationsNavBadge storageId={activeStorageId} />
             </Link>
           </li>
           {/* 活动 + 设置 are secondary: on desktop they live in the footer; on the
@@ -56,17 +61,17 @@ export function AppSidebar({
           <li className="nav-activity-item">
             <Link
               className={`nav-item ${active === "activity" ? "is-active" : ""}`}
-              href="/activity"
+              href={globalNavHref("/activity", activeStorageId)}
             >
               <Activity size={16} aria-hidden />
               活动
-              <ActivityNavBadge />
+              <ActivityNavBadge storageId={activeStorageId} />
             </Link>
           </li>
           <li className="nav-settings-item">
             <Link
               className={`nav-item ${active === "settings" ? "is-active" : ""}`}
-              href="/settings"
+              href={globalNavHref("/settings", activeStorageId)}
             >
               <Settings size={16} aria-hidden />
               设置
@@ -78,13 +83,13 @@ export function AppSidebar({
       <div className="sidebar-footer">
         <Link
           className={`nav-item nav-secondary ${active === "activity" ? "is-active" : ""}`}
-          href="/activity"
+          href={globalNavHref("/activity", activeStorageId)}
         >
           <Activity size={16} aria-hidden />
           活动
-          <ActivityNavBadge />
+          <ActivityNavBadge storageId={activeStorageId} />
         </Link>
-        <Link className="health-card" href="/settings" style={{ textDecoration: "none", color: "inherit" }}>
+        <Link className="health-card" href={globalNavHref("/settings", activeStorageId)} style={{ textDecoration: "none", color: "inherit" }}>
           <span className="health-icon">
             <Settings size={16} aria-hidden />
           </span>
