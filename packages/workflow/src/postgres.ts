@@ -150,6 +150,63 @@ const SCHEMA = `
   INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
     VALUES ('acct_default', 'default', '', true, now()::text)
     ON CONFLICT (id) DO NOTHING;
+  -- Tree model: make connected_storage_id part of the tracked_seasons / episode_states
+  -- primary key so the SAME title can be tracked independently on multiple drives.
+  -- Idempotent + guarded; self-contained backfill so SET NOT NULL is safe regardless
+  -- of when the separate backfillConnectedStorageId() runs.
+  ALTER TABLE episode_states ADD COLUMN IF NOT EXISTS connected_storage_id text;
+  -- 1) episodes inherit their season's drive
+  UPDATE episode_states e SET connected_storage_id = ts.connected_storage_id
+    FROM tracked_seasons ts WHERE e.tracked_season_id = ts.id AND e.connected_storage_id IS NULL;
+  -- 2) null drive -> the account's earliest-created (primary) drive
+  WITH primary_drive AS (
+    SELECT DISTINCT ON (account_id) account_id, id FROM connected_storages ORDER BY account_id, created_at
+  )
+  UPDATE tracked_seasons t SET connected_storage_id = p.id FROM primary_drive p
+    WHERE t.account_id = p.account_id AND t.connected_storage_id IS NULL;
+  WITH primary_drive AS (
+    SELECT DISTINCT ON (account_id) account_id, id FROM connected_storages ORDER BY account_id, created_at
+  )
+  UPDATE workflow_runs w SET connected_storage_id = p.id FROM primary_drive p
+    WHERE w.account_id = p.account_id AND w.connected_storage_id IS NULL;
+  -- episodes inherit again (their season may have just been pinned)
+  UPDATE episode_states e SET connected_storage_id = ts.connected_storage_id
+    FROM tracked_seasons ts WHERE e.tracked_season_id = ts.id AND e.connected_storage_id IS NULL;
+  -- 3) anything still null (account with zero drives) -> sentinel, with a logged count (expected 0)
+  DO $do$
+  DECLARE n_ts int; n_wr int; n_ep int;
+  BEGIN
+    UPDATE tracked_seasons SET connected_storage_id = '__unscoped__' WHERE connected_storage_id IS NULL;
+    GET DIAGNOSTICS n_ts = ROW_COUNT;
+    UPDATE workflow_runs SET connected_storage_id = '__unscoped__' WHERE connected_storage_id IS NULL;
+    GET DIAGNOSTICS n_wr = ROW_COUNT;
+    UPDATE episode_states SET connected_storage_id = '__unscoped__' WHERE connected_storage_id IS NULL;
+    GET DIAGNOSTICS n_ep = ROW_COUNT;
+    IF n_ts > 0 OR n_wr > 0 OR n_ep > 0 THEN
+      RAISE NOTICE 'drive-scope migration: % tracked_seasons / % workflow_runs / % episode_states fell back to __unscoped__ (expected 0)', n_ts, n_wr, n_ep;
+    END IF;
+  END $do$;
+  -- 4) enforce NOT NULL now that no nulls remain
+  ALTER TABLE tracked_seasons ALTER COLUMN connected_storage_id SET NOT NULL;
+  ALTER TABLE episode_states ALTER COLUMN connected_storage_id SET NOT NULL;
+  -- 5) swap the primary keys (only when the current PK does not yet include the drive)
+  DO $do$
+  BEGIN
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey)
+      WHERE i.indrelid='tracked_seasons'::regclass AND i.indisprimary AND a.attname='connected_storage_id'
+    ) THEN
+      ALTER TABLE tracked_seasons DROP CONSTRAINT IF EXISTS tracked_seasons_pkey;
+      ALTER TABLE tracked_seasons ADD PRIMARY KEY (id, connected_storage_id);
+    END IF;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_index i JOIN pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=ANY(i.indkey)
+      WHERE i.indrelid='episode_states'::regclass AND i.indisprimary AND a.attname='connected_storage_id'
+    ) THEN
+      ALTER TABLE episode_states DROP CONSTRAINT IF EXISTS episode_states_pkey;
+      ALTER TABLE episode_states ADD PRIMARY KEY (tracked_season_id, connected_storage_id, episode_code);
+    END IF;
+  END $do$;
 `;
 
 /**
