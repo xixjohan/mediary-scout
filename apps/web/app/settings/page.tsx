@@ -4,6 +4,7 @@ import { Bell, Bot, Cable, CalendarClock, Clapperboard, Gauge, Languages, Radio,
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../components/test-connection-button";
+import { UnbindStorageButton } from "../../components/unbind-storage-button";
 import { PushNotificationForm } from "../../components/push-notification-form";
 import { PreferredLanguageForm } from "../../components/preferred-language-form";
 import { QualityPreferenceForm } from "../../components/quality-preference-form";
@@ -272,6 +273,10 @@ async function Pan115Section() {
                     </span>
                   )}
                   <TestConnectionButton storageId={drive.id} />
+                  <UnbindStorageButton
+                    storageId={drive.id}
+                    label={drive.provider === "pan115" ? "115网盘" : drive.provider === "quark" ? "夸克网盘" : drive.provider}
+                  />
                 </span>
               </li>
             ))}
