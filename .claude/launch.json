@@ -16,6 +16,20 @@
       "port": 3000
     },
     {
+      "name": "web-demo",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "MEDIA_TRACK_POSTGRES_URL=postgresql://mediatrack:mediatrack@localhost:5432/media_track",
+        "MEDIA_TRACK_DEMO_MODE=1",
+        "NEXT_PUBLIC_MEDIA_TRACK_DEMO_MODE=1",
+        "npm",
+        "run",
+        "dev:web"
+      ],
+      "autoPort": true,
+      "port": 3002
+    },
+    {
       "name": "web-multiuser",
       "runtimeExecutable": "env",
       "runtimeArgs": [
