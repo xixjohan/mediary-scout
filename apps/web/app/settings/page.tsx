@@ -32,6 +32,7 @@ import {
   resolveGlobalWorkspace,
 } from "../../lib/workflow-runtime";
 import { brandSupportsProwlarr } from "@media-track/workflow";
+import { isDemoMode } from "../../lib/demo-mode";
 
 export default function SettingsPage({
   searchParams,
@@ -53,30 +54,45 @@ export default function SettingsPage({
             <p>网盘连接与系统配置</p>
           </div>
         </div>
-        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <Pan115Section />
-        </Suspense>
-        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <PreferredLanguageSection />
-        </Suspense>
-        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <QualityPreferenceSection />
-        </Suspense>
-        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <LlmConfigSection />
-        </Suspense>
-        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <TmdbApiKeySection />
-        </Suspense>
-        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <ResourceProviderSection />
-        </Suspense>
-        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <DailySweepSection />
-        </Suspense>
-        <Suspense fallback={<div className="skeleton skeleton-heading" />}>
-          <PushNotificationSection />
-        </Suspense>
+        {isDemoMode() ? (
+          <div className="settings-card">
+            <p>
+              🔭 这是只读演示站,不提供网盘连接、登录与任何写入设置。
+              想真正使用(连 115/夸克、配 LLM key、自定义画质/通知)请{" "}
+              <a href="https://github.com/fancydirty/mediary-scout" target="_blank" rel="noreferrer">
+                自部署
+              </a>
+              。
+            </p>
+          </div>
+        ) : (
+          <>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <Pan115Section />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <PreferredLanguageSection />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <QualityPreferenceSection />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <LlmConfigSection />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <TmdbApiKeySection />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <ResourceProviderSection />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <DailySweepSection />
+            </Suspense>
+            <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+              <PushNotificationSection />
+            </Suspense>
+          </>
+        )}
       </main>
     </div>
   );
