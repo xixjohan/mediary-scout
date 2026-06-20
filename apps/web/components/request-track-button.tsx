@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { requestTrackingAction, type RequestTrackingActionResult } from "../app/actions";
 import type { SearchActionState } from "@media-track/workflow";
 import { RequestedBadge } from "./request-state";
+import { isDemoModeClient } from "../lib/demo-mode";
+import { DemoAcquirePlayback } from "./demo-acquire-playback";
 
 /**
  * Acquire control for a movie candidate. Visual states, kept consistent with
@@ -35,6 +37,10 @@ export function RequestTrackButton({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
+  // Read-only demo: clicking 获取 plays a scripted, client-only acquisition (no
+  // server action, which is gated server-side anyway).
+  const demo = isDemoModeClient();
+  const [demoPlaying, setDemoPlaying] = useState(false);
 
   // Once the SERVER reports the run finished (already_tracked), the optimistic
   // "已请求" from the click must release — otherwise the AcquiringPoller refreshes
@@ -55,6 +61,10 @@ export function RequestTrackButton({
     !inProgress &&
     !reserved &&
     (disabled || actionState === "already_tracked" || result?.status === "already_tracked");
+
+  if (demo && demoPlaying) {
+    return <DemoAcquirePlayback />;
+  }
 
   if (inProgress) {
     return <RequestedBadge title={result?.message} />;
@@ -85,6 +95,10 @@ export function RequestTrackButton({
         type="button"
         disabled={isPending}
         onClick={() => {
+          if (demo) {
+            setDemoPlaying(true);
+            return;
+          }
           startTransition(async () => {
             setResult(
               await requestTrackingAction({

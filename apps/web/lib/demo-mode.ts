@@ -24,6 +24,13 @@ export function isDemoMode(): boolean {
   return isDemoModeFromEnv(process.env);
 }
 
+/** Client-readable demo flag (Next inlines NEXT_PUBLIC_* into the bundle). The
+ *  demo deploy sets BOTH MEDIA_TRACK_DEMO_MODE (server gate) and this (client UX,
+ *  e.g. the 获取 button → scripted playback). */
+export function isDemoModeClient(): boolean {
+  return process.env.NEXT_PUBLIC_MEDIA_TRACK_DEMO_MODE === "1";
+}
+
 export function assertNotDemo(): void {
   assertNotDemoFromEnv(process.env);
 }
