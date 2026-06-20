@@ -29,3 +29,12 @@ coverage/
 # personal dev tooling (keep launch.json as contributor example)
 .claude/settings.json
 .claude/using-superpowers-*
+
+# internal working docs — kept on disk for the maintainer's workflow, never published
+docs/PROJECT-STATUS.md
+docs/superpowers/
+docs/incident-*.md
+docs/audit-*.md
+docs/e2e-live-*.md
+docs/original-skill-permission-audit-*.md
+docs/roadmap-self-host-expansion.md
