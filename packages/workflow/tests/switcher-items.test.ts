@@ -42,7 +42,7 @@ describe("switcherItems", () => {
       { id: "csNew", label: null, providerUid: "100000002", createdAt: "2026-06-10T00:00:00.000Z", status: "frozen" as const },
     ];
     const items = switcherItems(frozen, "/");
-    expect(items[0]!.label).toContain("4004");
+    expect(items[0]!.label).toContain("0001");
     expect(items.find((i) => i.id === "csNew")?.frozen).toBe(true);
   });
 });
