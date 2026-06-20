@@ -1,5 +1,38 @@
 import type { NotificationEvent, NotificationReport } from "./domain.js";
 import { formatReportPushText, landedSize } from "./notification-report.js";
+import { getStorageBrand, isRegisteredStorageProvider } from "./storage-brands.js";
+
+/** Human label for a drive in a push tag: the user-set nickname, else the brand
+ *  name (115 网盘 / 夸克网盘). Mirrors the workspace switcher's fallback. Never
+ *  throws — an unknown provider degrades to the raw provider string. */
+export function driveDisplayName(drive: { provider: string; label: string | null }): string {
+  const nickname = drive.label?.trim();
+  if (nickname) return nickname;
+  return isRegisteredStorageProvider(drive.provider) ? getStorageBrand(drive.provider).label : drive.provider;
+}
+
+/** Gate + resolution for the "which drive" push tag. Returns an EMPTY map when the
+ *  account has < 2 drives (single-drive → no source tag anywhere). Otherwise maps
+ *  each notification id to its source drive's display name. Entries whose drive is
+ *  null/unknown (legacy run, drive unbound after the run, or the __unscoped__
+ *  sentinel) are omitted, not errored. */
+export function resolveDriveSourceLabels(
+  entries: Array<{ connectedStorageId: string | null; notification: { id: string } }>,
+  drives: Array<{ id: string; provider: string; label: string | null }>,
+): Map<string, string> {
+  const labels = new Map<string, string>();
+  if (drives.length < 2) {
+    return labels;
+  }
+  const byId = new Map(drives.map((drive) => [drive.id, driveDisplayName(drive)]));
+  for (const entry of entries) {
+    const name = entry.connectedStorageId ? byId.get(entry.connectedStorageId) : undefined;
+    if (name) {
+      labels.set(entry.notification.id, name);
+    }
+  }
+  return labels;
+}
 
 /**
  * Outbound push: the in-app feed is the source of truth; these channels are

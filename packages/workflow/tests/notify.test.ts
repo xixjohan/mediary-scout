@@ -7,9 +7,56 @@ import {
   createWebhookChannel,
   createWeComChannel,
   dispatchNotifications,
+  driveDisplayName,
+  resolveDriveSourceLabels,
   type NotificationReport,
   type NotifyFetch,
 } from "../src/index.js";
+
+describe("driveDisplayName", () => {
+  it("uses the user-set nickname when present", () => {
+    expect(driveDisplayName({ provider: "pan115", label: "我的主盘" })).toBe("我的主盘");
+  });
+  it("falls back to the brand name when label is empty/blank", () => {
+    expect(driveDisplayName({ provider: "pan115", label: null })).toBe("115 网盘");
+    expect(driveDisplayName({ provider: "quark", label: "   " })).toBe("夸克网盘");
+  });
+  it("never throws on an unknown provider (returns the raw provider)", () => {
+    expect(driveDisplayName({ provider: "weird", label: null })).toBe("weird");
+  });
+});
+
+describe("resolveDriveSourceLabels (gate: account drive count ≥ 2)", () => {
+  const drivesTwo = [
+    { id: "cs_a", provider: "pan115", label: null },
+    { id: "cs_quark_x", provider: "quark", label: null },
+  ];
+  const entries = [
+    { connectedStorageId: "cs_quark_x", notification: { id: "n1" } },
+    { connectedStorageId: "cs_a", notification: { id: "n2" } },
+  ];
+
+  it("≥2 drives → maps each notification id to its source drive name", () => {
+    const m = resolveDriveSourceLabels(entries, drivesTwo);
+    expect(m.get("n1")).toBe("夸克网盘");
+    expect(m.get("n2")).toBe("115 网盘");
+  });
+  it("<2 drives → empty map (single-drive shows NO source tag at all)", () => {
+    const m = resolveDriveSourceLabels(entries, [drivesTwo[0]!]);
+    expect(m.size).toBe(0);
+  });
+  it("omits entries whose drive is null or unknown (legacy/unbound), never throws", () => {
+    const m = resolveDriveSourceLabels(
+      [
+        { connectedStorageId: null, notification: { id: "legacy" } },
+        { connectedStorageId: "cs_gone", notification: { id: "unbound" } },
+      ],
+      drivesTwo,
+    );
+    expect(m.has("legacy")).toBe(false);
+    expect(m.has("unbound")).toBe(false);
+  });
+});
 
 interface RecordedRequest {
   url: string;
