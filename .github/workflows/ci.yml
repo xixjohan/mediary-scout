@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: mediatrack
+          POSTGRES_PASSWORD: mediatrack
+          POSTGRES_DB: media_track
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U mediatrack"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      MEDIA_TRACK_POSTGRES_URL: postgresql://mediatrack:mediatrack@localhost:5432/media_track
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:workflow
+      - run: npm run typecheck
+      - run: npx tsc -p apps/web/tsconfig.json --noEmit
+      - run: npx vitest run
