@@ -1,40 +1,17 @@
 import {
   createEpisodeStates,
   episodeNumberFromCode,
-  getTrackedSeasonStatusView,
   InMemoryWorkflowRepository,
   type EpisodeState,
   type MediaTitle,
   type TrackedSeason,
-  type TrackedSeasonStatusView,
   type WorkflowRepository,
   type WorkflowRun,
 } from "@media-track/workflow";
 
-export interface DashboardState {
-  trackedSeason: TrackedSeasonStatusView;
-  events: Array<{
-    id: string;
-    kind: string;
-    title: string;
-    body: string;
-  }>;
-}
-
-export async function getDashboardState(): Promise<DashboardState> {
-  const repository = await createDemoWorkflowRepository();
-  const { season } = qiaochuFixture();
-
-  const trackedSeason = await getTrackedSeasonStatusView({
-    repository,
-    trackedSeasonId: season.id,
-  });
-  if (!trackedSeason) {
-    throw new Error("Demo tracked season was not created");
-  }
-
-  return dashboardStateFromTrackedSeason(trackedSeason);
-}
+const DEMO_ACCOUNT = "acct_default";
+const DEMO_DRIVE_115 = "cs_demo_115";
+const DEMO_DRIVE_QUARK = "cs_demo_quark";
 
 export async function createDemoWorkflowRepository(): Promise<InMemoryWorkflowRepository> {
   const repository = new InMemoryWorkflowRepository();
@@ -42,13 +19,173 @@ export async function createDemoWorkflowRepository(): Promise<InMemoryWorkflowRe
   return repository;
 }
 
-const DEMO_ACCOUNT = "acct_default";
-const DEMO_DRIVE_115 = "cs_demo_115";
-const DEMO_DRIVE_QUARK = "cs_demo_quark";
+type Drive = "pan115" | "quark";
+const driveId = (d: Drive) => (d === "pan115" ? DEMO_DRIVE_115 : DEMO_DRIVE_QUARK);
+const moviesDir = (d: Drive) => (d === "pan115" ? "demo_movies_115" : "demo_movies_q");
+const tvDir = (d: Drive) => (d === "pan115" ? "demo_tv_115" : "demo_tv_q");
+
+function episodesWithObtained(season: TrackedSeason, obtainedCount: number): EpisodeState[] {
+  return createEpisodeStates({
+    trackedSeasonId: season.id,
+    seasonNumber: season.seasonNumber,
+    totalEpisodes: season.totalEpisodes,
+    latestAiredEpisode: season.latestAiredEpisode,
+  }).map((episode) =>
+    episodeNumberFromCode(episode.episodeCode) <= obtainedCount
+      ? { ...episode, obtained: true, verifiedFileIds: [`file_${episode.episodeCode}`] }
+      : episode,
+  );
+}
+
+function movieFixture(input: {
+  tmdbId: number;
+  title: string;
+  year: number;
+  posterPath: string;
+  backdropPath: string | null;
+  storageDirectoryId: string;
+  obtained?: boolean;
+  releaseDate?: string;
+}): { title: MediaTitle; season: TrackedSeason; episodes: EpisodeState[] } {
+  const obtained = input.obtained ?? true;
+  const title: MediaTitle = {
+    id: `tmdb_movie_${input.tmdbId}`,
+    tmdbId: input.tmdbId,
+    type: "movie",
+    title: input.title,
+    originalTitle: input.title,
+    year: input.year,
+    aliases: [],
+    posterPath: input.posterPath,
+    backdropPath: input.backdropPath,
+    ...(input.releaseDate ? { releaseDate: input.releaseDate } : {}),
+  };
+  const season: TrackedSeason = {
+    id: `tmdb_movie_${input.tmdbId}_movie`,
+    mediaTitleId: title.id,
+    seasonNumber: 1,
+    status: obtained ? "completed" : "active",
+    qualityPreference: "4K",
+    storageDirectoryId: input.storageDirectoryId,
+    totalEpisodes: 1,
+    latestAiredEpisode: 1,
+    latestAiredSource: "manual",
+  };
+  return { title, season, episodes: episodesWithObtained(season, obtained ? 1 : 0) };
+}
+
+function seriesFixture(input: {
+  tmdbId: number;
+  title: string;
+  year: number;
+  type: "tv" | "anime";
+  posterPath: string;
+  backdropPath: string | null;
+  storageDirectoryId: string;
+  totalEpisodes: number;
+  latestAired: number;
+  obtainedCount: number;
+  status: "active" | "completed";
+}): { title: MediaTitle; season: TrackedSeason; episodes: EpisodeState[] } {
+  const title: MediaTitle = {
+    id: `tmdb_tv_${input.tmdbId}`,
+    tmdbId: input.tmdbId,
+    type: input.type,
+    title: input.title,
+    originalTitle: input.title,
+    year: input.year,
+    aliases: [],
+    posterPath: input.posterPath,
+    backdropPath: input.backdropPath,
+  };
+  const season: TrackedSeason = {
+    id: `tmdb_tv_${input.tmdbId}_s1`,
+    mediaTitleId: title.id,
+    seasonNumber: 1,
+    status: input.status,
+    qualityPreference: "4K",
+    storageDirectoryId: input.storageDirectoryId,
+    totalEpisodes: input.totalEpisodes,
+    latestAiredEpisode: input.latestAired,
+    latestAiredSource: "metadata",
+  };
+  return { title, season, episodes: episodesWithObtained(season, input.obtainedCount) };
+}
+
+function runFor(kind: WorkflowRun["kind"], tmdbId: number, trackedSeasonId: string): WorkflowRun {
+  return {
+    id: `run_demo_${tmdbId}`,
+    kind,
+    status: "succeeded",
+    trackedSeasonId,
+    startedAt: "2026-06-12T07:58:00.000Z",
+    finishedAt: "2026-06-12T08:00:00.000Z",
+    auditEvents: [],
+  };
+}
+
+type CuratedMovie = {
+  kind: "movie";
+  drive: Drive;
+  tmdbId: number;
+  title: string;
+  year: number;
+  posterPath: string;
+  backdropPath: string | null;
+  obtained?: boolean;
+  releaseDate?: string;
+};
+type CuratedSeries = {
+  kind: "series";
+  drive: Drive;
+  type: "tv" | "anime";
+  tmdbId: number;
+  title: string;
+  year: number;
+  posterPath: string;
+  backdropPath: string | null;
+  totalEpisodes: number;
+  latestAired: number;
+  obtainedCount: number;
+  status: "active" | "completed";
+};
+type Curated = CuratedMovie | CuratedSeries;
+
+const CURATED: Curated[] = [
+  // ---- 115 drive ----
+  { kind: "movie", drive: "pan115", tmdbId: 37165, title: "楚门的世界", year: 1998, posterPath: "/nAnzFcqORitpwvRQPceIt4mcm8G.jpg", backdropPath: "/aCHn2TXYJfzPXQKA6r9mKPbMlUB.jpg" },
+  { kind: "movie", drive: "pan115", tmdbId: 27205, title: "盗梦空间", year: 2010, posterPath: "/89W962aAnPS3N3BdKgy2BvUhnCh.jpg", backdropPath: "/8ZTVqvKDQ8emSGUEMjsS4yHAwrp.jpg" },
+  { kind: "movie", drive: "pan115", tmdbId: 157336, title: "星际穿越", year: 2014, posterPath: "/c35Vwd9rmMQfaEJuUrJRF3LZWJX.jpg", backdropPath: "/2ssWTSVklAEc98frZUQhgtGHx7s.jpg" },
+  { kind: "movie", drive: "pan115", tmdbId: 842675, title: "流浪地球2", year: 2023, posterPath: "/cAS2e9hUwu6Ydsx7byXj16H00Ai.jpg", backdropPath: "/94cS0mzODEoNIXFT7nhPcI8V4IJ.jpg" },
+  { kind: "movie", drive: "pan115", tmdbId: 76600, title: "阿凡达：水之道", year: 2022, posterPath: "/az6FndKaR11uuxnRQucKJ2mmglg.jpg", backdropPath: "/kJsPVzdyBrYHLomuNv5SJDXUQ2f.jpg" },
+  { kind: "movie", drive: "pan115", tmdbId: 1003596, title: "复仇者联盟5", year: 2026, posterPath: "/2UnOGhrwaDLyhlbYrSDDQWci4UC.jpg", backdropPath: null, obtained: false, releaseDate: "2026-12-16" },
+  { kind: "series", drive: "pan115", type: "tv", tmdbId: 87108, title: "切尔诺贝利", year: 2019, posterPath: "/2kjMfJSwwQqOq4o4idiZxbNxoYz.jpg", backdropPath: "/3URK0z9PzpVNJrGE7XOuyy6KFzk.jpg", totalEpisodes: 5, latestAired: 5, obtainedCount: 5, status: "completed" },
+  { kind: "series", drive: "pan115", type: "tv", tmdbId: 66732, title: "怪奇物语", year: 2016, posterPath: "/98pJM1e8S5SbPt7V5H9b1ZLrQdj.jpg", backdropPath: "/56v2KjBlU4XaOv9rVYEQypROD7P.jpg", totalEpisodes: 9, latestAired: 9, obtainedCount: 6, status: "completed" },
+  { kind: "series", drive: "pan115", type: "tv", tmdbId: 204541, title: "三体", year: 2023, posterPath: "/q2sNliRi4j0ncXKUO1x0MldR20A.jpg", backdropPath: "/zxfBtHz5UmSTfIEC4O4GngyjHwa.jpg", totalEpisodes: 30, latestAired: 30, obtainedCount: 30, status: "completed" },
+  { kind: "series", drive: "pan115", type: "anime", tmdbId: 1429, title: "进击的巨人", year: 2013, posterPath: "/1j3s19nko8OtGhCRwRMDGmr0m5O.jpg", backdropPath: "/rqbCbjB19amtOtFQbb3K2lgm2zv.jpg", totalEpisodes: 28, latestAired: 28, obtainedCount: 28, status: "completed" },
+  { kind: "series", drive: "pan115", type: "anime", tmdbId: 120089, title: "间谍过家家", year: 2022, posterPath: "/xkEGd9GF3oty89xDiXMGJm6pGQL.jpg", backdropPath: "/lysUnU6V0VfcthDbviuVlIqgHOR.jpg", totalEpisodes: 12, latestAired: 8, obtainedCount: 8, status: "active" },
+  { kind: "series", drive: "pan115", type: "anime", tmdbId: 85937, title: "鬼灭之刃", year: 2019, posterPath: "/tZ0yGfG4EIox7bYJTxAtqUhoOmR.jpg", backdropPath: "/3GQKYh6Trm8pxd2AypovoYQf4Ay.jpg", totalEpisodes: 11, latestAired: 11, obtainedCount: 7, status: "completed" },
+  // ---- quark drive ----
+  { kind: "movie", drive: "quark", tmdbId: 278, title: "肖申克的救赎", year: 1994, posterPath: "/Aqo8yM5S5ZEdlcyeBBxj7s0vkTf.jpg", backdropPath: "/zfbjgQE1uSd9wiPTX4VzsLi0rGG.jpg" },
+  { kind: "movie", drive: "quark", tmdbId: 13, title: "阿甘正传", year: 1994, posterPath: "/pplybKImR7LKzSVzRylK6Cl4dzm.jpg", backdropPath: "/66Kn4XWhkuPkJxOJyPEx4U2CUfN.jpg" },
+  { kind: "movie", drive: "quark", tmdbId: 155, title: "蝙蝠侠：黑暗骑士", year: 2008, posterPath: "/xUX0sVHmukGTYLTyqmSF5hpktOU.jpg", backdropPath: "/cfT29Im5VDvjE0RpyKOSdCKZal7.jpg" },
+  { kind: "series", drive: "quark", type: "tv", tmdbId: 1396, title: "绝命毒师", year: 2008, posterPath: "/rqliuvX7NdknSHu5qaSDfESplQi.jpg", backdropPath: "/tsRy63Mu5cu8etL1X7ZLyf7UP1M.jpg", totalEpisodes: 16, latestAired: 16, obtainedCount: 16, status: "completed" },
+  { kind: "series", drive: "quark", type: "tv", tmdbId: 1399, title: "权力的游戏", year: 2011, posterPath: "/6fJ7Gql9rD4C3X1uW2zinlkNwvw.jpg", backdropPath: "/2OMB0ynKlyIenMJWI2Dy9IWT4c.jpg", totalEpisodes: 6, latestAired: 6, obtainedCount: 6, status: "completed" },
+  { kind: "series", drive: "quark", type: "tv", tmdbId: 100088, title: "最后生还者", year: 2023, posterPath: "/ydyTjqxZsPlcFSTBNY2INYrmEvk.jpg", backdropPath: "/acevLdSl5I2MK5RYAm7gwAndt1w.jpg", totalEpisodes: 7, latestAired: 5, obtainedCount: 5, status: "active" },
+  { kind: "series", drive: "quark", type: "anime", tmdbId: 95479, title: "咒术回战", year: 2020, posterPath: "/kdE1ALF5G6DFMyDU67AyyUklEtn.jpg", backdropPath: "/qpin8cASXEVtwhzNsprHYFiOAGk.jpg", totalEpisodes: 23, latestAired: 23, obtainedCount: 23, status: "completed" },
+  { kind: "series", drive: "quark", type: "anime", tmdbId: 209867, title: "葬送的芙莉莲", year: 2023, posterPath: "/1TtrtRIwXz5BB0gXEl8zgBypl9c.jpg", backdropPath: "/rBOnrVlck7BIlGeWVlzYiZeg4l2.jpg", totalEpisodes: 28, latestAired: 20, obtainedCount: 20, status: "active" },
+];
+
+// A few notifications so the 通知 page isn't empty (keyed by tmdbId).
+const NOTIFS: Record<number, { kind: string; title: string; body: string; createdAt: string }> = {
+  37165: { kind: "movie_obtained", title: "楚门的世界 (1998) · 已入库", body: "已转存到 115 网盘并完成验证。", createdAt: "2026-06-12T08:00:00.000Z" },
+  842675: { kind: "movie_obtained", title: "流浪地球2 (2023) · 已入库", body: "已转存到 115 网盘并完成验证。", createdAt: "2026-06-12T09:10:00.000Z" },
+  87108: { kind: "tracking_initialized", title: "切尔诺贝利 第 1 季 · 已获取 5 集", body: "目标目录已验证到 5 个视频文件。", createdAt: "2026-06-11T00:02:00.000Z" },
+  120089: { kind: "tracking_initialized", title: "间谍过家家 · 已获取 8 集", body: "已获取至第 8 集，剩余将由每日巡检自动补齐。", createdAt: "2026-06-13T12:00:00.000Z" },
+};
 
 export async function seedDemoWorkflowRepository(repository: WorkflowRepository): Promise<void> {
-  // Two drives → the workspace switcher (≥2) + brand icons + per-drive scoping all
-  // show in the demo. Provisioned cids set so they read as healthy/active.
+  // Two drives → the workspace switcher (≥2) + brand icons + per-drive scoping show.
   await repository.upsertConnectedStorage({
     id: DEMO_DRIVE_115,
     accountId: DEMO_ACCOUNT,
@@ -76,217 +213,47 @@ export async function seedDemoWorkflowRepository(repository: WorkflowRepository)
     createdAt: "2026-06-05T00:00:00.000Z",
   });
 
-  // Tracked show on the primary (115) drive — partial + airing → 缺集 + 追更 badges.
-  const { title, season } = qiaochuFixture();
-  await repository.saveWorkflowRunSnapshot({
-    accountId: DEMO_ACCOUNT,
-    connectedStorageId: DEMO_DRIVE_115,
-    title,
-    season,
-    workflowRun: workflowRun(season),
-    episodes: seedEpisodes(season),
-    resourceSnapshots: [],
-    decisions: [],
-    transferAttempts: [],
-    notifications: [
-      {
-        id: "demo_notif_qiaochu",
-        workflowRunId: "run_demo_qiaochu",
-        kind: "tracking_initialized",
-        title: "翘楚 第 1 季 · 已获取 12 集",
-        body: "已获取至第 12 集，剩余将由每日巡检自动补齐。",
-        createdAt: "2026-06-11T00:02:00.000Z",
-      },
-    ],
-  });
-
-  // Two completed movies, one on each drive.
-  const truman = movieFixture({
-    tmdbId: 37165,
-    title: "楚门的世界",
-    year: 1998,
-    storageDirectoryId: "demo_movies_115",
-    posterPath: "/nAnzFcqORitpwvRQPceIt4mcm8G.jpg",
-    backdropPath: "/aCHn2TXYJfzPXQKA6r9mKPbMlUB.jpg",
-  });
-  await repository.saveWorkflowRunSnapshot({
-    accountId: DEMO_ACCOUNT,
-    connectedStorageId: DEMO_DRIVE_115,
-    title: truman.title,
-    season: truman.season,
-    workflowRun: movieRun("run_demo_truman", truman.season.id),
-    episodes: truman.episodes,
-    resourceSnapshots: [],
-    decisions: [],
-    transferAttempts: [],
-    notifications: [
-      {
-        id: "demo_notif_truman",
-        workflowRunId: "run_demo_truman",
-        kind: "movie_obtained",
-        title: "楚门的世界 (1998) · 已入库",
-        body: "已转存到 115 网盘并完成验证。",
-        createdAt: "2026-06-12T08:00:00.000Z",
-      },
-    ],
-  });
-
-  const shawshank = movieFixture({
-    tmdbId: 278,
-    title: "肖申克的救赎",
-    year: 1994,
-    storageDirectoryId: "demo_movies_q",
-    posterPath: "/Aqo8yM5S5ZEdlcyeBBxj7s0vkTf.jpg",
-    backdropPath: "/zfbjgQE1uSd9wiPTX4VzsLi0rGG.jpg",
-  });
-  await repository.saveWorkflowRunSnapshot({
-    accountId: DEMO_ACCOUNT,
-    connectedStorageId: DEMO_DRIVE_QUARK,
-    title: shawshank.title,
-    season: shawshank.season,
-    workflowRun: movieRun("run_demo_shawshank", shawshank.season.id),
-    episodes: shawshank.episodes,
-    resourceSnapshots: [],
-    decisions: [],
-    transferAttempts: [],
-    notifications: [],
-  });
-}
-
-function movieFixture(input: {
-  tmdbId: number;
-  title: string;
-  year: number;
-  storageDirectoryId: string;
-  posterPath: string;
-  backdropPath: string;
-}): { title: MediaTitle; season: TrackedSeason; episodes: EpisodeState[] } {
-  const title: MediaTitle = {
-    id: `tmdb_movie_${input.tmdbId}`,
-    tmdbId: input.tmdbId,
-    type: "movie",
-    title: input.title,
-    originalTitle: input.title,
-    year: input.year,
-    aliases: [],
-    posterPath: input.posterPath,
-    backdropPath: input.backdropPath,
-  };
-  const season: TrackedSeason = {
-    id: `tmdb_movie_${input.tmdbId}_movie`,
-    mediaTitleId: title.id,
-    seasonNumber: 1,
-    status: "completed",
-    qualityPreference: "4K",
-    storageDirectoryId: input.storageDirectoryId,
-    totalEpisodes: 1,
-    latestAiredEpisode: 1,
-    latestAiredSource: "manual",
-  };
-  const episodes = createEpisodeStates({
-    trackedSeasonId: season.id,
-    seasonNumber: 1,
-    totalEpisodes: 1,
-    latestAiredEpisode: 1,
-  }).map((episode) => ({ ...episode, obtained: true, verifiedFileIds: [`file_movie_${input.tmdbId}`] }));
-  return { title, season, episodes };
-}
-
-function movieRun(id: string, trackedSeasonId: string): WorkflowRun {
-  return {
-    id,
-    kind: "movie_init",
-    status: "succeeded",
-    trackedSeasonId,
-    startedAt: "2026-06-12T07:58:00.000Z",
-    finishedAt: "2026-06-12T08:00:00.000Z",
-    auditEvents: [],
-  };
-}
-
-export function dashboardStateFromTrackedSeason(trackedSeason: TrackedSeasonStatusView): DashboardState {
-  return {
-    trackedSeason,
-    events: [
-      {
-        id: "demo_event_obtained",
-        kind: "tracking_initialized",
-        title: "翘楚 S01E01-S01E12 已获取",
-        body: "目标目录已验证到 12 个视频文件。",
-      },
-      {
-        id: "demo_event_missing",
-        kind: "no_coverage",
-        title: "S01E13-S01E14 等待修复",
-        body: "已播出但未获取，会进入后续 Type 3 检查。",
-      },
-      {
-        id: "demo_event_health",
-        kind: "already_current",
-        title: "115 连接有效",
-        body: "最近一次最小读验证通过。",
-      },
-    ],
-  };
-}
-
-function qiaochuFixture(): { title: MediaTitle; season: TrackedSeason } {
-  const title: MediaTitle = {
-    id: "tmdb_tv_289271",
-    tmdbId: 289271,
-    type: "tv",
-    title: "翘楚",
-    originalTitle: "翘楚",
-    year: 2026,
-    aliases: [],
-    posterPath: "/vcU56Dw1aKxTTlhrVr0qvPnljDV.jpg",
-    backdropPath: "/6CgpC5cS8jvkXgkI0pRoj31nHf6.jpg",
-  };
-  return {
-    title,
-    season: {
-      id: "tmdb_tv_289271_s1",
-      mediaTitleId: title.id,
-      seasonNumber: 1,
-      status: "active",
-      qualityPreference: "4K",
-      storageDirectoryId: "115_dir_qiaochu_s1",
-      totalEpisodes: 24,
-      latestAiredEpisode: 14,
-      latestAiredSource: "metadata",
-    },
-  };
-}
-
-function seedEpisodes(season: TrackedSeason): EpisodeState[] {
-  return createEpisodeStates({
-    trackedSeasonId: season.id,
-    seasonNumber: season.seasonNumber,
-    totalEpisodes: season.totalEpisodes,
-    latestAiredEpisode: season.latestAiredEpisode,
-  }).map((episode) => {
-    // Use the canonical parser, not slice(-2): the latter silently breaks for
-    // episodes >= 100 ("S01E100".slice(-2) === "00").
-    const episodeNumber = episodeNumberFromCode(episode.episodeCode);
-    if (episodeNumber <= 12) {
-      return {
-        ...episode,
-        obtained: true,
-        verifiedFileIds: [`file_${episode.episodeCode}`],
-      };
-    }
-    return episode;
-  });
-}
-
-function workflowRun(season: TrackedSeason): WorkflowRun {
-  return {
-    id: "run_demo_qiaochu",
-    kind: "type2_init",
-    status: "succeeded",
-    trackedSeasonId: season.id,
-    startedAt: "2026-06-11T00:00:00.000Z",
-    finishedAt: "2026-06-11T00:02:00.000Z",
-    auditEvents: [],
-  };
+  for (const item of CURATED) {
+    const fixture =
+      item.kind === "movie"
+        ? movieFixture({
+            tmdbId: item.tmdbId,
+            title: item.title,
+            year: item.year,
+            posterPath: item.posterPath,
+            backdropPath: item.backdropPath,
+            storageDirectoryId: moviesDir(item.drive),
+            ...(item.obtained === undefined ? {} : { obtained: item.obtained }),
+            ...(item.releaseDate ? { releaseDate: item.releaseDate } : {}),
+          })
+        : seriesFixture({
+            tmdbId: item.tmdbId,
+            title: item.title,
+            year: item.year,
+            type: item.type,
+            posterPath: item.posterPath,
+            backdropPath: item.backdropPath,
+            storageDirectoryId: tvDir(item.drive),
+            totalEpisodes: item.totalEpisodes,
+            latestAired: item.latestAired,
+            obtainedCount: item.obtainedCount,
+            status: item.status,
+          });
+    const run = runFor(item.kind === "movie" ? "movie_init" : "type2_init", item.tmdbId, fixture.season.id);
+    const notif = NOTIFS[item.tmdbId];
+    await repository.saveWorkflowRunSnapshot({
+      accountId: DEMO_ACCOUNT,
+      connectedStorageId: driveId(item.drive),
+      title: fixture.title,
+      season: fixture.season,
+      workflowRun: run,
+      episodes: fixture.episodes,
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: notif
+        ? [{ id: `demo_notif_${item.tmdbId}`, workflowRunId: run.id, kind: notif.kind, title: notif.title, body: notif.body, createdAt: notif.createdAt }]
+        : [],
+    });
+  }
 }
