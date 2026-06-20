@@ -58,6 +58,28 @@ describe("resolveDriveSourceLabels (gate: account drive count ≥ 2)", () => {
   });
 });
 
+describe("buildNotifyMessage sourceLabel", () => {
+  const sampleReport: NotificationReport = {
+    titleName: "阿甘正传",
+    seasonLabel: null,
+    status: "acquired",
+    lines: ["已获取"],
+    newlyObtained: [],
+    realMissing: [],
+    year: 1994,
+  };
+  it("appends a 来源网盘 line to markdown AND the text fallback when given", () => {
+    const m = buildNotifyMessage(sampleReport, { sourceLabel: "夸克网盘" });
+    expect(m.markdown).toContain("来源网盘：夸克网盘");
+    expect(m.text).toContain("来源网盘：夸克网盘");
+  });
+  it("omits it entirely when no sourceLabel (现状回归)", () => {
+    const m = buildNotifyMessage(sampleReport, {});
+    expect(m.markdown).not.toContain("来源网盘");
+    expect(m.text).not.toContain("来源网盘");
+  });
+});
+
 interface RecordedRequest {
   url: string;
   method: string;

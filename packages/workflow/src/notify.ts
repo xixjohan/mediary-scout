@@ -63,7 +63,7 @@ const TMDB_POSTER_BASE = "https://image.tmdb.org/t/p/w500";
  */
 export function buildNotifyMessage(
   report: NotificationReport,
-  opts?: { posterBaseUrl?: string; webBaseUrl?: string },
+  opts?: { posterBaseUrl?: string; webBaseUrl?: string; sourceLabel?: string },
 ): NotifyMessage {
   const posterBase = (opts?.posterBaseUrl ?? TMDB_POSTER_BASE).replace(/\/$/, "");
   const head = report.seasonLabel
@@ -97,13 +97,21 @@ export function buildNotifyMessage(
   if (report.realMissing.length > 0) {
     md.push(`- 缺集：${report.realMissing.join("、")}`);
   }
+  // Source drive — only the push layer passes this, and only when the account has
+  // ≥2 drives mounted (single-drive → opts.sourceLabel absent → line omitted).
+  if (opts?.sourceLabel) {
+    md.push(`- 来源网盘：${opts.sourceLabel}`);
+  }
   if (url) {
     md.push("", `[查看详情 →](${url})`);
   }
 
+  const baseText = formatReportPushText(report);
+  const text = opts?.sourceLabel ? `${baseText}\n📦 来源网盘：${opts.sourceLabel}` : baseText;
+
   return {
     title: head,
-    text: formatReportPushText(report),
+    text,
     markdown: md.join("\n"),
     ...(imageUrl ? { imageUrl } : {}),
     ...(url ? { url } : {}),
@@ -272,8 +280,9 @@ export interface NotifyDispatchResult {
 export async function dispatchNotifications(input: {
   channels: NotifyChannel[];
   notifications: NotificationEvent[];
-  /** Public base URL for the tap-through link (absent → no link, e.g. local dev). */
-  opts?: { posterBaseUrl?: string; webBaseUrl?: string };
+  /** Public base URL for the tap-through link (absent → no link, e.g. local dev);
+   *  sourceLabel tags the source drive (set by the push layer when ≥2 drives). */
+  opts?: { posterBaseUrl?: string; webBaseUrl?: string; sourceLabel?: string };
 }): Promise<NotifyDispatchResult> {
   let sent = 0;
   const failures: NotifyDispatchResult["failures"] = [];
