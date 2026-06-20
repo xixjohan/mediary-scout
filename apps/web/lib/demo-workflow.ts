@@ -101,7 +101,14 @@ export async function seedDemoWorkflowRepository(repository: WorkflowRepository)
   });
 
   // Two completed movies, one on each drive.
-  const truman = movieFixture({ tmdbId: 37165, title: "楚门的世界", year: 1998, storageDirectoryId: "demo_movies_115" });
+  const truman = movieFixture({
+    tmdbId: 37165,
+    title: "楚门的世界",
+    year: 1998,
+    storageDirectoryId: "demo_movies_115",
+    posterPath: "/nAnzFcqORitpwvRQPceIt4mcm8G.jpg",
+    backdropPath: "/aCHn2TXYJfzPXQKA6r9mKPbMlUB.jpg",
+  });
   await repository.saveWorkflowRunSnapshot({
     accountId: DEMO_ACCOUNT,
     connectedStorageId: DEMO_DRIVE_115,
@@ -124,7 +131,14 @@ export async function seedDemoWorkflowRepository(repository: WorkflowRepository)
     ],
   });
 
-  const shawshank = movieFixture({ tmdbId: 278, title: "肖申克的救赎", year: 1994, storageDirectoryId: "demo_movies_q" });
+  const shawshank = movieFixture({
+    tmdbId: 278,
+    title: "肖申克的救赎",
+    year: 1994,
+    storageDirectoryId: "demo_movies_q",
+    posterPath: "/Aqo8yM5S5ZEdlcyeBBxj7s0vkTf.jpg",
+    backdropPath: "/zfbjgQE1uSd9wiPTX4VzsLi0rGG.jpg",
+  });
   await repository.saveWorkflowRunSnapshot({
     accountId: DEMO_ACCOUNT,
     connectedStorageId: DEMO_DRIVE_QUARK,
@@ -144,6 +158,8 @@ function movieFixture(input: {
   title: string;
   year: number;
   storageDirectoryId: string;
+  posterPath: string;
+  backdropPath: string;
 }): { title: MediaTitle; season: TrackedSeason; episodes: EpisodeState[] } {
   const title: MediaTitle = {
     id: `tmdb_movie_${input.tmdbId}`,
@@ -153,6 +169,8 @@ function movieFixture(input: {
     originalTitle: input.title,
     year: input.year,
     aliases: [],
+    posterPath: input.posterPath,
+    backdropPath: input.backdropPath,
   };
   const season: TrackedSeason = {
     id: `tmdb_movie_${input.tmdbId}_movie`,
@@ -221,6 +239,8 @@ function qiaochuFixture(): { title: MediaTitle; season: TrackedSeason } {
     originalTitle: "翘楚",
     year: 2026,
     aliases: [],
+    posterPath: "/vcU56Dw1aKxTTlhrVr0qvPnljDV.jpg",
+    backdropPath: "/6CgpC5cS8jvkXgkI0pRoj31nHf6.jpg",
   };
   return {
     title,
