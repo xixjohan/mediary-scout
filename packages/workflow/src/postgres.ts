@@ -745,6 +745,18 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     );
   }
 
+  async deleteConnectedStorage(accountId: string, storageId: string): Promise<void> {
+    await this.ensureSchema();
+    // Only the drive row (incl. its cookie) is removed. Tracking tables key on
+    // (account_id, connected_storage_id) and have NO FK to connected_storages, so
+    // their rows persist; re-binding the same drive (same cs_id) reconnects them.
+    // account_id in the WHERE is fail-closed: can't delete another account's drive.
+    await this.pool.query("DELETE FROM connected_storages WHERE id = $1 AND account_id = $2", [
+      storageId,
+      accountId,
+    ]);
+  }
+
   async findConnectedStorageByUid(
     provider: string,
     providerUid: string,
