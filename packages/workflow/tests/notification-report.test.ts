@@ -332,3 +332,28 @@ describe("formatDailyDigestPushText", () => {
     expect(text).not.toContain("已更新");
   });
 });
+
+describe("formatDailyDigestPushText source tags", () => {
+  it("suffixes each show line with ' · 来自<盘名>' from the id→label map", () => {
+    const notif = scheduledNotification({
+      titleName: "斗破苍穹",
+      seasonLabel: "第 5 季",
+      kind: "episodes_restored",
+      newlyObtained: ["E06"],
+      realMissing: [],
+    });
+    const map = new Map([[notif.id, "115 网盘"]]);
+    const out = formatDailyDigestPushText([notif], { sourceLabelById: map });
+    expect(out).toContain("· 来自115 网盘");
+  });
+  it("no opts → identical to current (no 来自 suffix)", () => {
+    const notif = scheduledNotification({
+      titleName: "斗破苍穹",
+      seasonLabel: "第 5 季",
+      kind: "episodes_restored",
+      newlyObtained: ["E06"],
+      realMissing: [],
+    });
+    expect(formatDailyDigestPushText([notif])).not.toContain("来自");
+  });
+});

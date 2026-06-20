@@ -323,7 +323,10 @@ export function landedSize(report: NotificationReport): { label: string; value: 
  * pushes a single message instead of one per show. Shows that changed get a
  * detail line; shows checked with nothing to do collapse into a tail count.
  */
-export function formatDailyDigestPushText(notifications: NotificationEvent[]): string {
+export function formatDailyDigestPushText(
+  notifications: NotificationEvent[],
+  opts?: { sourceLabelById?: Map<string, string> },
+): string {
   const withReport = notifications.filter((notification) => notification.report !== undefined);
   const changed = withReport.filter((notification) => notification.kind !== "already_current");
   const unchanged = withReport.length - changed.length;
@@ -364,7 +367,10 @@ export function formatDailyDigestPushText(notifications: NotificationEvent[]): s
     }
     // Markdown: bold name + bullet, so Server酱 renders a real list, not a flat
     // text blob (desp is markdown; bare "·" lines read as a wall of plain text).
-    lines.push(`- **${head}** — ${detail}`);
+    // Source-drive suffix only present when the push layer passes the map (≥2 drives).
+    const source = opts?.sourceLabelById?.get(notification.id);
+    const sourceSuffix = source ? ` · 来自${source}` : "";
+    lines.push(`- **${head}** — ${detail}${sourceSuffix}`);
   }
 
   if (unchanged > 0) {
