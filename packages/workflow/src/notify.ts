@@ -322,6 +322,8 @@ export async function sendPushNotifications(input: {
   notification: NotificationEvent;
   overrideConfig?: Record<string, string>;
   fetchImpl?: NotifyFetch;
+  /** Source-drive tag for the message (set by the push layer when ≥2 drives). */
+  sourceLabel?: string;
 }): Promise<string[]> {
   const config: Record<string, string> = {};
 
@@ -361,10 +363,13 @@ export async function sendPushNotifications(input: {
   }
 
   const webBaseUrl = process.env.MEDIA_TRACK_PUBLIC_BASE_URL?.trim();
+  const opts: { webBaseUrl?: string; sourceLabel?: string } = {};
+  if (webBaseUrl) opts.webBaseUrl = webBaseUrl;
+  if (input.sourceLabel) opts.sourceLabel = input.sourceLabel;
   const result = await dispatchNotifications({
     channels,
     notifications: [input.notification],
-    ...(webBaseUrl ? { opts: { webBaseUrl } } : {}),
+    ...(opts.webBaseUrl || opts.sourceLabel ? { opts } : {}),
   });
   const sentChannels = channels
     .filter((ch) => !result.failures.some((f) => f.channelId === ch.id))

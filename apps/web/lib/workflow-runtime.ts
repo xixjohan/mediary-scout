@@ -29,6 +29,7 @@ import {
   runQueuedMovieAcquisition,
   runQueuedSeriesInitialization,
   runQueuedType2Workflow,
+  resolveDriveSourceLabels,
   runScheduledType3Monitoring,
   sendPushNotifications,
   createPostgresWorkflowRepositorySync,
@@ -781,23 +782,32 @@ async function pushNotificationsSince(
       return;
     }
 
-    const byAccount = new Map<string, NotificationEvent[]>();
-    for (const { accountId, notification } of recent) {
+    type RecentEntry = { connectedStorageId: string | null; notification: NotificationEvent };
+    const byAccount = new Map<string, RecentEntry[]>();
+    for (const { accountId, connectedStorageId, notification } of recent) {
       const list = byAccount.get(accountId) ?? [];
-      list.push(notification);
+      list.push({ connectedStorageId, notification });
       byAccount.set(accountId, list);
     }
 
-    for (const [accountId, notifications] of byAccount) {
+    for (const [accountId, entries] of byAccount) {
       const settings = getAccountScopedSettings(accountId);
+      // Source-drive tags: only when this account has ≥2 drives mounted (else the
+      // map is empty and no message carries a source). Resolution is null/unknown
+      // safe (legacy run or unbound drive → that entry is simply not tagged).
+      const drives = await targetRepository.listConnectedStorages(accountId);
+      const sourceLabels = resolveDriveSourceLabels(entries, drives);
+
+      const notifications = entries.map((entry) => entry.notification);
       // A scheduled sweep touches many shows; collapse this account's into ONE
       // digest. User-triggered events stay per-resource — each its own message.
       const scheduled = notifications.filter((notification) => notification.trigger === "scheduled");
       const individual = notifications.filter((notification) => notification.trigger !== "scheduled");
 
       for (const notification of individual) {
+        const sourceLabel = sourceLabels.get(notification.id);
         try {
-          await sendPushNotifications({ repository: settings, notification });
+          await sendPushNotifications({ repository: settings, notification, ...(sourceLabel ? { sourceLabel } : {}) });
         } catch (error) {
           console.error(
             `[media-track] push for ${notification.id} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -811,7 +821,7 @@ async function pushNotificationsSince(
           workflowRunId: scheduled[0]!.workflowRunId,
           kind: "daily_digest",
           title: "每日巡检",
-          body: formatDailyDigestPushText(scheduled),
+          body: formatDailyDigestPushText(scheduled, { sourceLabelById: sourceLabels }),
           createdAt: new Date().toISOString(),
           trigger: "scheduled",
         };
