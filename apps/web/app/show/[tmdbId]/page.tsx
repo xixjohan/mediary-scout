@@ -9,6 +9,7 @@ import {
   RequestRemainingButton,
   RequestSeasonButton,
 } from "../../../components/title-action-buttons";
+import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import {
   getDetailView,
   type MovieHubView,
@@ -191,6 +192,13 @@ function TvHub({ view }: { view: TitleHubView }) {
                     ? "获取所有季"
                     : `获取剩余 ${view.untrackedSeasonNumbers.length} 季`
                 }
+                demoEntry={{
+                  tmdbId: view.tmdbId,
+                  title: view.title,
+                  year: view.year,
+                  type: "tv",
+                  posterPath: view.posterPath,
+                }}
               />
             ) : null}
           </div>
@@ -211,6 +219,13 @@ function TvHub({ view }: { view: TitleHubView }) {
               season={season}
               tmdbId={view.tmdbId}
               acquiring={view.acquiring}
+              demoEntry={{
+                tmdbId: view.tmdbId,
+                title: view.title,
+                year: view.year,
+                type: "tv",
+                posterPath: view.posterPath,
+              }}
             />
           ))}
         </ul>
@@ -310,10 +325,12 @@ function SeasonRow({
   season,
   tmdbId,
   acquiring,
+  demoEntry,
 }: {
   season: TitleHubSeason;
   tmdbId: number;
   acquiring: boolean;
+  demoEntry?: DemoAcquisitionEntry | undefined;
 }) {
   const total = season.totalEpisodes;
   const aired = Math.min(season.latestAiredEpisode, total);
@@ -356,6 +373,7 @@ function SeasonRow({
           tmdbId={tmdbId}
           seasonNumber={season.seasonNumber}
           titleAcquiring={acquiring}
+          demoEntry={demoEntry}
         />
       </li>
     );

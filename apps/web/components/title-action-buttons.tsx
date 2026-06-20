@@ -10,16 +10,22 @@ import {
 } from "../app/actions";
 import { useAcquisitionLock } from "./acquisition-lock";
 import { isLockedResult } from "./request-state";
+import { isDemoModeClient } from "../lib/demo-mode";
+import { DemoAcquirePlayback } from "./demo-acquire-playback";
+import type { DemoAcquisitionEntry } from "../lib/demo-session";
 
 export function RequestSeasonButton({
   tmdbId,
   seasonNumber,
   titleAcquiring = false,
+  demoEntry,
 }: {
   tmdbId: number;
   seasonNumber: number;
   /** Server truth: this title already has an acquisition run in flight. */
   titleAcquiring?: boolean;
+  /** Demo only: recorded to the session library when the scripted playback ends. */
+  demoEntry?: DemoAcquisitionEntry | undefined;
 }) {
   const router = useRouter();
   const lock = useAcquisitionLock();
@@ -30,6 +36,12 @@ export function RequestSeasonButton({
   const mine = lock?.acquiring === scope;
   const othersAcquiring = (lock != null && lock.acquiring != null && !mine) || titleAcquiring;
   const inFlight = isPending || mine;
+  const demo = isDemoModeClient();
+  const [demoPlaying, setDemoPlaying] = useState(false);
+
+  if (demo && demoPlaying) {
+    return <DemoAcquirePlayback entry={demoEntry} />;
+  }
 
   return (
     <button
@@ -40,6 +52,10 @@ export function RequestSeasonButton({
       }
       disabled={isPending || isLocked || othersAcquiring}
       onClick={() => {
+        if (demo) {
+          setDemoPlaying(true);
+          return;
+        }
         lock?.lock(scope);
         startTransition(async () => {
           setResult(await requestSeasonAction({ tmdbId, seasonNumber }));
@@ -63,11 +79,14 @@ export function RequestRemainingButton({
   tmdbId,
   label,
   titleAcquiring = false,
+  demoEntry,
 }: {
   tmdbId: number;
   label: string;
   /** Server truth: this title already has an acquisition run in flight. */
   titleAcquiring?: boolean;
+  /** Demo only: recorded to the session library when the scripted playback ends. */
+  demoEntry?: DemoAcquisitionEntry | undefined;
 }) {
   const router = useRouter();
   const lock = useAcquisitionLock();
@@ -78,6 +97,12 @@ export function RequestRemainingButton({
   const mine = lock?.acquiring === scope;
   const othersAcquiring = (lock != null && lock.acquiring != null && !mine) || titleAcquiring;
   const inFlight = isPending || mine;
+  const demo = isDemoModeClient();
+  const [demoPlaying, setDemoPlaying] = useState(false);
+
+  if (demo && demoPlaying) {
+    return <DemoAcquirePlayback entry={demoEntry} />;
+  }
 
   return (
     <button
@@ -86,6 +111,10 @@ export function RequestRemainingButton({
       title={othersAcquiring && !inFlight ? "该剧正在获取中，请稍候" : result?.message ?? label}
       disabled={isPending || isLocked || othersAcquiring}
       onClick={() => {
+        if (demo) {
+          setDemoPlaying(true);
+          return;
+        }
         lock?.lock(scope);
         startTransition(async () => {
           setResult(await requestRemainingAction({ tmdbId }));

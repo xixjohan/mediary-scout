@@ -4,6 +4,7 @@ import { CalendarClock, CheckCircle2, Clock3, Library, LoaderCircle, Search, Tri
 import { AcquiringPoller } from "../components/acquiring-poller";
 import { AppSidebar } from "../components/app-sidebar";
 import { RequestTrackButton } from "../components/request-track-button";
+import { DemoSessionLibrary } from "../components/demo-session-library";
 import { RememberQuery } from "../components/search-memory";
 import { SeasonRequestMenu } from "../components/season-request-menu";
 import { getSearchView } from "../lib/search-page";
@@ -115,9 +116,12 @@ async function HomeSurface({
             </Suspense>
           </section>
         ) : (
-          <Suspense fallback={<LibrarySurfaceSkeleton />}>
-            <LibrarySurface mediaType={mediaType} filter={filter} storageId={storageId} />
-          </Suspense>
+          <>
+            <DemoSessionLibrary />
+            <Suspense fallback={<LibrarySurfaceSkeleton />}>
+              <LibrarySurface mediaType={mediaType} filter={filter} storageId={storageId} />
+            </Suspense>
+          </>
         )}
       </main>
     </div>
@@ -309,6 +313,13 @@ function CandidateCard({
                   trackedLabel !== null ? `获取剩余 ${untrackedSeasons.length} 季` : "获取所有季"
                 }
                 storageId={storageId}
+                demoEntry={{
+                  tmdbId: candidate.tmdbId,
+                  title: candidate.title,
+                  year: candidate.year,
+                  type: candidate.mediaType,
+                  posterPath: candidate.posterPath,
+                }}
               />
             ) : null}
             {/* The clickable title is the detail entry already. Only surface an
@@ -326,6 +337,13 @@ function CandidateCard({
                 disabled={candidate.action.disabled}
                 label={candidate.action.label}
                 storageId={storageId}
+                demoEntry={{
+                  tmdbId: candidate.tmdbId,
+                  title: candidate.title,
+                  year: candidate.year,
+                  type: candidate.mediaType,
+                  posterPath: candidate.posterPath,
+                }}
               />
             ) : null}
           </div>

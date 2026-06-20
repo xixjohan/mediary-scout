@@ -9,6 +9,9 @@ import {
   type RequestTrackingActionResult,
 } from "../app/actions";
 import { isLockedResult, RequestedBadge } from "./request-state";
+import { isDemoModeClient } from "../lib/demo-mode";
+import { DemoAcquirePlayback } from "./demo-acquire-playback";
+import type { DemoAcquisitionEntry } from "../lib/demo-session";
 
 /**
  * Two-step acquisition entry for a tv title: the dropdown only SELECTS a
@@ -23,6 +26,7 @@ export function SeasonRequestMenu({
   totalSeasonCount,
   allLabel = "获取所有季",
   storageId,
+  demoEntry,
 }: {
   tmdbId: number;
   /** Seasons still available to request (untracked only). */
@@ -35,18 +39,32 @@ export function SeasonRequestMenu({
   allLabel?: string;
   /** Tree model: the active workspace drive — acquisition lands HERE. */
   storageId?: string | undefined;
+  /** Demo only: recorded to the session library when the scripted playback ends. */
+  demoEntry?: DemoAcquisitionEntry | undefined;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<number | "all">("all");
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
+  // Read-only demo: any acquire trigger plays the scripted, client-only playback
+  // (the server actions below are gated server-side anyway).
+  const demo = isDemoModeClient();
+  const [demoPlaying, setDemoPlaying] = useState(false);
+
+  if (demo && demoPlaying) {
+    return <DemoAcquirePlayback entry={demoEntry} />;
+  }
 
   if (isLockedResult(result)) {
     return <RequestedBadge title={result?.message} />;
   }
 
   const submit = () => {
+    if (demo) {
+      setDemoPlaying(true);
+      return;
+    }
     startTransition(async () => {
       setOpen(false);
       setResult(
@@ -72,6 +90,10 @@ export function SeasonRequestMenu({
         type="button"
         disabled={isPending}
         onClick={() => {
+          if (demo) {
+            setDemoPlaying(true);
+            return;
+          }
           startTransition(async () => {
             setResult(await requestSeasonAction({ tmdbId, seasonNumber: onlySeason }));
             router.refresh();
