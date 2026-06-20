@@ -1,12 +1,45 @@
-# Mediary Scout
+<p align="center">
+  <img src="docs/images/hero.svg" alt="Mediary Scout" width="600">
+</p>
 
-**An agent-driven media library for your cloud drives.** You ask for a movie, show, or anime; an LLM agent scouts resources across your indexers, transfers the best match into your own 115 / Quark drive, verifies what landed, and keeps tracking what's still missing.
+<p align="center">
+  <b>An agent-driven media library for your cloud drives.</b>
+</p>
 
-[![license](https://img.shields.io/badge/license-see%20LICENSE-blue)](LICENSE) · [中文文档](README.zh-CN.md)
+<p align="center">
+  <a href="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml"><img src="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-see%20LICENSE-blue" alt="license"></a>
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Next.js-black?logo=next.js&logoColor=white" alt="Next.js">
+  <img src="https://img.shields.io/badge/Postgres-4169E1?logo=postgresql&logoColor=white" alt="Postgres">
+  <img src="https://img.shields.io/badge/self--hosted-only-success" alt="self-hosted only">
+  <a href="https://github.com/fancydirty/mediary-scout/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
+</p>
+
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="docs/deploy.md">Deploy guide</a> ·
+  <a href="#demo">Demo</a> ·
+  <a href="README.zh-CN.md">中文文档</a>
+</p>
+
+You ask for a movie, show, or anime; an LLM agent scouts resources across your indexers, transfers the best match into your own 115 / Quark drive, verifies what landed, and keeps tracking what's still missing.
 
 ![Mediary Scout — media library](docs/images/library.png)
 
 > **Disclaimer.** Mediary Scout is **open-source, self-hosted software**. It is **not** offered, and never will be offered, as a hosted service — you run your own instance and bring your own drive / LLM / metadata credentials. It performs the same kinds of file operations you could do by hand in your own cloud drive. See [docs/distribution-and-legal-positioning.md](docs/distribution-and-legal-positioning.md) for the project's stance.
+
+## Contents
+
+- [What it is](#what-it-is)
+- [Features](#features)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [Deploy](#deploy)
+- [Demo](#demo)
+- [Supported drives](#supported-drives)
+- [Status & limitations](#status--limitations)
+- [Credits & upstream](#credits--upstream)
 
 ## What it is
 
@@ -70,7 +103,13 @@ Then open the web UI and, in **Settings**, provide what you want to use (all bri
 - **LLM** — any OpenAI-compatible endpoint (`baseURL` / `apiKey` / `modelId`). The author never sees your key.
 - **Prowlarr** *(optional)* — add your indexers for magnet/torrent sources (115 only; Quark has no magnet API).
 
-Full self-host notes: [docs/deploy-compose.md](docs/deploy-compose.md).
+## Deploy
+
+Self-host on a NAS, a router (软路由), a spare PC, or a VPS — and reach it from your phone / TV via **Tailscale** or a **Cloudflare Tunnel** (no public IP needed; never expose `:3000` raw). Full walkthrough: **[docs/deploy.md](docs/deploy.md)**.
+
+## Demo
+
+A public, **read-only** demo (mock data, no real acquisition) is planned — the link will appear here once it's live. Until then, the screenshots above are taken from the demo build.
 
 ## Supported drives
 
