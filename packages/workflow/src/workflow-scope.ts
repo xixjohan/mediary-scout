@@ -72,6 +72,7 @@ export interface WorkspaceSwitcherItem {
   label: string;
   isActive: boolean;
   frozen: boolean;
+  provider?: string | undefined;
 }
 
 /**
@@ -111,6 +112,7 @@ export function switcherItems(
         `${storage.provider === "quark" ? "夸克" : "115"} …${storage.providerUid.slice(-4)}`,
       isActive,
       frozen: storage.status === "frozen",
+      provider: storage.provider,
     };
   });
 }

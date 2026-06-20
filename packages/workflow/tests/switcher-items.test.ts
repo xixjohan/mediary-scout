@@ -23,6 +23,19 @@ describe("switcherItems", () => {
   it("a non-workspace path (/settings) keeps the primary active", () => {
     expect(switcherItems(drives, "/settings").find((i) => i.isActive)?.id).toBe("csOld");
   });
+  it("carries provider through to the output item", () => {
+    const withProvider = [
+      { id: "csOld", label: "主号", provider: "pan115", providerUid: "100000001", createdAt: "2026-06-01T00:00:00.000Z", status: "active" as const },
+      { id: "csNew", label: null, provider: "quark", providerUid: "100000002", createdAt: "2026-06-10T00:00:00.000Z", status: "active" as const },
+    ];
+    const items = switcherItems(withProvider, "/");
+    expect(items.find((i) => i.id === "csOld")?.provider).toBe("pan115");
+    expect(items.find((i) => i.id === "csNew")?.provider).toBe("quark");
+  });
+  it("provider is undefined when the storage omits it (no throw)", () => {
+    const items = switcherItems(drives, "/"); // top-of-file drives have no provider
+    expect(items[0]!.provider).toBeUndefined();
+  });
   it("label falls back to a uid-tail when unnamed; frozen surfaced", () => {
     const frozen = [
       { id: "csOld", label: null, providerUid: "100000001", createdAt: "2026-06-01T00:00:00.000Z", status: "active" as const },
