@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { lastQueryKey, switcherTabHref, workspaceSection } from "@media-track/workflow/scope";
 
@@ -9,6 +10,26 @@ export interface WorkspaceTab {
   href: string;
   label: string;
   frozen: boolean;
+  provider?: string | undefined;
+}
+
+/** Brand logo for a drive (left of the label). Falls back to the legacy colored
+ *  dot when the drive has no provider or its /brands/<provider>.svg is missing —
+ *  so an unconfigured brand never breaks the row. */
+function BrandMark({ provider, frozen }: { provider?: string | undefined; frozen: boolean }) {
+  const [failed, setFailed] = useState(false);
+  if (!provider || failed) {
+    return <span className={`ws-dot${frozen ? " is-frozen" : ""}`} aria-hidden />;
+  }
+  return (
+    <img
+      className="ws-icon"
+      src={`/brands/${provider}.svg`}
+      alt=""
+      aria-hidden
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 /**
@@ -35,7 +56,7 @@ export function WorkspaceSwitcher({ tabs }: { tabs: WorkspaceTab[] }) {
   return (
     <details className="workspace-switcher">
       <summary className="ws-current" aria-label="切换网盘工作区">
-        <span className={`ws-dot${current.frozen ? " is-frozen" : ""}`} aria-hidden />
+        <BrandMark provider={current.provider} frozen={current.frozen} />
         <span className="ws-label">{current.label}</span>
         {current.frozen ? (
           <span className="ws-frozen" aria-label="掉线">
@@ -74,7 +95,7 @@ export function WorkspaceSwitcher({ tabs }: { tabs: WorkspaceTab[] }) {
                 }
               }}
             >
-              <span className="ws-dot" aria-hidden />
+              <BrandMark provider={tab.provider} frozen={tab.frozen} />
               <span className="ws-label">{tab.label}</span>
               {tab.frozen ? (
                 <span className="ws-frozen" aria-label="掉线">

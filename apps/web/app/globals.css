@@ -2808,6 +2808,13 @@ select.setting-control {
 .workspace-switcher .ws-tab.is-frozen .ws-dot {
   background: #f59e0b;
 }
+.workspace-switcher .ws-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: contain;
+  flex: none;
+}
 .workspace-switcher .ws-label {
   overflow: hidden;
   text-overflow: ellipsis;

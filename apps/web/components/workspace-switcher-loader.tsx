@@ -27,6 +27,6 @@ export async function WorkspaceSwitcherLoader() {
       status: storage.status,
     })),
     "/",
-  ).map((item) => ({ id: item.id, href: item.href, label: item.label, frozen: item.frozen }));
+  ).map((item) => ({ id: item.id, href: item.href, label: item.label, frozen: item.frozen, provider: item.provider }));
   return <WorkspaceSwitcher tabs={tabs} />;
 }
