@@ -127,4 +127,12 @@ describe("getQualityGuidance", () => {
       expect(g).toMatch(/转存前|落盘前|读标题|看标题/);
     }
   });
+
+  it("medium yields ONE tier for Chinese subs (4K中字 beats 1080p无中字), but keeps the bloated-disc ceiling", () => {
+    const g = getQualityGuidance("movie", "medium");
+    expect(g).toContain("中字");
+    expect(g).toContain("破一档");
+    // still avoids 原盘/REMUX/ISO even for subs (no unlimited bump)
+    expect(g).toMatch(/原盘|REMUX|ISO/);
+  });
 });
