@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Activity, Bell, Film, Library, Settings } from "lucide-react";
+import { Activity, Aperture, Bell, Library, Settings } from "lucide-react";
 import { globalNavHref } from "@media-track/workflow";
 import { SearchNavLink } from "./search-memory";
 import { ActivityNavBadge } from "./activity-nav-badge";
@@ -26,7 +26,7 @@ export function AppSidebar({
     <aside className="sidebar">
       <div className="brand">
         <span className="brand-mark">
-          <Film size={18} aria-hidden />
+          <Aperture size={18} aria-hidden />
         </span>
         <span className="brand-copy">
           <strong>Mediary Scout</strong>
