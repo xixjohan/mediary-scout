@@ -25,3 +25,7 @@ coverage/
 # macOS
 .DS_Store
 .media-track-credentials-backup.json
+
+# personal dev tooling (keep launch.json as contributor example)
+.claude/settings.json
+.claude/using-superpowers-*
