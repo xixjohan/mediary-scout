@@ -430,7 +430,12 @@ export async function getLibraryWall(storageId?: string): Promise<LibraryWallEnt
     if (posterPath === null) {
       // Titles tracked before artwork persistence landed: enrich lazily
       // (cached 6h); future runs persist the poster with the title itself.
-      posterPath = (await seriesTargetFor(tmdbId))?.title.posterPath ?? null;
+      // Movies and series resolve through different TMDB endpoints — routing a
+      // movie id through the series resolver 404s, leaving the card blank.
+      posterPath =
+        title.type === "movie"
+          ? (await movieTargetFromTmdbId(tmdbId))?.title.posterPath ?? null
+          : (await seriesTargetFor(tmdbId))?.title.posterPath ?? null;
     }
     let obtained = 0;
     let aired = 0;
@@ -490,7 +495,10 @@ export async function getInProgressTitles(storageId?: string): Promise<InProgres
     }
     let posterPath = title.posterPath ?? null;
     if (posterPath === null) {
-      posterPath = (await seriesTargetFor(title.tmdbId))?.title.posterPath ?? null;
+      posterPath =
+        title.type === "movie"
+          ? (await movieTargetFromTmdbId(title.tmdbId))?.title.posterPath ?? null
+          : (await seriesTargetFor(title.tmdbId))?.title.posterPath ?? null;
     }
     byTmdb.set(title.tmdbId, {
       tmdbId: title.tmdbId,

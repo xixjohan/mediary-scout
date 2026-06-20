@@ -4,6 +4,7 @@ import {
   getPanSouBaseUrl,
   getProwlarrConfig,
   getQualityPreference,
+  movieTargetFromTmdbId,
   PANSOU_BASE_URL_SETTING_KEY,
   DEFAULT_PANSOU_BASE_URL,
   getTmdbAccesses,
@@ -119,6 +120,18 @@ describe("getProwlarrConfig", () => {
   it("returns undefined fields when nothing configured", async () => {
     const cfg = await getProwlarrConfig(repoMap({}), {} as unknown as NodeJS.ProcessEnv);
     expect(cfg).toEqual({ baseURL: undefined, apiKey: undefined });
+  });
+});
+
+describe("movieTargetFromTmdbId (demo provider mode — movie poster enrichment)", () => {
+  it("resolves a demo movie candidate carrying its poster", async () => {
+    const target = await movieTargetFromTmdbId(1311031); // 我的僵尸女儿 — demo movie candidate
+    expect(target?.title.type).toBe("movie");
+    expect(target?.title.posterPath, "demo movie candidate must carry a poster_path").toBeTruthy();
+  });
+
+  it("returns null for a tv id — movies need this dedicated path because the series resolver ignores them", async () => {
+    expect(await movieTargetFromTmdbId(289271)).toBeNull(); // 翘楚 is a tv candidate
   });
 });
 

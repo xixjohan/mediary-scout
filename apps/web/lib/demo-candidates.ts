@@ -46,8 +46,8 @@ export const demoCandidates: MediaSearchCandidate[] = [
     originalTitle: "翘楚",
     year: 2026,
     overview: "一部正在更新的国产剧，当前示例库中已经追踪第 1 季。",
-    posterPath: null,
-    backdropPath: null,
+    posterPath: "/vcU56Dw1aKxTTlhrVr0qvPnljDV.jpg",
+    backdropPath: "/6CgpC5cS8jvkXgkI0pRoj31nHf6.jpg",
     seasons: [
       {
         seasonNumber: 1,
@@ -63,8 +63,8 @@ export const demoCandidates: MediaSearchCandidate[] = [
     originalTitle: "Breaking Bad",
     year: 2008,
     overview: "多季完结剧示例，适合后续验证 complete-series package normalization。",
-    posterPath: null,
-    backdropPath: null,
+    posterPath: "/rqliuvX7NdknSHu5qaSDfESplQi.jpg",
+    backdropPath: "/tsRy63Mu5cu8etL1X7ZLyf7UP1M.jpg",
     seasons: [
       {
         seasonNumber: 1,
@@ -100,8 +100,8 @@ export const demoCandidates: MediaSearchCandidate[] = [
     originalTitle: "My Zombie Daughter",
     year: 2025,
     overview: "电影获取示例。产品化后 Type 1 也会留下媒体库记录。",
-    posterPath: null,
-    backdropPath: null,
+    posterPath: "/bhIytk0hlaHmGrQFY9P7bWhZZfC.jpg",
+    backdropPath: "/1RgPyOhN4DRs225BGTlHJqCudII.jpg",
     seasons: [],
   },
 ];
