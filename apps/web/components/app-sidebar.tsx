@@ -29,8 +29,8 @@ export function AppSidebar({
           <Film size={18} aria-hidden />
         </span>
         <span className="brand-copy">
-          <strong>Media Track</strong>
-          <span>115 library ops</span>
+          <strong>Mediary Scout</strong>
+          <span>multi-drive media agent</span>
         </span>
       </div>
 
@@ -103,7 +103,7 @@ export function AppSidebar({
           </span>
           <span>
             <strong>设置</strong>
-            <span>115 连接 · 推送 · 偏好</span>
+            <span>网盘连接 · 推送 · 偏好</span>
           </span>
         </Link>
       </div>

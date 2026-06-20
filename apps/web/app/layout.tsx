@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Media Track",
+  title: "Mediary Scout",
   description: "Background media acquisition workflow dashboard.",
 };
 

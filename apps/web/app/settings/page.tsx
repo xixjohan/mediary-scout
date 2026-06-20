@@ -50,7 +50,7 @@ export default function SettingsPage({
         <div className="section-heading library-heading">
           <div>
             <h1>设置</h1>
-            <p>115 网盘连接与系统配置</p>
+            <p>网盘连接与系统配置</p>
           </div>
         </div>
         <Suspense fallback={<div className="skeleton skeleton-heading" />}>
