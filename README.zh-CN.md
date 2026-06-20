@@ -1,12 +1,45 @@
-# Mediary Scout
+<p align="center">
+  <img src="docs/images/hero.svg" alt="Mediary Scout" width="600">
+</p>
 
-**给你自己网盘用的 agent 驱动媒体库。** 你说要某部电影/剧/番,LLM agent 跨索引源搜罗资源、把最合适的转存进你自己的 115 / 夸克网盘、转存后回读验证,并持续追踪还缺什么。
+<p align="center">
+  <b>给你自己网盘用的 agent 驱动媒体库。</b>
+</p>
 
-[![license](https://img.shields.io/badge/license-see%20LICENSE-blue)](LICENSE) · [English](README.md)
+<p align="center">
+  <a href="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml"><img src="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-see%20LICENSE-blue" alt="license"></a>
+  <img src="https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white" alt="TypeScript">
+  <img src="https://img.shields.io/badge/Next.js-black?logo=next.js&logoColor=white" alt="Next.js">
+  <img src="https://img.shields.io/badge/Postgres-4169E1?logo=postgresql&logoColor=white" alt="Postgres">
+  <img src="https://img.shields.io/badge/self--hosted-only-success" alt="self-hosted only">
+  <a href="https://github.com/fancydirty/mediary-scout/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
+</p>
+
+<p align="center">
+  <a href="#快速开始">快速开始</a> ·
+  <a href="docs/deploy.md">部署指南</a> ·
+  <a href="#demo">Demo</a> ·
+  <a href="README.md">English</a>
+</p>
+
+你说要某部电影 / 剧 / 番,LLM agent 跨索引源搜罗资源、把最合适的转存进你自己的 115 / 夸克网盘、转存后回读验证,并持续追踪还缺什么。
 
 ![Mediary Scout — 媒体库](docs/images/library.png)
 
 > **免责声明。** Mediary Scout 是**开源、自部署**软件,**不提供、也永远不会提供托管服务** —— 你自己跑实例、自带网盘 / LLM / 元数据凭证。它做的就是你本可以在自己网盘里手动完成的那些文件操作。项目定位详见 [docs/distribution-and-legal-positioning.md](docs/distribution-and-legal-positioning.md)。
+
+## 目录
+
+- [它是什么](#它是什么)
+- [功能](#功能)
+- [架构](#架构)
+- [快速开始](#快速开始)
+- [部署](#部署)
+- [Demo](#demo)
+- [支持的网盘](#支持的网盘)
+- [状态与限制](#状态与限制)
+- [致谢与上游](#致谢与上游)
 
 ## 它是什么
 
@@ -15,7 +48,7 @@
 - **多盘、品牌可扩展** —— 现支持 115 与夸克,每块盘都是一等工作区(树模型:一个账号、多块盘)。接入新网盘品牌是个收敛的插件活。
 - **agent 选片** —— agent 读真实搜索结果,按画质偏好、**中文字幕**需求、去重来挑,转存后再回读验证。
 - **追踪 + 定时补缺** —— 季级状态机;定时巡检只回来处理仍有缺集的剧。
-- **网盘原生** —— 直接把分享/磁力**转存**(秒传 / save)进你的网盘,不往本地磁盘下载。
+- **网盘原生** —— 直接把分享 / 磁力**转存**(秒传 / save)进你的网盘,不往本地磁盘下载。
 
 面向熟悉自己网盘账号与凭证的进阶自部署用户 —— 不是一键式消费产品。
 
@@ -52,7 +85,7 @@ flowchart LR
 ```
 
 - 状态全程落 **Postgres**,所以 run 可在 worker 重启后续跑(agent 从真实网盘 + DB 状态重建,不依赖缓存的对话历史)。
-- 元数据来自 **TMDB**(内置代理兜底,开箱即用);资源搜索来自 **PanSou**,可选 **Prowlarr**(磁力/种子索引器)。
+- 元数据来自 **TMDB**(内置代理兜底,开箱即用);资源搜索来自 **PanSou**,可选 **Prowlarr**(磁力 / 种子索引器)。
 
 ## 快速开始
 
@@ -68,9 +101,15 @@ docker compose up -d
 - **网盘** —— 连 115 或夸克(扫码登录,或粘贴 cookie)。
 - **TMDB** —— 经代理开箱即用;想直连可填自己的 key。
 - **LLM** —— 任意 OpenAI 兼容端点(`baseURL` / `apiKey` / `modelId`)。作者看不到你的 key。
-- **Prowlarr**(可选) —— 加你的索引器以获得磁力/种子源(仅 115;夸克无磁力 API)。
+- **Prowlarr**(可选) —— 加你的索引器以获得磁力 / 种子源(仅 115;夸克无磁力 API)。
 
-完整自部署说明:[docs/deploy-compose.md](docs/deploy-compose.md)。
+## 部署
+
+自部署到 NAS、软路由、闲置 PC 或 VPS,并经 **Tailscale** 或 **Cloudflare Tunnel** 从手机 / 电视访问(无需公网 IP;别把 `:3000` 裸暴露)。完整教程:**[docs/deploy.md](docs/deploy.md)**。
+
+## Demo
+
+一个公开的**只读** demo(示例数据,不执行真实获取)正在计划中——上线后链接会出现在这里。在那之前,上方截图取自 demo 构建。
 
 ## 支持的网盘
 
@@ -81,7 +120,7 @@ docker compose up -d
 
 ## 状态与限制
 
-- 自部署、面向进阶用户;需要可用的 115/夸克(有会员最实用)。
+- 自部署、面向进阶用户;需要可用的 115 / 夸克(有会员最实用)。
 - 定时巡检在常开的主机上价值最大。
 - 这不是托管产品,不附带任何托管后端。
 
