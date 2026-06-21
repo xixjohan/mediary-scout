@@ -48,5 +48,25 @@ services:
       - "${WEB_PORT:-3000}:3000"
     restart: unless-stopped
 
+  # Optional public HTTPS via Cloudflare Tunnel (no public IP, no open ports).
+  # Off by default — only starts under `--profile tunnel`.
+  #   1. Create a tunnel in the Cloudflare Zero Trust dashboard, set its public
+  #      hostname's service URL to  http://web:3000  (the compose service name —
+  #      NOT localhost), and copy the connector token.
+  #   2. Put TUNNEL_TOKEN=<token> in .env  (compose reads .env for interpolation).
+  #   3. docker compose --profile tunnel up -d
+  #   4. ⚠️ Put Cloudflare Access in front of the hostname — this app has no login.
+  # See docs/deploy.md → 「方式二:Cloudflare Tunnel」 for the full walkthrough.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    depends_on:
+      - web
+    restart: unless-stopped
+    profiles:
+      - tunnel
+
 volumes:
   pgdata:

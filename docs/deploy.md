@@ -75,11 +75,39 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
 ### 方式二:Cloudflare Tunnel(需要公网 HTTPS 域名时)
 
-想要一个任意设备浏览器都能直接打开的 `https://media.yourdomain.com`,又没有公网 IP——用 Cloudflare Tunnel(`cloudflared`)把宿主反向连到 Cloudflare,无需在路由器开端口。
+想要一个任意设备浏览器都能直接打开的 `https://media.yourdomain.com`,又没有公网 IP——用 Cloudflare Tunnel(`cloudflared`)把宿主**出站**反连到 Cloudflare,路由器不开任何端口、不暴露公网 IP。本仓库的 `docker-compose.yml` 已内置一个**可选** `cloudflared` 服务(`tunnel` profile,默认不启),随栈一条命令起。
 
-1. 一个托管在 Cloudflare 的域名。
-2. 宿主装 `cloudflared`,`cloudflared tunnel login` → 建隧道 → 指向 `http://localhost:3000`,在 Cloudflare DNS 加一条指向隧道的记录。
-3. ⚠️ **务必加 Cloudflare Access**(零信任,给域名套一层登录 / 邮箱白名单)。Mediary Scout 默认单用户无登录,公网必须靠 Access 这类前置鉴权挡住,否则等于把实例挂公网。
+前提:一个托管在 Cloudflare 的域名(本指南以 `media.yourdomain.com` 为例)。
+
+**1. 在 Cloudflare 控制台建隧道、拿 token(推荐 dashboard 托管,配置集中、好接 Access)**
+
+- **Zero Trust → Networks → Tunnels → Create a tunnel → Cloudflared**,起个名(如 `mediary`)。
+- 连接方式选 **Docker**,**复制那串连接器 token**(`eyJ...` 一长串)。下一步用它,先不用管它给的 docker 命令。
+- 建好后进隧道的 **Public Hostname → Add a public hostname**:
+  - Subdomain `media`,Domain 选 `yourdomain.com`(→ `media.yourdomain.com`)。
+  - **Service:Type = HTTP,URL = `web:3000`**。⚠️ 这里必须填 compose 服务名 `web`,**不是 `localhost`**——`cloudflared` 跑在 compose 网络里,`localhost` 指的是它自己那个容器。
+  - 保存。DNS 的 CNAME 由 Cloudflare 自动建,无需手动加记录。
+
+**2. 在宿主放 token、随栈起隧道**
+
+```bash
+echo 'TUNNEL_TOKEN=粘贴你的连接器token' >> .env
+docker compose --profile tunnel up -d        # 多起一个 cloudflared 容器
+docker compose logs -f cloudflared           # 看到 "Registered tunnel connection" 即通
+```
+
+隧道通了之后,`https://media.yourdomain.com` 就能从任意设备打开。`.env` 里的 token 不会进 git(`.env` 已被忽略)。
+
+**3. ⚠️ 必须加 Cloudflare Access(否则等于把实例裸挂公网)**
+
+Mediary Scout 默认单用户、无登录,公网入口必须靠 Access 这类前置鉴权挡住:
+
+- **Zero Trust → Access → Applications → Add an application → Self-hosted**。
+- Application domain 填 `media.yourdomain.com`。
+- 加一条 **Allow** 策略,例如 Include = **Emails** = 你自己的邮箱(进站会先要求邮箱一次性验证码登录)。想给家人用就把他们的邮箱也加进白名单。
+- 保存后,任何访问 `media.yourdomain.com` 的人都要先过 Access 这关,才能到达应用。
+
+> 想自启:`cloudflared` 容器已 `restart: unless-stopped`,宿主重启会自动拉起;隧道配置在 Cloudflare 侧托管,改公网主机名 / Access 策略都在控制台改,不用动宿主。
 
 ## 安全
 
