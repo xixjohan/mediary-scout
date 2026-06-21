@@ -38,3 +38,5 @@ docs/audit-*.md
 docs/e2e-live-*.md
 docs/original-skill-permission-audit-*.md
 docs/roadmap-self-host-expansion.md
+.vercel
+.env*
