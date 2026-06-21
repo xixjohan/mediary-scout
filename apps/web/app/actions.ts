@@ -365,6 +365,7 @@ export async function saveLlmConfigAction(input: {
 }): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
+    const { normalizeLlmBaseUrl, sanitizeLlmApiKey } = await import("@media-track/workflow");
     const {
       getWorkflowRepository,
       getCurrentAccountId,
@@ -374,17 +375,45 @@ export async function saveLlmConfigAction(input: {
     } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
-    await repository.setAccountSetting(accountId, LLM_BASE_URL_SETTING_KEY, input.baseURL.trim());
+    // Normalize base URL (the provider appends /chat/completions itself) and
+    // strip all whitespace/invisible chars from the key — paste contamination
+    // would otherwise silently store a wrong value (大误会).
+    await repository.setAccountSetting(accountId, LLM_BASE_URL_SETTING_KEY, normalizeLlmBaseUrl(input.baseURL));
     await repository.setAccountSetting(accountId, LLM_MODEL_ID_SETTING_KEY, input.modelId.trim());
     // Only overwrite the key when the user actually typed a new one — a blank
     // submit keeps the stored key (the form never echoes it back).
-    const apiKey = input.apiKey.trim();
+    const apiKey = sanitizeLlmApiKey(input.apiKey);
     if (apiKey) {
       await repository.setAccountSetting(accountId, LLM_API_KEY_SETTING_KEY, apiKey);
     }
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function testLlmConnectionAction(): Promise<{ ok: boolean; message: string }> {
+  try {
+    assertNotDemo();
+    const { getCurrentAccountId, getAccountScopedSettings, resolveAgentModelConfig } = await import(
+      "../lib/workflow-runtime"
+    );
+    const accountId = await getCurrentAccountId();
+    // Resolve EXACTLY as the worker does (account-scoped → env → defaults).
+    const cfg = await resolveAgentModelConfig(getAccountScopedSettings(accountId));
+    if (!cfg.apiKey) {
+      return { ok: false, message: "未配置 API Key —— 请先填写并保存。" };
+    }
+    const { createAgentModel } = await import("@media-track/workflow");
+    const { generateText } = await import("ai");
+    const model = createAgentModel(cfg);
+    // A tiny real call — proves the key/base_url/model actually work, killing the
+    // "stored a wrong value silently" 大误会. Not reached unless apiKey is set.
+    await generateText({ model, prompt: "ping" });
+    return { ok: true, message: `连接正常 · ${cfg.modelId ?? "mimo-v2.5-pro"}` };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    return { ok: false, message: `连接失败：${msg.slice(0, 200)}` };
   }
 }
 

@@ -504,7 +504,7 @@ export async function runNextQueuedWorkflow() {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, preferredLanguage, qualityPreference } = await getAgentModel(repository);
+  const { model, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
   const storage = await getWorkerStorageExecutor(accountId);
@@ -960,7 +960,7 @@ export async function runScheduledType3(options?: { force?: boolean }): Promise<
     await hydratePan115CookieFromDb();
     const sync = tmdbSeasonMetadataSync();
     const accountId = await getCurrentAccountId();
-    const { model, preferredLanguage, qualityPreference } = await getAgentModel(repository);
+    const { model, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
       repository,
@@ -1376,6 +1376,25 @@ async function getWorkerStorageParents(
  * dev/demo runs complete without a real model. The preferred subtitle language is
  * passed to each workflow as standing context, not baked into the model instance.
  */
+/** Resolve the live agent model config the SAME way the worker builds it: DB
+ *  (pass an account-scoped repo) → .env → built-in MiMo defaults (filled later by
+ *  createAgentModel). Shared by getAgentModel and testLlmConnectionAction so the
+ *  Settings「测试连接」exercises exactly what acquisitions use. */
+export async function resolveAgentModelConfig(
+  repository: { getSetting(key: string): Promise<string | null> },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<{ apiKey?: string; baseURL?: string; modelId?: string }> {
+  const llm = await getLlmConfig(repository);
+  const apiKey = llm.apiKey ?? env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
+  const baseURL = llm.baseURL ?? env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
+  const modelId = llm.modelId ?? env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
+  return {
+    ...(apiKey === undefined ? {} : { apiKey }),
+    ...(baseURL === undefined ? {} : { baseURL }),
+    ...(modelId === undefined ? {} : { modelId }),
+  };
+}
+
 async function getAgentModel(repository: {
   getSetting(key: string): Promise<string | null>;
 }): Promise<{
@@ -1389,17 +1408,10 @@ async function getAgentModel(repository: {
   const preferredLanguage = await getPreferredLanguage(repository);
   const qualityPreference = await getQualityPreference(repository);
 
-  // Resolve the live model config DB-first, then .env, then the built-in MiMo
-  // defaults (inside createAgentModel). Settings → AI 模型 thus overrides .env.
-  const llm = await getLlmConfig(repository);
-  const apiKey = llm.apiKey ?? env.AGENT_MODEL_API_KEY ?? env.XIAOMI_MIMO_API_KEY;
-  const baseURL = llm.baseURL ?? env.AGENT_MODEL_BASE_URL ?? env.XIAOMI_MIMO_BASE_URL;
-  const modelId = llm.modelId ?? env.AGENT_MODEL_ID ?? env.XIAOMI_MIMO_MODEL_ID;
-  const resolved = {
-    ...(apiKey === undefined ? {} : { apiKey }),
-    ...(baseURL === undefined ? {} : { baseURL }),
-    ...(modelId === undefined ? {} : { modelId }),
-  };
+  // Resolve the live model config the SAME way the test action does (shared
+  // resolver) — DB-first, then .env, then built-in MiMo defaults.
+  const resolved = await resolveAgentModelConfig(repository, env);
+  const { apiKey, baseURL, modelId } = resolved;
   // Cache per resolved config signature (so a Settings edit takes effect without
   // a restart AND different accounts' models coexist).
   const signature = `${adapter}|${baseURL ?? ""}|${modelId ?? ""}|${apiKey ?? ""}`;
