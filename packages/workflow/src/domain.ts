@@ -97,6 +97,12 @@ export interface WorkflowRun {
   finishedAt: string | null;
   auditEvents: AuditEvent[];
   progress?: WorkflowRunProgress;
+  /** Count of automatic retries already performed for a transient failure.
+   *  Absent/0 = never auto-requeued. Capped at AUTO_REQUEUE_MAX. */
+  autoRequeueCount?: number;
+  /** Earliest ISO time the worker may re-claim this run. Set when auto-requeued
+   *  (backoff); absent = immediately claimable. */
+  nextAttemptAt?: string;
 }
 
 export interface AuditEvent {
@@ -200,7 +206,9 @@ export type NotificationReportStatus =
   | "acquired" // movie / one-off fully acquired
   | "airing" // still airing; obtained up to the latest aired episode, future auto-tracked
   | "partial" // a genuine aired gap remains
-  | "no_coverage"; // nothing found yet
+  | "no_coverage" // nothing found yet
+  | "failed" // acquisition failed terminally (transient retries exhausted, or a hard error)
+  | "retrying"; // transient failure; an automatic retry is scheduled
 
 /**
  * Structured acquisition report. The single source of wording: the web feed
