@@ -36,4 +36,13 @@ jobs:
       - run: npm run build:workflow
       - run: npm run typecheck
       - run: npx tsc -p apps/web/tsconfig.json --noEmit
+      # Production build with NO database — mirrors `docker compose build` (no .env
+      # at image-build time). cacheComponents prerenders pages at build; any server
+      # component that reads the DB outside a connection()/cookies()/searchParams
+      # guard crashes here. This step is what catches that class before it reaches a
+      # self-hoster's `docker compose up`. (next.config reads .env with `??=`, so a
+      # set-but-empty value is NOT overridden → the real no-DB build condition.)
+      - run: npm run build:web
+        env:
+          MEDIA_TRACK_POSTGRES_URL: ""
       - run: npx vitest run
