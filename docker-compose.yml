@@ -36,7 +36,10 @@ services:
       MEDIA_TRACK_SEARCH_PROVIDER: tmdb
       MEDIA_TRACK_WORKFLOW_ADAPTER: pansou
       MEDIA_TRACK_STORAGE_ADAPTER: "115"
-      MEDIA_TRACK_AGENT_ADAPTER: real
+      # Live trio: pansou + 115 REQUIRE the vercel-ai agent (assertWorkflowAgentAdapterPolicy).
+      # "real" is not a valid value — it fails the policy and the worker can never drain the
+      # queue (获取 stuck "排队", category dirs never provisioned). Must be vercel-ai.
+      MEDIA_TRACK_AGENT_ADAPTER: vercel-ai
       MEDIA_TRACK_DEMO_SEED: "0"
     # Optional overrides (TMDB/115/LLM/Prowlarr/CID). Missing file is fine —
     # everything has a default or is configured in the 设置 page.
