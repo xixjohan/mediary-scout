@@ -13,6 +13,7 @@ import { isLockedResult } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
+import { useDemoAcquiredTmdbIds } from "../lib/use-demo-session";
 
 export function RequestSeasonButton({
   tmdbId,
@@ -38,9 +39,19 @@ export function RequestSeasonButton({
   const inFlight = isPending || mine;
   const demo = isDemoModeClient();
   const [demoPlaying, setDemoPlaying] = useState(false);
+  const acquiredIds = useDemoAcquiredTmdbIds();
 
   if (demo && demoPlaying) {
     return <DemoAcquirePlayback entry={demoEntry} />;
+  }
+
+  if (demo && acquiredIds.has(tmdbId)) {
+    return (
+      <span className="hub-badge tone-green">
+        <Check size={13} aria-hidden />
+        已获取
+      </span>
+    );
   }
 
   return (
@@ -99,9 +110,19 @@ export function RequestRemainingButton({
   const inFlight = isPending || mine;
   const demo = isDemoModeClient();
   const [demoPlaying, setDemoPlaying] = useState(false);
+  const acquiredIds = useDemoAcquiredTmdbIds();
 
   if (demo && demoPlaying) {
     return <DemoAcquirePlayback entry={demoEntry} />;
+  }
+
+  if (demo && acquiredIds.has(tmdbId)) {
+    return (
+      <span className="hub-badge tone-green">
+        <Check size={13} aria-hidden />
+        已获取
+      </span>
+    );
   }
 
   return (

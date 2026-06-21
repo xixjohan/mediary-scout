@@ -9,6 +9,7 @@ import { RequestedBadge } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
+import { useDemoAcquiredTmdbIds } from "../lib/use-demo-session";
 
 /**
  * Acquire control for a movie candidate. Visual states, kept consistent with
@@ -46,6 +47,7 @@ export function RequestTrackButton({
   // server action, which is gated server-side anyway).
   const demo = isDemoModeClient();
   const [demoPlaying, setDemoPlaying] = useState(false);
+  const acquiredIds = useDemoAcquiredTmdbIds();
 
   // Once the SERVER reports the run finished (already_tracked), the optimistic
   // "已请求" from the click must release — otherwise the AcquiringPoller refreshes
@@ -69,6 +71,15 @@ export function RequestTrackButton({
 
   if (demo && demoPlaying) {
     return <DemoAcquirePlayback entry={demoEntry} />;
+  }
+
+  if (demo && demoEntry && acquiredIds.has(demoEntry.tmdbId)) {
+    return (
+      <span className="hub-badge tone-green">
+        <Check size={12} aria-hidden />
+        已获取
+      </span>
+    );
   }
 
   if (inProgress) {

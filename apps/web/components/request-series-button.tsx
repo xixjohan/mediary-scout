@@ -1,12 +1,13 @@
 "use client";
 
-import { Layers, LoaderCircle } from "lucide-react";
+import { Check, Layers, LoaderCircle } from "lucide-react";
 import { useState, useTransition } from "react";
 import { requestSeriesAction, type RequestTrackingActionResult } from "../app/actions";
 import { isLockedResult } from "./request-state";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
+import { useDemoAcquiredTmdbIds } from "../lib/use-demo-session";
 
 export function RequestSeriesButton({
   candidateId,
@@ -22,9 +23,19 @@ export function RequestSeriesButton({
   // Read-only demo: clicking plays the scripted playback (the server action is gated).
   const demo = isDemoModeClient();
   const [demoPlaying, setDemoPlaying] = useState(false);
+  const acquiredIds = useDemoAcquiredTmdbIds();
 
   if (demo && demoPlaying) {
     return <DemoAcquirePlayback entry={demoEntry} />;
+  }
+
+  if (demo && demoEntry && acquiredIds.has(demoEntry.tmdbId)) {
+    return (
+      <span className="hub-badge tone-green">
+        <Check size={14} aria-hidden />
+        已获取
+      </span>
+    );
   }
 
   return (
