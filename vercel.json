@@ -1,6 +1,5 @@
 {
-  "crons": [
-    { "path": "/api/workflows/run-next", "schedule": "*/10 * * * *" },
-    { "path": "/api/workflows/run-type3", "schedule": "0 * * * *" }
-  ]
+  "framework": "nextjs",
+  "buildCommand": "npm run build:web",
+  "outputDirectory": "apps/web/.next"
 }

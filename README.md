@@ -14,12 +14,13 @@
   <img src="https://img.shields.io/badge/Postgres-4169E1?logo=postgresql&logoColor=white" alt="Postgres">
   <img src="https://img.shields.io/badge/self--hosted-only-success" alt="self-hosted only">
   <a href="https://github.com/fancydirty/mediary-scout/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen" alt="PRs welcome"></a>
+  <a href="https://mediary-scout.vercel.app"><img src="https://img.shields.io/badge/demo-live-1ED760?logo=vercel&logoColor=white" alt="live demo"></a>
 </p>
 
 <p align="center">
   <a href="#quick-start">Quick start</a> ·
   <a href="docs/deploy.md">Deploy guide</a> ·
-  <a href="#demo">Demo</a> ·
+  <a href="https://mediary-scout.vercel.app">Live demo ↗</a> ·
   <a href="README.zh-CN.md">中文文档</a>
 </p>
 
@@ -109,7 +110,9 @@ Self-host on a NAS, a router (软路由), a spare PC, or a VPS — and reach it 
 
 ## Demo
 
-A public, **read-only** demo (mock data, no real acquisition) is planned — the link will appear here once it's live. Until then, the screenshots above are taken from the demo build.
+**🔭 Try it live: [mediary-scout.vercel.app](https://mediary-scout.vercel.app)**
+
+A public, **read-only** demo — mock drives, real TMDB search across the whole catalog, and a scripted acquisition you can watch land in the library. No drive connect, no transfers, nothing persists. Built from this repo.
 
 ## Supported drives
 
