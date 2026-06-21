@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import { isDemoModeClient } from "../lib/demo-mode";
-import { listDemoAcquisitions, type DemoAcquisitionEntry } from "../lib/demo-session";
+import { useDemoAcquisitions } from "../lib/use-demo-session";
 
 /**
  * Read-only demo: a top "本次演示获取" section showing the titles the visitor
@@ -12,13 +11,7 @@ import { listDemoAcquisitions, type DemoAcquisitionEntry } from "../lib/demo-ses
  * actually hydrates. Renders nothing outside demo or when empty.
  */
 export function DemoSessionLibrary() {
-  const [entries, setEntries] = useState<DemoAcquisitionEntry[]>([]);
-  useEffect(() => {
-    if (!isDemoModeClient()) {
-      return;
-    }
-    setEntries(listDemoAcquisitions());
-  }, []);
+  const entries = useDemoAcquisitions();
 
   if (!isDemoModeClient() || entries.length === 0) {
     return null;

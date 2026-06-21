@@ -5,6 +5,9 @@ import Link from "next/link";
 import { CheckCircle2, ChevronDown, ChevronRight, Clock3, Loader2, TriangleAlert, X } from "lucide-react";
 import { showHref } from "@media-track/workflow/scope";
 import type { ActivityActiveRun, ActivityCompletedItem, ActivityView } from "../lib/activity-view";
+import { isDemoModeClient } from "../lib/demo-mode";
+import { demoCompletedItems } from "../lib/demo-session";
+import { useDemoAcquisitions } from "../lib/use-demo-session";
 
 const POLL_MS = 2600;
 const POSTER = "https://image.tmdb.org/t/p/w185";
@@ -46,6 +49,11 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
     .sort((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0));
   // Only show completions for runs THIS session watched go active → done.
   const completed = view.recentCompleted.filter((item) => seenActive.current.has(item.workflowRunId));
+  // Demo: acquisitions are client-only (no DB run) → surface this session's
+  // acquired titles as completed items so the activity page reflects them.
+  const demoAcq = useDemoAcquisitions();
+  const demoDone = isDemoModeClient() ? demoCompletedItems(demoAcq) : [];
+  const allCompleted = [...demoDone, ...completed];
 
   return (
     <div className="activity">
@@ -66,11 +74,11 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
         )}
       </CollapsibleSection>
 
-      <CollapsibleSection title="已完成" count={completed.length} note="仅本次浏览" defaultOpen>
-        {completed.length === 0 ? (
+      <CollapsibleSection title="已完成" count={allCompleted.length} note="仅本次浏览" defaultOpen>
+        {allCompleted.length === 0 ? (
           <p className="act-empty">本次浏览还没有完成的任务，历史可在通知查看。</p>
         ) : (
-          completed.map((item) => <CompletedRow item={item} key={item.workflowRunId} />)
+          allCompleted.map((item) => <CompletedRow item={item} key={item.workflowRunId} />)
         )}
       </CollapsibleSection>
     </div>
