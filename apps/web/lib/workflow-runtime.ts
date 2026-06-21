@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import {
   PanSouResourceProvider,
   createProtectedPan115CookieStorageExecutorFromEnv,
+  createBootstrapPan115CookieStorageExecutor,
   CompositeResourceProvider,
   ProwlarrResourceProvider,
   createTmdbMetadataProvider,
@@ -1174,6 +1175,30 @@ interface AccountStorageCredentials {
   animeCid: string | null;
 }
 
+/**
+ * Provision a drive's media tree (Mediary Scout/{Movies,TV,Anime}) under the
+ * account root and return the CIDs. Uses an UNRESTRICTED bootstrap executor — a
+ * fresh drive has no write scope yet, and the scope is meant to come FROM these
+ * dirs (the catch-22 that left 115 drives stuck "目录待建"). Bounded, idempotent
+ * (find-or-create, no deletes). 115 root and 夸克 root are both "0".
+ */
+async function provisionDriveCategoryDirs(
+  provider: string,
+  cookie: string,
+): Promise<{ rootCid: string; moviesCid: string; tvCid: string; animeCid: string }> {
+  const executor =
+    provider === "quark"
+      ? createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] })
+      : createBootstrapPan115CookieStorageExecutor({ cookie });
+  return provisionCategoryDirs({
+    baseParentId: "0",
+    storage: {
+      listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
+      createDirectory: (dir) => executor.createDirectory(dir),
+    },
+  });
+}
+
 async function getAccountStorageCredentials(
   accountId: string,
   connectedStorageId?: string | null,
@@ -1193,15 +1218,44 @@ async function getAccountStorageCredentials(
     if (!drive || !cookie) {
       return null;
     }
+    let { rootCid, moviesCid, tvCid, animeCid } = drive;
+    // Self-heal: a live-mode drive with missing category CIDs (e.g. connect-time
+    // provisioning was skipped/failed → "目录待建") gets provisioned on first use,
+    // so the queued acquisition just proceeds — no manual rebind. Idempotent;
+    // persisted so subsequent runs skip. Best-effort: a failure leaves the CIDs
+    // null and the scoped executor still fails loud (surfaced, not silent).
+    const liveMode = process.env.MEDIA_TRACK_STORAGE_ADAPTER === "115";
+    if (liveMode && drive.status === "active" && !(rootCid && moviesCid && tvCid && animeCid)) {
+      try {
+        const p = await provisionDriveCategoryDirs(drive.provider, cookie);
+        ({ rootCid, moviesCid, tvCid, animeCid } = p);
+        await getWorkflowRepository().upsertConnectedStorage({
+          id: drive.id,
+          accountId,
+          provider: drive.provider,
+          providerUid: drive.providerUid,
+          label: drive.label,
+          payload: drive.payload,
+          rootCid,
+          moviesCid,
+          tvCid,
+          animeCid,
+          createdAt: drive.createdAt,
+        });
+        console.log(`[media-track] auto-provisioned ${drive.provider} dirs for ${drive.id} (root=${rootCid})`);
+      } catch (error) {
+        console.error(`[media-track] auto-provision failed for ${drive.id}: ${String(error)}`);
+      }
+    }
     return {
       id: drive.id,
       provider: drive.provider,
       status: drive.status,
       cookie,
-      rootCid: drive.rootCid,
-      moviesCid: drive.moviesCid,
-      tvCid: drive.tvCid,
-      animeCid: drive.animeCid,
+      rootCid,
+      moviesCid,
+      tvCid,
+      animeCid,
     };
   } catch (error) {
     console.error(`[media-track] failed to load storage credentials for ${accountId}: ${String(error)}`);
@@ -1689,9 +1743,10 @@ async function bindPan115ConnectedStorage(input: {
   const hasEnvCids = Boolean(cids.tvCid && cids.moviesCid && cids.animeCid);
   if (!hasEnvCids && process.env.MEDIA_TRACK_STORAGE_ADAPTER === "115") {
     try {
-      const executor = createProtectedPan115CookieStorageExecutorFromEnv({
-        env: { ...process.env, PAN115_COOKIE: input.cookie },
-      });
+      // Bootstrap (unrestricted) executor — a fresh drive has no write scope yet,
+      // and the protected/env executor throws without one (the catch-22 that left
+      // 115 drives stuck "目录待建"). Steady-state acquisition uses a scoped executor.
+      const executor = createBootstrapPan115CookieStorageExecutor({ cookie: input.cookie });
       const provisioned = await provisionCategoryDirs({
         baseParentId: "0", // 115 account root
         storage: {
