@@ -4,6 +4,7 @@ import {
   DEFAULT_ACCOUNT_ID,
   episodeNumberFromCode,
   type AgentDecision,
+  type AgentStep,
   type EpisodeState,
   type MediaTitle,
   type NotificationEvent,
@@ -40,7 +41,7 @@ import type {
   Session,
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
-import { normalizeScope, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
+import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 
 type Queryable = Pool | PoolClient;
@@ -79,6 +80,12 @@ const SCHEMA = `
     workflow_run_id text NOT NULL,
     ordinal int NOT NULL,
     snapshot_id text NOT NULL,
+    payload jsonb NOT NULL,
+    PRIMARY KEY (workflow_run_id, ordinal)
+  );
+  CREATE TABLE IF NOT EXISTS agent_steps (
+    workflow_run_id text NOT NULL,
+    ordinal int NOT NULL,
     payload jsonb NOT NULL,
     PRIMARY KEY (workflow_run_id, ordinal)
   );
@@ -459,6 +466,54 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     });
   }
 
+  async appendAgentStep(workflowRunId: string, step: AgentStep): Promise<void> {
+    // Hot path: fires once per agent tool call, in parallel across runs. A single
+    // autocommit INSERT on the pool — no BEGIN/COMMIT/connect overhead of a tx.
+    await this.ensureSchema();
+    await this.pool.query(
+      "INSERT INTO agent_steps (workflow_run_id, ordinal, payload) VALUES ($1, $2, $3::jsonb) " +
+        "ON CONFLICT (workflow_run_id, ordinal) DO NOTHING",
+      [workflowRunId, step.ordinal, json(step)],
+    );
+  }
+
+  async listAgentSteps(workflowRunId: string, scopeArg: ScopeArg = undefined): Promise<AgentStep[]> {
+    // Scope gate reads ONLY the run's two ownership columns — not the full snapshot
+    // (season/title/episodes/...) the old getWorkflowRunSnapshot load pulled in.
+    if (scopeArg !== undefined && !(await this.runMatchesScope(workflowRunId, scopeArg))) {
+      return [];
+    }
+    return this.selectMany<AgentStep>(
+      this.pool,
+      "SELECT payload FROM agent_steps WHERE workflow_run_id = $1 ORDER BY ordinal",
+      [workflowRunId],
+    );
+  }
+
+  /** Lightweight (account, storage) visibility check for a run: reads just the two
+   *  scope columns and applies the same scopeMatches predicate as everywhere else.
+   *  Fail-closed — an unknown run is not visible to any scope. */
+  private async runMatchesScope(workflowRunId: string, scopeArg: ScopeArg): Promise<boolean> {
+    const scope = normalizeScope(scopeArg);
+    await this.ensureSchema();
+    const row = await this.pool.query(
+      "SELECT account_id, connected_storage_id FROM workflow_runs WHERE id = $1",
+      [workflowRunId],
+    );
+    const owner = row.rows[0];
+    if (!owner) {
+      return false;
+    }
+    const ownerAccount = (owner.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID;
+    const ownerStorage = (owner.connected_storage_id as string | null | undefined) ?? null;
+    return scopeMatches(scope, ownerAccount, ownerStorage);
+  }
+
+  async clearAgentSteps(workflowRunId: string): Promise<void> {
+    await this.ensureSchema();
+    await this.pool.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [workflowRunId]);
+  }
+
   async cancelQueuedWorkflowRun(
     workflowRunId: string,
     scopeArg: ScopeArg = undefined,
@@ -488,6 +543,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       await client.query("DELETE FROM notifications WHERE workflow_run_id = $1", [workflowRunId]);
       await client.query("DELETE FROM transfer_attempts WHERE workflow_run_id = $1", [workflowRunId]);
       await client.query("DELETE FROM agent_decisions WHERE workflow_run_id = $1", [workflowRunId]);
+      await client.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [workflowRunId]);
       await client.query("DELETE FROM resource_snapshots WHERE workflow_run_id = $1", [workflowRunId]);
       await client.query("DELETE FROM workflow_runs WHERE id = $1", [workflowRunId]);
 
@@ -586,6 +642,10 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
           storageValue,
         ]);
         await client.query(`DELETE FROM agent_decisions WHERE workflow_run_id IN ${runIdsSub}`, [
+          seasonId,
+          storageValue,
+        ]);
+        await client.query(`DELETE FROM agent_steps WHERE workflow_run_id IN ${runIdsSub}`, [
           seasonId,
           storageValue,
         ]);
@@ -1175,6 +1235,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     await client.query("DELETE FROM notifications WHERE workflow_run_id = $1", [workflowRunId]);
     await client.query("DELETE FROM transfer_attempts WHERE workflow_run_id = $1", [workflowRunId]);
     await client.query("DELETE FROM agent_decisions WHERE workflow_run_id = $1", [workflowRunId]);
+    await client.query("DELETE FROM agent_steps WHERE workflow_run_id = $1", [workflowRunId]);
     await client.query("DELETE FROM resource_snapshots WHERE workflow_run_id = $1", [workflowRunId]);
     // Scope to THIS drive's episodes — never wipe another drive's episodes for the same season.
     await client.query(
