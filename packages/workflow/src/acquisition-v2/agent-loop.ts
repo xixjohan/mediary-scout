@@ -5,7 +5,7 @@ import { readSkillSection } from "./skill.js";
 import {
   DEFAULT_MAX_STEPS,
   buildRepetitionStop,
-  reflectionSystemOverride,
+  prepareStepSystemOverride,
 } from "./agent-loop-guards.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
 
@@ -203,6 +203,13 @@ export interface AcquisitionAgentRequest {
   /** Per-tool-call live progress for the activity page (cleaned activity + phase
    *  + raw name/args). Best-effort; absent in tests/headless. */
   onProgress?: (event: AgentToolEvent) => void;
+  /** Cumulative 115 API calls so far (real 115 only). Lets prepareStep inject the
+   *  budget soft-warning, the same way it injects the step-cap wind-down. Absent
+   *  (fakes/sim) → no budget nudge. */
+  apiCallCount?: () => number | undefined;
+  /** SOFT-warning threshold, derived from the configured HARD budget upstream
+   *  (budgetSoftThreshold). Absent → falls back to BUDGET_SOFT_REMIND_AT. */
+  budgetSoftAt?: number;
 }
 
 export interface AcquisitionAgentResult {
@@ -241,7 +248,14 @@ export async function runAcquisitionAgent(
     // Last ~10 steps before the cap: inject a calm "wrap up + clean staging" nudge
     // so a step-capped run doesn't leave the 一人之下-style half-done mess.
     prepareStep: ({ stepNumber }) => {
-      const system = reflectionSystemOverride({ stepNumber, maxSteps, baseSystem: request.system });
+      const spent = request.apiCallCount?.();
+      const system = prepareStepSystemOverride({
+        stepNumber,
+        maxSteps,
+        baseSystem: request.system,
+        ...(typeof spent === "number" ? { apiCallsSpent: spent } : {}),
+        ...(typeof request.budgetSoftAt === "number" ? { budgetSoftAt: request.budgetSoftAt } : {}),
+      });
       return system ? { system } : undefined;
     },
   });

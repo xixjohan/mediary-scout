@@ -19,11 +19,57 @@ export const REMIND_WITHIN_STEPS = 10;
 /** Calm wrap-up nudge (R3: must NOT scare the agent into dropping still-gettable episodes). */
 export const STEP_50_REMINDER =
   "【进度提醒】本次任务已接近步数预算(约剩 10 步)。这是正常的收尾信号,不是失败。请:" +
-  "① 不要再发起新的 searchResources / transferCandidate;" +
-  "② 把已转存好的用 moveToSeason 归位、对确实落盘的 markObtained;" +
-  "③ discardStaging 清理本次 staging;④ finish。" +
+  "① 不要再发起任何新的搜索或转存(searchResources / transferCandidate / transferUntilLanded 都不要);" +
+  "② 把已转存好的归位(TV/动漫用 moveToSeason 入季;电影用 flattenMovie 收进影片目录)、对确实落盘的 markObtained;" +
+  "③ 打扫战场:TV/动漫用 discardStaging 清空 staging;电影没有独立 staging——由 flattenMovie(见②)负责就地清掉包装目录,不要用 discardStaging;④ finish。" +
   "这次没来得及拿的集不要紧——只要没被 markObtained,下次每日巡检会自动发现并补齐。" +
   "请稳妥收尾,绝不要为赶进度草率丢弃还能拿到的资源。";
+
+/** Default SOFT-warning threshold, used only as a fallback when the hard budget is
+ *  unknown (storage without apiCallBudget). In production the threshold is DERIVED
+ *  from the configured hard limit via budgetSoftThreshold so the two never drift
+ *  (default hard 300 → soft 240, matching the拍板 design). */
+export const BUDGET_SOFT_REMIND_AT = 240;
+
+/** Headroom (in 115 calls) reserved between the SOFT warning and the HARD limit, so
+ *  the agent's own wrap-up (markObtained / discardStaging — themselves a few 115
+ *  calls) still fits before the hard stop. Default hard 300 − 60 = soft 240. */
+export const BUDGET_SOFT_HEADROOM = 60;
+
+/** Derive the SOFT-warning threshold from the configured HARD budget so they stay
+ *  consistent even when MEDIA_TRACK_115_MAX_API_CALLS overrides the limit. */
+export function budgetSoftThreshold(hardBudget: number): number {
+  return Math.max(1, hardBudget - BUDGET_SOFT_HEADROOM);
+}
+
+/** Calm wrap-up nudge for the 115 call budget — mirrors STEP_50_REMINDER's tone.
+ *  No hardcoded numbers: the threshold is configurable, so the text stays generic. */
+export const BUDGET_REMINDER =
+  "【网盘调用提醒】本次任务的 115 接口调用已接近预算上限。这是正常的收尾信号,不是失败。请:" +
+  "① 不要再发起任何新的搜索或转存(searchResources / transferCandidate / transferUntilLanded 都不要);" +
+  "② 对确实落盘的 markObtained、把已转存好的归位(TV/动漫用 moveToSeason 入季;电影用 flattenMovie 收进影片目录);" +
+  "③ 打扫战场:TV/动漫用 discardStaging 清空 staging;电影已落影片目录、flattenMovie 已就地清理,不要再 discardStaging;④ finish。" +
+  "这次没来得及拿的集不要紧——只要没被 markObtained,下次每日巡检会自动补齐。" +
+  "请立刻稳妥收尾:调用一旦到硬上限会被强制中断,别把预算耗在还没收尾上。";
+
+/** The step-cap reminder as a pure nudge (text or null) — within the last
+ *  `within` steps before the cap. Composable with other nudges in prepareStep. */
+export function stepReflectionNudge(
+  stepNumber: number,
+  maxSteps: number,
+  within: number = REMIND_WITHIN_STEPS,
+): string | null {
+  return stepNumber >= maxSteps - within ? STEP_50_REMINDER : null;
+}
+
+/** The 115 call-budget reminder as a pure nudge (text or null) — at/after the soft
+ *  threshold. `spent` undefined (storage without apiCallCount, e.g. fakes) → null. */
+export function budgetReflectionNudge(
+  spent: number | undefined,
+  softAt: number = BUDGET_SOFT_REMIND_AT,
+): string | null {
+  return typeof spent === "number" && spent >= softAt ? BUDGET_REMINDER : null;
+}
 
 // Minimal structural view of an AI-SDK StepResult — only the fields we read.
 interface StepLike {
@@ -58,9 +104,27 @@ export function reflectionSystemOverride(input: {
   baseSystem: string;
   remindWithinSteps?: number;
 }): string | undefined {
-  const within = input.remindWithinSteps ?? REMIND_WITHIN_STEPS;
-  if (input.stepNumber >= input.maxSteps - within) {
-    return `${input.baseSystem}\n\n${STEP_50_REMINDER}`;
-  }
-  return undefined;
+  const nudge = stepReflectionNudge(input.stepNumber, input.maxSteps, input.remindWithinSteps);
+  return nudge ? `${input.baseSystem}\n\n${nudge}` : undefined;
+}
+
+/**
+ * Compose the applicable wrap-up nudges (step-cap AND/OR 115 budget) onto the base
+ * system for one step. Returns the overridden system text, or undefined when no
+ * nudge applies. Both can fire at once (near the step cap AND over budget) — then
+ * both are appended. Pure → unit-testable; prepareStep just calls this.
+ */
+export function prepareStepSystemOverride(input: {
+  stepNumber: number;
+  maxSteps: number;
+  baseSystem: string;
+  apiCallsSpent?: number;
+  remindWithinSteps?: number;
+  budgetSoftAt?: number;
+}): string | undefined {
+  const nudges = [
+    stepReflectionNudge(input.stepNumber, input.maxSteps, input.remindWithinSteps),
+    budgetReflectionNudge(input.apiCallsSpent, input.budgetSoftAt),
+  ].filter((nudge): nudge is string => nudge !== null);
+  return nudges.length > 0 ? [input.baseSystem, ...nudges].join("\n\n") : undefined;
 }

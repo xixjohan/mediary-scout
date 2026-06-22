@@ -193,6 +193,14 @@ export class Pan115ApiGuard {
     return this.callCount;
   }
 
+  /** The HARD call budget: checked BEFORE each call, the guard refuses (throws
+   *  Pan115RiskControlError) the next call once callCount has reached this value.
+   *  Surfaced so the agent loop can derive its SOFT-warning threshold from the
+   *  actually-configured limit instead of hardcoding a number. */
+  callBudget(): number {
+    return this.maxCallsPerOperation;
+  }
+
   async run<T>(operation: Pan115Operation, call: () => Promise<T>): Promise<T> {
     this.assertCircuitClosed(operation);
     await this.applyDelay(operation);
@@ -341,9 +349,16 @@ export class Storage115Executor implements StorageExecutor {
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
-  /** Cumulative 115 API calls so far (observability — surfaced into the agent trace). */
+  /** Cumulative 115 API calls so far — surfaced into the agent trace AND used to
+   *  drive the agent loop's budget soft-warning. */
   apiCallCount(): number {
     return this.apiGuard.callsSpent();
+  }
+
+  /** The configured HARD call budget — the agent loop derives its SOFT-warning
+   *  threshold from this so the two stay consistent when the limit is overridden. */
+  apiCallBudget(): number {
+    return this.apiGuard.callBudget();
   }
 
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
@@ -918,7 +933,13 @@ export function createProtectedStorage115Executor(
     // recursive post-transfer verification listings.
     executorOptions.apiGuardOptions = {
       minDelayMs: positiveIntFromEnv(env["MEDIA_TRACK_115_MIN_DELAY_MS"]) ?? 1_200,
-      maxCallsPerOperation: positiveIntFromEnv(env["MEDIA_TRACK_115_MAX_API_CALLS"]) ?? 240,
+      // HARD limit (throws Pan115RiskControlError) — default 300, configurable here.
+      // The agent gets a SOFT wrap-up warning earlier, at
+      // budgetSoftThreshold(maxCallsPerOperation) (= that value minus a fixed
+      // headroom) via the agent loop, so its own markObtained/
+      // discardStaging cleanup still fits before the hard stop. Override-safe: the
+      // soft threshold is derived from this value, never hardcoded.
+      maxCallsPerOperation: positiveIntFromEnv(env["MEDIA_TRACK_115_MAX_API_CALLS"]) ?? 300,
       maxListItemsPerResponse: 1000,
       ...options.apiGuardOptions,
     };

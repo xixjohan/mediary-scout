@@ -7,6 +7,7 @@ import { CandidateRegistry } from "./candidate-registry.js";
 import type { DeadLinkStore } from "./dead-links.js";
 import { RealResourceProviderV2 } from "./real-provider-adapter.js";
 import { RealStorageV2 } from "./real-storage-adapter.js";
+import { budgetSoftThreshold } from "./agent-loop-guards.js";
 import { TaskSandbox } from "./sandbox.js";
 import {
   needForMovie,
@@ -111,6 +112,14 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
+    // Real 115 exposes its cumulative call count → drives the budget soft-warning
+    // in the agent loop; fakes/sim omit apiCallCount → no nudge.
+    ...(request.executor.apiCallCount ? { apiCallCount: () => request.executor.apiCallCount!() } : {}),
+    // Soft threshold derived from the configured HARD budget so they stay consistent
+    // even when MEDIA_TRACK_115_MAX_API_CALLS overrides the limit.
+    ...(request.executor.apiCallBudget
+      ? { budgetSoftAt: budgetSoftThreshold(request.executor.apiCallBudget()) }
+      : {}),
   };
 
   const result =
