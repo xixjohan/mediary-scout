@@ -8,7 +8,8 @@ import {
   requestSeasonAction,
   type RequestTrackingActionResult,
 } from "../app/actions";
-import { isLockedResult, RequestedBadge } from "./request-state";
+import { isLockedResult } from "./request-state";
+import { AcquireProgressBadge } from "./acquire-progress-badge";
 import { isDemoModeClient } from "../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../lib/demo-session";
@@ -48,6 +49,10 @@ export function SeasonRequestMenu({
   const [isPending, startTransition] = useTransition();
   const [open, setOpen] = useState(false);
   const [selected, setSelected] = useState<number | "all">("all");
+  // The scope ACTUALLY requested (set at submit). The single-season path requests
+  // `onlySeason` while `selected` stays "all", so the locked badge must read this,
+  // not `selected`, to match the right season's run.
+  const [requestedSeason, setRequestedSeason] = useState<number | "all">("all");
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
   // Read-only demo: any acquire trigger plays the scripted, client-only playback
   // (the server actions below are gated server-side anyway).
@@ -69,7 +74,18 @@ export function SeasonRequestMenu({
   }
 
   if (isLockedResult(result)) {
-    return <RequestedBadge title={result?.message} storageId={storageId} />;
+    // Match the SEASON that was just requested: a specific season → that number (so
+    // we don't show another season's running progress); "all remaining" → null
+    // (match any of this show's running seasons). → inline live progress while
+    // running, static 已请求 pill otherwise.
+    return (
+      <AcquireProgressBadge
+        tmdbId={tmdbId}
+        seasonNumber={requestedSeason === "all" ? null : requestedSeason}
+        storageId={storageId}
+        title={result?.message}
+      />
+    );
   }
 
   const submit = () => {
@@ -77,6 +93,7 @@ export function SeasonRequestMenu({
       setDemoPlaying(true);
       return;
     }
+    setRequestedSeason(selected);
     startTransition(async () => {
       setOpen(false);
       setResult(
@@ -106,6 +123,7 @@ export function SeasonRequestMenu({
             setDemoPlaying(true);
             return;
           }
+          setRequestedSeason(onlySeason);
           startTransition(async () => {
             setResult(await requestSeasonAction({ tmdbId, seasonNumber: onlySeason, storageId }));
             router.refresh();
