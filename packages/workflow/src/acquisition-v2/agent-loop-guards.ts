@@ -94,6 +94,53 @@ export function buildRepetitionStop<TOOLS extends ToolSet = ToolSet>(): StopCond
 }
 
 /**
+ * Does the step history contain a systemic transfer block (quota / auth / VIP) with
+ * nothing landed? The agent loop should stop — every candidate will fail the same way.
+ * Reads the systemicBlock field that transferCandidate / transferUntilLanded surface.
+ */
+export function hasSystemicTransferBlock(steps: ReadonlyArray<StepLike>): boolean {
+  let hasBlock = false;
+  let anythingLanded = false;
+  for (const step of steps) {
+    for (const result of step.toolResults ?? []) {
+      const output = result.output as
+        | {
+            systemicBlock?: { reason: string };
+            attempt?: { status?: string; materializedFileIds?: ReadonlyArray<unknown> };
+            transferredCandidateId?: string | null;
+            staging?: ReadonlyArray<unknown>;
+            landed?: ReadonlyArray<unknown>;
+          }
+        | undefined;
+      if (output?.systemicBlock) {
+        hasBlock = true;
+      }
+      // Something landed ⇒ the account CAN transfer, so a later systemic-looking
+      // message is not an account block. Check the ACTUAL landed files, not just the
+      // status flag: a provider can materialize files yet mark the attempt failed
+      // (e.g. quark), and the truth is the landing point (materializedFileIds /
+      // staging / landed tree), per the "trust the reread, not the prediction" rule.
+      if (
+        output?.attempt?.status === "succeeded" ||
+        Boolean(output?.transferredCandidateId) ||
+        (output?.attempt?.materializedFileIds?.length ?? 0) > 0 ||
+        (output?.staging?.length ?? 0) > 0 ||
+        (output?.landed?.length ?? 0) > 0
+      ) {
+        anythingLanded = true;
+      }
+    }
+  }
+  // Only a block if nothing landed — if something transferred, the account works.
+  return hasBlock && !anythingLanded;
+}
+
+/** A StopCondition that fires when a systemic transfer block is detected. */
+export function buildSystemicBlockStop<TOOLS extends ToolSet = ToolSet>(): StopCondition<TOOLS> {
+  return ({ steps }) => hasSystemicTransferBlock(steps as ReadonlyArray<StepLike>);
+}
+
+/**
  * The reflection nudge, as a pure decision: within the last REMIND_WITHIN_STEPS
  * steps before the cap, return the base system text + reminder (to override the
  * step's system message); otherwise undefined (no override). Pure → unit-testable.

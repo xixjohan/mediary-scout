@@ -6,6 +6,7 @@ import {
 } from "../planning-search-gate.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
+import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 
 /**
  * The task sandbox for the Acquisition V2 rebuild — the permission cage the
@@ -56,6 +57,10 @@ export interface TransferToolResult {
   /** The TRUE staging contents after a forced reread — the only evidence the
    *  agent should trust about what actually landed. */
   staging: SimTreeFile[];
+  /** When the transfer failed with a SYSTEMIC message (quota / auth / VIP), the
+   *  agent should STOP — every candidate will fail. Present only on a systemic
+   *  block; absent means ordinary failure (iterate to the next candidate). */
+  systemicBlock?: { reason: string };
 }
 
 export class TaskSandbox {
@@ -221,7 +226,15 @@ export class TaskSandbox {
       intoDirectoryId: this.stagingDirectoryId,
     });
     const staging = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
-    return { attempt, staging };
+    // A systemic block ONLY when nothing actually landed — a provider can mark an
+    // attempt failed yet materialize files (e.g. quark); the truth is the landing
+    // point (staging / materializedFileIds), not the status flag.
+    const nothingLanded = staging.length === 0 && attempt.materializedFileIds.length === 0;
+    const systemicBlock =
+      attempt.status === "failed" && nothingLanded && isSystemicTransferBlockMessage(attempt.providerMessage)
+        ? { reason: attempt.providerMessage!.trim() }
+        : undefined;
+    return { attempt, staging, ...(systemicBlock ? { systemicBlock } : {}) };
   }
 
   /** MOVIE-ONLY: transfer an AGENT-ORDERED list of candidates the agent judged to
@@ -238,7 +251,8 @@ export class TaskSandbox {
   async transferUntilLanded(input: { candidateIds: string[] }): Promise<{
     landed: SimTreeFile[];
     transferredCandidateId: string | null;
-    attempts: Array<{ candidateId: string; status: "succeeded" | "failed" }>;
+    attempts: Array<{ candidateId: string; status: "succeeded" | "failed"; providerMessage?: string }>;
+    systemicBlock?: { reason: string };
   }> {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for transfers");
@@ -272,21 +286,37 @@ export class TaskSandbox {
         );
       }
     }
-    const attempts: Array<{ candidateId: string; status: "succeeded" | "failed" }> = [];
+    const attempts: Array<{ candidateId: string; status: "succeeded" | "failed"; providerMessage?: string }> = [];
     let transferredCandidateId: string | null = null;
+    let systemicBlock: { reason: string } | undefined;
     for (const candidateId of input.candidateIds) {
       const attempt = await this.storage.transferCandidate({
         candidateId,
         intoDirectoryId: this.stagingDirectoryId,
       });
-      attempts.push({ candidateId, status: attempt.status });
+      attempts.push({
+        candidateId,
+        status: attempt.status,
+        ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
+      });
       if (attempt.status === "succeeded") {
         transferredCandidateId = candidateId;
         break;
       }
+      // Layer-1: stop on the first failure that is a SYSTEMIC block (quota / auth /
+      // VIP) — it may come after one or more dead-link failures, but once we see a
+      // systemic one every remaining candidate will fail the same way, so don't
+      // grind the rest of the list (the 心灵奇旅 13-transfer waste). Ordinary
+      // dead-link failures (过期/取消/错链) keep iterating to the next candidate.
+      // Only a block if THIS attempt landed nothing — a provider can materialize
+      // files yet mark the attempt failed (e.g. quark); trust the landing point.
+      if (attempt.materializedFileIds.length === 0 && isSystemicTransferBlockMessage(attempt.providerMessage)) {
+        systemicBlock = { reason: attempt.providerMessage!.trim() };
+        break;
+      }
     }
     const landed = await this.storage.listTree({ directoryId: this.stagingDirectoryId });
-    return { landed, transferredCandidateId, attempts };
+    return { landed, transferredCandidateId, attempts, ...(systemicBlock ? { systemicBlock } : {}) };
   }
 
   /** Batch distribution plan (挖取/extract): the agent submits the WHOLE
