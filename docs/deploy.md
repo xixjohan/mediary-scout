@@ -11,7 +11,7 @@
 - [可选增强](#可选增强)
 - [从你的设备访问](#从你的设备访问)
 - [安全](#安全)
-- [国内构建加速](#国内构建加速)
+- [国内构建加速](#国内构建加速连不上-docker-hub)
 - [升级](#升级)
 
 ## 选择你的宿主
@@ -139,11 +139,42 @@ Mediary Scout 默认单用户、无登录,公网入口必须靠 Access 这类前
 
 即便开了多用户,也仍建议放在 Tailscale / Cloudflare Access 之后——登录只为隔离用户数据,不是给公网当门禁。
 
-## 国内构建加速
+## 国内构建加速(连不上 Docker Hub)
 
-Docker Hub / ghcr 在国内常连不上,首次 `docker compose up` 构建 / 拉取会卡住:
-- 给 Docker 配 registry mirror(如 `https://docker.1ms.run`,写进 `/etc/docker/daemon.json` 的 `registry-mirrors` 后 `systemctl restart docker`)。
-- 构建 web 镜像时换 npm 源:`docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com`。
+Docker Hub 和 ghcr 在国内常连不上,首次 `docker compose up` 构建 / 拉取会卡住。下面的镜像加速**只解决 Docker Hub**(占绝大多数镜像);来自 ghcr 的 `pansou` 是例外,见本节末尾。典型报错(任一即是此问题):
+
+```
+failed to fetch oauth token: Post "https://auth.docker.io/token": ... i/o timeout
+DeadlineExceeded / dial tcp ...:443: i/o timeout
+```
+
+解决办法是**给 Docker 配一个国内 registry 镜像**。按你的平台来 —— ⚠️ 两者方式不同,别搞混:
+
+**Docker Desktop(macOS / Windows)** — 不是改 `daemon.json` 文件、也没有 `systemctl`:
+1. 打开 **Settings(设置)→ Docker Engine**;
+2. 在那段 JSON 里加上 `registry-mirrors`(和已有字段并列):
+   ```json
+   {
+     "registry-mirrors": ["https://docker.1ms.run"]
+   }
+   ```
+3. **Apply & Restart**(应用并重启),等鲸鱼图标变绿再重试 `docker compose up -d`。
+
+**Linux(含软路由 / NAS,直接装的 Docker Engine)**:把镜像写进 `/etc/docker/daemon.json` 的 `registry-mirrors`,然后 `sudo systemctl restart docker`:
+```json
+{ "registry-mirrors": ["https://docker.1ms.run"] }
+```
+
+**npm 也慢的话**,构建时换国内源:
+```bash
+docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
+```
+
+> 镜像地址会失效/限速,`docker.1ms.run` 只是示例;搜「Docker 镜像加速 可用」找当前能用的即可。配好后,所有 **Docker Hub** 镜像(`postgres`、构建 web 用的 `node`、`cloudflared`)都会走镜像 —— 本仓库 Dockerfile 已**特意不写 `# syntax=` 指令**,避免它绕过镜像、第一步就卡死(见 #46)。
+
+**⚠️ 注意 `pansou` 例外**:它来自 **ghcr.io**(`ghcr.io/fish2018/pansou-web`),而 Docker 的 `registry-mirrors` **只对 Docker Hub 生效、管不到 ghcr**。若 ghcr 也连不上,二选一:
+- 在 `.env` 设 `PANSOU_IMAGE=` 指向一个 ghcr 镜像/代理(如 `ghcr.nju.edu.cn/fish2018/pansou-web:latest`,镜像可用性自行确认),再 `docker compose up -d`;
+- 或者不用自带 pansou —— 把 `PANSOU_BASE_URL` 指到一个外部 PanSou 实例,然后 `docker compose up -d web`(不起 pansou 容器)。
 
 作者实测在带镜像加速的软路由(iStoreOS)上一把过。
 
