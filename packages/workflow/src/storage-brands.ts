@@ -11,11 +11,13 @@
  * capabilities (uid parsing, auth-error classification, applicable resource kinds).
  */
 import { parsePan115Uid } from "./account-credentials.js";
+import type { ResourceType } from "./domain.js";
+import { isGuangYaAuthError, parseGuangYaUid } from "./guangya-client.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import { isQuarkAuthError, parseQuarkUid } from "./quark-cookie-client.js";
 
-export type StorageProvider = "pan115" | "quark";
-export type ResourceProviderKind = "pansou-115" | "pansou-quark" | "prowlarr";
+export type StorageProvider = "pan115" | "quark" | "guangya";
+export type ResourceProviderKind = "pansou-115" | "pansou-quark" | "pansou-magnet" | "prowlarr";
 
 export interface StorageBrand {
   provider: StorageProvider;
@@ -45,7 +47,30 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     isAuthError: isQuarkAuthError,
     resourceProviderKinds: ["pansou-quark"],
   },
+  {
+    provider: "guangya",
+    label: "光鸭云盘",
+    parseUid: parseGuangYaUid,
+    isAuthError: isGuangYaAuthError,
+    resourceProviderKinds: ["pansou-magnet", "prowlarr"],
+  },
 ];
+
+/**
+ * Map a brand's resource-provider kinds to the PanSou link types its acquisitions
+ * may transfer. A 夸克 drive can only save 夸克 share links; a 光鸭(磁力) drive can
+ * only offline-download magnets; a 115 drive takes both 115 links and magnets.
+ * Pure + brand-table-driven so the resource assembly stays testable.
+ */
+export function allowedResourceTypesForKinds(kinds: readonly string[]): ResourceType[] {
+  if (kinds.includes("pansou-quark")) {
+    return ["quark"];
+  }
+  if (kinds.includes("pansou-magnet")) {
+    return ["magnet"];
+  }
+  return ["115", "magnet"];
+}
 
 export function getStorageBrand(provider: string): StorageBrand {
   const brand = STORAGE_BRANDS.find((b) => b.provider === provider);
