@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   InMemoryWorkflowRepository,
+  type EpisodeState,
   type MediaTitle,
   type PersistWorkflowRunSnapshotInput,
   type TrackedSeason,
@@ -24,6 +25,18 @@ function season(titleId: string, seasonNumber: number): TrackedSeason {
     latestAiredSource: "metadata",
   };
 }
+function episode(seasonNumber: number, episodeNumber: number, trackedSeasonId = "s"): EpisodeState {
+  return {
+    trackedSeasonId,
+    episodeCode: `S${String(seasonNumber).padStart(2, "0")}E${String(episodeNumber).padStart(2, "0")}`,
+    airDate: null,
+    title: `Episode ${episodeNumber}`,
+    airStatus: "aired",
+    obtained: false,
+    metadataStatus: "confirmed",
+    verifiedFileIds: [],
+  };
+}
 function run(input: {
   id: string;
   tmdbId: number;
@@ -31,6 +44,7 @@ function run(input: {
   status: WorkflowStatus;
   startedAt: string;
   finishedAt?: string;
+  episodes?: EpisodeState[];
 }): PersistWorkflowRunSnapshotInput {
   const t = title(input.tmdbId, input.name);
   const s = season(t.id, 1);
@@ -46,7 +60,7 @@ function run(input: {
       finishedAt: input.finishedAt ?? null,
       auditEvents: [],
     },
-    episodes: [],
+    episodes: input.episodes ?? [],
     resourceSnapshots: [],
     decisions: [],
     transferAttempts: [],
@@ -78,6 +92,23 @@ function run(input: {
 }
 
 describe("getActivityView", () => {
+  it("active run over multiple seasons exposes the distinct sorted seasonNumbers", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const snap = run({
+      id: "r_multi",
+      tmdbId: 9,
+      name: "Ozark",
+      status: "running",
+      startedAt: "2026-06-17T00:00:00Z",
+      episodes: [episode(1, 1, "t9_s1"), episode(2, 1, "t9_s1"), episode(3, 1, "t9_s1"), episode(4, 1, "t9_s1")],
+    });
+    await repo.saveWorkflowRunSnapshot(snap);
+
+    const view = await getActivityView({ repository: repo });
+    const r = view.active.find((x) => x.runId === "r_multi")!;
+    expect(r.seasonNumbers).toEqual([1, 2, 3, 4]);
+  });
+
   it("returns active queued+running runs with queue positions; running carries progress", async () => {
     const repo = new InMemoryWorkflowRepository();
     await repo.saveWorkflowRunSnapshot(run({ id: "r_run", tmdbId: 1, name: "Running", status: "running", startedAt: "2026-06-17T00:00:00Z" }));

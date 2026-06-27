@@ -5,6 +5,13 @@ import {
   type WorkflowRepository,
   type WorkflowRunProgress,
 } from "@media-track/workflow";
+import { distinctSeasons, seasonLabelText } from "./activity-season-label";
+
+// Re-export the pure season-label helpers so existing server-side imports from
+// this module keep working. The CANONICAL home is the runtime-free
+// `activity-season-label.ts` — the "use client" activity-feed must import from
+// there (not here), since this module pulls the Postgres-backed runtime.
+export { distinctSeasons, seasonLabelText };
 
 /** One title currently in the pipeline (queued or running). */
 export interface ActivityActiveRun {
@@ -14,7 +21,15 @@ export interface ActivityActiveRun {
   year: number | null;
   type: MediaType;
   posterPath: string | null;
+  /** The snapshot's primary/placeholder season number (`snapshot.season`). May
+   *  be a real number even for a whole-show ("全季") run, where it's just the
+   *  scope's anchor season — NOT the full set of covered seasons. null only for
+   *  movies / season-less snapshots. For display, prefer `seasonNumbers`. */
   seasonNumber: number | null;
+  /** The distinct, sorted seasons the run actually covers, derived from its
+   *  episode set. This is what the UI labels (e.g. "第 1/2/3/4 季"); a 全季 run
+   *  spans many seasons even though `seasonNumber` is a single anchor value. */
+  seasonNumbers: number[];
   status: "queued" | "running";
   /** 1-based position among queued items; null for the running one. */
   queuePosition: number | null;
@@ -100,6 +115,7 @@ export async function getActivityView(input: {
       type: snapshot.title.type,
       posterPath: snapshot.title.posterPath ?? null,
       seasonNumber: snapshot.season.seasonNumber ?? null,
+      seasonNumbers: distinctSeasons(snapshot.episodes),
       status,
       queuePosition: status === "queued" && queueIndex >= 0 ? queueIndex + 1 : null,
       missingCount,
