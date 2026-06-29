@@ -40,3 +40,6 @@ docs/original-skill-permission-audit-*.md
 docs/roadmap-self-host-expansion.md
 .vercel
 .env*
+
+# 个人博客草稿(推广用,不进公共仓库)
+docs/blog/
