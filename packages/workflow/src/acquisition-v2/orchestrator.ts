@@ -9,6 +9,7 @@ import { RealResourceProviderV2 } from "./real-provider-adapter.js";
 import { RealStorageV2 } from "./real-storage-adapter.js";
 import { budgetSoftThreshold } from "./agent-loop-guards.js";
 import { TaskSandbox } from "./sandbox.js";
+import { AssrtSubtitleProvider, type AssrtProviderPort } from "../subtitle-provider.js";
 import {
   needForMovie,
   needForTvTarget,
@@ -58,6 +59,14 @@ export interface RunAcquisitionV2Request {
   /** Filters known-dead candidates from search results before the agent sees them,
    *  and records newly-proven-dead links from failed transfers (#15). */
   deadLinkStore?: DeadLinkStore;
+  /** assrt token (Settings → 字幕来源). When set AND origin is non-CN AND the
+   *  drive is 115, the orchestrator pre-warms a subtitle snapshot and the agent
+   *  gets viewSubtitleSnapshot/transferSubtitle tools. Undefined/empty = no
+   *  subtitle flow (the agent never sees those tools). */
+  assrtToken?: string;
+  /** Injectable assrt provider (tests pass a spy). When absent, the orchestrator
+   *  builds a real AssrtSubtitleProvider from assrtToken. */
+  assrtProvider?: AssrtProviderPort;
   /** Per-tool-call live progress for the activity page (best-effort). */
   onProgress?: (event: AgentToolEvent) => void;
 }
@@ -123,6 +132,43 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     prefetchedCandidateCount = undefined;
   }
 
+  // Pre-warm the assrt subtitle snapshot when all three gates pass: token
+  // configured, KNOWN non-CN origin, and the EXECUTOR can land external
+  // subtitle urls. UNKNOWN origin (undefined/empty originCountries — missing
+  // TMDB metadata) counts as NOT eligible: niche 国产短剧 are precisely the
+  // titles most likely to lack origin metadata, while mainstream foreign
+  // titles essentially always carry it — and a false positive here recurs on
+  // EVERY patrol tick, burning the shared assrt quota (20/min) and confusing
+  // the agent with subtitle tools on a natively-Chinese title. Requiring known
+  // non-CN loses almost nothing and matches the UI copy (仅对非国产内容生效).
+  // The third gate is a CAPABILITY probe (transferSubtitleUrl presence), not a
+  // brand string — the day the 光鸭/夸克 executor implements the method,
+  // subtitles light up there automatically, and the gate can never disagree
+  // with what the executor can actually do (today only 115 implements it).
+  // Soft-fail: a flaky assrt / empty search sets an empty snapshot, never
+  // blocks the video task. When the gates don't pass, the subtitle tools are
+  // simply not registered (the agent never knows subtitles were an option).
+  const origins = request.originCountries ?? [];
+  const subtitleActive =
+    request.assrtToken !== undefined &&
+    request.assrtToken.trim() !== "" &&
+    origins.length > 0 &&
+    origins.every((c) => c !== "CN") &&
+    typeof request.executor.transferSubtitleUrl === "function";
+  let subtitleCandidateCount: number | undefined;
+  if (subtitleActive) {
+    const subtitleProvider: AssrtProviderPort =
+      request.assrtProvider ?? new AssrtSubtitleProvider({ token: request.assrtToken! });
+    try {
+      await sandbox.primeSubtitleSnapshot(request.target.title, subtitleProvider);
+      // Feed the prompt pointer line (the 活期文档 twin of prefetchedCandidateCount).
+      subtitleCandidateCount = sandbox.viewSubtitleSnapshot().candidateCount;
+    } catch {
+      // assrt unavailable → empty snapshot; the subtitle tools still register
+      // (viewSubtitleSnapshot will show "no snapshot"), agent decides from there.
+    }
+  }
+
   const common = {
     sandbox,
     model: request.model,
@@ -132,6 +178,8 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
+    ...(subtitleActive ? { subtitle: true } : {}),
+    ...(subtitleCandidateCount ? { subtitleCandidateCount } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
     // Real 115 exposes its cumulative call count → drives the budget soft-warning
     // in the agent loop; fakes/sim omit apiCallCount → no nudge.

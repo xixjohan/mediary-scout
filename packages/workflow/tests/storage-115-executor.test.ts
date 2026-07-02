@@ -1004,6 +1004,197 @@ describe("Storage115Executor", () => {
   });
 });
 
+describe("Storage115Executor.transferSubtitleUrl", () => {
+  it("does NOT claim a pre-existing same-named file — only a file that APPEARS after submission counts", async () => {
+    const api = new FakePan115Api({
+      directories: { stage: [{ fid: "old_leftover", n: "Show.S01E01.ass", s: "1KB" }] },
+    });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // lands nothing new
+    const executor = new Storage115Executor({
+      api,
+      offlineMaterializeAttempts: 1,
+      offlineMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/Show.S01E01.ass",
+      filename: "Show.S01E01.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.materializedFileIds).toEqual([]);
+  });
+
+  it("guard-rejected invalid filenames consume attempt numbers — ids never collide", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    const executor = new Storage115Executor({ api });
+
+    const a = await executor.transferSubtitleUrl!({ url: "http://x/a.ass", filename: "a/b.ass", directoryId: "stage", workflowRunId: "run-test" });
+    const b = await executor.transferSubtitleUrl!({ url: "http://x/c.ass", filename: "c\\d.ass", directoryId: "stage", workflowRunId: "run-test" });
+
+    expect(a.status).toBe("failed");
+    expect(b.status).toBe("failed");
+    expect(a.id).not.toBe(b.id);
+    expect(a.candidateId).not.toBe(b.candidateId);
+    expect(a.candidateId).not.toContain("/"); // raw filename kept OUT of the id
+  });
+
+  it("rejects a filename containing path separators at the boundary (zero API calls)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let offlineCalls = 0;
+    api.addOfflineTask = async () => {
+      offlineCalls += 1;
+      return { ok: true, message: "accepted" };
+    };
+    const executor = new Storage115Executor({ api });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/evil.ass",
+      filename: "subdir/evil.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toMatch(/path separator|路径分隔/i);
+    expect(attempt.materializedFileIds).toEqual([]);
+    expect(offlineCalls).toBe(0);
+  });
+
+  it("submits an offline task with the subtitle url, then confirms landing via listTree by filename", async () => {
+    const api = new FakePan115Api({
+      directories: { stage: [] },
+    });
+    const SUBTITLE_FILENAME = "Breaking.Bad.S02E01.ass";
+    api.addOfflineTask = async (input) => {
+      api.directories[input.directoryId] = [
+        ...(api.directories[input.directoryId] ?? []),
+        { fid: `sub_${input.url.slice(-6)}`, n: SUBTITLE_FILENAME, s: "718KB" },
+      ];
+      return { ok: true, message: "offline task accepted" };
+    };
+    const executor = new Storage115Executor({ api });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/713570/-/1/Breaking.Bad.S02E01.ass?api=1",
+      filename: SUBTITLE_FILENAME,
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds.length).toBe(1);
+    expect(attempt.providerMessage).toBe("");
+  });
+
+  it("reports failed when addOfflineTask returns ok:false (e.g. dead link)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: false, message: "invalid url" });
+    const executor = new Storage115Executor({ api });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/dead.zip",
+      filename: "dead.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("failed");
+    expect(attempt.providerMessage).toContain("invalid url");
+    expect(attempt.materializedFileIds).toEqual([]);
+  });
+
+  it("reports no_target_change when the file never appears in listTree", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    const executor = new Storage115Executor({
+      api,
+      offlineMaterializeAttempts: 1,
+      offlineMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/slow.ass",
+      filename: "slow.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(attempt.materializedFileIds).toEqual([]);
+  });
+
+  it("best-effort cancels the in-flight offline task on no_target_change (frees quota, prevents late drop)", async () => {
+    const SUBTITLE_URL = "http://file0.assrt.net/onthefly/never-lands.ass";
+    const api = new FakePan115Api({
+      directories: { stage: [] },
+      offlineTaskList: [
+        { infoHash: "hash-abc", name: "never-lands.ass", percentDone: 0, status: 1, statusText: "downloading", url: SUBTITLE_URL },
+      ],
+    });
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    const executor = new Storage115Executor({
+      api,
+      offlineMaterializeAttempts: 1,
+      offlineMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: SUBTITLE_URL,
+      filename: "never-lands.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+    expect(api.removedOfflineHashes).toContain("hash-abc"); // the queued task was cancelled by its infoHash
+  });
+
+  it("assigns DISTINCT attempt ids across a succeed-then-fail sequence on one executor (no transfer_attempts PK collision)", async () => {
+    // A multi-file subtitle package loops transferSubtitleUrl per file on the SAME
+    // executor instance. A succeeded call followed by a failed call must NOT reuse
+    // the same attempt id — otherwise both attempts collide on the transfer_attempts
+    // primary key and the run's single-transaction persist rolls back, losing the
+    // video's obtained marks (a subtitle failure blocking the video).
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let call = 0;
+    api.addOfflineTask = async (input) => {
+      call += 1;
+      if (call === 1) {
+        api.directories[input.directoryId] = [
+          ...(api.directories[input.directoryId] ?? []),
+          { fid: "sub_ok", n: "Show.S01E01.ass", s: "700KB" },
+        ];
+        return { ok: true, message: "offline task accepted" };
+      }
+      return { ok: false, message: "invalid url" };
+    };
+    const executor = new Storage115Executor({ api });
+
+    const first = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/Show.S01E01.ass",
+      filename: "Show.S01E01.ass",
+      directoryId: "stage",
+      workflowRunId: "run-collide",
+    });
+    const second = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/dead.ass",
+      filename: "Show.S01E02.ass",
+      directoryId: "stage",
+      workflowRunId: "run-collide",
+    });
+
+    expect(first.status).toBe("succeeded");
+    expect(second.status).toBe("failed");
+    expect(first.id).not.toBe(second.id); // distinct ids — no PK collision
+  });
+});
+
 class FakePan115Api implements Pan115StorageApi {
   readonly directories: Record<string, Pan115Item[]>;
   readonly shareFiles: Record<string, Pan115Item[]>;

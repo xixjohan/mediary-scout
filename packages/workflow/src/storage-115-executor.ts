@@ -498,6 +498,134 @@ export class Storage115Executor implements StorageExecutor {
     return attempt;
   }
 
+  /** Subtitle direct-link landing: submit the http url as a 115 offline task
+   *  (115's lixianssp add_task_url accepts http/https/ftp/magnet/ed2k), then
+   *  confirm the named file landed by reading listTree (NOT listVideoFiles —
+   *  subtitle extensions are invisible to that path). Mirrors transfer()'s
+   *  offline-task materialization window, but matches by FILE NAME instead of
+   *  by video extension diff. */
+  async transferSubtitleUrl(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+    workflowRunId: string;
+  }): Promise<TransferAttempt> {
+    // Boundary validation: the filename comes from an EXTERNAL provider (assrt).
+    // A path-y name like "subdir/file.ass" would pollute the synthetic
+    // candidateId and make the listTree endsWith-match ambiguous — reject it
+    // before spending any API call. Soft failure (attempt, not throw): the
+    // sandbox counts it like any other landing failure.
+    if (/[\\/]/.test(input.filename)) {
+      // Consume a number even for guard-rejected calls (same "one number per
+      // call" invariant as every other attempt) so ids stay unique; keep the
+      // raw filename OUT of the candidateId — it's exactly what pollutes ids.
+      const invalidAttemptNumber = this.nextTransferNumber;
+      this.nextTransferNumber += 1;
+      return {
+        id: `${input.workflowRunId}_subtitle_${invalidAttemptNumber}`,
+        workflowRunId: input.workflowRunId,
+        candidateId: `subtitle:invalid_name_${invalidAttemptNumber}`,
+        status: "failed",
+        providerMessage:
+          "SUBTITLE_INVALID_FILENAME: filename must be a bare name without path separators (路径分隔符)",
+        materializedFileIds: [],
+      };
+    }
+    const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer subtitle");
+    // Mirror transfer(): one number consumed per call from the SHARED transfer
+    // counter (video transfers advance it too, so the suffix reflects the run's
+    // overall attempt order, not a subtitle-only sequence), unconditionally — a
+    // failed subtitle attempt burns a slot just like a failed transfer does, so
+    // subsequent ids never collide.
+    const attemptNumber = this.nextTransferNumber;
+    this.nextTransferNumber += 1;
+    const candidateId = `subtitle:${input.filename}`;
+
+    // Landing detection is a BEFORE/AFTER diff (mirroring transfer()'s
+    // materialization diff): only a same-named file that APPEARS after the task
+    // was submitted counts. Matching a pre-existing file (an earlier attempt's
+    // leftover with the same name) would report success for a transfer that
+    // landed nothing. Match by exact basename — endsWith("/name") could be
+    // satisfied by a same-named file in any wrapper dir, which is intended, but
+    // exact basename keeps it unambiguous.
+    const basenameMatches = (path: string): boolean => path.split("/").pop() === input.filename;
+    const beforeIds = new Set(
+      (await this.listTree({ directoryId: safeDirectoryId, maxDepth: 2 }))
+        .filter((file) => basenameMatches(file.path))
+        .map((file) => file.providerFileId),
+    );
+
+    const action = await this.callApi("addOfflineTask", () =>
+      this.api.addOfflineTask({ url: input.url, directoryId: safeDirectoryId }),
+    );
+    if (!action.ok) {
+      return {
+        id: `${input.workflowRunId}_subtitle_${attemptNumber}`,
+        workflowRunId: input.workflowRunId,
+        candidateId,
+        status: "failed",
+        providerMessage: action.message,
+        materializedFileIds: [],
+      };
+    }
+
+    let remaining = this.offlineMaterializeAttempts;
+    let materializedFileIds: string[] = [];
+    while (remaining > 0) {
+      // maxDepth: 2 bounds the per-poll API fan-out (listTree recurses + lists each
+      // subdir; the default depth-6 could explode calls on a big staging tree). A 115
+      // offline task lands the file directly under the target dir OR one wrapper level
+      // down, so depth 2 catches both while staying cheap.
+      const tree = await this.listTree({ directoryId: safeDirectoryId, maxDepth: 2 });
+      const hit = tree.find(
+        (file) => basenameMatches(file.path) && !beforeIds.has(file.providerFileId),
+      );
+      if (hit) {
+        materializedFileIds = [hit.providerFileId];
+        break;
+      }
+      remaining -= 1;
+      if (remaining > 0) await this.sleep(this.offlineMaterializePollMs);
+    }
+
+    // Nothing materialized in the window: 115 queued a real background download we
+    // will not wait for. Best-effort cancel it (task_del) so it can't drop the file
+    // into staging AFTER the workflow moves on, and so it doesn't tie up offline-task
+    // quota — mirroring transfer()'s non-秒传 cleanup. The HTTP subtitle url has no
+    // infoHash up front, so resolve the queued task by matching its url in the task
+    // list, then remove it by the infoHash 115 assigned. Only cancel on an UNAMBIGUOUS
+    // single match — if the account-wide list has zero or multiple tasks for this url
+    // (e.g. a stale task from a prior run), skip rather than risk cancelling the wrong
+    // task. Never fail the attempt over cleanup.
+    if (materializedFileIds.length === 0) {
+      try {
+        const tasks = await this.callApi("listOfflineTasks", () => this.api.listOfflineTasks());
+        const matches = tasks.filter((task) => task.url === input.url && task.infoHash);
+        if (matches.length === 1) {
+          await this.callApi("removeOfflineTask", () =>
+            this.api.removeOfflineTask({ infoHashes: [matches[0]!.infoHash] }),
+          );
+        }
+      } catch {
+        // best-effort cleanup — a failed cancel must never fail the subtitle attempt
+      }
+    }
+
+    const status: TransferStatus =
+      materializedFileIds.length > 0 ? "succeeded" : "no_target_change";
+    return {
+      id: `${input.workflowRunId}_subtitle_${attemptNumber}`,
+      workflowRunId: input.workflowRunId,
+      candidateId,
+      status,
+      providerMessage:
+        status === "succeeded"
+          ? ""
+          : "subtitle offline task accepted but file did not materialize in window",
+      materializedFileIds,
+    };
+  }
+
   async flattenDirectory(directoryId: string): Promise<{ moved: string[]; removed: string[] }> {
     const safeDirectoryId = await this.assertSafeFlattenTarget(directoryId);
     await this.assertWithinWriteScope(safeDirectoryId, "flatten directory");
