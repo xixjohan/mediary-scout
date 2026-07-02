@@ -211,4 +211,23 @@ describe("QuarkStorageExecutor", () => {
     });
     expect(calls).toContain("moveFiles:f9->STAGE");
   });
+  it("deleteFiles deletes a subtitle (non-video) file inside the staging dir", async () => {
+    const { client, files, calls } = makeFakeClient();
+    files.set("sub1", { fid: "sub1", file_name: "多余字幕.srt", dir: false, size: 77944, pdir_fid: "STAGE" });
+    const exec = quarkExecutor(client);
+    await expect(exec.deleteFiles({ directoryId: "STAGE", fileIds: ["sub1"] })).resolves.toEqual({
+      deleted: ["sub1"],
+    });
+    expect(calls).toContain("deleteFiles:sub1");
+  });
+
+  it("deleteFiles still refuses ids that are nowhere in the directory tree", async () => {
+    const { client, files, calls } = makeFakeClient();
+    files.set("sub1", { fid: "sub1", file_name: "多余字幕.srt", dir: false, size: 77944, pdir_fid: "STAGE" });
+    const exec = quarkExecutor(client);
+    await expect(exec.deleteFiles({ directoryId: "STAGE", fileIds: ["ghost"] })).rejects.toThrow(
+      /SAFETY_VIOLATION/,
+    );
+    expect(calls.filter((c) => c.startsWith("deleteFiles:"))).toEqual([]);
+  });
 });
