@@ -1005,6 +1005,72 @@ describe("Storage115Executor", () => {
 });
 
 describe("Storage115Executor.transferSubtitleUrl", () => {
+  it("createProtectedStorage115Executor passes the subtitle window options through (tuning must not be silently ignored)", async () => {
+    // Target a staging SUBDIR inside the write scope — the scope root itself is
+    // (correctly) protected from recursive listing.
+    const api = new FakePan115Api({
+      directories: { sub_stage: [] },
+      directoryInfo: { sub_stage: seasonPathInfo("test_root", "sub_stage") },
+    });
+    let listCalls = 0;
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    const origList = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // Listing #1 is the BEFORE-snapshot; the tuned window (1) polls exactly once
+      // (listing #2). Landing on listing #3 is inside the DEFAULT window (8) but
+      // outside the tuned one — if the factory drops the tuning, this sees succeeded.
+      if (listCalls === 3) {
+        api.directories["sub_stage"] = [{ fid: "late_sub", n: "Tuned.S01E01.ass", s: "40KB" }];
+      }
+      return origList(input);
+    };
+    const executor = createProtectedStorage115Executor({
+      api,
+      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "test_root" },
+      apiGuardOptions: { minDelayMs: 0 },
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
+      sleep: async () => {},
+    });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/Tuned.S01E01.ass",
+      filename: "Tuned.S01E01.ass",
+      directoryId: "sub_stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("no_target_change");
+  });
+
+  it("uses a subtitle-specific materialization window wider than the video default (live e2e: real assrt landings took ~60s, video window is 4x2s)", async () => {
+    const api = new FakePan115Api({ directories: { stage: [] } });
+    let listCalls = 0;
+    api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
+    const origList = api.listItems.bind(api);
+    api.listItems = async (input) => {
+      listCalls += 1;
+      // The file materializes only on the 6th listing — beyond the video window
+      // (4 attempts) but inside the subtitle window.
+      if (listCalls === 6) {
+        api.directories["stage"] = [{ fid: "late_sub", n: "Late.S01E01.ass", s: "40KB" }];
+      }
+      return origList(input);
+    };
+    const executor = new Storage115Executor({ api, sleep: async () => {} });
+
+    const attempt = await executor.transferSubtitleUrl!({
+      url: "http://file0.assrt.net/onthefly/1/Late.S01E01.ass",
+      filename: "Late.S01E01.ass",
+      directoryId: "stage",
+      workflowRunId: "run-test",
+    });
+
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["late_sub"]);
+  });
+
   it("does NOT claim a pre-existing same-named file — only a file that APPEARS after submission counts", async () => {
     const api = new FakePan115Api({
       directories: { stage: [{ fid: "old_leftover", n: "Show.S01E01.ass", s: "1KB" }] },
@@ -1012,8 +1078,8 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" }); // lands nothing new
     const executor = new Storage115Executor({
       api,
-      offlineMaterializeAttempts: 1,
-      offlineMaterializePollMs: 1,
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
       sleep: async () => {},
     });
 
@@ -1112,8 +1178,8 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
     const executor = new Storage115Executor({
       api,
-      offlineMaterializeAttempts: 1,
-      offlineMaterializePollMs: 1,
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
       sleep: async () => {},
     });
 
@@ -1139,8 +1205,8 @@ describe("Storage115Executor.transferSubtitleUrl", () => {
     api.addOfflineTask = async () => ({ ok: true, message: "accepted" });
     const executor = new Storage115Executor({
       api,
-      offlineMaterializeAttempts: 1,
-      offlineMaterializePollMs: 1,
+      subtitleMaterializeAttempts: 1,
+      subtitleMaterializePollMs: 1,
       sleep: async () => {},
     });
 

@@ -116,6 +116,17 @@ export interface Storage115ExecutorOptions {
   offlineMaterializeAttempts?: number;
   /** Delay between offline-task materialization checks (ms). */
   offlineMaterializePollMs?: number;
+  /** Subtitle-landing window (transferSubtitleUrl). Separate from the video
+   *  window: that one only confirms a 秒传 cache hit (~8s), while a subtitle is
+   *  a REAL server-side HTTP fetch whose queue latency varies — live e2e
+   *  (2026-07-02, The Matrix) measured landings at ~20s and ~60s.
+   *  Timing semantics: the first poll is immediate; sleeps happen only BETWEEN
+   *  polls, so the effective wait ≈ (attempts - 1) × pollMs plus listTree time
+   *  (defaults 8 & 6000ms → ~42s of sleeps). Worst-case listTree count is
+   *  1 + attempts (the before/after-diff snapshot + each poll), so attempts
+   *  bounds the 115 API spend per file. */
+  subtitleMaterializeAttempts?: number;
+  subtitleMaterializePollMs?: number;
   /** Injectable sleep (tests pass a fast/no-op). */
   sleep?: (ms: number) => Promise<void>;
 }
@@ -129,6 +140,8 @@ export interface ProtectedStorage115ExecutorOptions {
   videoExtensions?: string[];
   offlineMaterializeAttempts?: number;
   offlineMaterializePollMs?: number;
+  subtitleMaterializeAttempts?: number;
+  subtitleMaterializePollMs?: number;
   sleep?: (ms: number) => Promise<void>;
 }
 
@@ -325,6 +338,8 @@ export class Storage115Executor implements StorageExecutor {
   private readonly apiGuard: Pan115ApiGuard;
   private readonly offlineMaterializeAttempts: number;
   private readonly offlineMaterializePollMs: number;
+  private readonly subtitleMaterializeAttempts: number;
+  private readonly subtitleMaterializePollMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
   private nextTransferNumber = 1;
 
@@ -346,6 +361,14 @@ export class Storage115Executor implements StorageExecutor {
     // span, 115 has no cached copy and the caller switches candidates.
     this.offlineMaterializeAttempts = options.offlineMaterializeAttempts ?? 4;
     this.offlineMaterializePollMs = options.offlineMaterializePollMs ?? 2000;
+    // Subtitles are NOT 秒传 confirmations — they are real server-side HTTP
+    // fetches with queue latency. Live e2e (The Matrix, 2026-07-02) measured
+    // one landing at ~20s and one at ~60s (the 8s video window mis-judged it
+    // no_target_change and the file dropped in late). 8 attempts sleep only
+    // BETWEEN polls (7 gaps × 6s ≈ 42s + listing time) — covers the common
+    // case while bounding poll cost (each poll = one depth-2 listTree).
+    this.subtitleMaterializeAttempts = options.subtitleMaterializeAttempts ?? 8;
+    this.subtitleMaterializePollMs = options.subtitleMaterializePollMs ?? 6000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
 
@@ -569,7 +592,7 @@ export class Storage115Executor implements StorageExecutor {
       };
     }
 
-    let remaining = this.offlineMaterializeAttempts;
+    let remaining = this.subtitleMaterializeAttempts;
     let materializedFileIds: string[] = [];
     while (remaining > 0) {
       // maxDepth: 2 bounds the per-poll API fan-out (listTree recurses + lists each
@@ -585,7 +608,7 @@ export class Storage115Executor implements StorageExecutor {
         break;
       }
       remaining -= 1;
-      if (remaining > 0) await this.sleep(this.offlineMaterializePollMs);
+      if (remaining > 0) await this.sleep(this.subtitleMaterializePollMs);
     }
 
     // Nothing materialized in the window: 115 queued a real background download we
@@ -1100,6 +1123,12 @@ function optionalExecutorOptions(
   }
   if (options.offlineMaterializePollMs !== undefined) {
     executorOptions.offlineMaterializePollMs = options.offlineMaterializePollMs;
+  }
+  if (options.subtitleMaterializeAttempts !== undefined) {
+    executorOptions.subtitleMaterializeAttempts = options.subtitleMaterializeAttempts;
+  }
+  if (options.subtitleMaterializePollMs !== undefined) {
+    executorOptions.subtitleMaterializePollMs = options.subtitleMaterializePollMs;
   }
   if (options.sleep !== undefined) {
     executorOptions.sleep = options.sleep;
