@@ -1,6 +1,11 @@
 appId: sbs.dirtyfancy.mediary-scout
 productName: Mediary Scout
 
+# Hoisted monorepo: electron lives in the ROOT node_modules, so electron-builder
+# can't infer the version from apps/desktop/node_modules. Keep in sync with the
+# root package-lock's electron version.
+electronVersion: 33.4.11
+
 directories:
   output: dist-app
   buildResources: build
@@ -40,11 +45,12 @@ extraResources:
     filter:
       - "**/*"
 
-# Rebuild native deps (better-sqlite3 in THIS package's node_modules) against
-# Electron's ABI at package time. NOTE: this does NOT cover the copy of
-# better-sqlite3 that Next traced INTO the standalone bundle — see README.md
-# for the required explicit @electron/rebuild --module-dir step.
-npmRebuild: true
+# DISABLED in this hoisted monorepo: electron-builder's install/rebuild step runs
+# `npm install --omit=dev` in apps/desktop, which prunes the ROOT node_modules'
+# dev deps — deleting electron-builder itself mid-build. The main process never
+# loads better-sqlite3 (the server child uses the standalone bundle's copy, which
+# README step 3 rebuilds explicitly), so skipping this is safe.
+npmRebuild: false
 
 mac:
   category: public.app-category.entertainment
