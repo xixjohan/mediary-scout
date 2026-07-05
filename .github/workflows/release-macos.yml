@@ -158,10 +158,9 @@ jobs:
             echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Upload installer to GitHub Release
+      - name: Upload Windows installer to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
-          target_commitish: refs/tags/${{ steps.tag.outputs.tag }}
           files: apps/desktop/dist-app/*.exe
           generate_release_notes: true
