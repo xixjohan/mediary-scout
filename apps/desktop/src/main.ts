@@ -1,5 +1,8 @@
 import { app, BrowserWindow, Tray, Menu, dialog, nativeImage, type MenuItemConstructorOptions } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomBytes } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import {
   pickFreePort,
@@ -9,6 +12,12 @@ import {
   resolveServerEntry,
 } from "./server-launch.js";
 import { onWindowClose, trayMenuState, type TrayItem } from "./lifecycle.js";
+import {
+  loadOrCreateAgentToken,
+  buildAgentManifest,
+  agentManifestPath,
+  writeAgentManifest,
+} from "./agent-manifest.js";
 
 let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -66,6 +75,18 @@ async function bootstrap(): Promise<void> {
 async function startServer(): Promise<string> {
   const port = await pickFreePort();
   const sqlitePath = path.join(app.getPath("userData"), "mediary.db");
+  const agentToken = loadOrCreateAgentToken({
+    tokenFilePath: path.join(app.getPath("userData"), "agent-token"),
+    readFile: (p) => {
+      try {
+        return readFileSync(p, "utf8");
+      } catch {
+        return null;
+      }
+    },
+    writeFile: (p, content, mode) => writeFileSync(p, content, { mode }),
+    randomBytes,
+  });
   const entry = resolveServerEntry({
     isPackaged: app.isPackaged,
     resourcesPath: process.resourcesPath,
@@ -73,7 +94,10 @@ async function startServer(): Promise<string> {
     repoRoot: path.resolve(__dirname, "..", "..", ".."),
   });
   serverProc = spawn(process.execPath, [entry], {
-    env: buildServerEnv({ port, sqlitePath, baseEnv: process.env }),
+    env: {
+      ...buildServerEnv({ port, sqlitePath, baseEnv: process.env }),
+      MEDIA_TRACK_AGENT_TOKEN: agentToken,
+    },
     stdio: "inherit",
   });
   serverProc.on("exit", (code) => {
@@ -113,6 +137,12 @@ async function startServer(): Promise<string> {
     );
   });
   serverBooted = true;
+  writeAgentManifest({
+    manifestPath: agentManifestPath(os.homedir()),
+    content: buildAgentManifest({ port, token: agentToken, version: app.getVersion() }),
+    mkdir: (p) => mkdirSync(p, { recursive: true, mode: 0o700 }),
+    writeFile: (p, content, mode) => writeFileSync(p, content, { mode }),
+  });
   return url;
 }
 
