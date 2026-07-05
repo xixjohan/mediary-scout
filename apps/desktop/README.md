@@ -49,27 +49,30 @@ The server child runs under **Electron-as-Node**, so every native `.node` it
 loads must match **Electron's** ABI — not the build machine's system Node. Next
 traces a *copy* of `better-sqlite3` into the standalone bundle at
 `apps/web/.next/standalone/node_modules/better-sqlite3`, and that copy is built
-for system Node. It must be rebuilt for the pinned Electron version's ABI or the
+for system Node. It must be swapped for the pinned Electron version's ABI or the
 server child crashes on launch (`ERR_DLOPEN_FAILED` / wrong `NODE_MODULE_VERSION`).
 
-`electron-builder`'s `npmRebuild: true` only rebuilds `apps/desktop/node_modules`
-— it does **not** touch the standalone copy. Do it explicitly:
+Verified working approach — fetch the official Electron prebuild directly into
+the standalone copy (`@electron/rebuild --module-dir` was tried first and
+reported success without actually replacing the binary; do not rely on it):
 
 ```bash
-# --module-dir points at the dir CONTAINING node_modules (the standalone root).
-# @electron/rebuild reads the Electron version from apps/desktop automatically;
-# if it can't, pass --version <electron-version> (currently pinned ^33).
-npx @electron/rebuild \
-  -f \
-  -w better-sqlite3 \
-  --module-dir apps/web/.next/standalone
+# Electron 33 = ABI 130. Keep -t in sync with electronVersion in electron-builder.yml.
+cd apps/web/.next/standalone/node_modules/better-sqlite3
+npx prebuild-install -r electron -t 33.4.11
+cd -
 ```
 
-Verify the rebuilt binary's ABI matches Electron 33 before packaging (optional
-sanity check):
+Verify the swap actually happened before packaging (this catches the silent
+no-op failure mode):
 
 ```bash
-find apps/web/.next/standalone/node_modules/better-sqlite3 -name '*.node'
+cat > /tmp/abi-check.js <<'EOF'
+const Database = require(process.env.PWD + '/apps/web/.next/standalone/node_modules/better-sqlite3');
+new Database(':memory:').exec('CREATE TABLE t(x)');
+console.log('ABI_OK modules', process.versions.modules);   // must print 130 for Electron 33
+EOF
+ELECTRON_RUN_AS_NODE=1 <path-to-packaged-or-dist-Electron> /tmp/abi-check.js
 ```
 
 ### 4. Signing / notarization environment (NEVER commit these)
@@ -119,3 +122,9 @@ verify the server child starts and the window loads. Do **not** ship this build.
   child can load better-sqlite3's non-Apple-signed `.node`.
 - Steps 2 and 3 must run **before** step 5 — packaging copies the standalone
   bundle as-is; it does not rebuild the bundled native module for you.
+- `npmRebuild` is intentionally `false` in `electron-builder.yml`: in this
+  hoisted npm-workspaces monorepo, electron-builder's "installing production
+  dependencies" step prunes the ROOT `node_modules` dev deps — deleting
+  electron-builder (and app-builder-bin) out from under the running build. The
+  Electron main process never loads better-sqlite3 itself (only the server
+  child does, from the standalone bundle), so nothing is lost by skipping it.
