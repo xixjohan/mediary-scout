@@ -25,6 +25,7 @@ describe("handleTmdbProxy — proxy & guards", () => {
       originFetch: async () => new Response("{}"),
     });
     expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
   });
 
   it("rejects non-allowlisted paths with 404", async () => {
@@ -218,5 +219,214 @@ describe("trending discovery", () => {
       originFetch: async () => new Response("nope", { status: 500 }),
     });
     expect(kv.puts).toHaveLength(0);
+  });
+});
+
+describe("poster image proxy", () => {
+  it("proxies an allowlisted poster path, passing body/Content-Type through with an immutable Cache-Control", async () => {
+    let seenUrl = "";
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/abc123.jpg"),
+      kv: fakeKv(),
+      token: "authorkey",
+      originFetch: async (url) => {
+        seenUrl = String(url);
+        return new Response(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]), {
+          status: 200,
+          headers: { "Content-Type": "image/jpeg" },
+        });
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(seenUrl).toBe("https://image.tmdb.org/t/p/w342/abc123.jpg");
+    expect(res.headers.get("Content-Type")).toBe("image/jpeg");
+    expect(res.headers.get("Cache-Control")).toBe("public, max-age=31536000, immutable");
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(new Uint8Array([0xff, 0xd8, 0xff, 0xe0]));
+  });
+
+  it("rejects sizes outside the allowlist (original, w9999) with 404 and never hits origin", async () => {
+    let originCalls = 0;
+    const originFetch: typeof fetch = async () => {
+      originCalls += 1;
+      return new Response("nope", { status: 200 });
+    };
+    for (const path of ["/img/t/p/original/abc.jpg", "/img/t/p/w9999/abc.jpg"]) {
+      const res = await handleTmdbProxy({
+        request: new Request(`https://w.example${path}`),
+        kv: fakeKv(),
+        token: "k",
+        originFetch,
+      });
+      expect(res.status).toBe(404);
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+    }
+    expect(originCalls).toBe(0);
+  });
+
+  it("rejects path shenanigans (traversal, non-t/p shapes) with 404 and never hits origin", async () => {
+    let originCalls = 0;
+    const originFetch: typeof fetch = async () => {
+      originCalls += 1;
+      return new Response("nope", { status: 200 });
+    };
+    for (const path of ["/img/t/p/w342/../../secret", "/img/x/y/z.jpg"]) {
+      const res = await handleTmdbProxy({
+        request: new Request(`https://w.example${path}`),
+        kv: fakeKv(),
+        token: "k",
+        originFetch,
+      });
+      expect(res.status).toBe(404);
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+    }
+    expect(originCalls).toBe(0);
+  });
+
+  it("rejects POST to an img path with 405 (existing method gate fires first)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/abc.jpg", { method: "POST" }),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: async () => new Response("nope", { status: 200 }),
+    });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
+  });
+
+  it("allows underscores in filenames (future-proofing)", async () => {
+    let seenUrl = "";
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/abc_123.jpg"),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: async (url) => {
+        seenUrl = String(url);
+        return new Response(new Uint8Array([0xff]), { status: 200 });
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(seenUrl).toBe("https://image.tmdb.org/t/p/w342/abc_123.jpg");
+  });
+
+  it("does NOT cache non-OK image responses (no-store, not immutable)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/img/t/p/w342/valid_shape.jpg"),
+      kv: fakeKv(),
+      token: "k",
+      originFetch: async () => new Response("nope", { status: 404 }),
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+  });
+});
+
+describe("CORS for the landing site", () => {
+  it("echoes an allowlisted Origin and sets Vary: Origin", async () => {
+    // build deps exactly like neighboring tests do, with KV pre-seeded:
+    // key "trending/movie/week?language=zh-CN" -> "{\"ok\":1}"
+    const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
+        headers: { Origin: "https://mediary.dirtyfancy.sbs" },
+      }),
+      kv,
+      token: "t",
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("does NOT set CORS for an unknown Origin, but still varies on Origin", async () => {
+    const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
+        headers: { Origin: "https://evil.example" },
+      }),
+      kv,
+      token: "t",
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    // CORS spec: caches must be told the response varies by Origin even when
+    // no ACAO is emitted, else a cached no-ACAO response poisons allowed origins.
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("sets CORS on the MISS path too (cold KV, allowlisted Origin)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
+        headers: { Origin: "https://mediary.dirtyfancy.sbs" },
+      }),
+      kv: fakeKv(),
+      token: "t",
+      originFetch: async () => new Response('{"ok":1}', { status: 200 }),
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("sets neither ACAO nor Vary when the request has no Origin header", async () => {
+    const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN"),
+      kv,
+      token: "t",
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(res.headers.get("Vary")).toBeNull();
+  });
+
+  it("echoes ACAO + Vary on the 405 branch for an allowlisted Origin (inspectable error, not an opaque CORS TypeError)", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/movie/278", {
+        method: "POST",
+        headers: { Origin: "https://mediary.dirtyfancy.sbs" },
+      }),
+      kv: fakeKv(),
+      token: "t",
+      originFetch: async () => new Response("{}"),
+    });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("echoes ACAO + Vary on the 404 branch for an allowlisted Origin hitting a non-allowlisted path", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/account/secret", {
+        headers: { Origin: "https://mediary.dirtyfancy.sbs" },
+      }),
+      kv: fakeKv(),
+      token: "t",
+      originFetch: async () => new Response("{}"),
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediary.dirtyfancy.sbs");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("echoes ACAO for the new mediaryscout.app origin (domain migration)", async () => {
+    const kv = fakeKv({ "trending/movie/week?language=zh-CN": '{"ok":1}' });
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/trending/movie/week?language=zh-CN", {
+        headers: { Origin: "https://mediaryscout.app" },
+      }),
+      kv,
+      token: "t",
+    });
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://mediaryscout.app");
+    expect(res.headers.get("Vary")).toBe("Origin");
+  });
+
+  it("sets neither ACAO nor Vary on a 404 when the request has no Origin header", async () => {
+    const res = await handleTmdbProxy({
+      request: new Request("https://w.example/account/secret"),
+      kv: fakeKv(),
+      token: "t",
+      originFetch: async () => new Response("{}"),
+    });
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBeNull();
+    expect(res.headers.get("Vary")).toBeNull();
   });
 });

@@ -1,8 +1,34 @@
 const TMDB_ORIGIN = "https://api.themoviedb.org/3";
+const TMDB_IMAGE_ORIGIN = "https://image.tmdb.org";
+
+// Poster image proxy: image.tmdb.org is GFW-blocked for mainland visitors, so
+// the landing site loads posters through the worker. Tight shape allowlist
+// (two sizes, hash-like filename) keeps this from being a general image proxy.
+const IMG_PATH_RE = /^t\/p\/(w342|w500)\/[A-Za-z0-9_]+\.(jpg|png)$/;
 
 // Only the metadata read paths the app actually uses — keeps the worker from
 // being abusable as a general HTTP proxy. Prefix match after the leading slash.
 const ALLOWED_PREFIXES = ["movie/", "tv/", "search/", "discover/", "find/", "genre/", "configuration", "trending/"];
+
+const CORS_ALLOWED_ORIGINS = new Set([
+  "https://mediaryscout.app",
+  "https://demo.mediaryscout.app",
+  // Old .sbs origins kept during the domain transition (will 301 to mediaryscout.app).
+  "https://mediary.dirtyfancy.sbs",
+  "https://demo.dirtyfancy.sbs",
+  "http://localhost:8788",
+  "http://127.0.0.1:8788",
+]);
+
+function corsHeadersFor(request: Request): Record<string, string> {
+  const origin = request.headers.get("Origin"); // case-insensitive per Fetch spec
+  if (origin !== null && CORS_ALLOWED_ORIGINS.has(origin)) {
+    return { "Access-Control-Allow-Origin": origin, Vary: "Origin" };
+  }
+  // Vary must be emitted for ANY request carrying an Origin, even when no ACAO
+  // is granted — caches must know the response differs by origin (CORS spec).
+  return origin !== null ? { Vary: "Origin" } : {};
+}
 
 const MOVIE_TTL_SECONDS = 7 * 24 * 60 * 60; // movie metadata is effectively static
 const SHORT_TTL_SECONDS = 60 * 60;          // tv/season/search: 追更 needs hourly freshness
@@ -76,8 +102,31 @@ function isAllowed(path: string): boolean {
   return ALLOWED_PREFIXES.some((prefix) => path === prefix || path.startsWith(prefix));
 }
 
-function jsonHeaders(cache: "HIT" | "MISS"): Record<string, string> {
-  return { "Content-Type": "application/json;charset=utf-8", "X-Cache": cache };
+/** Binary passthrough for poster images. No KV (binary content; the immutable
+ *  Cache-Control lets the CF edge cache own it) and no CORS (loaded via <img>
+ *  tags, which need none). Anything off the strict shape allowlist is 404. */
+async function handleImageProxy(rest: string, originFetch: typeof fetch): Promise<Response> {
+  if (!IMG_PATH_RE.test(rest)) {
+    return new Response("Not Found", { status: 404, headers: { "Cache-Control": "no-store" } });
+  }
+  // NOTE: no cf cache overrides on purpose. cacheEverything+cacheTtl would
+  // pin origin 404s/5xx at the edge for a year, and per-status TTLs
+  // (cacheTtlByStatus) are Enterprise-only. Default rules cache jpg/png by
+  // extension honoring origin headers, with short negative caching — the
+  // right behavior here.
+  const originResponse = await originFetch(`${TMDB_IMAGE_ORIGIN}/${rest}`, { method: "GET" });
+  const headers: Record<string, string> = {
+    "Cache-Control": originResponse.ok ? "public, max-age=31536000, immutable" : "no-store",
+  };
+  const contentType = originResponse.headers.get("Content-Type");
+  if (contentType !== null) {
+    headers["Content-Type"] = contentType;
+  }
+  return new Response(originResponse.body, { status: originResponse.status, headers });
+}
+
+function jsonHeaders(cache: "HIT" | "MISS", request: Request): Record<string, string> {
+  return { "Content-Type": "application/json;charset=utf-8", "X-Cache": cache, ...corsHeadersFor(request) };
 }
 
 export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Response> {
@@ -85,18 +134,23 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
   const originFetch = deps.originFetch ?? fetch;
 
   if (request.method !== "GET") {
-    return new Response("Method Not Allowed", { status: 405 });
+    // CORS on error branches: without ACAO an allowlisted origin sees an opaque
+    // CORS TypeError instead of an inspectable 405/404 (debuggability, not caching).
+    return new Response("Method Not Allowed", { status: 405, headers: { ...corsHeadersFor(request), Allow: "GET" } });
   }
 
   const path = pathOf(request);
+  if (path.startsWith("img/")) {
+    return handleImageProxy(path.slice("img/".length), originFetch);
+  }
   if (!isAllowed(path)) {
-    return new Response("Not Found", { status: 404 });
+    return new Response("Not Found", { status: 404, headers: corsHeadersFor(request) });
   }
 
   const key = cacheKeyFor(request);
   const cached = await deps.kv.get(key);
   if (cached !== null) {
-    return new Response(cached, { status: 200, headers: jsonHeaders("HIT") });
+    return new Response(cached, { status: 200, headers: jsonHeaders("HIT", request) });
   }
 
   const originUrl = `${TMDB_ORIGIN}/${key}`;
@@ -107,11 +161,11 @@ export async function handleTmdbProxy(deps: HandleTmdbProxyDeps): Promise<Respon
 
   const body = await originResponse.text();
   if (!originResponse.ok) {
-    return new Response(body, { status: originResponse.status, headers: jsonHeaders("MISS") });
+    return new Response(body, { status: originResponse.status, headers: jsonHeaders("MISS", request) });
   }
   const ttl = isTrendingFeedRequest(key) ? TRENDING_TTL_SECONDS : ttlForPath(path);
   await deps.kv.put(key, body, { expirationTtl: ttl });
-  return new Response(body, { status: 200, headers: jsonHeaders("MISS") });
+  return new Response(body, { status: 200, headers: jsonHeaders("MISS", request) });
 }
 
 export interface RunScheduledRefreshDeps {

@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mediary Scout — 追剧，只剩点一下</title>
+  <meta name="description" content="开源免费的网盘追剧工具：搜到你想看的，点一下，agent 替你找资源、存进你自己的 115/夸克网盘、核对无误。macOS / Windows 桌面版，双击就能用。">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Mediary Scout — 追剧，只剩点一下">
+  <meta property="og:description" content="开源免费的网盘追剧工具：搜到你想看的，点一下，agent 替你找资源、存进你自己的 115/夸克网盘、核对无误。macOS / Windows 桌面版，双击就能用。">
+  <meta property="og:image" content="https://mediaryscout.app/assets/og.png">
+  <meta property="og:url" content="https://mediaryscout.app/">
+  <meta property="og:type" content="website">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/icon-32.png">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="main.js"></script>
+</head>
+<body>
+  <a href="#main" class="skip-link">跳转到主内容</a>
+  <nav>
+    <div class="container">
+      <div class="nav-left">
+        <div class="logo-dot"></div>
+        <span class="wordmark">Mediary Scout</span>
+      </div>
+      <div class="nav-right">
+        <div class="nav-links">
+          <a href="#features">功能</a>
+          <span aria-hidden="true">·</span>
+          <a href="#deploy">自部署</a>
+          <span aria-hidden="true">·</span>
+          <a href="#faq">FAQ</a>
+        </div>
+        <a href="https://github.com/fancydirty/mediary-scout" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+        </a>
+        <span class="pill" data-stars>★ …</span>
+      </div>
+    </div>
+  </nav>
+
+  <main id="main">
+
+  <!-- Hero section: title, CTAs, ticker window -->
+  <section id="hero">
+    <div class="container">
+      <h1>追剧，只剩<em>点一下</em></h1>
+      <p class="hero-sub">搜到你想看的，点一下——剩下的交给 agent：找资源、存网盘、回读核对。</p>
+
+      <div class="cta-row">
+        <a class="pill cta-main" data-dl href="https://github.com/fancydirty/mediary-scout/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="18" height="18">
+            <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+          </svg>
+          <span data-dl-label>macOS</span> <span data-dl-ver></span>
+        </a>
+        <a class="pill cta-dark" data-dl href="https://github.com/fancydirty/mediary-scout/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="18" height="18">
+            <path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-12.9-1.801"/>
+          </svg>
+          <span data-dl-label>Windows</span> <span data-dl-ver hidden></span>
+        </a>
+        <a class="pill cta-outline" href="https://demo.mediaryscout.app">▶ 在线试玩</a>
+      </div>
+
+      <p class="hero-note">免费开源 · 也可 docker 自部署 ↓</p>
+
+      <div class="ticker-window">
+        <div class="ticker-dots">
+          <div class="dot dot-red"></div>
+          <div class="dot dot-orange"></div>
+          <div class="dot dot-green"></div>
+        </div>
+        <div class="ticker-content">
+          <div class="tk-line">▸ 正在搜罗全网资源…找到 37 个候选</div>
+          <div class="tk-line">▸ 挑中 2160p · 中文字幕 · 体积正常的那个</div>
+          <div class="tk-line">▸ 正在存进你的网盘…（不经过你的电脑）</div>
+          <div class="tk-line">▸ 回头打开网盘核对：真的到了，没缺没坏</div>
+          <div class="tk-line done">✓ 已入库 · 打开网盘直接看</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Endorsement bar: 阮一峰 · HelloGitHub · GitHub stars -->
+  <section id="endorse">
+    <div class="container">
+      <p class="endorse-text">阮一峰《科技爱好者周刊》推荐 · HelloGitHub 收录 · <span class="pill" data-stars>★ …</span></p>
+    </div>
+  </section>
+
+  <!-- Scrollytelling "它正在工作": 4-act sticky window + intersection observer -->
+  <section id="how">
+    <div class="container">
+      <h2>agent 是怎么干活的</h2>
+      <div class="how-wrap">
+        <div class="how-marker" data-scene="0"></div>
+        <div class="how-marker" data-scene="1"></div>
+        <div class="how-marker" data-scene="2"></div>
+        <div class="how-marker" data-scene="3"></div>
+
+        <div class="how-sticky">
+          <div class="how-window">
+            <div class="how-dots">
+              <i class="dot dot-red"></i>
+              <i class="dot dot-orange"></i>
+              <i class="dot dot-green"></i>
+            </div>
+            <div class="how-search"><svg width="13" height="13" viewBox="0 0 18 18" fill="none" aria-hidden="true" style="vertical-align: middle; display: inline-block;"><circle cx="9" cy="9" r="5.5" stroke="currentColor" stroke-width="1.8"/><line x1="13" y1="13" x2="16.5" y2="16.5" stroke="currentColor" stroke-width="1.8"/></svg> 闪灵<span class="how-cursor">▏</span></div>
+            <div class="how-ticker">
+              <div class="how-line" data-need="1">▸ 搜罗全网资源找到 37 个候选</div>
+              <div class="how-line" data-need="1">▸ 挑中 2160p·中文字幕</div>
+              <div class="how-line" data-need="2">▸ 存进你的网盘不经过你的电脑</div>
+              <div class="how-line" data-need="2">▸ 回头核对真的到了</div>
+              <div class="how-line" data-need="3">✓ 已入库</div>
+            </div>
+            <div class="how-eps">
+              <i class="got"></i><i class="got"></i><i class="got"></i><i class="got"></i>
+              <i class="got"></i><i class="got"></i><i class="got"></i><i class="got"></i>
+              <i data-fill="3"></i><i data-fill="3"></i><i data-fill="3"></i><i data-fill="3"></i>
+            </div>
+            <div class="how-counter">S01 · <span class="how-count">8</span>/12 已入库</div>
+          </div>
+          <div class="how-captions">
+            <div class="how-caption" data-cap="0">
+              <b>搜到，点一下</b>
+              <span>搜到你想看的，点一下获取。完事，该干嘛干嘛去。</span>
+            </div>
+            <div class="how-caption" data-cap="1">
+              <b>它去找、去挑</b>
+              <span>画质、中文字幕、假资源，都替你把过关——挑不到合格的就直说，不塞垃圾给你。</span>
+            </div>
+            <div class="how-caption" data-cap="2">
+              <b>存进你自己的网盘</b>
+              <span>不下载到电脑、不占硬盘。存完还回头核对一遍，真到了才算数。</span>
+            </div>
+            <div class="how-caption" data-cap="3">
+              <b>追更的剧，缺的集自己回来</b>
+              <span>它记得你每部剧缺哪几集，出了新集自动补上。</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features v4: poster wall solo block + flat editorial column + label-voice trust line -->
+  <section id="features">
+    <div class="container">
+      <h2>不只是下载，是一个正经媒体库</h2>
+      <div class="feat-split">
+        <div class="feat-glow" aria-hidden="true"></div>
+
+        <!-- The ONLY solid block: tilted TMDB poster wall -->
+        <div class="feat-wall-col">
+          <div class="feat-wall">
+            <div class="poster-wall"></div>
+            <div class="poster-overlay">
+              <div class="feat-eyebrow">LIBRARY</div>
+              <h3>你的网盘，长出一个正经媒体库</h3>
+              <p>真海报、真元数据，来自 TMDB · 本周热映</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Flat editorial feature column: mono numerals, hairlines, no boxes -->
+        <div class="feat-list">
+          <div class="feat-item">
+            <div class="feat-num">01</div>
+            <b>追更交给 agent</b>
+            <span>剧更新了，agent 自己去找、自己存进网盘。缺哪几集它记着，补齐为止。</span>
+            <div class="episode-grid">
+              <i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep got"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i><i class="ep"></i>
+            </div>
+            <span>S01 · 8/12 已入库</span>
+          </div>
+          <div class="feat-item">
+            <div class="feat-num">02</div>
+            <b>找资源的活它来干</b>
+            <span>agent 全网搜罗，挑画质、挑中字、避开假资源。挑不到合格的会直说。</span>
+          </div>
+          <div class="feat-item">
+            <div class="feat-num">03</div>
+            <b>存在你自己的网盘</b>
+            <span>115 / 夸克 / 光鸭，转存不下载，不占硬盘。缺字幕的它自动配。</span>
+          </div>
+          <div class="feat-item">
+            <div class="feat-num">04</div>
+            <b>全家可以分开用</b>
+            <span>一个实例各自注册，各绑各的网盘、各看各的库。</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Trust line: flat label voice, no container -->
+      <div class="feat-trust">
+        <div class="feat-hairline" aria-hidden="true"></div>
+        <div class="trust-row">
+          <span class="trust-green">开源免费</span>
+          <span>凭证只存你自己电脑</span>
+          <span>不下载不占硬盘</span>
+          <span>挑不到合格资源就直说</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Demo section: GIF + CTA to demo.mediaryscout.app -->
+  <section id="demo">
+    <div class="container">
+      <h2>不装也能玩</h2>
+      <p class="demo-sub">只读回放，不用注册不用装，点开就看。</p>
+      <div class="demo-window">
+        <div class="demo-dots">
+          <div class="dot dot-red"></div>
+          <div class="dot dot-orange"></div>
+          <div class="dot dot-green"></div>
+        </div>
+        <img loading="lazy" src="assets/demo.gif" alt="Mediary Scout 在线 demo 回放：搜索到入库全流程">
+      </div>
+      <div class="demo-cta">
+        <a class="pill cta-outline" href="https://demo.mediaryscout.app">打开在线 Demo，看它跑一单</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Desktop vs Docker comparison cards -->
+  <section id="deploy">
+    <div class="container">
+      <h2>装在电脑，或装在服务器</h2>
+      <div class="deploy-split">
+        <div class="deploy-col">
+          <div class="deploy-eyebrow deploy-eyebrow-green">DESKTOP</div>
+          <b>双击就能用（推荐）</b>
+          <p>macOS 签名公证 / Windows 安装向导 · 数据存你自己电脑</p>
+        </div>
+        <div class="deploy-divider"></div>
+        <div class="deploy-col">
+          <div class="deploy-eyebrow">DOCKER</div>
+          <b>NAS · 服务器 · 24 小时巡检</b>
+          <p>全家多账号合用</p>
+          <code class="deploy-code">docker compose up -d</code>
+          <a class="deploy-link" href="https://github.com/fancydirty/mediary-scout#docker-%E8%87%AA%E9%83%A8%E7%BD%B2">README 里有「让 AI 替你部署」的提示词 →</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ accordion with <details name="faq"> -->
+  <section id="faq">
+    <div class="container">
+      <h2>你可能想问</h2>
+      <details name="faq" class="faq">
+        <summary>
+          它会乱动我的网盘吗？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>只做你手动也能做的转存和整理，全程每一步可见，凭证只在你自己的实例里。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          账号密码存在哪？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>你自己电脑（桌面版）或你自己的服务器，作者碰不到。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          要花钱吗？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>软件免费开源；你需要自己的网盘账号和一个 AI 服务的 key（任意 OpenAI 兼容接口）。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          支持哪些网盘？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>115、夸克、光鸭；网盘层是插件化接口，欢迎 PR 加新品牌。</p>
+        </div>
+      </details>
+      <details name="faq" class="faq">
+        <summary>
+          Windows 提示「已保护你的电脑」？
+          <svg class="chev" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+            <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </summary>
+        <div class="faq-body">
+          <p>未签名所致（个人开发者证书太贵），点「更多信息 → 仍要运行」即可；每个安装包发布前都经过 CI 真机安装验证。</p>
+        </div>
+      </details>
+    </div>
+  </section>
+
+  <!-- Final CTA -->
+  <section id="cta">
+    <div class="container">
+      <h2>觉得有用就试试</h2>
+      <div class="cta-final-row">
+        <a class="pill cta-main cta-big" data-dl-cta href="https://github.com/fancydirty/mediary-scout/releases/latest">
+          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" width="20" height="20">
+            <path d="M17.05 20.28c-.98.95-2.05.8-3.08.35-1.09-.46-2.09-.48-3.24 0-1.44.62-2.2.44-3.06-.35C2.79 15.25 3.51 7.59 9.05 7.31c1.35.07 2.29.74 3.08.8 1.18-.24 2.31-.93 3.57-.84 1.51.12 2.65.72 3.4 1.8-3.12 1.87-2.38 5.98.48 7.13-.57 1.5-1.31 2.99-2.54 4.09l.01-.01zM12.03 7.25c-.15-2.23 1.66-4.07 3.74-4.25.29 2.58-2.34 4.5-3.74 4.25z"/>
+          </svg>
+          <span data-dl-label>下载 Mediary Scout（macOS）</span>
+        </a>
+        <a class="pill cta-outline cta-github" href="https://github.com/fancydirty/mediary-scout">
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" width="20" height="20">
+            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+          </svg>
+          GitHub
+        </a>
+      </div>
+    </div>
+  </section>
+
+  </main>
+
+  <footer>
+    <div class="container">
+      <div>
+        <h3>产品</h3>
+        <ul>
+          <li><a href="https://github.com/fancydirty/mediary-scout/releases/latest">下载</a></li>
+          <li><a href="https://demo.mediaryscout.app">在线 Demo</a></li>
+        </ul>
+      </div>
+      <div>
+        <h3>社区</h3>
+        <ul>
+          <li><a href="https://github.com/fancydirty/mediary-scout">GitHub</a></li>
+          <li><a href="https://github.com/fancydirty/mediary-scout/issues">Issues</a></li>
+        </ul>
+      </div>
+      <div>
+        <p class="footer-small">
+          AGPL 开源<br>
+          工程细节与测试门禁见 GitHub
+        </p>
+        <div class="tmdb-attr">
+          <svg viewBox="0 0 273.4 35.5" aria-label="TMDB" class="tmdb-logo">
+            <path fill="#01d277" d="M19.3 0H4.7C2.1 0 0 2.1 0 4.7v26.1c0 2.6 2.1 4.7 4.7 4.7h14.6c2.6 0 4.7-2.1 4.7-4.7V4.7C24 2.1 21.9 0 19.3 0zm0 31.2H4.7V4.3h14.6v26.9z"/>
+            <path fill="#fff" d="M273.4 12.3h-8.5V6.8h-5.4v5.5h-3.2v4.7h3.2v9.4c0 5.2 2.8 7 7.1 7 1.8 0 3.3-.3 4.4-.7v-4.6c-.8.3-1.7.4-2.6.4-1.7 0-2.9-.6-2.9-3.2v-8.3h8.5v-4.7h.4zM170.5 12.3c-2.1-1.2-4.6-1.8-7.3-1.8-6.3 0-10.7 4.2-10.7 10.5s4.4 10.5 10.7 10.5c2.7 0 5.2-.6 7.3-1.8v-4.9c-1.9 1.3-4.1 2-6.5 2-3.6 0-6.1-2.4-6.1-5.8s2.5-5.8 6.1-5.8c2.4 0 4.6.7 6.5 2v-4.9zM241.3 6.8h-5.4v5.5h-3.2v4.7h3.2v9.4c0 5.2 2.8 7 7.1 7 1.8 0 3.3-.3 4.4-.7v-4.6c-.8.3-1.7.4-2.6.4-1.7 0-2.9-.6-2.9-3.2v-8.3h5.5v-4.7h-5.5V6.8h-.6zM212.1 10.5c-5.8 0-10.2 4.3-10.2 10.5s4.4 10.5 10.2 10.5 10.2-4.3 10.2-10.5-4.4-10.5-10.2-10.5zm0 16.2c-3.1 0-4.8-2.5-4.8-5.7s1.7-5.7 4.8-5.7 4.8 2.5 4.8 5.7-1.7 5.7-4.8 5.7zM141.3 10.5c-2.8 0-5.1 1.1-6.6 3.1V6.8h-5.4v24.4h5.4V19.8c0-3.1 1.6-4.8 4.4-4.8s4.1 1.7 4.1 4.8v11.4h5.4V18.4c0-4.9-2.9-7.9-7.3-7.9zM183.5 10.5c-5.8 0-10.2 4.3-10.2 10.5s4.4 10.5 10.2 10.5 10.2-4.3 10.2-10.5-4.4-10.5-10.2-10.5zm0 16.2c-3.1 0-4.8-2.5-4.8-5.7s1.7-5.7 4.8-5.7 4.8 2.5 4.8 5.7-1.7 5.7-4.8 5.7zM113.6 10.5c-2.6 0-4.8 1-6.4 2.8V6.8h-5.4v24.4h5.4V20c0-3.3 1.8-5.1 4.9-5.1 2.8 0 4.4 1.7 4.4 4.8v11.5h5.4V18.4c0-4.9-3.2-7.9-8.3-7.9zM80.3 10.5c-2.6 0-4.8 1-6.4 2.8v-2.1h-5.4v20.1h5.4V20c0-3.3 1.8-5.1 4.9-5.1 2.8 0 4.4 1.7 4.4 4.8v11.5h5.4V18.4c0-4.9-3.2-7.9-8.3-7.9zM56.5 15.3c1.9 0 3.6.7 4.9 1.9v5.5c-1.3 1.2-2.9 1.9-4.9 1.9-3.4 0-5.8-2.4-5.8-5.8s2.4-5.5 5.8-5.5zm10.3 4.3c0-5.8-4.2-9.1-9.6-9.1-6 0-10.6 4.2-10.6 10.5s4.6 10.5 10.6 10.5c2.4 0 4.7-.6 6.6-1.8v-4.9c-1.7 1.3-3.7 2-5.8 2-3 0-5.5-1.7-6.1-4.6h15v-2.6h-.1z"/>
+          </svg>
+          <p>This product uses the TMDB API but is not endorsed or certified by TMDB.</p>
+        </div>
+      </div>
+    </div>
+  </footer>
+</body>
+</html>
