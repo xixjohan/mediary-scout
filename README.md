@@ -43,6 +43,8 @@ You ask for a movie, show, or anime; an LLM agent scouts resources across your i
 
 No Docker, no Postgres, no terminal. The app bundles its own SQLite data layer and runs the full engine inside an Electron shell.
 
+The Windows installer is machine-verified before it's published: CI installs it on a clean runner, boots the real app, and requires an HTTP 200 health response — a broken installer can't reach the Releases page. macOS builds get the same native-ABI verification at build time, plus signing and notarization.
+
 ### Docker (power users — always-on server)
 
 ```bash
