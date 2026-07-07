@@ -29,22 +29,25 @@ async function wireDownloads() {
     }
   }
   const { version, items } = orderDownloads(release, detectPlatform(navigator.userAgent));
-  document.querySelectorAll("[data-dl]").forEach((a, i) => {
-    const it = items[i]; if (!it) return;
+  // Map by platform NAME via each button's explicit data-dl-platform, not by DOM
+  // order: orderDownloads reverses items for Windows visitors, and every button's
+  // icon/label is platform-fixed in the HTML. Reading the platform off the element
+  // keeps the href under the right icon even if buttons are reordered/added.
+  const byPlatform = Object.fromEntries(items.map((it) => [it.platform, it]));
+
+  // Hero buttons (the macOS one also shows the version).
+  document.querySelectorAll("[data-dl]").forEach((a) => {
+    const it = byPlatform[a.dataset.dlPlatform]; if (!it) return;
     a.href = it.url;
-    a.querySelector("[data-dl-label]").textContent = it.label;
-    if (i === 0) a.querySelector("[data-dl-ver]").textContent = version;
+    const label = a.querySelector("[data-dl-label]"); if (label) label.textContent = it.label;
+    const ver = a.querySelector("[data-dl-ver]"); if (ver && a.dataset.dlPlatform === "mac") ver.textContent = version;
   });
 
-  // Wire the final CTA button
-  const cta = document.querySelector("[data-dl-cta]");
-  if (cta && items[0]) {
-    cta.href = items[0].url;
-    const label = cta.querySelector("[data-dl-label]");
-    if (label) {
-      label.textContent = `下载 Mediary Scout（${items[0].label}）`;
-    }
-  }
+  // Final-CTA buttons (static labels).
+  document.querySelectorAll("[data-dl-cta]").forEach((btn) => {
+    const it = byPlatform[btn.dataset.dlPlatform];
+    if (it) btn.href = it.url;
+  });
 }
 
 async function wireStars() {
@@ -185,17 +188,16 @@ function initHowScrolly() {
 }
 
 function initFAQ() {
-  const faqs = document.querySelectorAll("details.faq");
+  const faqs = [...document.querySelectorAll("details.faq")];
   if (faqs.length === 0) return;
-
-  // Ensure exclusive accordion behavior (fallback for browsers without name attribute support)
+  // Exclusivity is native via <details name="faq"> (Chrome 120+ / FF 130+ / Safari
+  // 17.2+). This toggle listener is a progressive-enhancement FALLBACK for older
+  // engines without name-grouping: when one opens, close the others. It drives the
+  // native [open], so a11y semantics and the CSS ::details-content animation stay
+  // fully native/correct. No effect where name-grouping already handles it.
   faqs.forEach((d) => {
     d.addEventListener("toggle", () => {
-      if (d.open) {
-        faqs.forEach((o) => {
-          if (o !== d) o.open = false;
-        });
-      }
+      if (d.open) faqs.forEach((o) => { if (o !== d) o.open = false; });
     });
   });
 }

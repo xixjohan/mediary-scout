@@ -8,6 +8,8 @@
   --border-subtle:#242424;
   --dot-red:#f3727f; --dot-orange:#ffa42b;
   --hairline-gradient:linear-gradient(90deg, transparent, #242424 25%, #242424 75%, transparent);
+  /* Unlocks the height:0↔auto animation for the FAQ ::details-content (Chromium 129+). */
+  interpolate-size: allow-keywords;
 }
 * { box-sizing:border-box; } body { margin:0; background:var(--bg-base); color:var(--text); font-family:var(--font); line-height:1.5; }
 .skip-link{position:absolute;top:-40px;left:0;background:var(--accent);color:#000;padding:8px 16px;border-radius:0 0 4px 0;font-weight:700;text-decoration:none;z-index:200}.skip-link:focus{top:0}
@@ -959,26 +961,35 @@ section {
   transform: rotate(180deg);
 }
 
-.faq .faq-body {
-  display: grid;
-  grid-template-rows: 0fr;
-  transition: grid-template-rows .22s ease;
+/* Smooth accordion driven purely by native [open]: the ::details-content pseudo
+   animates height 0↔auto (interpolate-size on :root unlocks the keyword). a11y
+   (aria-expanded) and the click toggle are native; exclusivity is native
+   details[name] with a tiny JS toggle-listener fallback (see initFAQ) for older
+   engines. Engines without ::details-content / interpolate-size ignore these rules
+   and fall back to the native instant toggle (still functional + a11y-correct).
+   allow-discrete keeps content-visibility from cutting the collapse short. */
+.faq::details-content {
+  height: 0;
+  overflow: hidden;
+  content-visibility: hidden;
+  transition: height .3s ease, content-visibility .3s allow-discrete;
 }
 
-.faq[open] .faq-body {
-  grid-template-rows: 1fr;
+.faq[open]::details-content {
+  height: auto;
+  content-visibility: visible;
 }
 
 .faq .faq-body > p {
-  overflow: hidden;
-  margin: 0 0 16px;
+  margin: 0;
+  padding: 2px 0 18px;
   color: var(--text-muted);
   font-size: 14px;
   line-height: 1.7;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .faq .faq-body,
+  .faq::details-content,
   .faq .chev {
     transition: none;
   }
@@ -1022,16 +1033,19 @@ section {
   border-top: 1px solid var(--border-subtle);
 }
 
+/* Wordmark aspect ratio is ~7.7:1 (viewBox 273.4×35.5). At 60px it rendered ~8px
+   tall and read as illegible garble; 140px → ~18px, a clean, legible TMDB mark. */
 .tmdb-logo {
-  width: 60px;
+  width: 140px;
   height: auto;
   display: block;
-  margin-bottom: 6px;
+  margin-bottom: 10px;
 }
 
 .tmdb-attr p {
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.6;
   margin: 0;
+  max-width: 320px;
 }
