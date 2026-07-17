@@ -42,4 +42,28 @@ describe("STORAGE_BRANDS registry", () => {
     expect(getStorageBrand("quark").authKind).toBe("cookie");
     expect(getStorageBrand("guangya").authKind).toBe("token");
   });
+
+  it("carries each brand's provisionRootId (category-dir root parent is registry data)", () => {
+    // 115 & 夸克 provision under account root "0"; 光鸭 under "" (account root);
+    // 天翼 under personal-cloud folder "-11". These drive provisionCategoryDirs'
+    // baseParentId — a change here shifts where the media tree gets created.
+    expect(getStorageBrand("pan115").provisionRootId).toBe("0");
+    expect(getStorageBrand("quark").provisionRootId).toBe("0");
+    expect(getStorageBrand("guangya").provisionRootId).toBe("");
+    expect(getStorageBrand("tianyi").provisionRootId).toBe("-11");
+  });
+
+  it("carries each token brand's requiredCredentialKeys (drives the connection guard)", () => {
+    // extractStorageCredential treats a token blob as connected iff every one of
+    // these keys is a non-empty string; a change here changes what counts as a
+    // usable credential. Cookie brands have none (they authenticate by cookie).
+    expect(getStorageBrand("guangya").requiredCredentialKeys).toEqual(["accessToken", "refreshToken"]);
+    expect(getStorageBrand("tianyi").requiredCredentialKeys).toEqual([
+      "sessionKey",
+      "accessToken",
+      "refreshToken",
+    ]);
+    expect(getStorageBrand("pan115").requiredCredentialKeys).toBeUndefined();
+    expect(getStorageBrand("quark").requiredCredentialKeys).toBeUndefined();
+  });
 });
