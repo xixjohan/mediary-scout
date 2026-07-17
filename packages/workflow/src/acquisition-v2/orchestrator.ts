@@ -215,7 +215,17 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     transferAttempts,
     resourceSnapshots,
     coverageMet: result.coverage.coverageMet,
-    reason: result.text,
+    // The finish terminal stop ends the loop AT the finish step, so a SUCCESSFUL
+    // run has no closing free-text turn — fall back to the honest coverage summary
+    // for that case. Other mechanical stops (systemic block / no-coverage) also
+    // leave text empty; their reasons already persist elsewhere (each attempt's
+    // providerMessage / the reportNoCoverage reason), so they keep the pre-existing
+    // empty-reason behavior here.
+    reason:
+      result.text ||
+      (result.coverage.coverageMet
+        ? `已完成:obtained=${result.coverage.obtained.join(",") || "-"}(finish 终结即停)`
+        : result.text),
   });
   return { ...result, outcome: { resourceSnapshots, decisions, transferAttempts }, auditEvents: sandbox.auditTrail() };
 }
