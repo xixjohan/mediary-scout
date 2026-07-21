@@ -17,12 +17,12 @@ import {
 } from "./domain.js";
 import {
   claimWorkflowRun,
-  claimableQueuedRuns,
   cloneWorkflowValue,
   compareTrackedSeasonStates,
   expireWorkflowRun,
   retriedWorkflowRun,
   isActiveWorkflowStatus,
+  isStaleActiveWorkflowRun,
   type PersistedWorkflowRunSnapshot,
   type PersistWorkflowRunSnapshotInput,
   type ReserveWorkflowRunInput,
@@ -420,11 +420,17 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
     now: string;
   }): Promise<PersistedWorkflowRunSnapshot | null> {
     const claimedRunId = await this.withTransaction(async (client) => {
-      const queuedRun = claimableQueuedRuns(
-        await this.allWorkflowRuns(client),
-        input.kind,
-        input.now,
-      )[0];
+      // Lock exactly one FIFO-ready row. Under READ COMMITTED a plain read followed
+      // by upsert lets two workers see and claim the same queued run; SKIP LOCKED
+      // instead lets the second worker move on without waiting for duplicate work.
+      const result = await client.query<{ payload: WorkflowRun }>(
+        "SELECT payload FROM workflow_runs " +
+          "WHERE payload->>'kind' = $1 AND payload->>'status' = 'queued' " +
+          "AND (payload->>'nextAttemptAt' IS NULL OR payload->>'nextAttemptAt' <= $2) " +
+          "ORDER BY payload->>'startedAt' ASC LIMIT 1 FOR UPDATE SKIP LOCKED",
+        [input.kind, input.now],
+      );
+      const queuedRun = result.rows[0]?.payload;
       if (!queuedRun) {
         return null;
       }
@@ -869,13 +875,20 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
 
   async listRecentNotificationsWithAccount(input?: {
     limit?: number;
+    since?: string;
   }): Promise<Array<{ accountId: string; connectedStorageId: string | null; notification: NotificationEvent }>> {
     await this.ensureSchema();
+    // since + ORDER BY + LIMIT all in SQL so a large history cannot force a full-table
+    // pull into JS just to throw most rows away.
+    const limit = input?.limit ?? 100;
     const result = await this.pool.query(
       "SELECT n.payload AS payload, wr.account_id AS account_id, wr.connected_storage_id AS connected_storage_id FROM notifications n " +
-        "JOIN workflow_runs wr ON n.workflow_run_id = wr.id",
+        "JOIN workflow_runs wr ON n.workflow_run_id = wr.id " +
+        "WHERE ($1::text IS NULL OR (n.payload->>'createdAt') >= $1) " +
+        "ORDER BY (n.payload->>'createdAt') DESC LIMIT $2",
+      [input?.since ?? null, limit],
     );
-    const rows = result.rows.map((row) => {
+    return result.rows.map((row) => {
       const rawStorage = (row.connected_storage_id as string | null | undefined) ?? null;
       return {
         accountId: (row.account_id as string | undefined) ?? DEFAULT_ACCOUNT_ID,
@@ -885,8 +898,6 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
         notification: row.payload as NotificationEvent,
       };
     });
-    rows.sort((left, right) => right.notification.createdAt.localeCompare(left.notification.createdAt));
-    return rows.slice(0, input?.limit ?? 100);
   }
 
   async getSetting(key: string): Promise<string | null> {
@@ -1381,7 +1392,7 @@ export class PostgresWorkflowRepository implements WorkflowRepository {
       (workflowRun) =>
         workflowRun.kind === snapshot.workflowRun.kind &&
         isActiveWorkflowStatus(workflowRun.status) &&
-        workflowRun.startedAt < input.staleActiveRunStartedBefore!,
+        isStaleActiveWorkflowRun(workflowRun, input.staleActiveRunStartedBefore!),
     );
     for (const staleRun of staleRuns) {
       const expiredRun = expireWorkflowRun(staleRun, input.staleFinishedAt ?? snapshot.workflowRun.startedAt);
