@@ -1,35 +1,60 @@
 "use client";
 
-import { useState } from "react";
-import {
-  collapseMovieSynopsis,
-  shouldCollapseMovieSynopsis,
-} from "../lib/movie-synopsis";
+import { useEffect, useState } from "react";
 
-/** Full overview body for movie detail. Long copy collapses behind 展开/收起. */
+/**
+ * Full-width overview.
+ * Mobile (≤860px): default 2-line clamp + gradient veil; tap block to expand.
+ * Desktop: always full text, static markup (no button chrome).
+ */
 export function MovieSynopsis({ overview }: { overview: string }) {
   const text = overview.trim();
-  const collapsible = shouldCollapseMovieSynopsis(text);
-  const [expanded, setExpanded] = useState(!collapsible);
+  const [expanded, setExpanded] = useState(false);
+  const [mobile, setMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 860px)");
+    const sync = () => setMobile(mq.matches);
+    sync();
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", sync);
+      return () => mq.removeEventListener("change", sync);
+    }
+    mq.addListener(sync);
+    return () => mq.removeListener(sync);
+  }, []);
+
   if (!text) return null;
 
-  const body = expanded || !collapsible ? text : collapseMovieSynopsis(text);
+  // Desktop: static full text — no interactive control to focus.
+  if (!mobile) {
+    return (
+      <section className="movie-synopsis is-expanded" aria-labelledby="movie-synopsis-title">
+        <h2 className="movie-synopsis-label" id="movie-synopsis-title">
+          简介
+        </h2>
+        <div className="movie-synopsis-body">{text}</div>
+      </section>
+    );
+  }
 
   return (
-    <section className="movie-synopsis" aria-labelledby="movie-synopsis-title">
+    <section
+      className={`movie-synopsis${expanded ? " is-expanded" : " is-collapsed"}`}
+      aria-labelledby="movie-synopsis-title"
+    >
       <h2 className="movie-synopsis-label" id="movie-synopsis-title">
         简介
       </h2>
-      <p className="movie-synopsis-body">{body}</p>
-      {collapsible ? (
-        <button
-          type="button"
-          className="movie-synopsis-toggle"
-          onClick={() => setExpanded((value) => !value)}
-        >
-          {expanded ? "收起" : "展开"}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className="movie-synopsis-hit"
+        aria-expanded={expanded}
+        onClick={() => setExpanded((value) => !value)}
+      >
+        <span className="movie-synopsis-body">{text}</span>
+        <span className="movie-synopsis-hint">{expanded ? "收起" : "轻触展开全文"}</span>
+      </button>
     </section>
   );
 }
