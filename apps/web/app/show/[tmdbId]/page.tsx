@@ -1,10 +1,14 @@
+import Link from "next/link";
 import { connection } from "next/server";
 import { Suspense, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
+import { isMovieUnreleased } from "@media-track/workflow";
 import { AcquiringPoller } from "../../../components/acquiring-poller";
 import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
 import { AppSidebar } from "../../../components/app-sidebar";
 import { BackLink } from "../../../components/back-link";
+import { MovieSynopsis } from "../../../components/movie-synopsis";
+import { RequestTrackButton } from "../../../components/request-track-button";
 import {
   RequestRemainingButton,
   RequestSeasonButton,
@@ -17,8 +21,8 @@ import {
   type TitleHubSeason,
   type TitleHubView,
 } from "../../../lib/title-hub";
-import { resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
 import { seasonBadgeState } from "../../../lib/title-aggregate";
+import { resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
 
 const aggregateBadge = {
   untracked: null,
@@ -114,7 +118,7 @@ async function ShowContent({
   return (
     <ShowShell
       active={from ?? "none"}
-      backLabel={from === "search" ? "返回搜索" : from === "library" ? "返回媒体库" : "返回"}
+      backLabel={from === "search" ? "搜索" : from === "library" ? "媒体库" : "返回"}
       backHref={
         from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`
       }
@@ -262,7 +266,7 @@ const movieStateMeta = {
   untracked: { label: "未追踪", tone: "muted" },
 } as const;
 
-/** A movie's detail page: a single status, no season grid. */
+/** A movie's detail page: hero + full synopsis body (no season grid). */
 function MovieHub({
   view,
   storageId,
@@ -273,8 +277,18 @@ function MovieHub({
   basePath: string;
 }) {
   const meta = movieStateMeta[view.state];
-  const releaseLine =
-    view.state === "reserved" && view.releaseDate ? `${formatMovieDate(view.releaseDate)} 上映` : null;
+  const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
+  const nowIso = new Date().toISOString();
+  const unreleased =
+    view.state === "untracked" && isMovieUnreleased(view.releaseDate, nowIso);
+  const movieCandidateId = `tmdb_movie_${view.tmdbId}`;
+  const chips: Array<{ label: string; value: string }> = [];
+  if (view.releaseDate) chips.push({ label: "上映", value: formatMovieDate(view.releaseDate) });
+  if (view.originalTitle && view.originalTitle !== view.title) {
+    chips.push({ label: "原名", value: view.originalTitle });
+  }
+  chips.push({ label: "类型", value: "电影" });
+
   return (
     <AcquisitionLockProvider>
       {view.acquiring ? <AcquiringPoller /> : null}
@@ -300,19 +314,41 @@ function MovieHub({
             <h1>
               {view.title} <span className="hub-year">({view.year})</span>
             </h1>
-            <p className="hub-attributes">
-              电影
-              {view.originalTitle && view.originalTitle !== view.title ? ` · ${view.originalTitle}` : ""}
-              {releaseLine ? ` · ${releaseLine}` : ""}
-            </p>
-            {view.overview ? <p className="hub-overview">{view.overview}</p> : null}
-            {view.state !== "untracked" ? (
-              <div className="hub-actions">
+            <p className="hub-attributes">电影</p>
+            <div className="hub-actions">
+              {view.state === "untracked" ? (
+                <RequestTrackButton
+                  candidateId={movieCandidateId}
+                  tmdbId={view.tmdbId}
+                  actionState={unreleased ? "can_reserve" : "can_request"}
+                  label={unreleased ? "预定" : "获取"}
+                  storageId={storageId}
+                />
+              ) : null}
+              {view.state === "acquiring" ? (
+                <Link className="primary-button" href={activityHref}>
+                  查看活动
+                </Link>
+              ) : null}
+              {view.state !== "untracked" ? (
                 <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />
-              </div>
+              ) : null}
+            </div>
+            {view.state === "missing" ? (
+              <p className="hub-missing-note">已上映但仍缺资源，日常巡检会继续尝试。</p>
             ) : null}
           </div>
         </header>
+        {view.overview ? <MovieSynopsis overview={view.overview} /> : null}
+        {chips.length > 0 ? (
+          <div className="movie-meta-chips">
+            {chips.map((chip) => (
+              <span key={`${chip.label}-${chip.value}`} className="movie-meta-chip">
+                {chip.label} <strong>{chip.value}</strong>
+              </span>
+            ))}
+          </div>
+        ) : null}
       </section>
     </AcquisitionLockProvider>
   );
@@ -323,11 +359,8 @@ function formatMovieDate(releaseDate: string): string {
   return match ? `${match[1]}年${Number(match[2])}月${Number(match[3])}日` : releaseDate;
 }
 
-/** Contextual placeholder while the hub's first render streams in. Mirrors the
- *  real hub SHAPE (poster + title block header, then the season list) so the
- *  swap to real content doesn't reflow — reuses the same layout containers. A
- *  movie resolves with no seasons, but the header (the dominant region) matches
- *  both, and the season rows cover the common TV case. */
+/** Shared placeholder while the hub streams. Header-only — no fake TV season
+ *  rows (movies have none; TV content replaces this quickly). */
 function HubSkeleton() {
   return (
     <section className="title-hub">
@@ -341,14 +374,12 @@ function HubSkeleton() {
           <div className="skeleton skeleton-hub-line short" />
         </div>
       </header>
-      <section className="hub-seasons" aria-hidden>
+      <div className="movie-synopsis" aria-hidden>
         <div className="skeleton skeleton-hub-section" />
-        <ul className="hub-season-list">
-          <li className="skeleton skeleton-hub-row" />
-          <li className="skeleton skeleton-hub-row" />
-          <li className="skeleton skeleton-hub-row" />
-        </ul>
-      </section>
+        <div className="skeleton skeleton-hub-line" />
+        <div className="skeleton skeleton-hub-line" />
+        <div className="skeleton skeleton-hub-line short" />
+      </div>
     </section>
   );
 }
