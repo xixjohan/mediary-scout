@@ -109,33 +109,38 @@ When a 天翼转存 fails with a SYSTEMIC message — "配额不足" / "额度�
   - Verified to cover → process it (move / dedup / mark) and finish. Do NOT keep searching for a "better" one.
   - Does not cover → treat it as a dead candidate, clean its staging residue with deleteFiles, try the next.`;
 
-const DEAD_LINKS_BLACK_BOX_PAN123 = `# Dead links, 转存, and black-box resources (123网盘)
+const DEAD_LINKS_BLACK_BOX_PAN123 = `# Dead links, 转存, 离线磁力, and black-box resources (123网盘)
 
 > 提醒:raw 候选已预搜好,先 viewResourceSnapshot() 通读活期文档再动手;searchResources 只用于繁体/英文升级,别拿画质/字幕词搜。
 
-## How transfer works on THIS drive (123)
-The drive is 123网盘. Every candidate is a 123 分享链 (123pan.com/s/<key> — 123684/123865/123912 等镜像域也是真的,一样能转;提取码在 pwd) — a 转存分享 (the 115-秒传 equivalent): the system opens the share, lists its files, and 秒传复制s them into staging via a server-side async copy, then re-lists the target until the copy settles (the bounded polling is built in — you do NOT wait or poll yourself). transferCandidate returns the TRUE materialized files (the system rereads for you). Trust THAT, not your prediction.
+## How transfer works on THIS drive (123) — DUAL path (like 115)
+The drive is 123网盘. Candidates may be either:
+1. **123 分享链** (123pan.com/s/<key> — 123684/123865/123912 等镜像域也是真的;提取码在 pwd): 转存分享 / 秒传复制 into staging via server-side async copy; bounded settle-polling is built in — you do NOT poll yourself.
+2. **磁力 / ed2k**: native offline download (resolve → submit → poll until status succeed). The system waits for the offline task; you still trust the staging reread, not your prediction.
 
-## 无磁力 (this is the key difference from 115)
-123 has NO magnet / offline-download API (v1). So there are NO magnet candidates here (the resource provider only surfaces 123 分享链), and a magnet would fail LOUD ("PAN123_NO_MAGNET") if ever forced. There is therefore NO "magnet silently fails / wait for download" nuance at all — every candidate is a 转存分享 that lands, fails loud, or — rarely — reports no_target_change (see below).
+transferCandidate returns the TRUE materialized files. Prefer a transparent 123 分享 when both cover the need (instant copy); use magnet when share coverage is thin. For TV/anime or any magnet/ed2k candidate, use transferCandidate and then inspectStaging; transferUntilLanded is movie-only and accepts share links only.
 
-## Fail-loud (a dead / cancelled / wrong-code share)
-A 123 分享 fails LOUD with a clear reason — switch to another covering candidate:
-- "分享为空 / 已失效" (the system's own empty/dead-share report), "分享不存在", "分享已取消 / 链接失效 / 已过期", "提取码错误 / 需要提取码". All = dead.
-A dead link is the NORM, never a reason to give up — try the next 123 分享 that covers the need. For a movie, transferUntilLanded over your ranked 123 分享 burns through the dead ones automatically (it relies on this loud failure, exactly like the 115 path).
+For a movie with ranked 123 share links, use transferUntilLanded to burn through dead shares automatically. Do not give up after one dead link.
 
-## no_target_change (the third outcome — NOT a loud failure)
-Sometimes the attempt reports no_target_change: the 转存 went through without an error, yet no new video appeared in the target dir within the built-in settle window. A LARGE share's server-side copy can outlast that window, so this can be a FALSE miss. Do NOT immediately re-transfer the same candidate (you may double-land its files) and do NOT instantly write it off: re-read the target directory (inspectStaging) first — if the files have appeared by then, it landed; only when the re-read still shows nothing did it truly not land, and THEN you switch to the next covering candidate.
+## Fail-loud — shares
+A 123 分享 fails LOUD — switch candidate:
+- "分享为空 / 已失效", "分享不存在", "分享已取消 / 链接失效 / 已过期", "提取码错误 / 需要提取码".
+
+## Fail-loud — magnets / offline
+A dead magnet fails LOUD with PAN123_OFFLINE_RESOLVE_FAILED / PAN123_OFFLINE_FAILED — switch to the next covering 磁力 or 123 分享. If the bounded offline poll expires, the result is no_target_change (the task is cancelled before moving on); inspectStaging once, then switch only if still empty. Dead magnets are the NORM, never a reason to give up.
+
+## no_target_change (third outcome on the SHARE path — NOT a loud failure)
+On a large 秒传复制, the settle window can expire before files appear. Do NOT immediately re-transfer the same candidate (double-land risk): inspectStaging first; only when still empty switch candidate. For a magnet, no_target_change means the offline task was cancelled after the bounded poll without a confirmed landing (slow torrent or task that finished without producing a video) — the same action applies: inspectStaging once, then switch if still empty.
 
 ## SYSTEMIC BLOCK (别甩锅)
-When a 123 转存 fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "容量不足" / "VIP会员" / "登录" / "鉴权" — the resource EXISTS but the ACCOUNT is blocked (quota / auth / VIP). The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Every candidate will fail the same way. Report honestly: the resource was found, the account cannot transfer it (not "no resource"). This is actionable (top up / re-login), never blame the resource.
+When a 123 transfer fails with a SYSTEMIC message — "配额不足" / "额度已用完" / "容量不足" / "离线下载配额不足" / "VIP会员" / "登录" / "鉴权" / PAN123_OFFLINE_CLEANUP_FAILED — the resource EXISTS but the ACCOUNT or task cleanup is blocked. The tool result carries \`systemicBlock: { reason: "..." }\`. **立即停 — DO NOT keep transferring.** Report honestly: resource found, account cannot transfer or cancellation is unconfirmed (not "no resource").
 
 ## Black-box gate (same discipline as 115)
 "Transparent" = the title states size / resolution / episodes / release group. "Black-box / opaque" = a bare name or a vague bundle.
-- If a TRANSPARENT 123 分享 clearly covers the need, select ONLY it and STOP. Do NOT also transfer opaque ones "just in case".
-- ONLY when ZERO transparent candidate covers may you fall back to a black-box one. When you do, your VERY NEXT step after it lands MUST be inspectStaging to VERIFY it actually holds the target — black-box coverage is UNPROVEN until you read the real files.
-  - Verified to cover → process it (move / dedup / mark) and finish. Do NOT keep searching for a "better" one.
-  - Does not cover → treat it as a dead candidate, clean its staging residue with deleteFiles, try the next.
+- If a TRANSPARENT 123 分享 or magnet clearly covers the need, select ONLY it and STOP.
+- ONLY when ZERO transparent candidate covers may you fall back to a black-box one; next step MUST be inspectStaging.
+  - Verified → process and finish.
+  - Does not cover → deleteFiles residue, try the next.
 - For an ongoing show's just-aired episode, a black-box resource whose publish time predates that episode's air time almost certainly does NOT contain it — do not bet on it.`;
 
 const DEAD_LINKS_BLACK_BOX_GUANGYA = `# Dead magnets, offline tasks, and black-box resources (光鸭云盘)
