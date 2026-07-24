@@ -192,6 +192,62 @@ Mediary Scout 默认单用户、无登录,公网入口必须靠 Access 这类前
 
 > 想自启:`cloudflared` 容器已 `restart: unless-stopped`,宿主重启会自动拉起;隧道配置在 Cloudflare 侧托管,改公网主机名 / Access 策略都在控制台改,不用动宿主。
 
+**让 agent 帮你配(方式二提示词)** — 把下面这段整体复制给 Claude Code / Codex / opencode,它会带你走完上面整个流程:
+
+```text
+你是在帮用户把自托管的 Mediary Scout 暴露到公网,走 Cloudflare Tunnel(无需公网 IP、不开路由器端口)。
+
+前提(不满足就先停,或考虑 Tailscale 替代):
+- 用户有一个域名,且其 NS(域名服务器)已切到 Cloudflare——仅在别家注册商买了域名但没切 NS 是不行的。
+- 用户能登录 Cloudflare Zero Trust(免费档;注意开通流程可能要求绑一张卡或 PayPal,但不会扣费)。
+- 若用户没有域名/不想切 NS/不想绑卡:改建议 Tailscale(私有 mesh,无需域名,适合自己/家人),并停下。
+
+安全红线:
+- TUNNEL_TOKEN 是机密,不进 git、不写进文档/截图、不打印日志,只写入实例 .env。
+- 禁止在路由器/防火墙上把 3000 端口转发到公网;compose 默认映射到宿主局域网是允许的。
+
+第 0 步·环境门:
+1. `docker info` — 失败则提示用户,停止。
+2. `docker compose ls` — 找到 mediary-scout 部署目录的 project,`cd` 进去,确认有 web 服务。
+
+第 1 步·建隧道(在 Cloudflare Zero Trust dashboard):
+a. Networks → Tunnels → Create a tunnel → 选 Cloudflared → 起名(如 mediary)
+b. 连接器页面会给一段 docker run 命令,里面有 token(eyJ... 一长串)。只复制 token 那串,不要复制整条命令。
+c. 进这条隧道的 Public Hostname → Add a public hostname:
+   - Subdomain 填子域(如 media),Domain 选你的域名
+   - Service: Type=HTTP, URL=web:3000(必须是 compose 服务名 web,不是 localhost)
+   - DNS CNAME 由 Cloudflare 自动创建,不要手动加记录。
+
+第 2 步·写凭证:
+- 确保 .env 中有且仅有一行有效: TUNNEL_TOKEN=<上一步复制的 token>
+- 若已有旧 TUNNEL_TOKEN,先用 # 注释备份那行,再写新行;不要动其它配置。
+- 若 .env 不在 git 忽略里(git check-ignore .env 返回非 0),先把 .env 加进 .git/info/exclude。
+
+第 3 步·启动:
+- 在部署目录执行 `docker compose --profile tunnel up -d`
+- 首次会拉取 cloudflared 镜像(慢网络几分钟,正常);拉取失败重试 `docker compose --profile tunnel pull` 1-2 次。
+
+第 4 步·确认连通:
+1. 先 `docker compose ps cloudflared` 应显示 Up(若 Starting/空,等 30 秒再看,别判失败)。
+2. 再 `docker compose logs cloudflared --tail 30` 看到 "Registered tunnel connection" 即成功。
+3. 若 1 分钟后仍无 Registered:
+   a. token 是否完整一行; b. 目录/服务名 web/cloudflared 与 web 同网络; c. 出站 7844 没被拦;
+   d. .env 追加 TUNNEL_TRANSPORT_PROTOCOL=http2,重新 `docker compose --profile tunnel up -d`(不是 restart)。
+
+第 5 步·必须加 Cloudflare Access(否则等于裸挂公网):
+a. Zero Trust → Access → Applications → Add an application → Self-hosted
+b. Application domain 填你的完整子域(如 media.你的域名)
+c. 加一条 Policy: Action=Allow,Include 选择器选 **Emails**(注意不是 "Emails ending in"),填用户自己(及家人)邮箱。
+d. 登录身份默认走 One-time PIN(邮箱一次性验证码);若登录页提示无 IdP,去 Settings → Authentication 确认 One-time PIN 已启用。
+
+第 6 步·验证(由人来完成):
+- 浏览器打开子域 → 应先 Access 邮箱验证 → 通过后进 Mediary Scout。
+- 若直接进应用(没拦),立刻回第 5 步检查 policy 是否 Enable、domain 是否精确匹配子域。
+- agent 不要自行声称验证结果,让用户确认。
+
+完成后用简短中文汇报:隧道是否 Registered、Access 是否配置、面板是否(由用户确认)能进。
+```
+
 ### 方式三:Scout Connect（受邀）
 
 若你收到作者的 Scout Connect 邀请链接（`https://mediaryconnect.app/i/...`）:
