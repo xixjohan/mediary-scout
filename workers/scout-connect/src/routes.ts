@@ -10,6 +10,10 @@ import { homePage } from "./html/home-page.js";
 import { adminPage } from "./html/admin-page.js";
 import { invitePage, type InvitePageState } from "./html/invite-page.js";
 
+// Same aperture mark as apps/web/app/icon.svg — the product brand.
+const LOGO_SVG =
+  '<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="16" fill="#1ED760"/><g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m14.31 8 5.74 9.94"/><path d="M9.69 8h11.48"/><path d="m7.38 12 5.74-9.94"/><path d="M9.69 16 3.95 6.06"/><path d="M14.31 16H2.83"/><path d="m16.62 12-5.74 9.94"/></g></svg>';
+
 export interface RouteDeps {
   db: ConnectDb;
   cf: CfApi;
@@ -82,6 +86,16 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
   if (method === "GET" && path === "/healthz") {
     return new Response("ok", {
       headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  // Brand logo for Access Custom Pages + invite page — self-hosted so we don't
+  // depend on any external asset host.
+  if (method === "GET" && path === "/logo.svg") {
+    return new Response(LOGO_SVG, {
+      headers: {
+        "content-type": "image/svg+xml; charset=utf-8",
+        "cache-control": "public, max-age=86400",
+      },
     });
   }
   if (method === "GET" && path === "/admin") {
