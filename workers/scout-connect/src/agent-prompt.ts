@@ -6,30 +6,54 @@ export function buildAgentPrompt(input: {
 
 目标:让用户的自托管实例经 Cloudflare Tunnel 发布到:
   https://${input.hostname}
-门禁是 Cloudflare Access 邮箱 OTP(用户浏览器打开时会要求邮箱验证码)。
+门禁是 Cloudflare Access 邮箱 OTP(浏览器打开时先要求邮箱验证码,通过后才进应用)。
 不要修改获取/网盘/LLM 业务逻辑。
 
-安全:
-- TUNNEL_TOKEN 是机密,不要提交到 git,不要写进 README,不要出现在截图 issue 里。
-- 只写入实例目录的 .env(该文件应已被 gitignore)。
+安全红线:
+- TUNNEL_TOKEN 是机密。不提交 git、不写进文档/截图/issue、不打印日志,只写入实例 .env。
+- 全程在你正在操作的这台机器的部署目录里执行;不要碰任何 git 源码克隆(那是源码,不是部署)。
 
-步骤:
-1. 进入用户的 mediary-scout 部署目录(常见 docker compose 项目根)。
-2. 确保 .env 中有且仅有一行有效:
-     TUNNEL_TOKEN=${input.tunnelToken}
-   若已有旧 TUNNEL_TOKEN,先备份再替换。
-3. 可选:若用户网络不稳定/UDP 受限,追加:
-     TUNNEL_TRANSPORT_PROTOCOL=http2
-4. 执行:
-     docker compose --profile tunnel up -d
-5. 查看日志直到出现 Registered tunnel connection 一类成功字样:
-     docker compose logs -f cloudflared
-6. 让用户在浏览器打开 https://${input.hostname}
-   - 应先看到 Cloudflare Access 邮箱验证
-   - 通过后进入 Mediary Scout UI
-7. 若失败:检查 compose 服务名是否仍为 web、cloudflared 是否与 web 同网络、
-   token 是否完整一行、防火墙是否拦截出站。
+第 0 步·环境门(先做,不过就停):
+1. 执行 \`docker info\` — 若报 command not found / permission denied,提示用户(需装 Docker/加 sudo/OrbStack),停止。
+2. 执行 \`docker compose ls\` — 找到 Config file 路径指向 mediary-scout 部署目录的那个 project。
+3. \`cd\` 到该目录,确认 docker-compose.yml 里有名为 web 的服务。若无,停止并向用户确认目录。
 
-完成后用简短中文汇报:是否 up、Access 是否出现、打开面板是否成功。
+第 1 步·写凭证:
+- 确保 .env 中有且仅有一行有效: TUNNEL_TOKEN=${input.tunnelToken}
+- 若已有旧 TUNNEL_TOKEN,先用 # 注释备份那行,再写新行;不要动其它配置。
+- 若 .env 不在 git 忽略里(git check-ignore .env 返回非 0),先把 .env 加进 .git/info/exclude。
+
+第 2 步(可选)·UDP 受限: 先跳过,第 4 步失败时再回来加。
+
+第 3 步·启动:
+- 在部署目录执行 \`docker compose --profile tunnel up -d\`
+- 注意:首次运行会拉取 cloudflared 镜像(几十 MB,慢网络可能几分钟),这是正常的。
+- 若拉取镜像失败(报 failed to fetch / EOF / not found 一类):
+  重试 \`docker compose --profile tunnel pull\` 1-2 次;仍失败则提示用户网络/镜像源问题
+  (国内网络常见,可配置 Docker 镜像加速后重试),不要反复瞎试。
+
+第 4 步·确认连通(关键,别急着判失败):
+1. 先 \`docker compose ps cloudflared\` — 应显示 Up。若是 Created/Starting/空,等 30 秒再看,不要判失败。
+2. 再 \`docker compose logs cloudflared --tail 30\` — 看到 "Registered tunnel connection"(通常 connIndex=0..3 共 4 条)即成功。
+3. 若 1 分钟后仍无 Registered:
+   a. 确认 token 是完整一行(没被换行/截断/带了多余字符);
+   b. 确认在正确目录、compose 服务名是 web、cloudflared 与 web 在同一 docker 网络;
+   c. 确认出站 7844 端口没被防火墙拦;
+   d. 回到第 2 步,在 .env 追加 TUNNEL_TRANSPORT_PROTOCOL=http2,然后重新执行
+      \`docker compose --profile tunnel up -d\`(不是 restart——restart 不会重读 .env),再看日志。
+
+第 5 步·验证门禁(由人来完成,不是 agent):
+- 请用户在自己的设备浏览器打开 https://${input.hostname}
+- 应先到 Cloudflare Access 邮箱验证页(输入受邀邮箱收验证码;若没收到,查垃圾邮件)
+- 通过后进入 Mediary Scout 面板
+- 你(agent)不要自行声称验证结果;让用户告诉你看到了什么。
+- 若用户直接看到应用而无 Access 页,立刻停止并提示(门禁没生效,需作者检查)。
+
+第 6 步·收尾(告诉用户):
+- https://${input.hostname} 现在可从任何设备访问;token 页面只显示一次,但 token 本身长期有效,重启容器/宿主不影响。
+- 以后若无法访问,先 \`docker compose logs cloudflared --tail 30\` 看隧道是否还活着。
+
+完成后用简短中文汇报三项:隧道是否 Registered、Access 验证页是否(由用户确认)出现、能否进入面板。
+若卡在某步,说明卡在哪、日志关键行、你的下一步建议。
 `;
 }

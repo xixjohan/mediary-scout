@@ -11,9 +11,10 @@ function countOccurrences(haystack: string, needle: string): number {
 }
 
 describe("buildAgentPrompt", () => {
-  it("contains the hostname exactly twice", () => {
+  it("contains the hostname in the goal, verification, and closing steps", () => {
     const out = buildAgentPrompt(INPUT);
-    expect(countOccurrences(out, INPUT.hostname)).toBe(2);
+    // goal (https://…), 第 5 步 verification, 第 6 步 closing — 3 occurrences
+    expect(countOccurrences(out, INPUT.hostname)).toBe(3);
   });
 
   it("contains the tunnel token exactly once", () => {
@@ -26,6 +27,21 @@ describe("buildAgentPrompt", () => {
     expect(out).toContain("Scout Connect");
     expect(out).toContain("docker compose --profile tunnel up -d");
     expect(out).toContain("TUNNEL_TRANSPORT_PROTOCOL=http2");
+    expect(out).toContain("Registered tunnel connection");
+    expect(out).toContain("docker compose ls");
+    expect(out).toContain("docker compose logs cloudflared --tail 30");
+  });
+
+  it("covers the audited failure modes", () => {
+    const out = buildAgentPrompt(INPUT);
+    // image-pull retry (OrbStack e2e finding)
+    expect(out).toContain("docker compose --profile tunnel pull");
+    // old-token backup discipline
+    expect(out).toContain("注释备份");
+    // not "restart" (restart doesn't re-read .env)
+    expect(out).toContain("restart 不会重读 .env");
+    // Access verification is done by the human, not the agent
+    expect(out).toContain("不要自行声称验证结果");
   });
 
   it("is deterministic for the same input", () => {
