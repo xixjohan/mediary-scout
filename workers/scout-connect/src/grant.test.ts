@@ -19,10 +19,68 @@ function deps(db: ConnectDb, over: Partial<GrantDeps> = {}): GrantDeps {
 }
 
 describe("grantEntitlement", () => {
+  it("persists an Alipay grant under provider-neutral idempotency fields", async () => {
+    const db = createMemoryConnectDb();
+    const result = await grantEntitlement(
+      {
+        email: "alipay@example.com",
+        months: 3,
+        source: "alipay",
+        paymentProvider: "alipay",
+        paymentTransactionId: "MC202608160001",
+      },
+      deps(db),
+    );
+
+    expect((await db.listEntitlements(result.accountId))[0]).toMatchObject({
+      account_id: result.accountId,
+      source: "alipay",
+      months: 3,
+      paddle_transaction_id: null,
+    });
+  });
+
+  it("binds a paid grant to the existing account and rejects an email mismatch", async () => {
+    const db = createMemoryConnectDb();
+    await db.insertAccount({
+      id: "act_paid",
+      email: "paid@example.com",
+      paddle_customer_id: null,
+      created_at: NOW,
+      last_login_at: null,
+    });
+    const d = deps(db);
+    await expect(
+      grantEntitlement(
+        {
+          accountId: "act_paid",
+          email: "attacker@example.com",
+          months: 3,
+          source: "alipay",
+          paymentProvider: "alipay",
+          paymentTransactionId: "MC-mismatch",
+        },
+        d,
+      ),
+    ).rejects.toThrow(/email mismatch/i);
+    const applied = await grantEntitlement(
+      {
+        accountId: "act_paid",
+        email: "PAID@example.com",
+        months: 3,
+        source: "alipay",
+        paymentProvider: "alipay",
+        paymentTransactionId: "MC-bound",
+      },
+      d,
+    );
+    expect(applied.accountId).toBe("act_paid");
+  });
+
   it("首次充值:建账号 + 从当下起算", async () => {
     const db = createMemoryConnectDb();
     const r = await grantEntitlement(
-      { email: "a@example.com", months: 12, source: "paddle", paddleTransactionId: "txn_1" },
+      { email: "a@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "txn_1" },
       deps(db),
     );
     expect(r.applied).toBe(true);
@@ -36,11 +94,11 @@ describe("grantEntitlement", () => {
     const db = createMemoryConnectDb();
     const d = deps(db);
     await grantEntitlement(
-      { email: "b@example.com", months: 3, source: "paddle", paddleTransactionId: "t1" },
+      { email: "b@example.com", months: 3, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t1" },
       d,
     );
     const second = await grantEntitlement(
-      { email: "b@example.com", months: 3, source: "paddle", paddleTransactionId: "t2" },
+      { email: "b@example.com", months: 3, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t2" },
       d,
     );
     // 2026-10-29 再加 3 个月 → 2027-01-29,而不是从当下起算的 2026-10-29
@@ -62,11 +120,14 @@ describe("grantEntitlement", () => {
       expires_at: "2026-01-01T00:00:00.000Z", // 已过期
       source: "manual",
       paddle_transaction_id: null,
+      payment_provider: null,
+      payment_transaction_id: null,
+      refunded_at: null,
       months: 12,
       created_at: "2025-01-01T00:00:00.000Z",
     });
     const r = await grantEntitlement(
-      { email: "c@example.com", months: 3, source: "paddle", paddleTransactionId: "t3" },
+      { email: "c@example.com", months: 3, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t3" },
       d,
     );
     expect(r.expiresAt).toBe("2026-10-29T12:00:00.000Z"); // 从 NOW 起算
@@ -77,12 +138,12 @@ describe("grantEntitlement", () => {
     const db = createMemoryConnectDb();
     const d = deps(db);
     const first = await grantEntitlement(
-      { email: "d@example.com", months: 12, source: "paddle", paddleTransactionId: "txn_dup" },
+      { email: "d@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "txn_dup" },
       d,
     );
     expect(first.applied).toBe(true);
     const replay = await grantEntitlement(
-      { email: "d@example.com", months: 12, source: "paddle", paddleTransactionId: "txn_dup" },
+      { email: "d@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "txn_dup" },
       d,
     );
     expect(replay.applied, "重投必须被识别为幂等").toBe(false);
@@ -94,25 +155,45 @@ describe("grantEntitlement", () => {
     const db = createMemoryConnectDb();
     const d = deps(db);
     const first = await grantEntitlement(
-      { email: "e@example.com", months: 12, source: "paddle", paddleTransactionId: "txn_e" },
+      { email: "e@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "txn_e" },
       d,
     );
     const replay = await grantEntitlement(
-      { email: "e@example.com", months: 12, source: "paddle", paddleTransactionId: "txn_e" },
+      { email: "e@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "txn_e" },
       d,
     );
     expect(replay.expiresAt).toBe(first.expiresAt);
+  });
+
+  it("已退款交易重投不返回假设再次入账的未来到期时刻", async () => {
+    const db = createMemoryConnectDb();
+    const d = deps(db);
+    const input = {
+      email: "refunded-replay@example.com",
+      months: 3,
+      source: "alipay" as const,
+      paymentProvider: "alipay" as const,
+      paymentTransactionId: "MC_REFUNDED_REPLAY",
+    };
+    const first = await grantEntitlement(input, d);
+    expect(first.expiresAt).not.toBe(NOW);
+    expect(await db.markEntitlementRefunded("alipay", input.paymentTransactionId, NOW)).toBe(true);
+
+    const replay = await grantEntitlement(input, d);
+
+    expect(replay.applied).toBe(false);
+    expect(replay.expiresAt).toBe(NOW);
   });
 
   it("邮箱大小写与空白归一(同一人不该建两个账号)", async () => {
     const db = createMemoryConnectDb();
     const d = deps(db);
     await grantEntitlement(
-      { email: "  MiXeD@Example.COM  ", months: 3, source: "paddle", paddleTransactionId: "t5" },
+      { email: "  MiXeD@Example.COM  ", months: 3, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t5" },
       d,
     );
     await grantEntitlement(
-      { email: "mixed@example.com", months: 3, source: "paddle", paddleTransactionId: "t6" },
+      { email: "mixed@example.com", months: 3, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t6" },
       d,
     );
     const acct = await db.getAccountByEmail("mixed@example.com");
@@ -124,7 +205,7 @@ describe("grantEntitlement", () => {
   it("手工授予(admin)不带 paddle_transaction_id 也能工作", async () => {
     const db = createMemoryConnectDb();
     const r = await grantEntitlement(
-      { email: "f@example.com", months: 6, source: "manual", paddleTransactionId: null },
+      { email: "f@example.com", months: 6, source: "manual", paymentProvider: null, paymentTransactionId: null },
       deps(db),
     );
     expect(r.applied).toBe(true);
@@ -137,11 +218,11 @@ describe("grantEntitlement", () => {
     const db = createMemoryConnectDb();
     const d = deps(db);
     await grantEntitlement(
-      { email: "g@example.com", months: 1, source: "manual", paddleTransactionId: null },
+      { email: "g@example.com", months: 1, source: "manual", paymentProvider: null, paymentTransactionId: null },
       d,
     );
     const second = await grantEntitlement(
-      { email: "g@example.com", months: 1, source: "manual", paddleTransactionId: null },
+      { email: "g@example.com", months: 1, source: "manual", paymentProvider: null, paymentTransactionId: null },
       d,
     );
     expect(second.applied).toBe(true);
@@ -176,11 +257,11 @@ describe("并发安全:lost update", () => {
     const d = deps(db);
     await Promise.all([
       grantEntitlement(
-        { email: "race@example.com", months: 12, source: "paddle", paddleTransactionId: "t1" },
+        { email: "race@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t1" },
         d,
       ),
       grantEntitlement(
-        { email: "race@example.com", months: 12, source: "paddle", paddleTransactionId: "t2" },
+        { email: "race@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t2" },
         d,
       ),
     ]);
@@ -199,7 +280,7 @@ describe("并发安全:lost update", () => {
     await Promise.all(
       ["a", "b", "c"].map((t) =>
         grantEntitlement(
-          { email: "race3@example.com", months: 12, source: "paddle", paddleTransactionId: t },
+          { email: "race3@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: t },
           d,
         ),
       ),
@@ -215,11 +296,11 @@ describe("并发安全:lost update", () => {
     const db = createMemoryConnectDb();
     const d = deps(db);
     await grantEntitlement(
-      { email: "seq@example.com", months: 3, source: "paddle", paddleTransactionId: "s1" },
+      { email: "seq@example.com", months: 3, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "s1" },
       d,
     );
     const second = await grantEntitlement(
-      { email: "seq@example.com", months: 3, source: "paddle", paddleTransactionId: "s2" },
+      { email: "seq@example.com", months: 3, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "s2" },
       d,
     );
     expect(second.expiresAt).toBe("2027-01-29T12:00:00.000Z");
@@ -234,7 +315,7 @@ describe("重投自愈:上次并发收敛失败留下的错值要能修正", () 
     const db = createMemoryConnectDb();
     const d = deps(db);
     await grantEntitlement(
-      { email: "heal@example.com", months: 12, source: "paddle", paddleTransactionId: "t1" },
+      { email: "heal@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t1" },
       d,
     );
     const acct = await db.getAccountByEmail("heal@example.com");
@@ -245,6 +326,9 @@ describe("重投自愈:上次并发收敛失败留下的错值要能修正", () 
       expires_at: "2027-07-29T12:00:00.000Z",
       source: "paddle",
       paddle_transaction_id: "t2",
+      payment_provider: "paddle",
+      payment_transaction_id: "t2",
+      refunded_at: null,
       months: 12,
       created_at: NOW,
     });
@@ -252,7 +336,7 @@ describe("重投自愈:上次并发收敛失败留下的错值要能修正", () 
     expect(before, "前置条件:错值存在").toBe("2027-07-29T12:00:00.000Z");
 
     const replay = await grantEntitlement(
-      { email: "heal@example.com", months: 12, source: "paddle", paddleTransactionId: "t2" },
+      { email: "heal@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "t2" },
       d,
     );
     expect(replay.applied, "仍是幂等命中").toBe(false);
@@ -273,12 +357,12 @@ describe("重投自愈:上次并发收敛失败留下的错值要能修正", () 
     };
     const d = deps(counted);
     await grantEntitlement(
-      { email: "noop@example.com", months: 12, source: "paddle", paddleTransactionId: "n1" },
+      { email: "noop@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "n1" },
       d,
     );
     const baseline = updates;
     await grantEntitlement(
-      { email: "noop@example.com", months: 12, source: "paddle", paddleTransactionId: "n1" },
+      { email: "noop@example.com", months: 12, source: "paddle", paymentProvider: "paddle", paymentTransactionId: "n1" },
       d,
     );
     expect(updates, "无需修正时不该写").toBe(baseline);
@@ -289,12 +373,12 @@ describe("重投自愈:上次并发收敛失败留下的错值要能修正", () 
     const db = createMemoryConnectDb();
     const d = deps(db);
     const r1 = await grantEntitlement(
-      { email: "man@example.com", months: 1, source: "manual", paddleTransactionId: null },
+      { email: "man@example.com", months: 1, source: "manual", paymentProvider: null, paymentTransactionId: null },
       d,
     );
     expect(r1.applied).toBe(true);
     const r2 = await grantEntitlement(
-      { email: "man@example.com", months: 1, source: "manual", paddleTransactionId: null },
+      { email: "man@example.com", months: 1, source: "manual", paymentProvider: null, paymentTransactionId: null },
       d,
     );
     expect(r2.applied, "null txn id 不参与幂等,应真入账").toBe(true);
