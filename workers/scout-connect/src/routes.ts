@@ -352,7 +352,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     return createAlipayCheckout(request, deps);
   }
   if (method === "GET" && path === "/alipay/checkout") {
-    return openAlipayCheckout(url, deps, request);
+    return openAlipayCheckout(url, deps);
   }
   const alipayStatusMatch = path.match(/^\/api\/alipay\/orders\/([^/]+)\/status$/);
   if (method === "GET" && alipayStatusMatch !== null) {
@@ -921,16 +921,6 @@ async function adminAlipayRefundQuery(requestNo: string, deps: RouteDeps): Promi
 
 const ALIPAY_CHECKOUT_TTL_MS = 20 * 60_000;
 
-/**
- * Detect if the request comes from a mobile browser based on User-Agent.
- * Mobile browsers should use WAP pay, desktop browsers use page pay.
- */
-function isMobileBrowser(userAgent: string): boolean {
-  const ua = userAgent.toLowerCase();
-  // Match common mobile indicators: Android, iPhone, iPad, iPod, Windows Phone, BlackBerry, etc.
-  return /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini|mobile|phone/i.test(ua);
-}
-
 function randomHex(bytes: number): string {
   const buffer = crypto.getRandomValues(new Uint8Array(bytes));
   return Array.from(buffer, (value) => value.toString(16).padStart(2, "0")).join("");
@@ -997,7 +987,7 @@ async function createAlipayCheckout(request: Request, deps: RouteDeps): Promise<
 }
 
 /** Resolve the bearer checkout capability and emit a signed Alipay page-pay form. */
-async function openAlipayCheckout(url: URL, deps: RouteDeps, request: Request): Promise<Response> {
+async function openAlipayCheckout(url: URL, deps: RouteDeps): Promise<Response> {
   const checkoutToken = url.searchParams.get("checkout") ?? "";
   if (checkoutToken === "" || checkoutToken.length > 256) {
     return json({ error: "not found" }, 404, { noStore: true });
@@ -1028,11 +1018,6 @@ async function openAlipayCheckout(url: URL, deps: RouteDeps, request: Request): 
   const root = deps.rootDomain.trim().toLowerCase();
   const sandbox = deps.alipayEnvironment === "sandbox";
   const origin = sandbox ? url.origin : `https://${root}`;
-
-  // Detect mobile browser and use WAP pay instead of page pay
-  const userAgent = request.headers.get("user-agent") ?? "";
-  const useWapPay = isMobileBrowser(userAgent);
-
   try {
     const form = await api.pagePayForm({
       outTradeNo: order.out_trade_no,
@@ -1042,7 +1027,6 @@ async function openAlipayCheckout(url: URL, deps: RouteDeps, request: Request): 
       // and use the owned status page's signed trade.query compensation instead.
       ...(sandbox ? {} : { notifyUrl: `${origin}/api/alipay/notify` }),
       returnUrl: `${origin}/payment-success?order=${encodeURIComponent(order.id)}`,
-      useWapPay,
     });
     if (order.status === "created") {
       await deps.db.compareAndSetPaymentOrder(

@@ -198,7 +198,6 @@ describe("GET /alipay/checkout", () => {
       subject: "Mediary Connect 年度",
       notifyUrl: "https://mediaryconnect.app/api/alipay/notify",
       returnUrl: `https://mediaryconnect.app/payment-success?order=${created.order.id}`,
-      useWapPay: false,
     });
     expect(pagePayCalls[1]?.outTradeNo).toBe(pagePayCalls[0]?.outTradeNo);
     expect((await db.getPaymentOrderById(created.order.id))?.status).toBe("form_issued");
@@ -260,7 +259,6 @@ describe("GET /alipay/checkout", () => {
       totalAmount: "45.00",
       subject: "Mediary Connect 季度",
       returnUrl: `http://localhost:8787/payment-success?order=${created.order.id}`,
-      useWapPay: false,
     });
   });
 });

@@ -17,8 +17,6 @@ export interface PagePayInput {
   subject: string;
   notifyUrl?: string;
   returnUrl: string;
-  /** Whether to use WAP pay (mobile browser) instead of page pay (desktop). */
-  useWapPay?: boolean;
 }
 
 export interface AlipayGatewayResult {
@@ -228,15 +226,11 @@ export async function createAlipayApi(options: AlipayApiOptions): Promise<Alipay
 
   return {
     async pagePayForm(input) {
-      // Use WAP pay for mobile browsers, page pay for desktop
-      const method = input.useWapPay ? "alipay.trade.wap.pay" : "alipay.trade.page.pay";
-      const productCode = input.useWapPay ? "QUICK_WAP_WAY" : "FAST_INSTANT_TRADE_PAY";
-
-      const params = commonParams(method, {
+      const params = commonParams("alipay.trade.page.pay", {
         out_trade_no: input.outTradeNo,
         total_amount: input.totalAmount,
         subject: input.subject,
-        product_code: productCode,
+        product_code: "FAST_INSTANT_TRADE_PAY",
         timeout_express: "20m",
       });
       if (input.notifyUrl?.trim()) params.notify_url = input.notifyUrl.trim();
