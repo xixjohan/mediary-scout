@@ -67,6 +67,58 @@ describe("getTrackedSeasonStatusView", () => {
     ]);
   });
 
+  // 123 醒来 bug (2026-09-04): the same season tracked on two drives. The detail
+  // page must show THAT drive's episodes — passing only accountId drops the
+  // storage filter and the unscoped lookup returns an arbitrary drive's copy
+  // (the 115 copy at 0/22) while the library card correctly said 21/22 for 123.
+  // Which copy "wins" unscoped is repository-specific: Postgres takes the first
+  // row, InMemoryWorkflowRepository takes the latest run across drives.
+  it("scopes the view to the requested drive when the season is tracked on multiple drives", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = fixture();
+    const emptyEpisodes = createEpisodeStates({
+      trackedSeasonId: season.id,
+      seasonNumber: season.seasonNumber,
+      totalEpisodes: season.totalEpisodes,
+      latestAiredEpisode: season.latestAiredEpisode,
+    });
+    const snapshot = (storageId: string, runId: string, startedAt: string, obtained: boolean) => ({
+      accountId: "acct_1",
+      connectedStorageId: storageId,
+      title,
+      season,
+      workflowRun: { ...workflowRun(season), id: runId, startedAt },
+      episodes: emptyEpisodes.map((episode) =>
+        episode.airStatus === "aired" ? { ...episode, obtained } : episode,
+      ),
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    // InMemoryWorkflowRepository picks the latest run across drives when
+    // unscoped; give the drive with NOTHING the more recent run so an unscoped
+    // read would report 0 obtained — the scoped reads below must not.
+    await repository.saveWorkflowRunSnapshot(snapshot("cs_pan123", "run_123", "2026-09-01T00:00:00.000Z", true));
+    await repository.saveWorkflowRunSnapshot(snapshot("cs_115", "run_115", "2026-09-02T00:00:00.000Z", false));
+
+    const view123 = await getTrackedSeasonStatusView({
+      repository,
+      trackedSeasonId: season.id,
+      scope: { accountId: "acct_1", connectedStorageId: "cs_pan123" },
+    });
+    expect(view123?.obtainedCount).toBe(2);
+    expect(view123?.missingAiredCount).toBe(0);
+
+    const view115 = await getTrackedSeasonStatusView({
+      repository,
+      trackedSeasonId: season.id,
+      scope: { accountId: "acct_1", connectedStorageId: "cs_115" },
+    });
+    expect(view115?.obtainedCount).toBe(0);
+    expect(view115?.missingAiredCount).toBe(2);
+  });
+
   it("returns null when the tracked season does not exist", async () => {
     const view = await getTrackedSeasonStatusView({
       repository: new InMemoryWorkflowRepository(),
