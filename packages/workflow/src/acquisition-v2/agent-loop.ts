@@ -30,6 +30,28 @@ async function asEvidence(run: () => Promise<unknown>): Promise<unknown> {
   }
 }
 
+/** Peak single-request input usage across every step in one generateText turn. */
+function peakInputTokensOf(turn: unknown): number | undefined {
+  if (!turn || typeof turn !== "object") return undefined;
+  const record = turn as {
+    usage?: { inputTokens?: unknown };
+    steps?: unknown;
+  };
+  const values: number[] = [];
+  const add = (value: unknown) => {
+    if (typeof value === "number" && Number.isFinite(value)) values.push(value);
+  };
+  add(record.usage?.inputTokens);
+  if (Array.isArray(record.steps)) {
+    for (const step of record.steps) {
+      if (step && typeof step === "object") {
+        add((step as { usage?: { inputTokens?: unknown } }).usage?.inputTokens);
+      }
+    }
+  }
+  return values.length > 0 ? Math.max(...values) : undefined;
+}
+
 /**
  * Opt-in observability (MEDIA_TRACK_AGENT_LOG=1): log every sandbox tool call the
  * agent makes — the keyword it searches, the candidate it transfers, what it
@@ -286,46 +308,99 @@ export async function runAcquisitionAgent(
       : {}),
   });
   const maxSteps = request.maxSteps ?? DEFAULT_MAX_STEPS;
-  const result = await generateText({
-    model: request.model,
-    system: request.system,
-    prompt: request.prompt,
-    tools,
-    // Five stops: step cap (cost/runaway), repetition (agent crazy), systemic
-    // transfer block (account quota/auth — every candidate will fail, stop grinding),
-    // successful reportNoCoverage (terminal declaration — no second report), and
-    // successful finish (the symmetric terminal declaration — 复联4 live showed
-    // finish ×3 tail steps without a mechanical stop). The stops are independent
-    // and OR'd — each fires under disjoint conditions, so ordering is not semantic.
-    stopWhen: [
-      stepCountIs(maxSteps),
-      buildRepetitionStop(),
-      buildSystemicBlockStop(),
-      buildNoCoverageStop(),
-      buildFinishStop(),
-    ],
-    // Last ~10 steps before the cap: inject a calm "wrap up + clean staging" nudge
-    // so a step-capped run doesn't leave the 一人之下-style half-done mess.
-    prepareStep: ({ stepNumber }) => {
-      const spent = request.apiCallCount?.();
-      const system = prepareStepSystemOverride({
-        stepNumber,
-        maxSteps,
-        baseSystem: request.system,
-        ...(typeof spent === "number" ? { apiCallsSpent: spent } : {}),
-        ...(typeof request.budgetSoftAt === "number" ? { budgetSoftAt: request.budgetSoftAt } : {}),
-      });
-      return system ? { system } : undefined;
-    },
-  });
-  const steps = result.steps?.length ?? 0;
+  const generateAgentTurn = (system: string, prompt: string, toolSet: ToolSet, stepLimit: number) =>
+    generateText({
+      model: request.model,
+      system,
+      prompt,
+      tools: toolSet,
+      // Five stops: step cap (cost/runaway), repetition (agent crazy), systemic
+      // transfer block (account quota/auth — every candidate will fail, stop grinding),
+      // successful reportNoCoverage (terminal declaration — no second report), and
+      // successful finish (the symmetric terminal declaration — 复联4 live showed
+      // finish ×3 tail steps without a mechanical stop). The stops are independent
+      // and OR'd — each fires under disjoint conditions, so ordering is not semantic.
+      stopWhen: [
+        stepCountIs(stepLimit),
+        buildRepetitionStop(),
+        buildSystemicBlockStop(),
+        buildNoCoverageStop(),
+        buildFinishStop(),
+      ],
+      // Last ~10 steps before the cap: inject a calm "wrap up + clean staging" nudge
+      // so a step-capped run doesn't leave the 一人之下-style half-done mess.
+      prepareStep: ({ stepNumber }) => {
+        const spent = request.apiCallCount?.();
+        const overriddenSystem = prepareStepSystemOverride({
+          stepNumber,
+          maxSteps: stepLimit,
+          baseSystem: system,
+          ...(typeof spent === "number" ? { apiCallsSpent: spent } : {}),
+          ...(typeof request.budgetSoftAt === "number" ? { budgetSoftAt: request.budgetSoftAt } : {}),
+        });
+        return overriddenSystem ? { system: overriddenSystem } : undefined;
+      },
+    });
+
+  let result = await generateAgentTurn(request.system, request.prompt, tools, maxSteps);
+  let steps = Math.max(result.steps?.length ?? 0, result.finishReason === "content-filter" ? 1 : 0);
+  let totalUsageTokens = result.totalUsage?.totalTokens;
+  let peakInputTokens = peakInputTokensOf(result);
+  // A provider content filter can terminate a model response after it has already
+  // transferred a resource and inspected the landing point (the Guangya movie
+  // incident). One fresh turn gets the live sandbox state and a chance to perform
+  // the mandatory flatten/mark/finish sequence. Never loop this recovery: a second
+  // content filter remains an honest incomplete run rather than burning calls.
+  if (result.finishReason === "content-filter") {
+    const remainingSteps = maxSteps - steps;
+    if (remainingSteps > 0) {
+      // Recovery may inspect, organize, mark, finish, or honestly report no
+      // coverage. Search and transfer are deliberately absent: the current
+      // sandbox is the evidence, and a retry must not duplicate side effects.
+      const recoveryToolNames = new Set([
+        "readSkill",
+        "inspectStaging",
+        "inspectTargetDir",
+        "moveToSeason",
+        "deleteFiles",
+        "flattenMovie",
+        "renameSubtitle",
+        "markObtained",
+        "finish",
+        "reportNoCoverage",
+      ]);
+      if (!request.movie) recoveryToolNames.add("discardStaging");
+      const recoveryTools = Object.fromEntries(
+        Object.entries(tools).filter(([name]) => recoveryToolNames.has(name)),
+      ) as ToolSet;
+      const recoveryResult = await generateAgentTurn(
+        `${request.system}\n\n【恢复】上一次回答被模型内容过滤中断。请从当前 sandbox 的真实状态继续：只使用当前状态完成观察、整理、核对、markObtained 和 finish；不要重新搜索或重复转存。若没有可用落盘，按证据如实收尾。`,
+        `${request.prompt}\n\nContinue the interrupted acquisition from the current sandbox state and reach an honest terminal action. Read the relevant skill section first. Do not search or transfer again; use only the current sandbox evidence and the recovery tools to finish the original task.`,
+        recoveryTools,
+        remainingSteps,
+      );
+      result = recoveryResult;
+      steps += Math.max(
+        recoveryResult.steps?.length ?? 0,
+        recoveryResult.finishReason === "content-filter" ? 1 : 0,
+      );
+      const recoveryTokens = recoveryResult.totalUsage?.totalTokens;
+      if (typeof recoveryTokens === "number") {
+        totalUsageTokens = (totalUsageTokens ?? 0) + recoveryTokens;
+      }
+      const recoveryPeak = peakInputTokensOf(recoveryResult);
+      if (typeof recoveryPeak === "number") {
+        peakInputTokens = Math.max(peakInputTokens ?? 0, recoveryPeak);
+      }
+    }
+  }
   if (process.env.MEDIA_TRACK_AGENT_LOG === "1") {
-    const total = result.totalUsage?.totalTokens;
+    const total = totalUsageTokens;
     const perStep = total ? ` ~${Math.round(total / Math.max(steps, 1))}/step` : "";
-    // peakContext = the LAST step's input — the single-request window usage that
-    // decides whether context condensation/compact is ever needed (vs the 1M
-    // window). totalTokens above is the cumulative BILLED count, not window usage.
-    const peak = result.usage?.inputTokens;
+    // peakContext = the maximum observed step input — the largest single-request
+    // window usage that decides whether context condensation/compact is ever needed
+    // (vs the 1M window). totalTokens above is the cumulative BILLED count, not window usage.
+    const peak = peakInputTokens;
     const peakStr = peak ? ` peakContext=${peak}` : "";
     console.log(
       `[agent] loop done: steps=${steps} tokens=${total ?? "n/a"}${perStep}${peakStr} finish=${result.finishReason}`,
