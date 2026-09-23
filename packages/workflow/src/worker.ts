@@ -18,6 +18,7 @@ import {
   requeueWorkflowRunForRetry,
 } from "./repository.js";
 import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js";
+import type { JevJudge } from "./jev-judge.js";
 import { stagingLeakAuditEvent, stagingLeaksOf } from "./acquisition-v2/directory-lifecycle.js";
 import { describeAgentRunError, summarizeErrorForNotification } from "./agent-error.js";
 import { formatReportPushText } from "./notification-report.js";
@@ -88,6 +89,7 @@ async function resolveWorkerDeps(
   qualityPreference: "high" | "medium" | undefined;
   storageProvider: string | undefined;
   assrtToken: string | undefined;
+  jevJudge: JevJudge | undefined;
   storageParentDirectoryId: string | undefined;
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
@@ -101,6 +103,10 @@ async function resolveWorkerDeps(
     qualityPreference: ctx.qualityPreference ?? base.qualityPreference,
     storageProvider: ctx.storageProvider ?? base.storageProvider,
     assrtToken: ctx.assrtToken ?? base.assrtToken,
+    // Jev is per-account opt-in: with a resolver, its answer is authoritative even
+    // when it has no judge — an account that never configured (or switched off) the
+    // prefilter must not inherit a judge that happens to ride in the base deps.
+    jevJudge: resolve ? ctx.jevJudge : base.jevJudge,
     storageParentDirectoryId:
       ctx.storageParentDirectoryId ?? base.storageParentDirectoryId,
     animeStorageParentDirectoryId:
@@ -138,6 +144,8 @@ export interface AccountWorkerContext {
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
   assrtToken?: string;
+  /** Optional Jev candidate prefilter, resolved per account from Settings. */
+  jevJudge?: JevJudge;
   storageParentDirectoryId?: string;
   animeStorageParentDirectoryId?: string;
   moviesParentDirectoryId?: string;
@@ -344,6 +352,9 @@ export async function runQueuedType2Workflow(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      ...(deps.jevJudge === undefined
+        ? {}
+        : { jevJudge: deps.jevJudge }),
       // finishedAt is stamped post-run inside the persist step (see runner-v2),
       // so it reflects actual completion, not the claim time.
       workflowRun: {
@@ -545,6 +556,9 @@ export async function runScheduledType3Monitoring(input: {
         ...(deps.assrtToken === undefined
           ? {}
           : { assrtToken: deps.assrtToken }),
+        ...(deps.jevJudge === undefined
+          ? {}
+          : { jevJudge: deps.jevJudge }),
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
@@ -623,6 +637,7 @@ async function patrolMovie(args: {
     qualityPreference: "high" | "medium" | undefined;
     storageProvider: string | undefined;
     assrtToken: string | undefined;
+    jevJudge: JevJudge | undefined;
     moviesParentDirectoryId: string | undefined;
   };
   state: {
@@ -710,6 +725,9 @@ async function patrolMovie(args: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      ...(deps.jevJudge === undefined
+        ? {}
+        : { jevJudge: deps.jevJudge }),
       workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
       now,
     });
@@ -847,6 +865,9 @@ export async function runQueuedMovieAcquisition(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      ...(deps.jevJudge === undefined
+        ? {}
+        : { jevJudge: deps.jevJudge }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,
@@ -947,6 +968,9 @@ export async function runQueuedSeriesInitialization(input: {
       ...(deps.assrtToken === undefined
         ? {}
         : { assrtToken: deps.assrtToken }),
+      ...(deps.jevJudge === undefined
+        ? {}
+        : { jevJudge: deps.jevJudge }),
       workflowRun: {
         id: claimed.workflowRun.id,
         startedAt: claimed.workflowRun.startedAt,

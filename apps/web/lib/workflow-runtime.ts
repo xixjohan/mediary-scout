@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { cache } from "react";
 import {
   checkLoginAllowed,
@@ -12,6 +12,9 @@ import {
   createBootstrapPan115CookieStorageExecutor,
   CompositeResourceProvider,
   ProwlarrResourceProvider,
+  createJevJudge,
+  DEFAULT_JEV_BASE_URL,
+  type JevJudge,
   createTmdbMetadataProvider,
   TMDB_DIRECT_BASE_URL,
   type TmdbAccess,
@@ -536,8 +539,14 @@ export async function resolveSessionAccountId(signedCookie: string): Promise<str
  * has no per-key account_settings, so it reads exactly the global values it
  * always did — single-user behavior is unchanged.
  */
-export function getAccountScopedSettings(accountId: string): { getSetting(key: string): Promise<string | null> } {
-  const repository = getWorkflowRepository();
+export function getAccountScopedSettings(
+  accountId: string,
+  /** Injectable for callers that already hold the repository (a server action
+   *  that also writes through it, a test with a swapped repo). Defaults to the
+   *  process-wide one, so every existing call site is unchanged. */
+  repo?: Pick<WorkflowRepository, "getAccountSetting" | "getSetting">,
+): { getSetting(key: string): Promise<string | null>; getOwnSetting(key: string): Promise<string | null> } {
+  const repository = repo ?? getWorkflowRepository();
   return {
     async getSetting(key: string): Promise<string | null> {
       const own = await repository.getAccountSetting(accountId, key);
@@ -545,6 +554,12 @@ export function getAccountScopedSettings(accountId: string): { getSetting(key: s
         return own;
       }
       return repository.getSetting(key);
+    },
+    // The account's own row only, no fallback: for the few readers that must know
+    // WHERE a value came from (getJevConfig: a URL the account chose may not carry a
+    // key the account borrowed from the instance).
+    async getOwnSetting(key: string): Promise<string | null> {
+      return repository.getAccountSetting(accountId, key);
     },
   };
 }
@@ -881,7 +896,7 @@ export async function runStartupMigrations(): Promise<void> {
  * shared one. model/resourceProvider/language stay global (shared author LLM/
  * PanSou) for v1 — per-account LLM/Prowlarr is a later refinement.
  */
-function buildAccountContextResolver(): ResolveAccountWorkerContext {
+export function buildAccountContextResolver(): ResolveAccountWorkerContext {
   return async (accountId: string, connectedStorageId?: string | null) => {
     // Per-account settings (account_settings → global → env) drive the agent
     // model, resource providers, language and quality — so each user's
@@ -897,12 +912,17 @@ function buildAccountContextResolver(): ResolveAccountWorkerContext {
     const driveProvider =
       (await getAccountStorageCredentials(accountId, connectedStorageId))?.provider ?? "pan115";
     const assrtToken = await getAssrtToken(scoped);
+    // Per-account: undefined unless THIS account set a key, enabled the prefilter
+    // and the save-time probe passed. Undefined → the orchestrator keeps the bare
+    // provider, so an unconfigured account costs exactly zero Jev calls.
+    const jevJudge = await resolveJevJudge(scoped);
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
       resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
       storageProvider: driveProvider,
       model,
       ...(assrtToken === undefined ? {} : { assrtToken }),
+      ...(jevJudge === undefined ? {} : { jevJudge }),
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
       storageParentDirectoryId: parents.tv,
@@ -1166,6 +1186,123 @@ export async function getProwlarrConfig(
     baseURL: await read(PROWLARR_BASE_URL_SETTING_KEY, "PROWLARR_BASE_URL"),
     apiKey: await read(PROWLARR_API_KEY_SETTING_KEY, "PROWLARR_API_KEY"),
   };
+}
+
+export const JEV_API_KEY_SETTING_KEY = "jev_api_key";
+export const JEV_BASE_URL_SETTING_KEY = "jev_base_url";
+export const JEV_PREFILTER_ENABLED_SETTING_KEY = "jev_prefilter_enabled";
+/** "ok" after a successful save-time probe; anything else (absent/blank) = inactive.
+ *  A failed probe refuses the save and leaves the previous state untouched, so
+ *  "fail" is never written; runtime failures fail open per search (see
+ *  SnapshotPrefilter.status) and are not recorded here (future: health badge). */
+export const JEV_HEALTH_SETTING_KEY = "jev_health";
+/** Which (key, base URL) the "ok" above was probed with — see jevConfigFingerprint.
+ *  Written together with health by 保存并测试, blanked by 清除. */
+export const JEV_PROBED_FOR_SETTING_KEY = "jev_probed_for";
+
+/** A short one-way fingerprint of the probed config. The raw key never goes into it
+ *  in a recoverable form; 64 bits is plenty to notice a rotation. */
+export function jevConfigFingerprint(apiKey: string, baseUrl: string): string {
+  return createHash("sha256").update(`${apiKey.trim()}\n${baseUrl.trim()}`).digest("hex").slice(0, 16);
+}
+
+/** Where Jev settings are read from: a plain repository, or the account → global
+ *  facade (getAccountScopedSettings), whose getOwnSetting tells the account's own rows
+ *  apart from what it inherits. */
+export interface JevSettingsSource {
+  getSetting(key: string): Promise<string | null>;
+  getOwnSetting?(key: string): Promise<string | null>;
+}
+
+export interface JevConfig {
+  apiKey: string | undefined;
+  baseUrl: string;
+  enabled: boolean;
+  health: string | undefined;
+}
+
+/** Jev candidate prefilter settings (Settings → 资源提供商). DB wins over env;
+ *  blank = unset. `enabled` is true only for the exact string "1".
+ *  env JEV_API_KEY / JEV_BASE_URL only supply the key/url; activation still
+ *  requires a successful 保存并测试 (which writes enabled/health) — an env-only
+ *  deployment activates by saving the form with the key left blank. */
+export async function getJevConfig(
+  repository: JevSettingsSource,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<JevConfig> {
+  const read = async (key: string, envKey: string): Promise<string | undefined> => {
+    const dbValue = (await repository.getSetting(key))?.trim();
+    if (dbValue) return dbValue;
+    const envValue = env[envKey]?.trim();
+    return envValue ? envValue : undefined;
+  };
+  const apiKey = await read(JEV_API_KEY_SETTING_KEY, "JEV_API_KEY");
+  const baseUrl = (await read(JEV_BASE_URL_SETTING_KEY, "JEV_BASE_URL")) ?? DEFAULT_JEV_BASE_URL;
+  const health = (await repository.getSetting(JEV_HEALTH_SETTING_KEY))?.trim() || undefined;
+  // A verdict only covers the config it was probed with. When the effective key or URL
+  // has moved since (an env JEV_API_KEY rotated, an operator changed the global URL),
+  // "ok" would keep the prefilter "active" while every real search fails open without
+  // a word — so it reads as untested until the next 保存并测试. Rows saved before the
+  // fingerprint existed carry none and keep their verdict: an upgrade must not switch
+  // the prefilter off silently.
+  const probedFor = (await repository.getSetting(JEV_PROBED_FOR_SETTING_KEY))?.trim();
+  const stale = Boolean(probedFor) && probedFor !== jevConfigFingerprint(apiKey ?? "", baseUrl);
+  // A URL the account chose carries the account's OWN key or nothing. With the key
+  // inherited from the instance (global row or env), an account-level URL would send
+  // the shared key to a host of the account's choosing on every search (multi-user);
+  // it reads as untested instead, so no call is ever made. 保存并测试 refuses to
+  // create this state; this covers rows it did not write.
+  const ownUrl = (await repository.getOwnSetting?.(JEV_BASE_URL_SETTING_KEY))?.trim();
+  const ownKey = (await repository.getOwnSetting?.(JEV_API_KEY_SETTING_KEY))?.trim();
+  const borrowedKeyAtOwnUrl = Boolean(ownUrl) && !ownKey;
+  return {
+    apiKey,
+    baseUrl,
+    enabled: ((await repository.getSetting(JEV_PREFILTER_ENABLED_SETTING_KEY))?.trim() ?? "") === "1",
+    health: stale || borrowedKeyAtOwnUrl ? undefined : health,
+  };
+}
+
+/** The account's OWN Jev base-URL override, for the settings input. Deliberately NOT
+ *  read through the account → global facade: prefilling a global (or env) value would
+ *  be saved straight back into the account row on the next 保存, freezing today's
+ *  endpoint and shadowing later operator / env changes. Blank = no override. */
+export async function getJevBaseUrlOverride(
+  accountId: string,
+  repo: Pick<WorkflowRepository, "getAccountSetting"> = getWorkflowRepository(),
+): Promise<string> {
+  return (await repo.getAccountSetting(accountId, JEV_BASE_URL_SETTING_KEY))?.trim() ?? "";
+}
+
+/** Where a BLANK account Base URL resolves: the instance-wide (global) row → env
+ *  JEV_BASE_URL → the OpenRouter default. 保存并测试 probes this when the field is left
+ *  blank, and the settings input shows it as the placeholder — one rule, so the page
+ *  can never promise an endpoint other than the one that will be called. */
+export async function getJevInheritedBaseUrl(
+  repo: Pick<WorkflowRepository, "getSetting"> = getWorkflowRepository(),
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string> {
+  const global = (await repo.getSetting(JEV_BASE_URL_SETTING_KEY))?.trim();
+  if (global) return global;
+  return env.JEV_BASE_URL?.trim() || DEFAULT_JEV_BASE_URL;
+}
+
+/** The go/no-go, on an already-read config: key set AND enabled AND the last
+ *  probe succeeded. The settings page and resolveJevJudge share this one rule. */
+export function isJevPrefilterActive(cfg: JevConfig): boolean {
+  return Boolean(cfg.apiKey) && cfg.enabled && cfg.health === "ok";
+}
+
+/** The ONE place that decides whether the prefilter is active. Anything short of
+ *  key + enabled + healthy → undefined → the orchestrator uses the bare provider
+ *  (zero Jev calls, zero prompt change). */
+export async function resolveJevJudge(
+  repository: JevSettingsSource,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<JevJudge | undefined> {
+  const cfg = await getJevConfig(repository, env);
+  if (!isJevPrefilterActive(cfg) || !cfg.apiKey) return undefined;
+  return createJevJudge({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
 }
 
 export const DAILY_SWEEP_TIME_SETTING_KEY = "daily_sweep_time";

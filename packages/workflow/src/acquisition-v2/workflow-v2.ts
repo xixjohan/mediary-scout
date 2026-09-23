@@ -12,6 +12,7 @@ import type { DeadLinkStore } from "./dead-links.js";
 import { readLandedSize } from "./landed-size.js";
 import type { AgentToolEvent } from "./activity.js";
 import { runAcquisitionV2, type AcquisitionV2Outcome } from "./orchestrator.js";
+import type { JevJudge } from "../jev-judge.js";
 import { syncSeasonNeed } from "./sync-need.js";
 import type { SearchProfile } from "./search-profile.js";
 
@@ -58,6 +59,8 @@ export interface RunAcquisitionV2WorkflowRequest {
   storageProvider?: string;
   /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
   assrtToken?: string;
+  /** Optional Jev candidate prefilter (see orchestrator.jevJudge). */
+  jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
   onProgress?: (event: AgentToolEvent) => void;
 }
@@ -143,6 +146,7 @@ export async function runAcquisitionV2Workflow(
       kind: "tv",
       title: request.title.name,
       aliases: request.title.aliases,
+      year: request.title.year,
       seasons: request.seasons.map((season) => season.seasonNumber),
       missingEpisodes: before.missing,
       qualityPreference: request.qualityPreference,
@@ -158,6 +162,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.searchProfile === undefined ? {} : { searchProfile: request.searchProfile }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
+    ...(request.jevJudge === undefined ? {} : { jevJudge: request.jevJudge }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });

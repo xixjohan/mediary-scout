@@ -137,6 +137,35 @@ export interface ResourceSnapshot {
   /** 本次搜索各源的健康态。可选：老快照与不关心健康态的 provider 不带此字段。
    *  缺失时按 healthy 处理（向后兼容），因此新增判定必须显式检查而非假设存在。 */
   sourceHealth?: MergedSourceHealth;
+  /** Optional pre-agent filter trace (see SnapshotPrefilter). Absent when no filter ran. */
+  prefilter?: SnapshotPrefilter;
+}
+
+/** Result of an optional pre-agent candidate filter (today: Jev). Rides the jsonb
+ *  snapshot payload so dropped candidates stay auditable and future evals can be
+ *  replayed from production data. `skipped` = fail-open (nothing was dropped). */
+export interface SnapshotPrefilter {
+  provider: "jev";
+  model: string;
+  /** applied = filtered; skipped = not attempted (nothing judgeable); failed = attempted and errored → fail-open, nothing dropped. */
+  status: "applied" | "skipped" | "failed";
+  /** Why the filter was not applied: skipped (nothing judgeable) or failed (judge
+   *  error/timeout/circuit-open). Never contains secrets. */
+  reason?: string;
+  /** candidateId → P(refers to target) for every judged candidate, dropped ones included. */
+  scores: Record<string, number>;
+  dropped: Array<{ id: string; title: string; score: number }>;
+  /** Candidates the judge scored below dropBelow but that were KEPT because their title
+   *  contains the target title/alias verbatim (structural floor — the one unacceptable
+   *  failure is dropping the right pack). Only present when non-empty. */
+  floored?: Array<{ id: string; title: string; score: number }>;
+  thresholds: { dropBelow: number; uncertainBelow: number };
+  durationMs: number;
+  inputTokens?: number;
+  cost?: number;
+  /** Chunks the judge could not answer (their candidates were kept unjudged). Only
+   *  present when > 0; status stays "applied". */
+  failedChunks?: number;
 }
 
 export interface AgentDecision {

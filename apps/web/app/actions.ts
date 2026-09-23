@@ -713,6 +713,122 @@ export async function clearProwlarrConfigAction(): Promise<PushSettingsActionRes
   }
 }
 
+export async function saveJevConfigAction(input: {
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const {
+      getWorkflowRepository,
+      getCurrentAccountId,
+      getAccountScopedSettings,
+      getJevConfig,
+      getJevInheritedBaseUrl,
+      JEV_API_KEY_SETTING_KEY,
+      JEV_BASE_URL_SETTING_KEY,
+      JEV_HEALTH_SETTING_KEY,
+      JEV_PREFILTER_ENABLED_SETTING_KEY,
+      JEV_PROBED_FOR_SETTING_KEY,
+      jevConfigFingerprint,
+    } = await import("../lib/workflow-runtime");
+    const { probeJev, validateJevBaseUrlFormat } = await import("../lib/jev-probe");
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    // 留空 = 沿用当前**生效**的配置(account → 全局 → env) —— 与表单上「已设置」
+    // 占位符同一条规则。只读 account 行的话,一个存在于全局作用域或 env 的 key
+    // 会在这里被判成「没有 key」;而 enabled/health 只有这个 action 会写,于是
+    // 纯 env 部署永远激活不了。
+    const scoped = getAccountScopedSettings(accountId, repository);
+    const effective = await getJevConfig(scoped);
+    const typedKey = input.apiKey.trim();
+    const apiKey = typedKey || effective.apiKey || "";
+    if (!apiKey) return { success: false, message: "需要 Jev API Key（OpenRouter 的 sk-or-… 或 TypeSafe 官方控制台的 Key 都可以）。" };
+    const typedUrl = input.baseUrl.trim();
+    // 自定义地址只配**本账号自己的** Key。key 可能继承自实例(全局行或 env):允许
+    // 「只改地址」,等于让任一账号把共享 Key 发到它自己挑的服务器——探活发一次,之后
+    // 每次搜索都发(多用户)。读取端(getJevConfig)对这种状态同样视为未测、零调用。
+    const ownKey = typedKey || (await repository.getAccountSetting(accountId, JEV_API_KEY_SETTING_KEY))?.trim() || "";
+    if (typedUrl && !ownKey) {
+      return {
+        success: false,
+        message:
+          "自定义 Base URL 需要同时填你自己的 Key：当前用的是实例共享的 Jev Key，它只会发往实例配置的地址。清空 Base URL，或填上你自己的 Key 再保存。未保存。",
+      };
+    }
+    // 留空的 URL 会存成 ""(=去掉 account 覆盖),保存后真正生效的是 全局 → env → 默认。
+    // 探活必须打**那个**地址:沿用 effective.baseUrl 会打到即将被清掉的旧覆盖,
+    // 于是一个从没测过的端点被记成 healthy + enabled。
+    const baseUrl = typedUrl || (await getJevInheritedBaseUrl(repository));
+    // 先跑便宜的格式校验:漏写 scheme 的地址否则要耗满 8s 探活,再换回一句
+    // 含糊的「连不上」,而真正的问题是格式(与 PanSou 同一条规则)。只校验用户这次
+    // 输入的地址:继承来的(全局/env)是运营方的配置,不拿 http 规则去拦它。
+    if (typedUrl) {
+      const format = validateJevBaseUrlFormat(typedUrl);
+      if (!format.ok) return { success: false, message: format.message };
+    }
+    // 存之前真打一次:一个打不通的 key 被保存后,预筛会在每次搜索上静默 fail-open,
+    // 用户以为开了其实从没生效 —— 与 PanSou 自建源「活了 6 天」是同一种病。
+    const probe = await probeJev({ apiKey, baseUrl });
+    if (!probe.ok) return { success: false, message: probe.message };
+    // 只写用户**这次真输入**的内容:留空的 key 不重写(全局/env 的 key 不会被
+    // 复制进 account 行),留空的 URL 写 ""=无覆盖(同 Prowlarr),否则今天的默认
+    // 端点会被冻进 DB,日后改 env JEV_BASE_URL 也推不动它。
+    if (typedKey) await repository.setAccountSetting(accountId, JEV_API_KEY_SETTING_KEY, typedKey);
+    await repository.setAccountSetting(accountId, JEV_BASE_URL_SETTING_KEY, typedUrl);
+    await repository.setAccountSetting(accountId, JEV_HEALTH_SETTING_KEY, "ok");
+    // 记下这次探活的是哪套 key/URL:之后 env 换了 key 或端点挪了,读取端就把 "ok"
+    // 当成未测(见 getJevConfig),而不是顶着旧结论让每次搜索静默 fail-open。
+    await repository.setAccountSetting(accountId, JEV_PROBED_FOR_SETTING_KEY, jevConfigFingerprint(apiKey, baseUrl));
+    await repository.setAccountSetting(accountId, JEV_PREFILTER_ENABLED_SETTING_KEY, "1");
+    return { success: true, message: `已连通（${probe.model}）` };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function clearJevConfigAction(): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const {
+      getWorkflowRepository,
+      getCurrentAccountId,
+      JEV_API_KEY_SETTING_KEY,
+      JEV_BASE_URL_SETTING_KEY,
+      JEV_HEALTH_SETTING_KEY,
+      JEV_PREFILTER_ENABLED_SETTING_KEY,
+      JEV_PROBED_FOR_SETTING_KEY,
+    } = await import("../lib/workflow-runtime");
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    for (const key of [JEV_API_KEY_SETTING_KEY, JEV_BASE_URL_SETTING_KEY, JEV_HEALTH_SETTING_KEY, JEV_PROBED_FOR_SETTING_KEY]) {
+      await repository.setAccountSetting(accountId, key, "");
+    }
+    // A blank account row means "inherit" (account → global): blanking `enabled` too
+    // would hand this account back to an instance-wide config that the worker keeps
+    // using while the form says 未配置. 清除 means this account's prefilter is off.
+    await repository.setAccountSetting(accountId, JEV_PREFILTER_ENABLED_SETTING_KEY, "0");
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `清除失败：${String(error)}` };
+  }
+}
+
+export async function setJevPrefilterEnabledAction(enabled: boolean): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, JEV_PREFILTER_ENABLED_SETTING_KEY } = await import(
+      "../lib/workflow-runtime"
+    );
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    await repository.setAccountSetting(accountId, JEV_PREFILTER_ENABLED_SETTING_KEY, enabled ? "1" : "0");
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
 export async function testPushNotificationAction(
   settings: Record<string, string>,
 ): Promise<PushSettingsActionResult> {

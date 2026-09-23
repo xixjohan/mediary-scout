@@ -13,6 +13,7 @@ import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
 import type { AuditEvent } from "../domain.js";
 import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
+import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -49,6 +50,41 @@ function sourceHealthWarning(health: MergedSourceHealth | undefined): string | u
     case "unreachable":
       return `搜索源「${sources}」本次连不上,一个候选都没能取回。这是搜索源故障,不是这部片子没有资源:「没有资源」这个结论不被这份证据支持,不要 reportNoCoverage;请如实说明是搜索源不可用。`;
   }
+}
+
+/** Rows viewResourceSnapshot renders before it truncates. Shared with the presenter
+ *  so the legend is gated on exactly the rows that make it into the document. */
+const RAW_SNAPSHOT_ROW_LIMIT = 120;
+
+/** The tool-facing view of a snapshot: the ⚠ suffix rendered into each title (same as
+ *  the 活期文档), the raw score map stripped (the agent judges titles, not numbers).
+ *  Both read paths (searchResources and viewResourceSnapshot) go through here so the
+ *  agent can never see two different stories about the same candidates. */
+function presentSnapshotForAgent(snapshot: ResourceSnapshotV2, limit?: number): {
+  snapshot: ResourceSnapshotV2;
+  legend: string | undefined;
+  allDroppedWarning: string | undefined;
+} {
+  const scores = snapshot.prefilterScores;
+  if (!scores) return { snapshot, legend: undefined, allDroppedWarning: undefined };
+  // The legend explains a ⚠ the agent can SEE. viewResourceSnapshot truncates its
+  // rows, so a flag past the cut must not pull in a legend for a document that has
+  // no flag in it. `limit` undefined = every row is shown (searchResources).
+  let flagged = 0;
+  const candidates = snapshot.candidates.map((c, index) => {
+    const flag = jevUncertaintyFlag(scores[c.id]);
+    if (flag && (limit === undefined || index < limit)) flagged += 1;
+    return flag ? { ...c, title: `${c.title}${flag}` } : c;
+  });
+  // Both prefilter fields are stripped: the agent judges titles, not numbers, and the
+  // drop count only ever reaches it through the all-dropped warning below.
+  const { prefilterScores: _scores, prefilterDropped: _dropped, ...rest } = snapshot;
+  const dropped = snapshot.prefilterDropped ?? 0;
+  return {
+    snapshot: { ...rest, candidates },
+    legend: flagged > 0 ? JEV_UNCERTAIN_LEGEND : undefined,
+    allDroppedWarning: candidates.length === 0 && dropped > 0 ? jevAllDroppedWarning(dropped) : undefined,
+  };
 }
 
 /** Strip quality/subtitle tokens from a search keyword and fold the resulting
@@ -300,9 +336,14 @@ export class TaskSandbox {
       // 看到的还是一个「干净的空结果」,照样会去 reportNoCoverage。审计不重复
       // 记（search_dedup 已记录这次复搜）。
       const cachedHealthWarning = sourceHealthWarning(cachedSnapshot.sourceHealth);
-      const dedupWarnings = cachedHealthWarning ? [...tabooWarnings, cachedHealthWarning] : tabooWarnings;
+      const dedupWarnings = cachedHealthWarning ? [...tabooWarnings, cachedHealthWarning] : [...tabooWarnings];
+      // 复搜必须跟首搜讲同一个故事:同样的 ⚠ 标记、同样的说明。否则 agent 第二次
+      // 看到一份「干净」的快照,前一次的存疑提示就凭空消失了。
+      const cachedView = presentSnapshotForAgent(cachedSnapshot);
+      if (cachedView.legend) dedupWarnings.push(cachedView.legend);
+      if (cachedView.allDroppedWarning) dedupWarnings.push(cachedView.allDroppedWarning);
       return {
-        snapshot: cachedSnapshot,
+        snapshot: cachedView.snapshot,
         deduped: true,
         repeatNotice: this.repeatNotice(effectiveKeyword, count, cachedSnapshot.candidates.length),
         ...(notice ? { notice } : {}),
@@ -355,10 +396,16 @@ export class TaskSandbox {
         },
       });
     }
-    const searchWarnings = healthWarning ? [...tabooWarnings, healthWarning] : tabooWarnings;
+    const searchWarnings = healthWarning ? [...tabooWarnings, healthWarning] : [...tabooWarnings];
+
+    // 内部各表(snapshotByKeyword / observedSnapshots / rawSnapshot)保留原始快照;
+    // 只有交给 agent 的这一份带 ⚠ 标记且不含原始分数。
+    const view = presentSnapshotForAgent(snapshot);
+    if (view.legend) searchWarnings.push(view.legend);
+    if (view.allDroppedWarning) searchWarnings.push(view.allDroppedWarning);
 
     return {
-      snapshot,
+      snapshot: view.snapshot,
       ...(decision === "reserve" ? { note: this.reserveNote() } : {}),
       ...(notice ? { notice } : {}),
       ...(searchWarnings.length > 0 ? { warnings: searchWarnings } : {}),
@@ -833,9 +880,14 @@ export class TaskSandbox {
       };
     }
 
-    const candidates = this.rawSnapshot.candidates;
+    // A flag means the judge was not confident this is the target: the uncertain band,
+    // or a drop-band row the containment floor kept because its title contains the
+    // target's name. Kept and flagged so the agent looks twice.
+    // Same presenter as searchResources: one story, two read paths.
+    const view = presentSnapshotForAgent(this.rawSnapshot, RAW_SNAPSHOT_ROW_LIMIT);
+    const candidates = view.snapshot.candidates;
     const total = candidates.length;
-    const truncated = candidates.slice(0, 120);
+    const truncated = candidates.slice(0, RAW_SNAPSHOT_ROW_LIMIT);
     const remaining = total - truncated.length;
 
     let document = `📋 Raw snapshot (${total} candidates):\n\n`;
@@ -847,6 +899,8 @@ export class TaskSandbox {
     if (remaining > 0) {
       document += `\n... 还有 ${remaining} 条。如需更多,可用 searchResources 搜繁体/英文关键词。\n`;
     }
+    if (view.legend) document += `\n${view.legend}\n`;
+    if (view.allDroppedWarning) document += `\n${view.allDroppedWarning}\n`;
 
     return { document, candidateCount: total };
   }
