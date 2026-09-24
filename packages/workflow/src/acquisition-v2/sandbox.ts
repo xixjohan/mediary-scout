@@ -14,6 +14,7 @@ import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.j
 import type { AuditEvent } from "../domain.js";
 import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
 import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
+import { indexSubtitleFiles, selectSubtitleChunk } from "./subtitle-renewal.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -23,6 +24,18 @@ const QUALITY_SUBTITLE_TOKEN =
   /\b(?:4k|2160p|1080p|720p|hdr|dv|remux|web-?dl|bluray|bdrip)\b|蓝光|中字|国语|双语|字幕/gi;
 
 const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
+
+export const SUBTITLE_RENEWAL_CHUNK_SIZE = 24;
+const SUBTITLE_MAX_CONSECUTIVE_FAILURES = 3;
+
+export interface SubtitleChunkDiagnostic {
+  chunkNumber: number;
+  requestedCount: number;
+  detailRefreshed: boolean;
+  landedCount: number;
+  unlandedCount: number;
+  error?: string;
+}
 
 const STRIP_NOTICE =
   "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
@@ -947,13 +960,20 @@ export class TaskSandbox {
   }
 
   /** Land a chosen subtitle package's files into staging via the 115 offline-task
-   *  path. Resolves the package's filelist via detail(), hands the whole package
-   *  to storage.transferSubtitleUrls, returns the filenames that actually landed. The
-   *  agent then renames them (moveToSeason/flattenMovie) to ride beside the video.
-   *  Soft-fails: empty filelist → {status:"failed", landedFilenames:[]}. */
+   *  path. Refreshes assrt detail() before each bounded chunk so short-lived URLs
+   *  are never reused after they age out. The agent then renames landed files
+   *  (moveToSeason/flattenMovie) to ride beside the video. */
   async transferSubtitle(input: {
     candidateId: number;
-  }): Promise<{ status: "succeeded" | "failed"; landedFilenames: string[]; error?: string }> {
+  }): Promise<{
+    status: "succeeded" | "failed";
+    landedFilenames: string[];
+    error?: string;
+    chunksProcessed: number;
+    chunksTotal: number;
+    unattemptedCount: number;
+    chunkDiagnostics: SubtitleChunkDiagnostic[];
+  }> {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for subtitle transfer");
     }
@@ -969,10 +989,24 @@ export class TaskSandbox {
     try {
       files = await this.subtitleProvider.detail(input.candidateId);
     } catch {
-      return { status: "failed", landedFilenames: [] };
+      return {
+        status: "failed",
+        landedFilenames: [],
+        chunksProcessed: 0,
+        chunksTotal: 0,
+        unattemptedCount: 0,
+        chunkDiagnostics: [],
+      };
     }
     if (files.length === 0) {
-      return { status: "failed", landedFilenames: [] };
+      return {
+        status: "failed",
+        landedFilenames: [],
+        chunksProcessed: 0,
+        chunksTotal: 0,
+        unattemptedCount: 0,
+        chunkDiagnostics: [],
+      };
     }
     // Boundary guard (same class as the rename guard): only subtitle-extension
     // files may ride the landing pipeline. assrt's detail() can return a
@@ -990,38 +1024,148 @@ export class TaskSandbox {
       return {
         status: "failed",
         landedFilenames: [],
+        chunksProcessed: 0,
+        chunksTotal: 0,
+        unattemptedCount: 0,
+        chunkDiagnostics: [],
         error:
           "该字幕包没有可直接落盘的字幕文件(整包压缩包 zip/rar 落盘也无法使用)——换一个候选,或放弃字幕(软目标,不阻塞视频)。",
       };
     }
-    // The WHOLE package goes to storage in one call: the storage layer knows what a
-    // landing costs on its brand (115 submits everything then polls the dir once per
-    // round; a per-file brand loops under its own consecutive-failure abort), the
-    // sandbox only reads back per-file outcomes. The 2026-09-20 LIAR GAME run spent
-    // 260 of its 300 115 calls looping this per file — the wrap-up then hit the hard
-    // limit with 15 episodes still in staging. Storage OWNS soft-failing (a landing
-    // problem comes back as status "failed" per file); a throw out of
-    // transferSubtitleUrls is a contract violation (batch arity / no subtitle
-    // support), not a landing failure, and is deliberately left to surface.
-    const results = await this.storage.transferSubtitleUrls({
-      files: subtitleFiles.map((file) => ({ url: file.url, filename: file.filename })),
-      intoDirectoryId: this.stagingDirectoryId,
-    });
-    // The name each file REALLY landed under when storage knows it (123 lands a taken name
-    // as name(1).ext) — the agent reads staging by these names; the package name would
-    // point it at a file this call did not produce.
-    const landedFilenames = results
-      .filter((result) => result.status === "succeeded")
-      .map((result) => result.landedFilename ?? result.filename);
-    // Surface WHY (the last failure's message — for a per-file abort that is the
-    // "已连续 N 个失败,提前中止" notice) so the agent can decide, never retry blindly.
-    let lastError = [...results].reverse().find((result) => result.status !== "succeeded" && result.providerMessage)?.providerMessage;
+    const initial = indexSubtitleFiles(subtitleFiles);
+    const pending = new Set(initial.map((file) => file.key));
+    const chunksTotalPending = new Set(pending);
+    let chunksTotal = 0;
+    while (chunksTotalPending.size > 0) {
+      const chunk = selectSubtitleChunk(initial, initial, chunksTotalPending, SUBTITLE_RENEWAL_CHUNK_SIZE);
+      if (chunk.selected.length === 0) break;
+      chunksTotal += 1;
+      for (const file of chunk.selected) chunksTotalPending.delete(file.key);
+    }
+    let chunksProcessed = 0;
+    let unattemptedCount = 0;
+    let consecutiveFailures = 0;
+    let circuitTripped = false;
+    const landedFilenames: string[] = [];
+    const chunkDiagnostics: SubtitleChunkDiagnostic[] = [];
+    let lastError: string | undefined;
+
+    while (pending.size > 0 && !circuitTripped) {
+      const detailRefreshed = chunksProcessed > 0;
+      const chunkNumber = chunksProcessed + 1;
+      const chunkSize = consecutiveFailures > 0 ? 1 : SUBTITLE_RENEWAL_CHUNK_SIZE;
+      let selected: ReturnType<typeof selectSubtitleChunk>["selected"];
+      let missing: string[];
+      if (!detailRefreshed) {
+        ({ selected, missing } = selectSubtitleChunk(initial, initial, pending, SUBTITLE_RENEWAL_CHUNK_SIZE));
+      } else {
+        let refreshedFiles: AssrtSubtitleFile[];
+        const candidateChunk = selectSubtitleChunk(initial, initial, pending, chunkSize);
+        const candidateCount = candidateChunk.selected.length + candidateChunk.missing.length;
+        try {
+          refreshedFiles = await this.subtitleProvider.detail(input.candidateId);
+        } catch {
+          lastError = "字幕链接续签失败：无法刷新 assrt detail，已停止后续字幕块。";
+          chunkDiagnostics.push({
+            chunkNumber,
+            requestedCount: candidateCount,
+            detailRefreshed: false,
+            landedCount: 0,
+            unlandedCount: candidateCount,
+            error: lastError,
+          });
+          break;
+        }
+        const refreshed = indexSubtitleFiles(
+          refreshedFiles.filter(
+            (file) => SUBTITLE_NAME_PATTERN.test(file.filename) && !file.filename.startsWith("._"),
+          ),
+        );
+        ({ selected, missing } = selectSubtitleChunk(initial, refreshed, pending, chunkSize));
+        if (consecutiveFailures > 0 && selected.length > 1) {
+          selected = [selected[0]!];
+          missing = [];
+        }
+        if (selected.length === 0) {
+          lastError = "字幕链接续签后没有匹配的文件，已停止后续字幕块。";
+          const requestedCount = selected.length + missing.length;
+          chunkDiagnostics.push({
+            chunkNumber,
+            requestedCount,
+            detailRefreshed: true,
+            landedCount: 0,
+            unlandedCount: requestedCount,
+            error: lastError,
+          });
+          break;
+        }
+      }
+
+      if (missing.length > 0) {
+        unattemptedCount += missing.length;
+        lastError = `字幕链接续签后 ${missing.length} 个文件不再存在，未复用旧链接。`;
+      }
+      for (const key of [...missing, ...selected.map((file) => file.key)]) pending.delete(key);
+
+      // Storage owns brand-specific soft failure, budget, and auth semantics. A
+      // throw remains loud; the sandbox only renews links and aggregates results.
+      const results = await this.storage.transferSubtitleUrls({
+        files: selected.map((file) => ({ url: file.url, filename: file.filename })),
+        intoDirectoryId: this.stagingDirectoryId,
+      });
+      chunksProcessed += 1;
+      let landedInChunk = 0;
+      let chunkError: string | undefined = missing.length > 0 ? lastError : undefined;
+      for (const result of results) {
+        if (result.status === "succeeded") {
+          landedFilenames.push(result.landedFilename ?? result.filename);
+          landedInChunk += 1;
+          if (!circuitTripped) consecutiveFailures = 0;
+        } else {
+          consecutiveFailures += 1;
+          if (result.providerMessage) {
+            lastError = result.providerMessage;
+            chunkError = result.providerMessage;
+          }
+          if (consecutiveFailures >= SUBTITLE_MAX_CONSECUTIVE_FAILURES) {
+            circuitTripped = true;
+          }
+        }
+      }
+      chunkDiagnostics.push({
+        chunkNumber,
+        requestedCount: selected.length + missing.length,
+        detailRefreshed,
+        landedCount: landedInChunk,
+        unlandedCount: selected.length - landedInChunk + missing.length,
+        ...(chunkError ? { error: chunkError } : {}),
+      });
+      if (circuitTripped) {
+        if (lastError === undefined) {
+          lastError = `已连续 ${SUBTITLE_MAX_CONSECUTIVE_FAILURES} 个字幕文件落盘失败，已停止后续字幕块。`;
+        }
+      }
+    }
+
     if (landedFilenames.length === 0 && lastError === undefined) {
       lastError = "subtitle transfer failed (no files landed, no provider message)";
+    }
+    const remainingChunkSize = consecutiveFailures > 0 ? 1 : SUBTITLE_RENEWAL_CHUNK_SIZE;
+    const remainingForCount = new Set(pending);
+    let remainingChunks = 0;
+    while (remainingForCount.size > 0) {
+      const chunk = selectSubtitleChunk(initial, initial, remainingForCount, remainingChunkSize);
+      if (chunk.selected.length === 0) break;
+      remainingChunks += 1;
+      for (const file of chunk.selected) remainingForCount.delete(file.key);
     }
     return {
       status: landedFilenames.length > 0 ? "succeeded" : "failed",
       landedFilenames,
+      chunksProcessed,
+      chunksTotal: Math.max(chunksTotal, chunksProcessed + remainingChunks),
+      unattemptedCount: unattemptedCount + pending.size,
+      chunkDiagnostics,
       ...(lastError ? { error: lastError } : {}),
     };
   }
