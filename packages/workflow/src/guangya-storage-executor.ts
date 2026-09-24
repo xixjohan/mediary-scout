@@ -5,9 +5,11 @@
  * only the brand-specific bits differ.
  *
  * Differences from quark:
- *  - 转存 is OFFLINE/磁力 (resolve_res → create_task → poll). This is the OPPOSITE
- *    of quark: a MAGNET works, a share link fails LOUD (GUANGYA_ONLY_MAGNET).
- *    Share-link 转存 is a phase-2 feature.
+ *  - 转存 is DUAL-path (like 123): a 磁力/ed2k goes OFFLINE (resolve_res →
+ *    create_task → poll); a 光鸭分享链 (guangyapan.com/s/<id>) is saved server-side
+ *    (get_share_access_token → get_share_page_files_list → restore_share → poll
+ *    get_task_status, real-drive verified 2026-09-24). Any other brand's share link
+ *    fails LOUD (GUANGYA_UNSUPPORTED_LINK).
  *  - 光鸭 has NO parent-walk / breadcrumb API, so the write-scope guard CANNOT walk
  *    a target's parents the way quark does (quark hops up via getFileInfo). Instead
  *    the guard is DERIVED-SCOPE: the workflow always provisions the directory chain
@@ -23,7 +25,7 @@
  */
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, TransferStatus, VerifiedFile } from "./domain.js";
 import { episodeCodeFromFileName } from "./episode-code.js";
-import { isGuangYaAuthError } from "./guangya-client.js";
+import { isGuangYaAuthError, parseGuangYaShareUrl } from "./guangya-client.js";
 import type { GuangYaResolvedRes, GuangYaTaskStatus } from "./guangya-client.js";
 import type { StorageExecutor, UnparsedVideoFile } from "./ports.js";
 
@@ -74,6 +76,13 @@ export interface GuangYaStorageClient {
     fileIndexes?: number[];
   }): Promise<string>;
   listTask(taskIds: string[]): Promise<GuangYaTaskStatus[]>;
+  /** 分享链转存 (optional so a magnet-only fake still type-checks; the real
+   *  GuangYaClient implements all four). A share candidate on a client without them
+   *  fails loud rather than silently falling back to offline. */
+  getShareAccessToken?(shareId: string, code: string): Promise<string>;
+  listShareFiles?(accessToken: string, parentId: string): Promise<GuangYaStorageItem[]>;
+  restoreShare?(input: { accessToken: string; fileIds: string[]; parentId: string }): Promise<string>;
+  getTaskStatus?(taskId: string): Promise<{ status: number }>;
 }
 
 export interface GuangYaStorageExecutorOptions {
@@ -180,15 +189,19 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     candidate: ResourceCandidate;
   }): Promise<TransferAttempt> {
     const url = stringValue(input.candidate.providerPayload["url"]);
+    const share = parseGuangYaShareUrl(url);
     const isMagnet =
-      input.candidate.type === "magnet" || url.startsWith("magnet:") || url.startsWith("ed2k:");
-    if (!isMagnet) {
+      !share && (input.candidate.type === "magnet" || url.startsWith("magnet:") || url.startsWith("ed2k:"));
+    if (!share && !isMagnet) {
       throw new Error(
-        "GUANGYA_ONLY_MAGNET: 光鸭 v1 仅支持磁力/离线候选(分享链转存留 phase 2);请改用磁力候选",
+        "GUANGYA_UNSUPPORTED_LINK: 光鸭只能转存光鸭分享链(guangyapan.com/s/…)或磁力/ed2k;其它网盘的分享链无法落到光鸭,请换候选",
       );
     }
 
     const safe = this.assertWithinWriteScope(input.directoryId, "transfer");
+    if (share) {
+      return this.transferShare({ ...input, directoryId: safe, share });
+    }
     const before = new Set((await this.listVideoFiles(safe)).map((f) => f.id));
 
     let providerMessage = "";
@@ -235,6 +248,131 @@ export class GuangYaStorageExecutor implements StorageExecutor {
       providerMessage:
         providerMessage ||
         (status === "no_target_change" ? "离线任务完成但目标目录未出现新视频" : ""),
+      materializedFileIds,
+    };
+    this.nextTransferNumber += 1;
+    return attempt;
+  }
+
+  /** 光鸭分享链 → our directory: token → list the share root → restore EVERY root
+   *  item (a folder restores whole) → poll the restore task → reread the target.
+   *  A share that is PROVEN unusable fails LOUD as a `failed` attempt so the agent
+   *  switches candidates at once (dead 201, malformed 112/200, unlistable — the empty
+   *  list half the real PanSou links return — or a task that reports a non-running
+   *  failure status). A restore still RUNNING when the poll window ends is NOT dead:
+   *  there is no cancel call and it may land later, so it comes back as
+   *  `no_target_change` (GUANGYA_RESTORE_TIMEOUT) — transferUntilLanded stops on
+   *  that instead of restoring the next share and double-landing the film. Auth
+   *  errors are rethrown so the worker freezes the drive. */
+  private async transferShare(input: {
+    workflowRunId: string;
+    directoryId: string;
+    candidate: ResourceCandidate;
+    share: { shareId: string; code: string };
+  }): Promise<TransferAttempt> {
+    const { client } = this;
+    const before = new Set((await this.listVideoFiles(input.directoryId)).map((f) => f.id));
+    let providerMessage = "";
+    let pendingMessage = "";
+    let acceptedTaskId = "";
+    let submitted = false;
+    try {
+      if (!client.getShareAccessToken || !client.listShareFiles || !client.restoreShare || !client.getTaskStatus) {
+        throw new Error("GUANGYA_SHARE_UNSUPPORTED: client has no share-transfer methods");
+      }
+      // PanSou's password field wins over one embedded in the url (same as 夸克/天翼/123).
+      const code = stringValue(input.candidate.providerPayload["password"]) || input.share.code;
+      const accessToken = await client.getShareAccessToken(input.share.shareId, code);
+      const rootItems = await client.listShareFiles(accessToken, "");
+      const fileIds = rootItems.map((item) => idOf(item)).filter((id): id is string => Boolean(id));
+      if (fileIds.length === 0) {
+        throw new Error("GUANGYA_SHARE_EMPTY: 分享可打开但列不出任何文件(可能被分享者限制或内容审核中),无法转存,请换候选");
+      }
+      // The submit itself can fail in TRANSIT (timeout / reset) after the server took it:
+      // from that moment on the outcome is unknown, so it is treated like an accepted task.
+      submitted = true;
+      const taskId = await client.restoreShare({ accessToken, fileIds, parentId: input.directoryId });
+      // From here the server-side task EXISTS and may land whatever happens next, so
+      // a polling error is not proof of failure — it is pending, like a timeout.
+      acceptedTaskId = taskId;
+      let done = false;
+      for (let poll = 0; poll < this.taskPollMaxPolls; poll += 1) {
+        const { status } = await client.getTaskStatus(taskId);
+        if (status === 2) {
+          done = true;
+          break;
+        }
+        if (status !== 1) {
+          throw new Error(`GUANGYA_RESTORE_FAILED: task ${taskId} status=${status}`);
+        }
+        // No sleep after the LAST poll — the window ends at the last answer, not later.
+        if (poll < this.taskPollMaxPolls - 1) {
+          await new Promise((resolve) => setTimeout(resolve, this.taskPollIntervalMs));
+        }
+      }
+      if (!done) {
+        // Still running, not dead: there is no cancel call, so it may land later.
+        // Reported as no_target_change (below) so transferUntilLanded STOPS here and
+        // the agent rereads staging, instead of restoring the next share and
+        // double-landing the film when this one finishes.
+        pendingMessage = `GUANGYA_RESTORE_TIMEOUT: 转存任务 ${taskId} 在 ${this.taskPollMaxPolls} 次轮询内未完成(仍在进行,可能稍后落盘;先 inspectStaging 再决定)`;
+      }
+    } catch (error) {
+      if (isGuangYaAuthError(error)) {
+        throw error;
+      }
+      const message = error instanceof Error ? error.message : String(error);
+      // A real server answer (GUANGYA_API_FAILED = a business code; RESTORE_FAILED = a
+      // terminal task status; RESTORE_SHARE_FAILED = a success envelope with no taskId,
+      // so no task exists to land) is a settled failure. Anything else once the restore was
+      // SUBMITTED — a transport error on the submit or while polling — leaves a task
+      // that may still land: pending, so transferUntilLanded stops.
+      const settled = ["GUANGYA_RESTORE_FAILED", "GUANGYA_RESTORE_SHARE_FAILED", "GUANGYA_API_FAILED"].some((prefix) =>
+        message.startsWith(prefix),
+      );
+      if (submitted && !settled) {
+        pendingMessage = `GUANGYA_RESTORE_PENDING: 转存${acceptedTaskId ? `任务 ${acceptedTaskId} ` : ""}已提交,之后出错(${message.slice(0, 120)}),可能仍在进行;先 inspectStaging 再决定`;
+      } else {
+        providerMessage = message;
+      }
+    }
+
+    // The landing reread must not throw past a restore that may have landed: an
+    // unreadable target after a submit is pending (reread next), not a crash.
+    let after: VerifiedFile[];
+    try {
+      after = await this.listVideoFiles(input.directoryId);
+    } catch (error) {
+      if (isGuangYaAuthError(error)) throw error;
+      after = [];
+      if (submitted && !providerMessage) {
+        pendingMessage ||= `GUANGYA_RESTORE_PENDING: 转存已提交,但回读目标目录失败(${error instanceof Error ? error.message.slice(0, 120) : String(error)});先 inspectStaging 再决定`;
+      } else if (!providerMessage) {
+        providerMessage = error instanceof Error ? error.message : String(error);
+      }
+    }
+    const materializedFileIds = after.filter((f) => !before.has(f.id)).map((f) => f.id);
+    // Only a still-RUNNING restore is pending (no_target_change → transferUntilLanded
+    // stops and the agent rereads). A restore that COMPLETED without a new video is
+    // settled: the share is alive but holds no film (zip / images) — a failed attempt
+    // so the next ranked share is tried. Not a dead link (see deadLinkReason).
+    if (!providerMessage && !pendingMessage && materializedFileIds.length === 0) {
+      providerMessage = "GUANGYA_SHARE_NO_VIDEO: 分享转存完成,但目标目录没有新视频(分享里可能只有压缩包/图片)";
+    }
+    const status: TransferStatus = providerMessage
+      ? "failed"
+      : materializedFileIds.length > 0
+        ? "succeeded"
+        : "no_target_change";
+    const attempt: TransferAttempt = {
+      id: `${input.workflowRunId}_transfer_${this.nextTransferNumber}`,
+      workflowRunId: input.workflowRunId,
+      candidateId: input.candidate.id,
+      status,
+      // A PARTIAL landing of a still-running restore is "succeeded" (so no second share
+      // is tried) but keeps the pending note: more files may still arrive — the agent
+      // should reread staging before it moves / marks.
+      providerMessage: providerMessage || pendingMessage,
       materializedFileIds,
     };
     this.nextTransferNumber += 1;

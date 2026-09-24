@@ -25,6 +25,7 @@ export type ResourceProviderKind =
   | "pansou-magnet"
   | "pansou-tianyi"
   | "pansou-123"
+  | "pansou-guangya"
   | "prowlarr";
 
 export interface StorageBrand {
@@ -40,7 +41,7 @@ export interface StorageBrand {
   /** Whether an error is this brand's dead-credential signal (drives freeze on it). */
   isAuthError: (err: unknown) => boolean;
   /** Resource providers applicable to this brand. Share-link brands (夸克/天翼)
-   *  have no magnet web API, so they omit "prowlarr" — magnet is 115/光鸭 only. */
+   *  have no magnet web API, so they omit "prowlarr" — magnet is 115/光鸭/123 only. */
   resourceProviderKinds: ResourceProviderKind[];
   /** Whether to strengthen the Chinese-subs soft default for this brand. When true,
    *  the agent prompt emphasizes that Chinese-titled resources from this drive are
@@ -94,7 +95,8 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     label: "光鸭云盘",
     parseUid: parseGuangYaUid,
     isAuthError: isGuangYaAuthError,
-    resourceProviderKinds: ["pansou-magnet", "prowlarr"],
+    // Own share links (restore_share, 2026-09) + magnet/offline — dual path like 123.
+    resourceProviderKinds: ["pansou-guangya", "pansou-magnet", "prowlarr"],
     assumeChineseSubsFromChineseTitle: false,
     authKind: "token",
     provisionRootId: "", // 光鸭 account root
@@ -127,8 +129,8 @@ export const STORAGE_BRANDS: StorageBrand[] = [
 
 /**
  * Map a brand's resource-provider kinds to the PanSou link types its acquisitions
- * may transfer. A 夸克 drive can only save 夸克 share links; a 光鸭(磁力) drive can
- * only offline-download magnets; a 115 drive takes both 115 links and magnets.
+ * may transfer. A 夸克 drive can only save 夸克 share links; 光鸭 / 123 / 115 take
+ * their OWN share links plus magnets (光鸭: restore_share + offline download).
  * Pure + brand-table-driven so the resource assembly stays testable.
  */
 export function allowedResourceTypesForKinds(kinds: readonly string[]): ResourceType[] {
@@ -143,6 +145,12 @@ export function allowedResourceTypesForKinds(kinds: readonly string[]): Resource
     return kinds.includes("prowlarr") || kinds.includes("pansou-magnet")
       ? ["123", "magnet"]
       : ["123"];
+  }
+  // 光鸭 share + magnet when a magnet source is also listed (dual-path brand).
+  if (kinds.includes("pansou-guangya")) {
+    return kinds.includes("prowlarr") || kinds.includes("pansou-magnet")
+      ? ["guangya", "magnet"]
+      : ["guangya"];
   }
   if (kinds.includes("pansou-magnet")) {
     return ["magnet"];

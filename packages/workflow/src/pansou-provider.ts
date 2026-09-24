@@ -1,3 +1,4 @@
+import { parseGuangYaShareUrl } from "./guangya-client.js";
 import { createHash } from "node:crypto";
 import type {
   ResourceCandidate,
@@ -295,6 +296,11 @@ function normalizeResourceType(rawType: string, url: string): ResourceType | nul
     /cloud\.189\.cn\/web\/share\?[^#]*\bcode=/.test(url)
   ) {
     return "tianyi";
+  }
+  // 光鸭 share: the SAME parser the executor transfers with, so a lookalike host
+  // (evilguangyapan.com) can never become a candidate that then fails as unsupported.
+  if (parseGuangYaShareUrl(url) !== null) {
+    return "guangya";
   }
   if (url.startsWith("magnet:")) {
     return "magnet";
