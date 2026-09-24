@@ -30,6 +30,10 @@ export interface JevJudgeResult {
   cost?: number;
   /** Chunks that failed; their candidates have no score. Absent when all chunks succeeded. */
   failedChunks?: number;
+  /** candidateId → P(candidate is pornographic/adult content), 0..1, asked in the SAME
+   *  request as identity. Missing id = not judged (kept). Absent from judges that do
+   *  not ask the question (tests, the offline replay's stubs). */
+  nsfw?: Record<string, number>;
 }
 
 export interface JevJudge {
@@ -56,6 +60,46 @@ export const JEV_UNCERTAIN_BELOW = 0.7;
 export const JEV_THRESHOLDS = { dropBelow: JEV_DROP_BELOW, uncertainBelow: JEV_UNCERTAIN_BELOW } as const;
 
 export type JevBand = "drop" | "uncertain" | "keep";
+
+/** NSFW gate. The reason this exists is not taste: a porn title that reaches the agent's
+ *  context makes content-moderated models (MiMo) cut the reply mid-run, and the run then
+ *  ends as a false 「暂未找到资源」(《出入平安》 2026-09-24). So an adult title is removed
+ *  BEFORE the agent reads the document — including one the containment floor would keep,
+ *  since the floor is exactly how 「出入平安的白虎…」 got through.
+ *
+ *  Two thresholds because the question alone cannot separate every case. Measured
+ *  2026-09-24 through the real client + provider on 446 production snapshots (14,954
+ *  candidates, 651 agent selections): every selected candidate scored ≤ 0.08, every
+ *  explicit adult title 0.63–0.99 with identity < 0.7. But legit releases score high
+ *  too: 「色戒 未删减版 激情戏完整」 0.75, the 2026 show 《寻爱交配季》 0.87. So between
+ *  JEV_NSFW_SUSPECT_AT and JEV_NSFW_DROP_AT a title is dropped only when the identity
+ *  judge is NOT confident it is the target (< JEV_UNCERTAIN_BELOW) — the film the user is
+ *  after keeps its explicit-sounding release — and only ≥ JEV_NSFW_DROP_AT (no legit
+ *  title in the eval came near) drops regardless. Final run at these thresholds: 51
+ *  dropped, 0 selections lost.
+ *  Eval harness: scratchpad/jev-nsfw-eval.mts + jev-nsfw-live.mts. */
+export const JEV_NSFW_DROP_AT = 0.95;
+export const JEV_NSFW_SUSPECT_AT = 0.6;
+
+/** True when the candidate must be removed as adult content. Fails OPEN like
+ *  classifyJevScore: a missing/NaN/out-of-range nsfw score never drops, and in the
+ *  suspect band so does a missing/invalid identity score — the band only drops on a
+ *  REAL "not the target" answer. (The real client returns both answers in one
+ *  response, so this is a contract guard, not a path production takes.) */
+export function isNsfwDrop(nsfw: number | undefined, identity: number | undefined): boolean {
+  // Outside 0..1 is a contract violation (a bad judge / a corrupted row), not evidence.
+  if (typeof nsfw !== "number" || !Number.isFinite(nsfw) || nsfw < 0 || nsfw > 1) return false;
+  if (nsfw >= JEV_NSFW_DROP_AT) return true;
+  if (nsfw < JEV_NSFW_SUSPECT_AT) return false;
+  return typeof identity === "number" && Number.isFinite(identity) && identity >= 0 && identity < JEV_UNCERTAIN_BELOW;
+}
+
+/** The adult-content question, asked per candidate beside the identity one. Wording
+ *  measured in scratchpad/jev-nsfw-eval.mts (variant 1: explicit carve-out for
+ *  legit/erotic-genre films pulled 金瓶梅/一路向西 down without losing any adult row). */
+export function buildJevNsfwInstruction(candidateKey: string): string {
+  return `\`candidates.${candidateKey}\` 是色情或成人向资源:标题露骨描述性行为/身体,或明确标注 R18、成人版、H、AV、同人H本、裸聊直播等。正常电影/剧集/动漫/纪录片(包括情色题材的正规院线片、限制级剧情片)判否。`;
+}
 
 export function classifyJevScore(score: number): JevBand {
   // Fail OPEN on anything that is not a real number: null from a jsonb round-trip
@@ -182,5 +226,5 @@ export const JEV_UNCERTAIN_LEGEND =
  *  result: dead-link filtering runs after the prefilter and can remove the rest, so
  *  「全部剔除」 would be an assertion the caller cannot actually make. */
 export function jevAllDroppedWarning(dropped: number): string {
-  return `本次搜索的候选中有 ${dropped} 个被系统按片名预筛剔除(同名/近名的其它作品或无关资源),剩余为空。这不是搜索源故障;可换 繁体/英文/原名 关键词再搜,若确认没有再 reportNoCoverage。`;
+  return `本次搜索的候选中有 ${dropped} 个被系统按片名预筛剔除(同名/近名的其它作品、无关资源或色情/成人内容),剩余为空。这不是搜索源故障;可换 繁体/英文/原名 关键词再搜,若确认没有再 reportNoCoverage。`;
 }

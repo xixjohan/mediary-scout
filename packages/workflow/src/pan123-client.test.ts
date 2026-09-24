@@ -623,3 +623,48 @@ describe("Pan123Client.listOfflineTasks (rows for a set of task ids)", () => {
     expect(calls).toBe(3);
   });
 });
+
+describe("Pan123Client transport errors name the brand and host", () => {
+  it("a fetch-layer timeout reads as 123 (not the model) and stays transient-classifiable", async () => {
+    const timeout = Object.assign(new Error("The operation was aborted due to timeout"), { name: "TimeoutError" });
+    const client = new Pan123Client({ token: "t", fetchImpl: (async () => { throw timeout; }) as Pan123Fetch });
+    const err = (await client.listFiles("0").then(() => new Error("expected a rejection"), (e: unknown) => e)) as Error;
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toMatch(/^PAN123_REQUEST_FAILED\(yun\.123pan\.com \/b\/api\/file\/list\/new\): TimeoutError/);
+    expect(err.message).toContain("aborted due to timeout");
+    expect((err as Error & { cause?: unknown }).cause).toBe(timeout);
+    const { isTransientAcquisitionError } = await import("./acquisition-v2/transient-error.js");
+    expect(isTransientAcquisitionError(err)).toBe(true);
+  });
+
+  it("never lets the token out through a header-validation error message", async () => {
+    const token = "eyJhbGciOiJIUzI1NiJ9.secret-token-value\n";
+    const bad = new TypeError(`Headers.append: "Bearer ${token.trim()}\n" is an invalid header value.`);
+    const client = new Pan123Client({ token, fetchImpl: (async () => { throw bad; }) as Pan123Fetch });
+    const err = (await client.listFiles("0").then(() => new Error("expected a rejection"), (e: unknown) => e)) as Error;
+    expect(err.message).toMatch(/^PAN123_REQUEST_FAILED/);
+    expect(err.message).not.toContain("secret-token-value");
+    expect(err.message).toContain("***");
+  });
+
+  it("masks a SHORT token too, without shredding words that merely contain its letters", async () => {
+    const bad = new TypeError('Headers.append: "Bearer abc12" is an invalid header value (abc12x stays)');
+    const client = new Pan123Client({ token: "abc12", fetchImpl: (async () => { throw bad; }) as Pan123Fetch });
+    const err = (await client.listFiles("0").then(() => new Error("expected a rejection"), (e: unknown) => e)) as Error;
+    expect(err.message).toContain('"Bearer ***"');
+    expect(err.message).toContain("abc12x stays");
+  });
+
+  it("masks a token right after an assignment (token=<t>), Copilot #269 r7", async () => {
+    const bad = new Error("upstream said token=abc12; retry");
+    const client = new Pan123Client({ token: "abc12", fetchImpl: (async () => { throw bad; }) as Pan123Fetch });
+    const err = (await client.listFiles("0").then(() => new Error("expected a rejection"), (e: unknown) => e)) as Error;
+    expect(err.message).toContain("token=***;");
+    expect(err.message).not.toContain("abc12");
+  });
+
+  it("an auth error from the envelope is untouched (still Pan123AuthError, still freezes)", async () => {
+    const client = new Pan123Client({ token: "t", fetchImpl: (async () => ({ status: 200, text: '{"code":401,"message":"token expired"}' })) as Pan123Fetch });
+    await expect(client.listFiles("0")).rejects.toBeInstanceOf(Pan123AuthError);
+  });
+});

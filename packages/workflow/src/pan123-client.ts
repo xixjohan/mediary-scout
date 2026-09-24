@@ -201,24 +201,48 @@ export class Pan123Client {
     }
     const s = signPath(u.pathname);
     u.searchParams.set(s.k, s.v);
-    const res = await this.fetchImpl(u.toString(), {
-      method: init.method,
-      headers: {
-        authorization: `Bearer ${this.token}`,
-        platform: "web",
-        "app-version": "3",
-        "content-type": "application/json;charset=UTF-8",
-        origin: "https://yun.123pan.com",
-        referer: "https://yun.123pan.com/",
-        "user-agent": "Mozilla/5.0",
-      },
-      ...(init.timeoutMs !== undefined ? { timeoutMs: init.timeoutMs } : {}),
-      ...(init.rawBody !== undefined
-        ? { body: init.rawBody }
-        : init.body !== undefined
-          ? { body: JSON.stringify(init.body) }
-          : {}),
-    });
+    let res: { status: number; text: string };
+    try {
+      res = await this.fetchImpl(u.toString(), {
+        method: init.method,
+        headers: {
+          authorization: `Bearer ${this.token}`,
+          platform: "web",
+          "app-version": "3",
+          "content-type": "application/json;charset=UTF-8",
+          origin: "https://yun.123pan.com",
+          referer: "https://yun.123pan.com/",
+          "user-agent": "Mozilla/5.0",
+        },
+        ...(init.timeoutMs !== undefined ? { timeoutMs: init.timeoutMs } : {}),
+        ...(init.rawBody !== undefined
+          ? { body: init.rawBody }
+          : init.body !== undefined
+            ? { body: JSON.stringify(init.body) }
+            : {}),
+      });
+    } catch (error) {
+      // A bare "The operation was aborted due to timeout" reads like the LLM timed out
+      // (《出入平安》 2026-09-24: 123's API hung for hours and the user suspected the
+      // model). Name the brand + host + path; keep the original message (the transient
+      // classifier matches on it) and the cause. The URL's query (signature) and the
+      // token header are never included.
+      const name = error instanceof Error ? error.name : "Error";
+      // undici quotes an invalid header VALUE in its message ('"Bearer <token>" is an
+      // invalid header value'), and this message is persisted and pushed — so the
+      // token is removed before it can travel. The cause keeps the raw error in-process.
+      let message = error instanceof Error ? error.message : String(error);
+      // Masked wherever it appears as a whole token-shaped run (bounded by characters
+      // that cannot be part of a JWT/base64url token), so any length is covered and a
+      // short token never shreds ordinary words ("t" inside "timeout" is not a match).
+      if (this.token) {
+        const escaped = this.token.replace(/[.*+?^\${}()|[\]\\]/g, "\\$&");
+        // "=" can only TRAIL a base64 value (padding), never lead one — so it is a
+        // boundary on the left (token=<t> must still be masked) but not on the right.
+        message = message.replace(new RegExp(`(?<![A-Za-z0-9._~+/-])${escaped}(?![A-Za-z0-9._~+/=-])`, "g"), "***");
+      }
+      throw new Error(`PAN123_REQUEST_FAILED(${u.host} ${u.pathname}): ${name} ${message}`, { cause: error });
+    }
     const parsed = parsePan123Json(res.text);
     // Fail LOUD on a non-JSON body (WAF/gateway/challenge HTML, transient 5xx) —
     // never null→{}→code=0=空成功, or an upstream outage / GFW block masquerades as

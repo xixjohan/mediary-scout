@@ -6,7 +6,10 @@ import {
   JEV_THRESHOLDS,
   JEV_UNCERTAIN_BELOW,
   JEV_UNCERTAIN_LEGEND,
+  JEV_NSFW_DROP_AT,
+  JEV_NSFW_SUSPECT_AT,
   classifyJevScore,
+  isNsfwDrop,
   jevAllDroppedWarning,
   jevUncertaintyFlag,
   normalizeTitleForContainment,
@@ -129,6 +132,9 @@ describe("prefilter legend and all-dropped warning", () => {
     expect(w).not.toContain("全部剔除");
     expect(w).toContain("不是搜索源故障");
     expect(w).toContain("reportNoCoverage");
+    // The count includes adult-content removals (real-provider-adapter adds nsfwDropped),
+    // so the stated reason must cover them too — an all-porn result is not "wrong work".
+    expect(w).toContain("色情/成人内容");
   });
 });
 
@@ -192,5 +198,29 @@ describe("normalizedTargetNames + titleContainsAny", () => {
     expect(normalizedTargetNames({ title: "《》", aliases: ["  "] })).toEqual([]);
     expect(titleContainsAny("权利交锋 S01E08", [])).toBe(false);
     expect(titleContainsAny("   ", ["交锋"])).toBe(false);
+  });
+});
+
+describe("isNsfwDrop", () => {
+  it("hard line: ≥ JEV_NSFW_DROP_AT drops whatever the identity score", () => {
+    expect(isNsfwDrop(JEV_NSFW_DROP_AT, 0.99)).toBe(true);
+    expect(isNsfwDrop(0.99, undefined)).toBe(true);
+  });
+  it("suspect band drops only when identity is not confident", () => {
+    expect(isNsfwDrop(JEV_NSFW_SUSPECT_AT, 0.69)).toBe(true);
+    expect(isNsfwDrop(0.75, JEV_UNCERTAIN_BELOW)).toBe(false); // 色戒 未删减版 for 色戒
+    // Suspect band needs a REAL "not the target" answer; missing/invalid identity fails open (#269 r5).
+    expect(isNsfwDrop(0.75, undefined)).toBe(false);
+    expect(isNsfwDrop(0.75, Number.NaN)).toBe(false);
+    expect(isNsfwDrop(0.75, 0.2)).toBe(true);
+  });
+  it("below suspect never drops; bad data fails open", () => {
+    expect(isNsfwDrop(JEV_NSFW_SUSPECT_AT - 0.01, 0)).toBe(false);
+    expect(isNsfwDrop(undefined, 0)).toBe(false);
+    expect(isNsfwDrop(Number.NaN, 0)).toBe(false);
+    expect(isNsfwDrop(null as unknown as number, 0)).toBe(false);
+    // Out of the 0..1 contract is not evidence either (Copilot #269 r3).
+    expect(isNsfwDrop(1.5, 0)).toBe(false);
+    expect(isNsfwDrop(-0.2, 0)).toBe(false);
   });
 });
