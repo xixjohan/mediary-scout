@@ -14,6 +14,14 @@ import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.j
 import type { AuditEvent } from "../domain.js";
 import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
 import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
+import {
+  AGENT_MEMORY_LIMITS,
+  validateMemoryInput,
+  type AgentMemory,
+  type AgentMemoryScope,
+  type AgentMemoryStore,
+  type AgentMemoryWrite,
+} from "../agent-memory.js";
 import { indexSubtitleFiles, selectSubtitleChunk } from "./subtitle-renewal.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
@@ -161,7 +169,20 @@ export interface TaskSandboxOptions {
   /** The task's fine-grained search profile — enables the anime taboo-keyword
    *  validator (warnings only, never blocking). 病2b。 */
   searchProfile?: SearchProfile;
+  /** Agent memory binding. `titleKey` is computed by the system from the task target
+   *  (memoryTitleKey) — the memory tools never take it from the agent, which is what
+   *  confines a run to the memory of its own work. Absent = memory tools refuse. */
+  memory?: {
+    store: AgentMemoryStore;
+    accountId: string;
+    titleKey: string;
+    runId: string;
+    now?: () => string;
+  };
 }
+
+/** What the models see of a memory entry (no persistence identifiers). */
+export type AgentMemoryView = Pick<AgentMemory, "scope" | "name" | "kind" | "description" | "body" | "provider" | "updatedAt">;
 
 export interface SearchToolResult {
   /** Present on a fresh search and on a dedup (the prior snapshot). */
@@ -197,6 +218,21 @@ export interface TransferToolResult {
    *  agent should STOP — every candidate will fail. Present only on a systemic
    *  block; absent means ordinary failure (iterate to the next candidate). */
   systemicBlock?: { reason: string };
+}
+
+/** One keyword in the run's search history (see TaskSandbox.searchHistory). */
+export interface SearchHistoryEntry {
+  keyword: string;
+  /** How many times the agent (or the system pre-search) asked for it. */
+  calls: number;
+  /** The LAST call's outcome. */
+  outcome: "ok" | "refused" | "error";
+  candidateCount: number;
+  sampleTitles: string[];
+  /** Candidates the Jev prefilter removed (lookalike + NSFW), when it ran. */
+  prefilterDropped?: number;
+  /** Refusal / error text for a non-ok outcome. */
+  note?: string;
 }
 
 export class TaskSandbox {
@@ -237,6 +273,14 @@ export class TaskSandbox {
   private pendingDigest: { keyword: string; count: number } | null = null;
   /** 病4: 本任务的审计事件（no_coverage 上报/dedup 重复/禁忌词警告）。runner 持久化到 workflowRun.auditEvents。 */
   private readonly auditEvents: AuditEvent[] = [];
+  /** Every search call in order — one entry per distinct keyword (repeats counted),
+   *  including refused and failed ones. The reflection digest reads this, NOT the
+   *  provider's persisted snapshots: those are deduped by content id, so two keywords
+   *  returning the same result collapse and a search that threw leaves no trace. */
+  private readonly searchLog: SearchHistoryEntry[] = [];
+  private readonly memory: TaskSandboxOptions["memory"];
+  /** Writes + deletes made by this task (capped at AGENT_MEMORY_LIMITS.changesPerRunMax). */
+  private memoryChanges = 0;
   /** Set the moment a video/subtitle transfer is ATTEMPTED (before the provider call,
    *  so a transfer that threw still counts). Read by hasTransferEvidence. */
   private transferAttempted = false;
@@ -259,6 +303,7 @@ export class TaskSandbox {
     this.need = options.need ?? [];
     this.titleTerms = options.titleTerms ?? [];
     this.subtitleProvider = options.subtitleProvider;
+    this.memory = options.memory;
   }
 
   /** Every scoped target directory (all seasons + the movie) — the union used for
@@ -306,6 +351,7 @@ export class TaskSandbox {
     // budget/provider so it costs nothing and the agent must re-keyword with the
     // real title. (asEvidence turns this throw into the {error} the agent reads.)
     if (!keywordReferencesTitle(effectiveKeyword, this.titleTerms)) {
+      this.logSearch(keyword, { outcome: "refused", note: "keyword names no title term" });
       throw new Error(
         `搜索关键词必须包含片名(片名/原名/别名)。"${keyword}" 不含片名,只会返回噪音,已拒绝。请用包含片名的关键词(裸标题召回最全;繁体/英文/原名 可作升级。注意:画质/字幕词会被自动移除,年份/季 等词虽不移除但同样会减召回,别加),不要用纯类型或纯年份(如 "电影"、"2026 电影")。`,
       );
@@ -343,6 +389,7 @@ export class TaskSandbox {
     if (cachedSnapshot) {
       const count = (this.searchCountByKeyword.get(normalized) ?? 1) + 1;
       this.searchCountByKeyword.set(normalized, count);
+      this.logSearch(effectiveKeyword, { outcome: "ok", snapshot: cachedSnapshot });
       this.auditEvents.push({
         type: "search_dedup",
         message: `重复搜索「${effectiveKeyword}」第 ${count} 次`,
@@ -381,12 +428,20 @@ export class TaskSandbox {
       return { deduped: true, ...(notice ? { notice } : {}) };
     }
     if (decision === "exhausted") {
+      this.logSearch(effectiveKeyword, { outcome: "refused", note: "search budget exhausted" });
       return { refused: this.budgetExhaustedMessage() };
     }
     // "fresh" and "reserve" both perform the search; "reserve" (movie 8+2) attaches
     // the note that flips the agent into last-resort subtitle-fallback mode.
     this.seenKeywords.add(normalized);
-    const snapshot = await this.provider.search(effectiveKeyword);
+    let snapshot: ResourceSnapshotV2;
+    try {
+      snapshot = await this.provider.search(effectiveKeyword);
+    } catch (error) {
+      this.logSearch(effectiveKeyword, { outcome: "error", note: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    this.logSearch(effectiveKeyword, { outcome: "ok", snapshot });
     this.snapshotByKeyword.set(normalized, snapshot);
     this.searchCountByKeyword.set(normalized, 1);
     this.observedSnapshots.set(snapshot.id, snapshot);
@@ -879,6 +934,163 @@ export class TaskSandbox {
     }
   }
 
+  // ── Agent memory tools ────────────────────────────────────────────────────
+  /** Whether this run has a memory binding (reflection runs only when it does). */
+  hasMemory(): boolean {
+    return this.memory !== undefined;
+  }
+
+  /** Writes + deletes made so far this run (for the reflection summary log). */
+  memoryChangeCount(): number {
+    return this.memoryChanges;
+  }
+
+  private requireMemory(): NonNullable<TaskSandboxOptions["memory"]> {
+    if (!this.memory) throw new Error("MEMORY_UNAVAILABLE: agent memory is not enabled for this run");
+    return this.memory;
+  }
+
+  private memoryTitleKeyFor(scope: AgentMemoryScope): string | null {
+    return scope === "title" ? this.requireMemory().titleKey : null;
+  }
+
+  /** Read one entry's body. Title scope = THIS work only. Returns the agent-facing
+   *  projection — never the row's id / account / bound key / run id. */
+  async readMemory(input: { scope: AgentMemoryScope; name: string }): Promise<AgentMemoryView> {
+    const memory = this.requireMemory();
+    const rows = await memory.store.listAgentMemories({
+      accountId: memory.accountId,
+      scope: input.scope,
+      titleKey: this.memoryTitleKeyFor(input.scope),
+    });
+    const hit = rows.find((row) => row.name === input.name);
+    if (!hit) throw new Error(`MEMORY_NOT_FOUND: no ${input.scope} memory named "${input.name}"`);
+    return {
+      scope: hit.scope,
+      name: hit.name,
+      kind: hit.kind,
+      description: hit.description,
+      body: hit.body,
+      provider: hit.provider,
+      updatedAt: hit.updatedAt,
+    };
+  }
+
+  /** Upsert by name. The title key is the BOUND one — any titleKey the agent passes
+   *  is ignored (the input type does not even carry it). */
+  async writeMemory(input: AgentMemoryWrite): Promise<{ name: string; scope: AgentMemoryScope; updated: boolean }> {
+    const memory = this.requireMemory();
+    const entry: AgentMemoryWrite = {
+      scope: input.scope,
+      name: input.name,
+      description: input.description,
+      kind: input.kind,
+      body: input.body,
+      ...(input.provider ? { provider: input.provider } : {}),
+    };
+    const invalid = validateMemoryInput(entry);
+    if (invalid) throw new Error(`MEMORY_INVALID: ${invalid}`);
+    this.reserveMemoryChange();
+    let updated: boolean;
+    try {
+      const titleKey = this.memoryTitleKeyFor(entry.scope);
+      const existing = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: entry.scope, titleKey });
+      const previous = existing.find((row) => row.name === entry.name);
+      updated = previous !== undefined;
+      const cap = entry.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
+      if (!updated && existing.length >= cap) {
+        throw new Error(`MEMORY_FULL: ${entry.scope} memory already has ${existing.length}/${cap} entries — delete or overwrite a stale one first`);
+      }
+      // The store enforces the cap atomically (concurrent reflections cannot overshoot);
+      // the check above only turns the common case into an early, friendly error.
+      // A revision that omits provider keeps the drive the entry was tied to (the
+      // upsert would otherwise overwrite it with null).
+      const stored = !entry.provider && previous?.provider ? { ...entry, provider: previous.provider } : entry;
+      await memory.store.upsertAgentMemory({
+        accountId: memory.accountId,
+        titleKey,
+        entry: stored,
+        sourceRunId: memory.runId,
+        now: (memory.now ?? (() => new Date().toISOString()))(),
+        maxEntries: cap,
+      });
+    } catch (error) {
+      this.memoryChanges -= 1;
+      throw error;
+    }
+    this.auditEvents.push({
+      type: "memory_written",
+      message: `agent 记忆${updated ? "更新" : "新增"}:${entry.scope}/${entry.name}`,
+      data: { scope: entry.scope, name: entry.name, updated },
+    });
+    return { name: entry.name, scope: entry.scope, updated };
+  }
+
+  /** Take a per-run change slot BEFORE the first await: the model may issue several
+   *  tool calls in one step and AI SDK runs them concurrently, so check-then-increment
+   *  after the store call would let them all pass. Callers release it on failure. */
+  private reserveMemoryChange(): void {
+    if (this.memoryChanges >= AGENT_MEMORY_LIMITS.changesPerRunMax) {
+      throw new Error(`MEMORY_RUN_LIMIT: at most ${AGENT_MEMORY_LIMITS.changesPerRunMax} memory writes/deletes per run`);
+    }
+    this.memoryChanges += 1;
+  }
+
+  async deleteMemory(input: { scope: AgentMemoryScope; name: string }): Promise<{ deleted: boolean }> {
+    const memory = this.requireMemory();
+    this.reserveMemoryChange();
+    let deleted: boolean;
+    try {
+      deleted = await memory.store.deleteAgentMemory({
+        accountId: memory.accountId,
+        scope: input.scope,
+        titleKey: this.memoryTitleKeyFor(input.scope),
+        name: input.name,
+      });
+    } catch (error) {
+      this.memoryChanges -= 1;
+      throw error;
+    }
+    if (!deleted) this.memoryChanges -= 1;
+    if (deleted) {
+      this.auditEvents.push({
+        type: "memory_deleted",
+        message: `agent 记忆删除:${input.scope}/${input.name}`,
+        data: { scope: input.scope, name: input.name },
+      });
+    }
+    return { deleted };
+  }
+
+  /** Per-keyword search history for the reflection digest (copies; order = first call). */
+  searchHistory(): SearchHistoryEntry[] {
+    return this.searchLog.map((entry) => ({ ...entry, sampleTitles: [...entry.sampleTitles] }));
+  }
+
+  private logSearch(
+    keyword: string,
+    result:
+      | { outcome: "ok"; snapshot: ResourceSnapshotV2 }
+      | { outcome: "refused" | "error"; note: string },
+  ): void {
+    const normalized = normalizeSearchKeyword(keyword);
+    let entry = this.searchLog.find((e) => normalizeSearchKeyword(e.keyword) === normalized);
+    if (!entry) {
+      entry = { keyword, calls: 0, outcome: result.outcome, candidateCount: 0, sampleTitles: [] };
+      this.searchLog.push(entry);
+    }
+    entry.calls += 1;
+    entry.outcome = result.outcome;
+    if (result.outcome === "ok") {
+      entry.candidateCount = result.snapshot.candidates.length;
+      entry.sampleTitles = result.snapshot.candidates.slice(0, 3).map((c) => c.title);
+      if (result.snapshot.prefilterDropped) entry.prefilterDropped = result.snapshot.prefilterDropped;
+      delete entry.note;
+    } else {
+      entry.note = result.note.slice(0, 160);
+    }
+  }
+
   auditTrail(): AuditEvent[] {
     return [...this.auditEvents];
   }
@@ -891,7 +1103,14 @@ export class TaskSandbox {
     const normalized = normalizeSearchKeyword(keyword);
     // Perform the search WITHOUT marking it as seen by the agent (don't add to
     // seenKeywords) — so it doesn't consume the distinct search budget.
-    const snapshot = await this.provider.search(keyword);
+    let snapshot: ResourceSnapshotV2;
+    try {
+      snapshot = await this.provider.search(keyword);
+    } catch (error) {
+      this.logSearch(keyword, { outcome: "error", note: error instanceof Error ? error.message : String(error) });
+      throw error;
+    }
+    this.logSearch(keyword, { outcome: "ok", snapshot });
 
     // Record in dedup map so agent re-searching this keyword hits dedup
     this.snapshotByKeyword.set(normalized, snapshot);

@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { isAgentMemoryEnabled } from "./agent-memory-server";
 import { cache } from "react";
 import {
   checkLoginAllowed,
@@ -916,6 +917,13 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // and the save-time probe passed. Undefined → the orchestrator keeps the bare
     // provider, so an unconfigured account costs exactly zero Jev calls.
     const jevJudge = await resolveJevJudge(scoped);
+    // Agent memory is on unless THIS account switched it off (Settings → AI 模型).
+    // Best-effort like every memory step: a failing read must not fail a runnable job —
+    // fall back to the default (on); the orchestrator swallows later store failures.
+    const agentMemory = await isAgentMemoryEnabled(getWorkflowRepository(), accountId).catch((error: unknown) => {
+      console.log(`[memory] agent_memory_enabled read failed (defaulting on): ${error instanceof Error ? error.message : String(error)}`);
+      return true;
+    });
     return {
       storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
       resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
@@ -923,6 +931,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       model,
       ...(assrtToken === undefined ? {} : { assrtToken }),
       ...(jevJudge === undefined ? {} : { jevJudge }),
+      agentMemory,
       ...(preferredLanguage === undefined ? {} : { preferredLanguage }),
       ...(qualityPreference === undefined ? {} : { qualityPreference }),
       storageParentDirectoryId: parents.tv,
