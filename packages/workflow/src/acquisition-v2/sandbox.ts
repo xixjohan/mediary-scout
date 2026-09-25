@@ -16,6 +16,8 @@ import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resour
 import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
 import {
   AGENT_MEMORY_LIMITS,
+  memoryDriveAllows,
+  memoryOtherDriveError,
   validateMemoryInput,
   type AgentMemory,
   type AgentMemoryScope,
@@ -177,6 +179,13 @@ export interface TaskSandboxOptions {
     accountId: string;
     titleKey: string;
     runId: string;
+    /** The drive this run lands on (connected-storage id). Bound by the system like
+     *  titleKey: every note this run writes is tagged with it, so a lesson learned on
+     *  one drive (a source that failed on 115) is never mistaken for one about another. */
+    provider?: string;
+    /** The run's brand: notes tagged with it predate concrete drive ids and are
+     *  treated as this drive's (and retagged on write). */
+    legacyProvider?: string;
     now?: () => string;
   };
 }
@@ -996,6 +1005,7 @@ export class TaskSandbox {
       const titleKey = this.memoryTitleKeyFor(entry.scope);
       const existing = await memory.store.listAgentMemories({ accountId: memory.accountId, scope: entry.scope, titleKey });
       const previous = existing.find((row) => row.name === entry.name);
+      this.assertSameDrive(previous, entry.scope, entry.name);
       updated = previous !== undefined;
       const cap = entry.scope === "title" ? AGENT_MEMORY_LIMITS.titleEntriesMax : AGENT_MEMORY_LIMITS.globalEntriesMax;
       if (!updated && existing.length >= cap) {
@@ -1003,13 +1013,18 @@ export class TaskSandbox {
       }
       // The store enforces the cap atomically (concurrent reflections cannot overshoot);
       // the check above only turns the common case into an early, friendly error.
-      // A revision that omits provider keeps the drive the entry was tied to (the
+      // The bound drive wins (the model cannot tag a note with another drive). Without
+      // one, a revision that omits provider keeps the drive the entry was tied to (the
       // upsert would otherwise overwrite it with null).
-      const stored = !entry.provider && previous?.provider ? { ...entry, provider: previous.provider } : entry;
+      const provider = memory.provider ?? entry.provider ?? previous?.provider;
+      const stored: AgentMemoryWrite = provider ? { ...entry, provider } : entry;
       await memory.store.upsertAgentMemory({
         accountId: memory.accountId,
         titleKey,
         entry: stored,
+        // Atomic twin of assertSameDrive above (which only gives the early message).
+        ...(memory.provider ? { onlyDrive: memory.provider } : {}),
+        ...(memory.provider && memory.legacyProvider ? { legacyDrive: memory.legacyProvider } : {}),
         sourceRunId: memory.runId,
         now: (memory.now ?? (() => new Date().toISOString()))(),
         maxEntries: cap,
@@ -1024,6 +1039,16 @@ export class TaskSandbox {
       data: { scope: entry.scope, name: entry.name, updated },
     });
     return { name: entry.name, scope: entry.scope, updated };
+  }
+
+  /** A run bound to a drive may not overwrite or delete a note tagged with ANOTHER
+   *  drive: a source that failed here (a magnet the drive had no cache for) may be
+   *  exactly what worked there. Untagged notes stay editable by any drive. */
+  private assertSameDrive(row: { provider: string | null } | undefined, scope: AgentMemoryScope, name: string): void {
+    const bound = this.memory?.provider;
+    if (bound && row && !memoryDriveAllows(row.provider, bound, this.memory?.legacyProvider)) {
+      throw memoryOtherDriveError(scope, name, row.provider!, bound);
+    }
   }
 
   /** Take a per-run change slot BEFORE the first await: the model may issue several
@@ -1041,11 +1066,15 @@ export class TaskSandbox {
     this.reserveMemoryChange();
     let deleted: boolean;
     try {
+      // The drive guard runs INSIDE the store's delete (atomic): a check here followed
+      // by a plain delete could remove a note another drive tagged in between.
       deleted = await memory.store.deleteAgentMemory({
         accountId: memory.accountId,
         scope: input.scope,
         titleKey: this.memoryTitleKeyFor(input.scope),
         name: input.name,
+        ...(memory.provider ? { onlyDrive: memory.provider } : {}),
+        ...(memory.provider && memory.legacyProvider ? { legacyDrive: memory.legacyProvider } : {}),
       });
     } catch (error) {
       this.memoryChanges -= 1;

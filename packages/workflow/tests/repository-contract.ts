@@ -66,6 +66,44 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         ...over,
       });
 
+      it("onlyDrive: a row tagged with another drive is neither overwritten nor deleted; untagged/same drive are", async () => {
+        const repo = await fresh();
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "g", provider: "guangya" }), now });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "u" }), now });
+        await expect(
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "g", body: "改", provider: "pan115" }), now, onlyDrive: "pan115" }),
+        ).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+        await expect(
+          repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "g", onlyDrive: "pan115" }),
+        ).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+        const g = (await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" })).find((m) => m.name === "g");
+        expect(g).toMatchObject({ provider: "guangya", body: entry().body });
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "u", body: "补", provider: "pan115" }), now, onlyDrive: "pan115" });
+        expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "u", onlyDrive: "pan115" })).toBe(true);
+        expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "missing", onlyDrive: "pan115" })).toBe(false);
+        // Concurrent FIRST writes of the same new name from two drives: exactly one
+        // lands, the other is refused — the winner's tag is never flipped.
+        const race = await Promise.allSettled([
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "race", provider: "guangya" }), now, onlyDrive: "guangya" }),
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "race", provider: "pan115" }), now, onlyDrive: "pan115" }),
+        ]);
+        expect(race.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+        const winner = (race.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<{ provider: string | null }>).value.provider;
+        const raced = (await repo.listAgentMemories({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1" })).find((m) => m.name === "race");
+        expect(raced!.provider).toBe(winner);
+        // Legacy brand tag: accepted (and retagged) only when the caller names that brand.
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "legacy", provider: "pan115" }), now });
+        await expect(
+          repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "legacy", provider: "cs_115" }), now, onlyDrive: "cs_115" }),
+        ).rejects.toThrow(/MEMORY_OTHER_DRIVE/);
+        const retagged = await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "legacy", provider: "cs_115" }), now, onlyDrive: "cs_115", legacyDrive: "pan115" });
+        expect(retagged.provider).toBe("cs_115");
+        await repo.upsertAgentMemory({ accountId: "acct_1", titleKey: "tmdb_movie_1", entry: entry({ name: "legacy2", provider: "pan115" }), now });
+        expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "legacy2", onlyDrive: "cs_115", legacyDrive: "pan115" })).toBe(true);
+        // Without onlyDrive (UI path) the user can still edit/delete anything.
+        expect(await repo.deleteAgentMemory({ accountId: "acct_1", scope: "title", titleKey: "tmdb_movie_1", name: "g" })).toBe(true);
+      });
+
       it("title scope refuses a missing or blank titleKey on every operation (no shared keyless bucket)", async () => {
         const repo = await fresh();
         for (const titleKey of [undefined, null, "", "  "] as unknown as string[]) {
