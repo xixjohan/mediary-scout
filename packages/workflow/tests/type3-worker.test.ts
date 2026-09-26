@@ -555,6 +555,130 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
   });
 });
 
+describe("runScheduledType3Monitoring — maxConcurrentRuns", () => {
+  /** Three gapped shows: two on drive A, one on drive B. The model holds every call
+   *  until the test counts who is in flight, so overlap is observed, not inferred. */
+  async function threeShowsOnTwoDrives(drives: Array<string | null> = ["drive_A", "drive_A", "drive_B"]) {
+    const repository = new InMemoryWorkflowRepository();
+    const storage = new FakeStorageExecutor();
+    const shows = [
+      { ...trackedFixture("a1"), drive: drives[0]! },
+      { ...trackedFixture("a2"), drive: drives[1]! },
+      { ...trackedFixture("b1"), drive: drives[2]! },
+    ];
+    for (const show of shows) {
+      await repository.saveWorkflowRunSnapshot({
+        ...(show.drive === null ? {} : { connectedStorageId: show.drive }),
+        title: show.title,
+        season: show.season,
+        workflowRun: {
+          id: `seed_${show.season.id}`,
+          kind: "type2_init",
+          status: "succeeded",
+          trackedSeasonId: show.season.id,
+          startedAt: fixedNow(),
+          finishedAt: fixedNow(),
+          auditEvents: [],
+        },
+        episodes: createEpisodeStates({ trackedSeasonId: show.season.id, seasonNumber: 1, totalEpisodes: 2, latestAiredEpisode: 2 }),
+        resourceSnapshots: [],
+        decisions: [],
+        transferAttempts: [],
+        notifications: [],
+      });
+      await seedV2Season(storage, show.title, show.season, []);
+    }
+    return { repository, storage, shows };
+  }
+
+  /** Every call fails after a short wait; records the peak number of calls in flight
+   *  and which titles overlapped. */
+  function slowFailingModel() {
+    let inFlight = 0;
+    const seen = { peak: 0, pairs: new Set<string>() };
+    const active = new Set<string>();
+    const model = new MockLanguageModelV3({
+      doGenerate: async (options) => {
+        const prompt = JSON.stringify(options.prompt);
+        const title = /Show (a1|a2|b1)/.exec(prompt)?.[1] ?? "?";
+        inFlight += 1;
+        active.add(title);
+        seen.peak = Math.max(seen.peak, inFlight);
+        for (const other of active) if (other !== title) seen.pairs.add([title, other].sort().join("+"));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        active.delete(title);
+        inFlight -= 1;
+        throw new Error("agent model unavailable");
+      },
+    });
+    return { model, seen };
+  }
+
+  it("runs different drives side by side but keeps one drive's shows one after another", async () => {
+    const { repository, storage } = await threeShowsOnTwoDrives();
+    const { model, seen } = slowFailingModel();
+    let counter = 0;
+    const outcomes = await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model,
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_par_${(counter += 1)}`,
+      maxConcurrentRuns: 3,
+    });
+    expect(outcomes.map((o) => o.status)).toEqual(["failed", "failed", "failed"]);
+    // Limit 3, but a1 and a2 share drive A: at most two shows at once, and a1/a2 never together.
+    expect(seen.peak).toBe(2);
+    expect(seen.pairs.has("a1+a2")).toBe(false);
+    expect([...seen.pairs].some((pair) => pair.includes("b1"))).toBe(true);
+  });
+
+  it("an unbound show shares its account's default drive with shows bound to that drive", async () => {
+    // a1 has no drive and lands on the account default (drive_A) — it must not run
+    // beside a2, which is bound to drive_A explicitly.
+    const { repository, storage } = await threeShowsOnTwoDrives([null, "drive_A", "drive_B"]);
+    const { model, seen } = slowFailingModel();
+    let counter = 0;
+    await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model,
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_def_${(counter += 1)}`,
+      maxConcurrentRuns: 3,
+      resolveDriveId: async () => "drive_A",
+    });
+    expect(seen.pairs.has("a1+a2")).toBe(false);
+    expect([...seen.pairs].some((pair) => pair.includes("b1"))).toBe(true);
+  });
+
+  it("accounts with no drive at all share the one fallback drive", async () => {
+    const { repository, storage, shows } = await threeShowsOnTwoDrives([null, null, "drive_B"]);
+    // Move a2 to a second account; both a1 and a2 have no drive anywhere.
+    const listAll = repository.listAllTrackedSeasonStates.bind(repository);
+    repository.listAllTrackedSeasonStates = async () =>
+      (await listAll()).map((state) => (state.title.id === shows[1]!.title.id ? { ...state, accountId: "acct_other" } : state));
+    const { model, seen } = slowFailingModel();
+    let counter = 0;
+    await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model,
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_nod_${(counter += 1)}`,
+      maxConcurrentRuns: 3,
+      resolveDriveId: async () => null,
+    });
+    expect(seen.pairs.has("a1+a2")).toBe(false);
+  });
+
+  it("defaults to one show at a time", async () => {
+    const { repository, storage } = await threeShowsOnTwoDrives();
+    const { model, seen } = slowFailingModel();
+    let counter = 0;
+    await runScheduledType3Monitoring({
+      repository, resourceProvider: emptyProvider(), storage, model,
+      storageParentDirectoryId: "library_root", now: fixedNow,
+      createWorkflowRunId: () => `run_ser_${(counter += 1)}`,
+    });
+    expect(seen.peak).toBe(1);
+  });
+});
+
 /**
  * Chain guard (2026-09-20). The live A/B ran with the prefilter ON and still
  * persisted `prefilter: null`: worker.ts spreads `jevJudge` into runner-v2's

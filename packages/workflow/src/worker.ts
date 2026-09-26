@@ -1,4 +1,5 @@
 import type { LanguageModel } from "ai";
+import { runKeyedPool } from "./keyed-pool.js";
 import type {
   AcquisitionSeasonScope,
   EpisodeState,
@@ -451,13 +452,66 @@ export async function runScheduledType3Monitoring(input: {
    *  The sweep is cross-account; each show runs under its owner's credentials. */
   resolveAccountContext?: ResolveAccountWorkerContext;
   onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
+  /** How many shows the sweep works on at once (default 1 = one after another).
+   *  Never two on the same drive — see runKeyedPool. */
+  maxConcurrentRuns?: number;
+  /** The drive an account's unbound shows land on (its default drive). Used only
+   *  to keep those shows off the same drive as its bound ones when running in
+   *  parallel; null when the account has no drive. */
+  resolveDriveId?: (accountId: string) => Promise<string | null>;
 }): Promise<ScheduledType3Outcome[]> {
   const now = input.now ?? (() => new Date().toISOString());
-  const outcomes: ScheduledType3Outcome[] = [];
   // Cross-account: patrol EVERY user's tracked shows, each under its owner's creds.
   const trackedStates = await input.repository.listAllTrackedSeasonStates();
 
-  for (const state of trackedStates) {
+  // One drive at a time, several drives side by side (see runKeyedPool). The key
+  // is the drive the run will actually land on: a state with no bound drive runs
+  // on its account's default drive, so it must share that drive's key, not get
+  // one of its own.
+  const concurrency = input.maxConcurrentRuns ?? 1;
+  // One lookup per account, not per show.
+  const defaultDrives = new Map<string, Promise<string | null>>();
+  const defaultDriveOf = (accountId: string) => {
+    let drive = defaultDrives.get(accountId);
+    if (!drive) {
+      drive = input.resolveDriveId ? input.resolveDriveId(accountId) : Promise.resolve(null);
+      defaultDrives.set(accountId, drive);
+    }
+    return drive;
+  };
+  const driveKeys =
+    concurrency > 1
+      ? await Promise.all(
+          trackedStates.map(async (state) => {
+            const drive = state.connectedStorageId ?? (await defaultDriveOf(state.accountId));
+            // No drive at all → the process-wide fallback executor (env cookie / fake),
+            // which every such account shares: one key for all of them.
+            return drive ?? "no-connected-drive";
+          }),
+        )
+      : [];
+  const keyByState = new Map(trackedStates.map((state, index) => [state, driveKeys[index] ?? ""]));
+  // A throw from one state's setup (drive client, DB reservation) is an infra
+  // failure: it aborts the sweep as the serial loop did, so the caller can release
+  // today's claimed slots and retry. Failures inside a run are outcomes, not throws.
+  const perState = await runKeyedPool(
+    trackedStates,
+    { concurrency, keyOf: (state) => keyByState.get(state)! },
+    (state) => patrolTrackedState({ input, state, now }),
+  );
+  return perState.filter((outcome): outcome is ScheduledType3Outcome => outcome !== null);
+}
+
+type ScheduledType3Input = Parameters<typeof runScheduledType3Monitoring>[0];
+
+/** One tracked state's patrol; null when there is nothing to do for it. */
+async function patrolTrackedState(args: {
+  input: ScheduledType3Input;
+  state: Awaited<ReturnType<WorkflowRepository["listAllTrackedSeasonStates"]>>[number];
+  now: () => string;
+}): Promise<ScheduledType3Outcome | null> {
+  const { input, state, now } = args;
+  {
     const deps = await resolveWorkerDeps(
       input.resolveAccountContext,
       state.accountId,
@@ -468,15 +522,11 @@ export async function runScheduledType3Monitoring(input: {
     // TV/anime agent (different semantics). (未上映/reserved films aren't tracked
     // yet; the air-time gate lands with that product state.)
     if (state.title.type === "movie") {
-      const outcome = await patrolMovie({ input, deps, state, now });
-      if (outcome) {
-        outcomes.push(outcome);
-      }
-      continue;
+      return (await patrolMovie({ input, deps, state, now })) ?? null;
     }
 
     if (state.season.status !== "active" || state.episodes.length === 0) {
-      continue;
+      return null;
     }
 
     // sync_all equivalent: refresh aired/total from TMDB so episodes that aired
@@ -540,8 +590,7 @@ export async function runScheduledType3Monitoring(input: {
         : { staleActiveRunStartedBefore, staleFinishedAt: startedAt }),
     });
     if (reservation.status !== "reserved") {
-      outcomes.push({ trackedSeasonId: season.id, status: "skipped_active" });
-      continue;
+      return { trackedSeasonId: season.id, status: "skipped_active" };
     }
 
     try {
@@ -583,12 +632,12 @@ export async function runScheduledType3Monitoring(input: {
         workflowRun: { id: workflowRunId, startedAt, finishedAt: null },
         now,
       });
-      outcomes.push({
+      return {
         trackedSeasonId: state.season.id,
         status: "ran",
         workflowRunId,
         workflowStatus: result.status,
-      });
+      };
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Workflow failed";
@@ -626,16 +675,14 @@ export async function runScheduledType3Monitoring(input: {
           ? {}
           : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
       });
-      outcomes.push({
+      return {
         trackedSeasonId: state.season.id,
         status: "failed",
         workflowRunId,
         errorMessage,
-      });
+      };
     }
   }
-
-  return outcomes;
 }
 
 /**

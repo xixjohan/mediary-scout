@@ -159,23 +159,33 @@ describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-boun
     expect(first.notice).toMatch(/已移除|画质|raw/);
     expect(second.notice).toMatch(/已移除|画质|raw/);
   });
+});
 
-  it("rejects a keyword that does not reference the title (no provider hit, no budget spent)", async () => {
+describe("searchResources — empty keyword", () => {
+  it("refuses a keyword that is nothing but quality/subtitle words, without spending budget or calling the provider", async () => {
     let calls = 0;
     const sandbox = new TaskSandbox({
       provider: { async search(keyword) { calls += 1; return { id: `s_${keyword}`, keyword, candidates: [] }; } },
-      searchBudget: 8,
-      titleTerms: ["公民义警", "Citizen Vigilante"],
+      searchBudget: 1,
     });
-
-    // The "2026 电影" garbage fallback: genre+year, no title → refused before the provider.
-    await expect(sandbox.searchResources("2026 电影")).rejects.toThrow(/片名/);
+    const refused = await sandbox.searchResources("1080p 中字");
+    expect(refused.refused).toMatch(/空/);
     expect(calls).toBe(0);
-
-    // A title-bearing keyword still works, and the rejected one consumed no budget.
-    const ok = await sandbox.searchResources("公民义警 2026");
-    expect(ok.snapshot).toBeDefined();
+    // The one budgeted search is still available.
+    expect((await sandbox.searchResources("Some Title")).snapshot).toBeDefined();
     expect(calls).toBe(1);
+  });
+
+  it("accepts a 繁体 or English keyword that names none of the known title terms", async () => {
+    const seen: string[] = [];
+    const sandbox = new TaskSandbox({
+      provider: { async search(keyword) { seen.push(keyword); return { id: `s_${keyword}`, keyword, candidates: [] }; } },
+      searchBudget: 8,
+      titleTerms: ["黄泉的使者"],
+    });
+    await sandbox.searchResources("黃泉的使者");
+    await sandbox.searchResources("Daemons of the Shadow Realm");
+    expect(seen).toEqual(["黃泉的使者", "Daemons of the Shadow Realm"]);
   });
 });
 

@@ -28,6 +28,34 @@ export interface PanSouFetchInit {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
 
+/** PanSou searches in progress per server, across every provider in this process.
+ *  One PanSou fans each search out to dozens of channels and starts answering 502
+ *  at about four simultaneous searches (measured 2026-09-25); parallel patrol runs
+ *  share it, so their searches queue here instead of failing as "source down". */
+const MAX_IN_FLIGHT_PER_SERVER = 2;
+const serverSlots = new Map<string, { inFlight: number; waiters: Array<() => void> }>();
+
+async function withServerSlot<T>(baseURL: string, call: () => Promise<T>): Promise<T> {
+  let slot = serverSlots.get(baseURL);
+  if (!slot) {
+    slot = { inFlight: 0, waiters: [] };
+    serverSlots.set(baseURL, slot);
+  }
+  if (slot.inFlight >= MAX_IN_FLIGHT_PER_SERVER) {
+    await new Promise<void>((resolve) => slot!.waiters.push(resolve));
+  } else {
+    slot.inFlight += 1;
+  }
+  try {
+    return await call();
+  } finally {
+    // Hand the slot straight to the next waiter (inFlight unchanged), or free it.
+    const next = slot.waiters.shift();
+    if (next) next();
+    else if ((slot.inFlight -= 1) === 0) serverSlots.delete(baseURL);
+  }
+}
+
 export type PanSouFetchJson = (url: string, init: PanSouFetchInit) => Promise<unknown>;
 
 export interface PanSouResourceProviderOptions {
@@ -106,6 +134,12 @@ export class PanSouResourceProvider implements ResourceProvider {
   }
 
   async search(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {
+    // The slot covers the whole poll loop, not each request: between polls PanSou
+    // is still fanning the search out to its channels, which is the load that 502s.
+    return withServerSlot(this.baseURL, () => this.pollSearch(input));
+  }
+
+  private async pollSearch(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {
     // PanSou is async/streaming: the first call returns quick cached results and
     // async-plugin results land on LATER calls (5 → 35 115-links, 0 → 419
     // magnets). Poll until the link count stops growing so the agent always

@@ -4,6 +4,73 @@ import { afterEach, describe, expect, it } from "vitest";
 import { PanSouResourceProvider } from "../src/index.js";
 
 describe("PanSouResourceProvider", () => {
+  it("never has more than two searches in flight against one server, even across providers", async () => {
+    // Parallel patrol runs each build their own provider over the same PanSou,
+    // which answers 502 from about four simultaneous searches.
+    let inFlight = 0;
+    let peak = 0;
+    const fetchJson = async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return { code: 0, data: { total: 0 } };
+    };
+    const make = (baseURL: string) => new PanSouResourceProvider({ baseURL, maxSearchAttempts: 1, fetchJson });
+    const a = make("https://slots.example");
+    const b = make("https://slots.example/");
+    await Promise.all(["k1", "k2", "k3", "k4", "k5"].map((kw, i) => (i % 2 ? a : b).search({ keyword: kw })));
+    expect(peak).toBe(2);
+
+    // A different server has its own slots.
+    peak = 0;
+    const c = make("https://other-a.example");
+    const d = make("https://other-b.example");
+    await Promise.all([c.search({ keyword: "x" }), c.search({ keyword: "y" }), d.search({ keyword: "z" }), d.search({ keyword: "w" })]);
+    expect(peak).toBe(4);
+  });
+
+  it("holds the slot across a search's polls, not just each request", async () => {
+    // Each search polls 3 times with waits in between. From each keyword's first
+    // request start to its last request end, at most two keywords overlap.
+    const spans = new Map<string, { start: number; end: number }>();
+    let clock = 0;
+    const provider = new PanSouResourceProvider({
+      baseURL: "https://polls.example",
+      maxSearchAttempts: 3,
+      searchPollMs: 2,
+      fetchJson: async (_url, init) => {
+        const kw = JSON.parse(String(init?.body)).kw as string;
+        const span = spans.get(kw) ?? { start: (clock += 1), end: 0 };
+        spans.set(kw, span);
+        await new Promise((resolve) => setTimeout(resolve, 2));
+        span.end = clock += 1;
+        // A new link on every poll keeps the provider polling all 3 attempts.
+        const links = Array.from({ length: clock }, (_, i) => ({ type: "magnet", url: `magnet:?xt=urn:btih:${kw}${i}` }));
+        return { code: 0, data: { results: [{ title: kw, links }] } };
+      },
+    });
+    await Promise.all(["a", "b", "c", "d"].map((kw) => provider.search({ keyword: kw })));
+    const all = [...spans.values()];
+    const peak = Math.max(...all.map((s) => all.filter((o) => o.start <= s.start && s.start < o.end).length));
+    expect(peak).toBe(2);
+  });
+
+  it("frees the slot when a search throws", async () => {
+    let calls = 0;
+    const provider = new PanSouResourceProvider({
+      baseURL: "https://throws.example",
+      maxSearchAttempts: 1,
+      fetchJson: async () => {
+        calls += 1;
+        throw new Error("boom");
+      },
+    });
+    const results = await Promise.all([1, 2, 3, 4].map((n) => provider.search({ keyword: `k${n}` })));
+    expect(calls).toBe(4);
+    expect(results.every((r) => r.sourceHealth?.status === "unreachable" || r.candidates.length === 0)).toBe(true);
+  });
+
   it("maps PanSou 115 and magnet links into a resource snapshot", async () => {
     const provider = new PanSouResourceProvider({
       baseURL: "https://pansou.example",
