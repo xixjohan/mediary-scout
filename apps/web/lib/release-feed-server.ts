@@ -33,10 +33,21 @@ export interface DesktopRelease {
 let cache: { at: number; ttl: number; feed: ReleaseEntry[] } | null = null;
 let desktopCache: { at: number; ttl: number; release: DesktopRelease | null } | null = null;
 const relationCache = new Map<string, { at: number; relation: CommitRelation | null }>();
+/** The fetch under way, shared by every caller that arrives meanwhile: the settings badge
+ *  polls every 8 s per open tab, and a cold feed is up to 11 GitHub requests. */
+let feedInFlight: Promise<ReleaseEntry[]> | null = null;
+let desktopInFlight: Promise<DesktopRelease | null> | null = null;
+const relationInFlight = new Map<string, Promise<CommitRelation | null>>();
+/** Bumped by 「检查更新」: a fetch that started before it must not refill the cache. */
+let generation = 0;
 
 export function invalidateReleaseFeedCache(): void {
+  generation += 1;
   cache = null;
   desktopCache = null;
+  feedInFlight = null;
+  desktopInFlight = null;
+  relationInFlight.clear();
   relationCache.clear();
 }
 
@@ -53,6 +64,17 @@ export async function fetchCommitRelation(
   const key = `${base}...${head}`;
   const hit = relationCache.get(key);
   if (hit && Date.now() - hit.at < (hit.relation ? OK_TTL_MS : FAIL_TTL_MS)) return hit.relation;
+  const running = relationInFlight.get(key);
+  if (running) return running;
+  const started = generation;
+  const pending = loadCommitRelation(key, fetchImpl, started).finally(() => {
+    if (relationInFlight.get(key) === pending) relationInFlight.delete(key);
+  });
+  relationInFlight.set(key, pending);
+  return pending;
+}
+
+async function loadCommitRelation(key: string, fetchImpl: typeof fetch, started: number): Promise<CommitRelation | null> {
   let relation: CommitRelation | null = null;
   try {
     const raw = await getText(fetchImpl, `https://api.github.com/repos/${REPO}/compare/${key}`);
@@ -61,7 +83,7 @@ export async function fetchCommitRelation(
   } catch {
     relation = null;
   }
-  relationCache.set(key, { at: Date.now(), relation });
+  if (started === generation) relationCache.set(key, { at: Date.now(), relation });
   return relation;
 }
 
@@ -81,6 +103,16 @@ async function getText(
 /** Newest first. Failure-tolerant: an offline instance gets [] (and does not retry for 5 minutes). */
 export async function fetchReleaseFeed(fetchImpl: typeof fetch = fetch): Promise<ReleaseEntry[]> {
   if (cache && Date.now() - cache.at < cache.ttl) return cache.feed;
+  if (feedInFlight) return feedInFlight;
+  const started = generation;
+  const pending = loadReleaseFeed(fetchImpl, started).finally(() => {
+    if (feedInFlight === pending) feedInFlight = null;
+  });
+  feedInFlight = pending;
+  return pending;
+}
+
+async function loadReleaseFeed(fetchImpl: typeof fetch, started: number): Promise<ReleaseEntry[]> {
   let feed: ReleaseEntry[] = [];
   let ttl = FAIL_TTL_MS;
   try {
@@ -111,7 +143,7 @@ export async function fetchReleaseFeed(fetchImpl: typeof fetch = fetch): Promise
   } catch {
     feed = [];
   }
-  cache = { at: Date.now(), ttl, feed };
+  if (started === generation) cache = { at: Date.now(), ttl, feed };
   return feed;
 }
 
@@ -122,6 +154,16 @@ export async function fetchReleaseFeed(fetchImpl: typeof fetch = fetch): Promise
  *  is not hidden for an hour. */
 export async function fetchLatestDesktopRelease(fetchImpl: typeof fetch = fetch): Promise<DesktopRelease | null> {
   if (desktopCache && Date.now() - desktopCache.at < desktopCache.ttl) return desktopCache.release;
+  if (desktopInFlight) return desktopInFlight;
+  const started = generation;
+  const pending = loadLatestDesktopRelease(fetchImpl, started).finally(() => {
+    if (desktopInFlight === pending) desktopInFlight = null;
+  });
+  desktopInFlight = pending;
+  return pending;
+}
+
+async function loadLatestDesktopRelease(fetchImpl: typeof fetch, started: number): Promise<DesktopRelease | null> {
   let release: DesktopRelease | null = null;
   let ttl = FAIL_TTL_MS;
   try {
@@ -131,7 +173,7 @@ export async function fetchLatestDesktopRelease(fetchImpl: typeof fetch = fetch)
   } catch {
     release = null;
   }
-  desktopCache = { at: Date.now(), ttl, release };
+  if (started === generation) desktopCache = { at: Date.now(), ttl, release };
   return release;
 }
 

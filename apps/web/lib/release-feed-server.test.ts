@@ -66,6 +66,41 @@ describe("fetchReleaseFeed", () => {
     expect((await fetchReleaseFeed(fetchImpl)).map((r) => r.tag)).toEqual(["v2026.09.28"]);
   });
 
+  it("callers that arrive while a cold fetch is running share it (one burst of requests, not one per caller)", async () => {
+    const fetchImpl = fakeFetch({
+      [TAGS]: { status: 200, body: JSON.stringify([ref("v2026.10.02", "c".repeat(40))]) },
+      [notes("v2026.10.02")]: { status: 200, body: "- 新增 一键更新" },
+    });
+    const [first, second, third] = await Promise.all([
+      fetchReleaseFeed(fetchImpl),
+      fetchReleaseFeed(fetchImpl),
+      fetchReleaseFeed(fetchImpl),
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // tags + one notes file
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+  });
+
+  it("a fetch that started before 「检查更新」 does not refill the cache after it", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const stale = vi.fn(async (url: string) => {
+      await gate;
+      return url === TAGS
+        ? new Response(JSON.stringify([ref("v2026.10.01", "b".repeat(40))]), { status: 200 })
+        : new Response("", { status: 404 });
+    }) as unknown as typeof fetch;
+    const pending = fetchReleaseFeed(stale);
+    invalidateReleaseFeedCache();
+    const fresh = fakeFetch({ [TAGS]: { status: 200, body: JSON.stringify([ref("v2026.10.02", "c".repeat(40))]) } });
+    expect((await fetchReleaseFeed(fresh))[0]?.tag).toBe("v2026.10.02");
+    release();
+    await pending;
+    expect((await fetchReleaseFeed(fresh))[0]?.tag).toBe("v2026.10.02");
+  });
+
   it("returns [] when GitHub is unreachable, and caches the failure", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("offline");
@@ -94,6 +129,36 @@ describe("fetchCommitRelation", () => {
     invalidateReleaseFeedCache();
     expect(await fetchCommitRelation(base, head, odd)).toBeNull();
   });
+
+  it("callers that arrive while the comparison is running share it", async () => {
+    const base = "b".repeat(40);
+    const head = "d".repeat(40);
+    const fetchImpl = fakeFetch({ [compare(base, head)]: { status: 200, body: JSON.stringify({ status: "behind" }) } });
+    const both = await Promise.all([fetchCommitRelation(base, head, fetchImpl), fetchCommitRelation(base, head, fetchImpl)]);
+    expect(both).toEqual(["behind", "behind"]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it("a comparison that started before 「检查更新」 does not overwrite the fresh answer", async () => {
+    const base = "b".repeat(40);
+    const head = "d".repeat(40);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    // The old request fails (a cached null would hide the update for five minutes).
+    const stale = vi.fn(async () => {
+      await gate;
+      return new Response("", { status: 502 });
+    }) as unknown as typeof fetch;
+    const pending = fetchCommitRelation(base, head, stale);
+    invalidateReleaseFeedCache();
+    const fresh = fakeFetch({ [compare(base, head)]: { status: 200, body: JSON.stringify({ status: "behind" }) } });
+    expect(await fetchCommitRelation(base, head, fresh)).toBe("behind");
+    release();
+    await pending;
+    expect(await fetchCommitRelation(base, head, fakeFetch({}))).toBe("behind");
+  });
 });
 
 const LATEST = "https://api.github.com/repos/fancydirty/mediary-scout/releases/latest";
@@ -121,6 +186,21 @@ describe("fetchLatestDesktopRelease", () => {
       dmgUrl: asset("Mediary.Scout-2026.1002.0-arm64.dmg").browser_download_url,
       exeUrl: asset("Mediary.Scout.Setup.2026.1002.0.exe").browser_download_url,
     });
+  });
+
+  it("callers that arrive while the lookup is running share it", async () => {
+    const fetchImpl = fakeFetch({
+      [LATEST]: {
+        status: 200,
+        body: JSON.stringify({
+          tag_name: "v2026.10.02",
+          assets: [asset("Mediary.Scout-2026.1002.0-arm64.dmg"), asset("Mediary.Scout.Setup.2026.1002.0.exe")],
+        }),
+      },
+    });
+    const [first, second] = await Promise.all([fetchLatestDesktopRelease(fetchImpl), fetchLatestDesktopRelease(fetchImpl)]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(second).toEqual(first);
   });
 
   it("ignores an old semver release, and installers served from anywhere else", async () => {

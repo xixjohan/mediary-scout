@@ -1,6 +1,7 @@
 "use server";
 
 import { isDemoMode } from "../lib/demo-mode";
+import { isAutoUpdateTime } from "../lib/auto-update-schedule";
 import { invalidateReleaseFeedCache } from "../lib/release-feed-server";
 import { resolveCurrentIsOwner } from "../lib/settings-attention-server";
 import { loadUpdateView } from "../lib/update-view-server";
@@ -10,6 +11,7 @@ const REASON_TEXT = {
   no_updater: "一键更新需要先完成一次手动升级（见下方命令）。",
   busy: "已经在更新了。",
   needs_recovery: "上次更新回退没成功，请先在部署目录运行 ./scripts/deploy.sh 恢复，再更新。",
+  serving_unknown: "部署目录被人手动换过版本。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能更新。",
   bad_tag: "这个版本不是可更新的新版本，刷新页面再试。",
   unreachable: "连不上更新助手，稍后再试。",
 } as const;
@@ -19,7 +21,7 @@ export async function startUpdateAction(
 ): Promise<{
   ok: boolean;
   message: string;
-  reason?: "no_updater" | "busy" | "needs_recovery" | "bad_tag" | "unreachable" | "denied" | "stale";
+  reason?: "no_updater" | "busy" | "needs_recovery" | "serving_unknown" | "bad_tag" | "unreachable" | "denied" | "stale";
 }> {
   if (isDemoMode() || !(await resolveCurrentIsOwner()))
     return { ok: false, message: "没有权限。", reason: "denied" };
@@ -28,9 +30,36 @@ export async function startUpdateAction(
   const offered = (await loadUpdateView()).available?.tag;
   if (!offered || offered !== tag) return { ok: false, message: REASON_TEXT.bad_tag, reason: "stale" };
   const result = await requestUpdate(offered);
-  return result.ok
-    ? { ok: true, message: "已开始更新。" }
-    : { ok: false, message: REASON_TEXT[result.reason], reason: result.reason };
+  if (!result.ok) return { ok: false, message: REASON_TEXT[result.reason], reason: result.reason };
+  // A click is a person's decision to try again: auto-update may retry a release it gave up on.
+  // The update is already running: a failed write here must not report it as not started.
+  try {
+    const { getWorkflowRepository, AUTO_UPDATE_FAIL_STREAK_SETTING_KEY } = await import("../lib/workflow-runtime");
+    await getWorkflowRepository().setSetting(AUTO_UPDATE_FAIL_STREAK_SETTING_KEY, "");
+  } catch (error) {
+    console.error(`[update] could not clear the auto-update retry count: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return { ok: true, message: "已开始更新。" };
+}
+
+/** The 「每天自动更新」 switch and its hour, whole hours in Beijing time. */
+export async function saveAutoUpdateAction(enabled: boolean, time: string): Promise<{ ok: boolean; message: string }> {
+  if (isDemoMode() || !(await resolveCurrentIsOwner())) return { ok: false, message: "没有权限。" };
+  if (!isAutoUpdateTime(time)) return { ok: false, message: "时间只能选整点。" };
+  const { getWorkflowRepository, AUTO_UPDATE_ENABLED_SETTING_KEY, AUTO_UPDATE_TIME_SETTING_KEY } = await import(
+    "../lib/workflow-runtime"
+  );
+  const repository = getWorkflowRepository();
+  // Two separate writes: order them so a failure part way leaves updates off, never on at
+  // an hour nobody chose. On: hour first, then the switch. Off: the switch first.
+  if (enabled) {
+    await repository.setSetting(AUTO_UPDATE_TIME_SETTING_KEY, time);
+    await repository.setSetting(AUTO_UPDATE_ENABLED_SETTING_KEY, "1");
+  } else {
+    await repository.setSetting(AUTO_UPDATE_ENABLED_SETTING_KEY, "0");
+    await repository.setSetting(AUTO_UPDATE_TIME_SETTING_KEY, time);
+  }
+  return { ok: true, message: "已保存。" };
 }
 
 let lastManualCheck = 0;
