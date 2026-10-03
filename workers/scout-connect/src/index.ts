@@ -3,6 +3,7 @@ import { createD1ConnectDb } from "./db.js";
 import { newId, newInviteCode } from "./ids.js";
 import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes.js";
 import { createMagicLinkSender } from "./magic-link-sender.js";
+import { createInstanceLinkSender } from "./instance-link-sender.js";
 import type { Env } from "./env.js";
 import { createWaffoApi, type WaffoApi } from "./waffo-api.js";
 import { sweepExpiredEndpoints } from "./expiry-sweep.js";
@@ -93,7 +94,59 @@ function routeDeps(env: Env, waffoApi: WaffoApi | undefined, scheduled = false):
     sendMagicLink: scheduled
       ? async () => {}
       : createMagicLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
+    sendInstanceLinkEmail: scheduled
+      ? async () => {}
+      : createInstanceLinkSender(requireEnv(env.RESEND_API_KEY, "RESEND_API_KEY")),
   };
+}
+
+// 连接请求过期 7 天后删掉:轮询早就拿不到东西,留着只是攒邮箱和 IP。
+const INSTANCE_LINK_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+const INSTANCE_LINK_RETENTION_BATCH = 1000;
+// 一轮最多删 10 批:积压超过一万条时剩下的留给第二天,不让一次 cron 跑太久。
+const INSTANCE_LINK_RETENTION_MAX_BATCHES = 10;
+
+async function deleteExpiredInstanceLinkRequests(deps: RouteDeps, cutoffIso: string): Promise<void> {
+  for (let batch = 0; batch < INSTANCE_LINK_RETENTION_MAX_BATCHES; batch += 1) {
+    const deleted = await deps.db.deleteInstanceLinkRequestsExpiredBefore(cutoffIso, INSTANCE_LINK_RETENTION_BATCH);
+    if (deleted < INSTANCE_LINK_RETENTION_BATCH) return;
+  }
+}
+
+export async function runScheduledMaintenance(
+  deps: RouteDeps,
+  options: { live: boolean; resendApiKey?: string | undefined },
+): Promise<void> {
+  const nowMs = Date.parse(deps.now());
+  const retention = Number.isFinite(nowMs)
+    ? deleteExpiredInstanceLinkRequests(deps, new Date(nowMs - INSTANCE_LINK_RETENTION_MS).toISOString())
+        .catch((error) => {
+          console.error("instance-link retention failed:", error instanceof Error ? error.message : String(error));
+        })
+    : Promise.resolve(console.error("instance-link retention skipped: invalid time"));
+  await Promise.all([
+    retention,
+    sweepExpiredEndpoints({
+      db: deps.db,
+      cf: deps.cf,
+      now: deps.now,
+      newAuditId: deps.newAuditId,
+      // dry-run 时不需要发信器(sweep 只在 live 且配置了时才调它)。
+      // 没配 RESEND key 时即便 live 也只是邮件发不出去,回收照走。
+      sendEmail:
+        options.resendApiKey === undefined || options.resendApiKey.trim() === ""
+          ? undefined
+          : createEmailSender(options.resendApiKey),
+      live: options.live,
+    }).catch((error) => {
+      // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。
+      console.error("expiry sweep failed:", error instanceof Error ? error.message : String(error));
+    }),
+    reconcileWaffoOrders(deps).catch((error) => {
+      // 同一轮的 Waffo 对账失败也只影响下一轮,不能吞掉其它 cron 工作。
+      console.error("Waffo reconciliation scan failed:", error instanceof Error ? error.message : String(error));
+    }),
+  ]);
 }
 
 export default {
@@ -104,28 +157,10 @@ export default {
     const waffoApi = createWaffoFromEnv(env);
     const deps = routeDeps(env, waffoApi, true);
     ctx.waitUntil(
-      Promise.all([
-        sweepExpiredEndpoints({
-          db: deps.db,
-          cf: deps.cf,
-          now: deps.now,
-          newAuditId: deps.newAuditId,
-          // dry-run 时不需要发信器(sweep 只在 live 且配置了时才调它)。
-          // 没配 RESEND key 时即便 live 也只是邮件发不出去,回收照走。
-          sendEmail:
-            env.RESEND_API_KEY === undefined || env.RESEND_API_KEY.trim() === ""
-              ? undefined
-              : createEmailSender(env.RESEND_API_KEY),
-          live: env.EXPIRY_SWEEP_LIVE === "true",
-        }).catch((error) => {
-          // 顶层兜底:任一轮失败不能让 cron 静默消失 —— 记录日志,下一轮再试。
-          console.error("expiry sweep failed:", error instanceof Error ? error.message : String(error));
-        }),
-        reconcileWaffoOrders(deps).catch((error) => {
-          // 同一轮的 Waffo 对账失败也只影响下一轮,不能吞掉其它 cron 工作。
-          console.error("Waffo reconciliation scan failed:", error instanceof Error ? error.message : String(error));
-        }),
-      ]),
+      runScheduledMaintenance(deps, {
+        live: env.EXPIRY_SWEEP_LIVE === "true",
+        resendApiKey: env.RESEND_API_KEY,
+      }),
     );
   },
   async fetch(request: Request, env: Env): Promise<Response> {

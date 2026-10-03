@@ -1,14 +1,19 @@
 import { describe, it, expect } from "vitest";
+import Database from "better-sqlite3";
+import { readFileSync } from "node:fs";
 import {
   createMemoryConnectDb,
   createD1ConnectDb,
   type D1Database,
   type D1PreparedStatement,
+  type ConnectDb,
   type InviteRow,
   type EndpointRow,
   type AuditRow,
   type EntitlementRow,
   type PaymentOrderRow,
+  type InstanceLinkRequestRow,
+  type InstanceCredentialRow,
 } from "./db.js";
 
 function makeInvite(overrides: Partial<InviteRow> = {}): InviteRow {
@@ -43,6 +48,37 @@ function makeEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
     last_seen_at: null,
     created_at: "2026-07-24T00:00:00.000Z",
     revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null,
+    ...overrides,
+  };
+}
+
+function makeInstanceLinkRequest(overrides: Partial<InstanceLinkRequestRow> = {}): InstanceLinkRequestRow {
+  return {
+    id: "ilr_1",
+    poll_secret_sha256: "poll-sha-1",
+    email: "alice@example.com",
+    verify_code: "AB23",
+    status: "pending",
+    account_id: null,
+    request_ip: "192.0.2.1",
+    created_at: "2026-10-03T00:00:00.000Z",
+    expires_at: "2026-10-03T00:30:00.000Z",
+    approved_at: null,
+    delivered_at: null,
+    last_polled_at: null,
+    ...overrides,
+  };
+}
+
+function makeInstanceCredential(overrides: Partial<InstanceCredentialRow> = {}): InstanceCredentialRow {
+  return {
+    id: "icr_1",
+    account_id: "act_1",
+    credential_sha256: "credential-sha-1",
+    link_request_id: "ilr_1",
+    created_at: "2026-10-03T00:01:00.000Z",
+    last_used_at: null,
+    revoked_at: null,
     ...overrides,
   };
 }
@@ -275,6 +311,308 @@ function createSpyD1(respond: { first?: unknown; all?: unknown[] } = {}): {
   };
   return { d1, calls };
 }
+
+function createSqliteConnectDb(): { sqlite: Database.Database; db: ConnectDb } {
+  const sqlite = new Database(":memory:");
+  const schema = readFileSync(new URL("../schema.sql", import.meta.url), "utf8");
+  sqlite.exec(schema);
+  type SyncPrepared = D1PreparedStatement & { runSync(): { meta: { changes: number } } };
+  const d1: D1Database = {
+    prepare(query: string): D1PreparedStatement {
+      const stmt = sqlite.prepare(query);
+      let values: unknown[] = [];
+      const api: SyncPrepared = {
+        bind(...next: unknown[]) {
+          values = next;
+          return api;
+        },
+        async first<T>() {
+          return (stmt.get(...values) as T | undefined) ?? null;
+        },
+        async all<T>() {
+          return { results: stmt.all(...values) as T[] };
+        },
+        async run() {
+          const result = stmt.run(...values);
+          return { meta: { changes: result.changes } };
+        },
+        runSync() {
+          const result = stmt.run(...values);
+          return { meta: { changes: result.changes } };
+        },
+      };
+      return api;
+    },
+    async batch(statements) {
+      const run = sqlite.transaction(() =>
+        statements.map((statement) => (statement as SyncPrepared).runSync()),
+      );
+      return run();
+    },
+  };
+  return { sqlite, db: createD1ConnectDb(d1) };
+}
+
+async function exerciseInstanceLinkDb(db: ConnectDb): Promise<void> {
+  const row = makeInstanceLinkRequest();
+  await db.insertInstanceLinkRequest(row);
+  expect(await db.getInstanceLinkRequestById(row.id)).toEqual(row);
+  expect(await db.getInstanceLinkRequestByPollSecretSha(row.poll_secret_sha256)).toEqual(row);
+  expect(await db.getInstanceLinkRequestById("missing")).toBeNull();
+  expect(await db.getInstanceLinkRequestByPollSecretSha("missing")).toBeNull();
+
+  expect(await db.approveInstanceLinkRequest(row.id, "act_1", "2026-10-03T00:10:00.000Z")).toBe(true);
+  expect(await db.approveInstanceLinkRequest(row.id, "act_1", "2026-10-03T00:11:00.000Z")).toBe(false);
+  expect(await db.getInstanceLinkRequestById(row.id)).toMatchObject({
+    status: "approved",
+    account_id: "act_1",
+    approved_at: "2026-10-03T00:10:00.000Z",
+  });
+
+  const expired = makeInstanceLinkRequest({ id: "ilr_expired", poll_secret_sha256: "poll-sha-expired" });
+  await db.insertInstanceLinkRequest(expired);
+  expect(await db.approveInstanceLinkRequest(expired.id, "act_1", "2026-10-03T00:30:00.001Z")).toBe(false);
+  expect(await db.touchInstanceLinkPoll(expired.id, "2026-10-03T00:20:00.000Z")).toBe(true);
+  expect(await db.touchInstanceLinkPoll(expired.id, "2026-10-03T00:20:00.001Z")).toBe(false);
+  expect(await db.getInstanceLinkRequestById(expired.id)).toMatchObject({
+    last_polled_at: "2026-10-03T00:20:00.000Z",
+  });
+
+  await db.insertInstanceCredential(makeInstanceCredential());
+  await db.insertInstanceCredential(
+    makeInstanceCredential({
+      id: "icr_keep",
+      credential_sha256: "credential-sha-keep",
+      account_id: "act_1",
+      link_request_id: "ilr_keep",
+    }),
+  );
+  await db.insertInstanceCredential(
+    makeInstanceCredential({
+      id: "icr_other-account",
+      credential_sha256: "credential-sha-other-account",
+      account_id: "act_2",
+      link_request_id: "ilr_other-account",
+    }),
+  );
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-1")).toMatchObject({ id: "icr_1" });
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-keep")).toMatchObject({ id: "icr_keep" });
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-other-account")).toMatchObject({
+    id: "icr_other-account",
+  });
+  await db.touchInstanceCredential("icr_keep", "2026-10-03T00:15:00.000Z");
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-keep")).toMatchObject({
+    last_used_at: "2026-10-03T00:15:00.000Z",
+  });
+  await db.revokeInstanceCredential("icr_keep", "2026-10-03T00:16:00.000Z");
+  expect(await db.getActiveInstanceCredentialBySha("credential-sha-keep")).toBeNull();
+}
+
+describe("instance link DB methods", () => {
+  async function exerciseOneCredentialPerRequest(db: ConnectDb): Promise<void> {
+    await db.insertInstanceCredential(makeInstanceCredential({ id: "icr_first", credential_sha256: "sha-first", link_request_id: "ilr_shared" }));
+    await expect(
+      db.insertInstanceCredential(makeInstanceCredential({ id: "icr_second", credential_sha256: "sha-second", link_request_id: "ilr_shared" })),
+    ).rejects.toThrow(/UNIQUE/i);
+  }
+
+  it("allows one credential per link request in memory, like D1", async () => {
+    await exerciseOneCredentialPerRequest(createMemoryConnectDb());
+  });
+
+  it("allows one credential per link request in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseOneCredentialPerRequest(db);
+  });
+
+  async function exerciseInstanceLinkRetention(db: ConnectDb): Promise<void> {
+    await db.insertInstanceLinkRequest(makeInstanceLinkRequest({
+      id: "ilr_old_1", poll_secret_sha256: "poll-old-1", expires_at: "2026-10-01T00:00:00.000Z",
+    }));
+    await db.insertInstanceLinkRequest(makeInstanceLinkRequest({
+      id: "ilr_old_2", poll_secret_sha256: "poll-old-2", expires_at: "2026-10-02T00:00:00.000Z", status: "approved",
+    }));
+    await db.insertInstanceLinkRequest(makeInstanceLinkRequest({
+      id: "ilr_recent", poll_secret_sha256: "poll-recent", expires_at: "2026-10-04T00:00:00.000Z", status: "delivered",
+    }));
+    expect(await db.deleteInstanceLinkRequestsExpiredBefore("2026-10-03T00:00:00.000Z", 1)).toBe(1);
+    expect(await db.getInstanceLinkRequestById("ilr_old_1")).toBeNull();
+    expect(await db.getInstanceLinkRequestById("ilr_old_2")).not.toBeNull();
+    expect(await db.getInstanceLinkRequestById("ilr_recent")).not.toBeNull();
+    expect(await db.deleteInstanceLinkRequestsExpiredBefore("2026-10-03T00:00:00.000Z", 100)).toBe(1);
+    expect(await db.getInstanceLinkRequestById("ilr_old_2")).toBeNull();
+  }
+
+  it("retains only recent instance-link requests in memory", async () => {
+    await exerciseInstanceLinkRetention(createMemoryConnectDb());
+  });
+
+  it("retains only recent instance-link requests in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseInstanceLinkRetention(db);
+  });
+
+  type DeliveryDb = ConnectDb & {
+    deliverInstanceCredential(input: {
+      requestId: string;
+      credential: InstanceCredentialRow;
+      nowIso: string;
+    }): Promise<boolean>;
+  };
+
+  async function exerciseAtomicDelivery(db: DeliveryDb): Promise<void> {
+    const request = makeInstanceLinkRequest({ id: "ilr_delivery", poll_secret_sha256: "poll-sha-delivery" });
+    await db.insertInstanceLinkRequest(request);
+    expect(await db.approveInstanceLinkRequest(request.id, "act_1", "2026-10-03T00:01:00.000Z")).toBe(true);
+    const credential = makeInstanceCredential({
+      id: "icr_delivery",
+      link_request_id: request.id,
+      credential_sha256: "credential-sha-delivery",
+      created_at: "2026-10-03T00:02:00.000Z",
+    });
+    expect(await db.deliverInstanceCredential({
+      requestId: request.id,
+      credential,
+      nowIso: "2026-10-03T00:02:00.000Z",
+    })).toBe(true);
+    expect(await db.deliverInstanceCredential({
+      requestId: request.id,
+      credential: { ...credential, id: "icr_delivery_retry", credential_sha256: "credential-sha-retry" },
+      nowIso: "2026-10-03T00:03:00.000Z",
+    })).toBe(false);
+    expect(await db.getInstanceLinkRequestById(request.id)).toMatchObject({ status: "delivered" });
+    expect(await db.getActiveInstanceCredentialBySha(credential.credential_sha256)).toMatchObject({ id: credential.id });
+  }
+
+  async function exerciseSameInstantRedelivery(db: DeliveryDb): Promise<void> {
+    // Two polls of one request that read the same clock: the loser inserts nothing and must not
+    // revoke the credential the winner already handed out.
+    const request = makeInstanceLinkRequest({ id: "ilr_same_ms", poll_secret_sha256: "poll-sha-same-ms" });
+    await db.insertInstanceLinkRequest(request);
+    await db.approveInstanceLinkRequest(request.id, "act_1", "2026-10-03T00:01:00.000Z");
+    const at = "2026-10-03T00:02:00.000Z";
+    const credential = makeInstanceCredential({
+      id: "icr_winner",
+      link_request_id: request.id,
+      credential_sha256: "credential-sha-winner",
+      created_at: at,
+    });
+    expect(await db.deliverInstanceCredential({ requestId: request.id, credential, nowIso: at })).toBe(true);
+    expect(await db.deliverInstanceCredential({
+      requestId: request.id,
+      credential: { ...credential, id: "icr_loser", credential_sha256: "credential-sha-loser" },
+      nowIso: at,
+    })).toBe(false);
+    expect(await db.getActiveInstanceCredentialBySha("credential-sha-winner")).toMatchObject({ id: "icr_winner" });
+  }
+
+  it("keeps the delivered credential when the same request is delivered again in the same instant, in memory", async () => {
+    await exerciseSameInstantRedelivery(createMemoryConnectDb() as DeliveryDb);
+  });
+
+  it("keeps the delivered credential when the same request is delivered again in the same instant, in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseSameInstantRedelivery(db as DeliveryDb);
+  });
+
+  it("delivers an instance credential atomically in memory", async () => {
+    await exerciseAtomicDelivery(createMemoryConnectDb() as DeliveryDb);
+  });
+
+  it("delivers an instance credential atomically in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseAtomicDelivery(db as DeliveryDb);
+  });
+
+  async function exerciseDeliveryRollback(db: DeliveryDb): Promise<void> {
+    const request = makeInstanceLinkRequest({ id: "ilr_rollback", poll_secret_sha256: "poll-sha-rollback" });
+    await db.insertInstanceLinkRequest(request);
+    await db.approveInstanceLinkRequest(request.id, "act_1", "2026-10-03T00:01:00.000Z");
+    await db.insertInstanceCredential(makeInstanceCredential({
+      id: "icr_collision",
+      credential_sha256: "credential-sha-existing",
+      link_request_id: "ilr_other",
+    }));
+    await expect(db.deliverInstanceCredential({
+      requestId: request.id,
+      credential: makeInstanceCredential({
+        id: "icr_collision",
+        credential_sha256: "credential-sha-new",
+        link_request_id: request.id,
+      }),
+      nowIso: "2026-10-03T00:02:00.000Z",
+    })).rejects.toThrow(/UNIQUE/i);
+    expect(await db.getInstanceLinkRequestById(request.id)).toMatchObject({ status: "approved" });
+    expect(await db.getActiveInstanceCredentialBySha("credential-sha-new")).toBeNull();
+  }
+
+  it("rolls back a failed delivery in memory", async () => {
+    await exerciseDeliveryRollback(createMemoryConnectDb() as DeliveryDb);
+  });
+
+  it("rolls back a failed delivery in D1", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseDeliveryRollback(db as DeliveryDb);
+  });
+
+  async function exerciseCredentialRotationOrdering(db: DeliveryDb, newerFirst: boolean): Promise<void> {
+    const requestA = makeInstanceLinkRequest({ id: "ilr_a", poll_secret_sha256: "poll-sha-a" });
+    const requestB = makeInstanceLinkRequest({ id: "ilr_b", poll_secret_sha256: "poll-sha-b" });
+    await db.insertInstanceLinkRequest(requestA);
+    await db.insertInstanceLinkRequest(requestB);
+    await db.approveInstanceLinkRequest(requestA.id, "act_1", "2026-10-03T00:00:00.000Z");
+    await db.approveInstanceLinkRequest(requestB.id, "act_1", "2026-10-03T00:00:00.000Z");
+    const deliver = async (request: InstanceLinkRequestRow, id: string, createdAt: string) =>
+      db.deliverInstanceCredential({
+        requestId: request.id,
+        credential: makeInstanceCredential({
+          id,
+          link_request_id: request.id,
+          credential_sha256: `credential-sha-${id}`,
+          created_at: createdAt,
+        }),
+        nowIso: createdAt,
+      });
+    // A slower poll can commit after a faster one even though its clock read is earlier. Whatever
+    // the order, a delivery that reports success must hand out a credential that is still active,
+    // and the account keeps exactly one: the one delivered last.
+    const [first, last] = newerFirst
+      ? [{ request: requestB, id: "icr_b", at: "2026-10-03T00:02:00.000Z" }, { request: requestA, id: "icr_a", at: "2026-10-03T00:01:00.000Z" }]
+      : [{ request: requestA, id: "icr_a", at: "2026-10-03T00:01:00.000Z" }, { request: requestB, id: "icr_b", at: "2026-10-03T00:02:00.000Z" }];
+    expect(await deliver(first.request, first.id, first.at)).toBe(true);
+    expect(await db.getActiveInstanceCredentialBySha(`credential-sha-${first.id}`)).toMatchObject({ id: first.id });
+    expect(await deliver(last.request, last.id, last.at)).toBe(true);
+    expect(await db.getActiveInstanceCredentialBySha(`credential-sha-${last.id}`)).toMatchObject({ id: last.id });
+    expect(await db.getActiveInstanceCredentialBySha(`credential-sha-${first.id}`)).toBeNull();
+  }
+
+  it("memory implementation preserves request and credential CAS semantics", async () => {
+    await exerciseInstanceLinkDb(createMemoryConnectDb());
+  });
+
+  it("D1 implementation preserves request and credential CAS semantics", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseInstanceLinkDb(db);
+  });
+
+  it("keeps only the credential delivered last for older-then-newer memory delivery", async () => {
+    await exerciseCredentialRotationOrdering(createMemoryConnectDb() as DeliveryDb, false);
+  });
+
+  it("keeps only the credential delivered last for newer-then-older memory delivery", async () => {
+    await exerciseCredentialRotationOrdering(createMemoryConnectDb() as DeliveryDb, true);
+  });
+
+  it("keeps only the credential delivered last for older-then-newer D1 delivery", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseCredentialRotationOrdering(db as DeliveryDb, false);
+  });
+
+  it("keeps only the credential delivered last for newer-then-older D1 delivery", async () => {
+    const { db } = createSqliteConnectDb();
+    await exerciseCredentialRotationOrdering(db as DeliveryDb, true);
+  });
+});
 
 describe("D1 ConnectDb SQL", () => {
   it("updateInviteStatus full patch keeps placeholder↔bind alignment", async () => {
