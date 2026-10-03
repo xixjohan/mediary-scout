@@ -1,4 +1,4 @@
-import type { PaymentOrderStatus } from "./alipay-order.js";
+import type { PaymentOrderStatus } from "./payment-order.js";
 
 export interface InviteRow {
   id: string;
@@ -53,10 +53,10 @@ export interface EntitlementRow {
   id: string;
   account_id: string;
   expires_at: string;
-  source: "alipay" | "paddle" | "founding" | "manual" | "beta";
+  source: "alipay" | "paddle" | "waffo" | "founding" | "manual" | "beta";
   /** Historical Paddle-only field. New grants write null and use the pair below. */
   paddle_transaction_id: string | null;
-  payment_provider: "alipay" | "paddle" | null;
+  payment_provider: "alipay" | "paddle" | "waffo" | null;
   payment_transaction_id: string | null;
   /** Non-null rows remain auditable but no longer contribute usable time. */
   refunded_at: string | null;
@@ -68,9 +68,13 @@ export interface PaymentOrderRow {
   id: string;
   checkout_token_sha256: string;
   account_id: string;
-  provider: "alipay";
+  /** Current checkout provider; historical rows retain their original provider. */
+  provider: "alipay" | "waffo";
   out_trade_no: string;
   trade_no: string | null;
+  /** Waffo checkout session and provider order ids; null for historical rows. */
+  waffo_session_id?: string | null;
+  waffo_order_id?: string | null;
   months: 3 | 12 | 24;
   total_amount: string;
   status: PaymentOrderStatus;
@@ -89,6 +93,9 @@ export type PaymentOrderPatch = Partial<
   Pick<
     PaymentOrderRow,
     | "trade_no"
+    | "expires_at"
+    | "waffo_session_id"
+    | "waffo_order_id"
     | "status"
     | "paid_at"
     | "fulfilled_at"
@@ -104,6 +111,12 @@ export interface PaymentOrderCondition {
   statuses?: readonly PaymentOrderStatus[];
   /** undefined = do not compare; null = require no refund claim; string = require exact claim. */
   refundRequestNo?: string | null;
+}
+
+export interface PaymentOrderReconciliationOptions {
+  unpaidSinceIso: string;
+  settledSinceIso: string;
+  limit: number;
 }
 
 export interface AuditRow {
@@ -220,12 +233,19 @@ export interface ConnectDb {
   getAccountById(id: string): Promise<AccountRow | null>;
   getAccountByEmail(email: string): Promise<AccountRow | null>;
   updateAccountLastLogin(id: string, at: string): Promise<void>;
-  // Durable Alipay checkout/payment state.
+  // Durable payment state (historical Alipay rows and current Waffo rows).
   insertPaymentOrder(row: PaymentOrderRow): Promise<PaymentOrderRow>;
   getPaymentOrderById(id: string): Promise<PaymentOrderRow | null>;
-  getPaymentOrderByCheckoutHash(sha256: string): Promise<PaymentOrderRow | null>;
   getPaymentOrderByOutTradeNo(outTradeNo: string): Promise<PaymentOrderRow | null>;
-  getPaymentOrderByRefundRequestNo(requestNo: string): Promise<PaymentOrderRow | null>;
+  insertPaymentOrderWithinDailyLimit(
+    row: PaymentOrderRow,
+    options: { sinceIso: string; limit: number },
+  ): Promise<boolean>;
+  /** Waffo reconciliation scan: recent orders that still need payment/refund compensation. */
+  listPaymentOrdersForReconciliation(
+    provider: PaymentOrderRow["provider"],
+    options: PaymentOrderReconciliationOptions,
+  ): Promise<PaymentOrderRow[]>;
   updatePaymentOrder(id: string, patch: PaymentOrderPatch): Promise<void>;
   /** Atomic conditional update used where fulfillment and refunds can race. */
   compareAndSetPaymentOrder(
@@ -365,9 +385,11 @@ function mapPaymentOrder(row: RawRow): PaymentOrderRow {
     id: row.id as string,
     checkout_token_sha256: row.checkout_token_sha256 as string,
     account_id: row.account_id as string,
-    provider: "alipay",
+    provider: row.provider as PaymentOrderRow["provider"],
     out_trade_no: row.out_trade_no as string,
     trade_no: row.trade_no as string | null,
+    waffo_session_id: (row.waffo_session_id as string | null | undefined) ?? null,
+    waffo_order_id: (row.waffo_order_id as string | null | undefined) ?? null,
     months: row.months as PaymentOrderRow["months"],
     total_amount: row.total_amount as string,
     status: row.status as PaymentOrderStatus,
@@ -784,9 +806,9 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
         .prepare(
           `INSERT INTO payment_orders
              (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
-              months, total_amount, status, created_at, expires_at, paid_at, fulfilled_at,
+              waffo_session_id, waffo_order_id, months, total_amount, status, created_at, expires_at, paid_at, fulfilled_at,
               closed_at, refunded_at, refund_request_no, last_notify_id, last_queried_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           row.id,
@@ -795,6 +817,8 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           row.provider,
           row.out_trade_no,
           row.trade_no,
+          row.waffo_session_id ?? null,
+          row.waffo_order_id ?? null,
           row.months,
           row.total_amount,
           row.status,
@@ -817,14 +841,6 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row === null ? null : mapPaymentOrder(row);
     },
 
-    async getPaymentOrderByCheckoutHash(sha256) {
-      const row = await d1
-        .prepare(`SELECT * FROM payment_orders WHERE checkout_token_sha256 = ?`)
-        .bind(sha256)
-        .first<RawRow>();
-      return row === null ? null : mapPaymentOrder(row);
-    },
-
     async getPaymentOrderByOutTradeNo(outTradeNo) {
       const row = await d1
         .prepare(`SELECT * FROM payment_orders WHERE out_trade_no = ?`)
@@ -833,17 +849,73 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
       return row === null ? null : mapPaymentOrder(row);
     },
 
-    async getPaymentOrderByRefundRequestNo(requestNo) {
-      const row = await d1
-        .prepare(`SELECT * FROM payment_orders WHERE refund_request_no = ?`)
-        .bind(requestNo)
-        .first<RawRow>();
-      return row === null ? null : mapPaymentOrder(row);
+    async insertPaymentOrderWithinDailyLimit(row, options) {
+      const result = (await d1
+        .prepare(
+          `INSERT INTO payment_orders
+             (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
+              waffo_session_id, waffo_order_id, months, total_amount, status, created_at, expires_at, paid_at, fulfilled_at,
+              closed_at, refunded_at, refund_request_no, last_notify_id, last_queried_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE (SELECT COUNT(*) FROM payment_orders WHERE account_id = ? AND created_at >= ?) < ?`,
+        )
+        .bind(
+          row.id,
+          row.checkout_token_sha256,
+          row.account_id,
+          row.provider,
+          row.out_trade_no,
+          row.trade_no,
+          row.waffo_session_id ?? null,
+          row.waffo_order_id ?? null,
+          row.months,
+          row.total_amount,
+          row.status,
+          row.created_at,
+          row.expires_at,
+          row.paid_at,
+          row.fulfilled_at,
+          row.closed_at,
+          row.refunded_at,
+          row.refund_request_no,
+          row.last_notify_id,
+          row.last_queried_at,
+          row.account_id,
+          options.sinceIso,
+          options.limit,
+        )
+        .run()) as { meta?: { changes?: number } };
+      return result.meta?.changes === 1;
+    },
+
+    async listPaymentOrdersForReconciliation(provider, options) {
+      const rows = await d1
+        .prepare(
+          `SELECT * FROM payment_orders
+             WHERE provider = ?
+               AND status NOT IN ('refunded', 'closed')
+               AND (
+                 (status IN ('created', 'form_issued', 'pending') AND created_at >= ?)
+                 OR (status IN ('paid', 'fulfilled') AND created_at >= ?)
+               )
+             ORDER BY
+               CASE WHEN last_queried_at IS NULL THEN 0 ELSE 1 END ASC,
+               last_queried_at ASC,
+               created_at DESC,
+               id DESC
+             LIMIT ?`,
+        )
+        .bind(provider, options.unpaidSinceIso, options.settledSinceIso, options.limit)
+        .all<RawRow>();
+      return rows.results.map(mapPaymentOrder);
     },
 
     async updatePaymentOrder(id, patch) {
       const columns = [
         "trade_no",
+        "expires_at",
+        "waffo_session_id",
+        "waffo_order_id",
         "status",
         "paid_at",
         "fulfilled_at",
@@ -871,6 +943,9 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
     async compareAndSetPaymentOrder(id, expected, patch) {
       const columns = [
         "trade_no",
+        "expires_at",
+        "waffo_session_id",
+        "waffo_order_id",
         "status",
         "paid_at",
         "fulfilled_at",
@@ -919,7 +994,7 @@ export function createD1ConnectDb(d1: D1Database): ConnectDb {
           `UPDATE payment_orders
               SET last_queried_at = ?
             WHERE id = ?
-              AND status IN ('created', 'form_issued', 'pending')
+              AND status IN ('created', 'form_issued', 'pending', 'fulfilled')
               AND (last_queried_at IS NULL OR last_queried_at <= ?)`,
         )
         .bind(queriedAt, id, cutoff)
@@ -1390,13 +1465,6 @@ export function createMemoryConnectDb(): ConnectDb {
       return row === undefined ? null : { ...row };
     },
 
-    async getPaymentOrderByCheckoutHash(sha256) {
-      for (const row of paymentOrders.values()) {
-        if (row.checkout_token_sha256 === sha256) return { ...row };
-      }
-      return null;
-    },
-
     async getPaymentOrderByOutTradeNo(outTradeNo) {
       for (const row of paymentOrders.values()) {
         if (row.out_trade_no === outTradeNo) return { ...row };
@@ -1404,11 +1472,54 @@ export function createMemoryConnectDb(): ConnectDb {
       return null;
     },
 
-    async getPaymentOrderByRefundRequestNo(requestNo) {
-      for (const row of paymentOrders.values()) {
-        if (row.refund_request_no === requestNo) return { ...row };
+    async insertPaymentOrderWithinDailyLimit(order, options) {
+      let count = 0;
+      for (const existingRow of paymentOrders.values()) {
+        if (existingRow.account_id === order.account_id && existingRow.created_at >= options.sinceIso) count += 1;
       }
-      return null;
+      if (count >= options.limit) return false;
+      if (paymentOrders.has(order.id)) {
+        throw new Error(`UNIQUE constraint failed: payment_orders.id (${order.id})`);
+      }
+      for (const existing of paymentOrders.values()) {
+        if (existing.checkout_token_sha256 === order.checkout_token_sha256) {
+          throw new Error("UNIQUE constraint failed: payment_orders.checkout_token_sha256");
+        }
+        if (existing.out_trade_no === order.out_trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.out_trade_no");
+        }
+        if (order.trade_no !== null && existing.trade_no === order.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (order.refund_request_no !== null && existing.refund_request_no === order.refund_request_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(order.id, { ...order });
+      return true;
+    },
+
+    async listPaymentOrdersForReconciliation(provider, options) {
+      return [...paymentOrders.values()]
+        .filter(
+          (row) =>
+            row.provider === provider &&
+            row.status !== "refunded" &&
+            row.status !== "closed" &&
+            ((row.status === "created" || row.status === "form_issued" || row.status === "pending")
+              ? row.created_at >= options.unpaidSinceIso
+              : (row.status === "paid" || row.status === "fulfilled") && row.created_at >= options.settledSinceIso),
+        )
+        .sort((a, b) => {
+          const aQueried = a.last_queried_at === null ? 0 : 1;
+          const bQueried = b.last_queried_at === null ? 0 : 1;
+          return aQueried - bQueried
+            || (a.last_queried_at ?? "").localeCompare(b.last_queried_at ?? "")
+            || b.created_at.localeCompare(a.created_at)
+            || b.id.localeCompare(a.id);
+        })
+        .slice(0, options.limit)
+        .map((row) => ({ ...row }));
     },
 
     async updatePaymentOrder(id, patch) {
@@ -1471,7 +1582,7 @@ export function createMemoryConnectDb(): ConnectDb {
     async claimPaymentOrderQuery(id, queriedAt, cutoff) {
       const row = paymentOrders.get(id);
       const queryable =
-        row?.status === "created" || row?.status === "form_issued" || row?.status === "pending";
+        row?.status === "created" || row?.status === "form_issued" || row?.status === "pending" || row?.status === "fulfilled";
       if (
         row === undefined ||
         !queryable ||

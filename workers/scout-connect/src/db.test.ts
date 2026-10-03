@@ -815,12 +815,80 @@ function entitlement(overrides: Partial<EntitlementRow> = {}): EntitlementRow {
 }
 
 describe("payment-order and provider-neutral entitlement persistence", () => {
+  it("stores Waffo session/order ids and scans reconciliation candidates", async () => {
+    const db = createMemoryConnectDb();
+    const row = paymentOrder({
+      id: "ord_waffo",
+      checkout_token_sha256: "sha_waffo",
+      provider: "waffo",
+      out_trade_no: "MC-WAFFO",
+      waffo_session_id: "cs_waffo",
+      waffo_order_id: "ORD_WAFFO",
+      created_at: "2026-10-01T00:00:00.000Z",
+    });
+    await db.insertPaymentOrder(row);
+    await db.insertPaymentOrder(
+      paymentOrder({
+        id: "ord_waffo_fulfilled",
+        checkout_token_sha256: "sha_waffo_fulfilled",
+        provider: "waffo",
+        out_trade_no: "MC-WAFFO-FULFILLED",
+        status: "fulfilled",
+        created_at: "2026-10-01T00:00:01.000Z",
+      }),
+    );
+
+    expect(await db.getPaymentOrderById(row.id)).toEqual(row);
+    expect(await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2026-09-30T00:00:00.000Z",
+      settledSinceIso: "2026-09-30T00:00:00.000Z",
+      limit: 10,
+    })).toEqual([
+      expect.objectContaining({ id: "ord_waffo_fulfilled", status: "fulfilled" }),
+      row,
+    ]);
+  });
+
+  it("reconciliation scan uses status windows, NULL-first query order, and a limit", async () => {
+    const db = createMemoryConnectDb();
+    const base = paymentOrder({ provider: "waffo", status: "created" });
+    await db.insertPaymentOrder({ ...base, id: "ord_null_old", checkout_token_sha256: "sha_null_old", out_trade_no: "MC_NULL_OLD", created_at: "2026-10-01T00:00:00.000Z", last_queried_at: null });
+    await db.insertPaymentOrder({ ...base, id: "ord_null_new", checkout_token_sha256: "sha_null_new", out_trade_no: "MC_NULL_NEW", created_at: "2026-10-02T00:00:00.000Z", last_queried_at: null });
+    await db.insertPaymentOrder({ ...base, id: "ord_queried", checkout_token_sha256: "sha_queried", out_trade_no: "MC_QUERIED", created_at: "2026-10-02T00:00:01.000Z", last_queried_at: "2026-09-30T00:00:00.000Z" });
+    await db.insertPaymentOrder({ ...base, id: "ord_paid_old", checkout_token_sha256: "sha_paid_old", out_trade_no: "MC_PAID_OLD", status: "paid", created_at: "2026-09-20T00:00:00.000Z" });
+    await db.insertPaymentOrder({ ...base, id: "ord_closed", checkout_token_sha256: "sha_closed", out_trade_no: "MC_CLOSED", status: "closed" });
+    await db.insertPaymentOrder({ ...base, id: "ord_refunded", checkout_token_sha256: "sha_refunded", out_trade_no: "MC_REFUNDED", status: "refunded" });
+    expect((await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2026-09-25T00:00:00.000Z",
+      settledSinceIso: "2026-09-15T00:00:00.000Z",
+      limit: 2,
+    })).map((row) => row.id)).toEqual(["ord_null_new", "ord_null_old"]);
+    const allCandidates = await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2026-09-25T00:00:00.000Z",
+      settledSinceIso: "2026-09-15T00:00:00.000Z",
+      limit: 10,
+    });
+    expect(allCandidates.map((row) => row.id)).toContain("ord_paid_old");
+    expect(allCandidates.map((row) => row.id)).not.toEqual(expect.arrayContaining(["ord_closed", "ord_refunded"]));
+  });
+
+  it("counts only this account's orders inside the checkout window", async () => {
+    const db = createMemoryConnectDb();
+    const base = paymentOrder({ provider: "waffo", account_id: "act_limit", created_at: "2026-10-02T09:00:00.000Z" });
+    await db.insertPaymentOrder(base);
+    await db.insertPaymentOrder({ ...base, id: "ord_limit_boundary", checkout_token_sha256: "sha_limit_boundary", out_trade_no: "MC_LIMIT_BOUNDARY", created_at: "2026-10-01T10:00:00.000Z" });
+    await db.insertPaymentOrder({ ...base, id: "ord_limit_old", checkout_token_sha256: "sha_limit_old", out_trade_no: "MC_LIMIT_OLD", created_at: "2026-10-01T09:59:59.999Z" });
+    await db.insertPaymentOrder({ ...base, id: "ord_other_account", checkout_token_sha256: "sha_other_account", out_trade_no: "MC_OTHER_ACCOUNT", account_id: "act_other" });
+    const candidate = { ...base, id: "ord_limit_candidate", checkout_token_sha256: "sha_limit_candidate", out_trade_no: "MC_LIMIT_CANDIDATE" };
+    expect(await db.insertPaymentOrderWithinDailyLimit(candidate, { sinceIso: "2026-10-01T10:00:00.000Z", limit: 2 })).toBe(false);
+    expect(await db.getPaymentOrderById(candidate.id)).toBeNull();
+  });
+
   it("round-trips and updates an Alipay order by every server-owned key", async () => {
     const db = createMemoryConnectDb();
     const row = paymentOrder();
     expect(await db.insertPaymentOrder(row)).toEqual(row);
     expect(await db.getPaymentOrderById(row.id)).toEqual(row);
-    expect(await db.getPaymentOrderByCheckoutHash(row.checkout_token_sha256)).toEqual(row);
     expect(await db.getPaymentOrderByOutTradeNo(row.out_trade_no)).toEqual(row);
 
     await db.updatePaymentOrder(row.id, {
