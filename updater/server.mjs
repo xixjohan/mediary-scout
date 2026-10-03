@@ -8,6 +8,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { restoreTunnelEnv, writeTunnelEnv } from "./tunnel-env.mjs";
 
 // Same shape as apps/web/lib/release-version.ts TAG_RE, plus that file's calendar check
 // (v2026.02.31 matches the pattern and is still not a date). Keep the two in sync.
@@ -34,6 +35,35 @@ const RECOVERED_MESSAGE = "上次更新没成功，之后已经恢复正常，�
 const RESTORE_FOLDER_CHANGED_MESSAGE =
   "更新被中断了，之后部署目录被人手动换过版本，更新助手没有再改动它。请在部署目录运行 ./scripts/deploy.sh，跑起来之后就能再更新。";
 const MAX_BODY = 1024;
+const TUNNEL_MAX_BODY = 8192;
+// The web calls /tunnel with Node's fetch, which stops waiting for response headers after 300 s
+// (undici headersTimeout) whatever its AbortSignal says, and gives up itself at 290 s. The whole
+// call — ≤15 s project lookup, this budget, 10 s TERM grace, 5 s KILL wait — must answer before
+// that. A slower image pull ends as pull_failed/compose_failed with a DOCKER_MIRROR hint, and a
+// retry resumes from the layers already downloaded.
+const TUNNEL_COMPOSE_TIMEOUT_MS = 250_000;
+// After SIGTERM, how long docker gets to exit before SIGKILL, and how long we then wait for it.
+const TUNNEL_TERM_GRACE_MS = 10_000;
+const TUNNEL_KILL_WAIT_MS = 5_000;
+// Compose output kept for logTail; only the end matters, and a noisy daemon must not grow us.
+const TUNNEL_OUTPUT_LIMIT = 1024 * 1024;
+const TUNNEL_TOKEN_RE = /^[A-Za-z0-9+/=_-]{20,4096}$/;
+// Same contract as the web (remote-access / connect-client): DNS labels, alphabetic TLD.
+const TUNNEL_HOSTNAME_RE = /^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+// Same set connect.sh sends to its DOCKER_MIRROR hint, plus a few other pull-side errors.
+const PULL_MARKERS = [
+  "failed to fetch anonymous token",
+  "auth.docker.io",
+  "registry-1.docker.io",
+  "failed to resolve reference",
+  "pull access denied",
+  "tls handshake timeout",
+  "connection reset by peer",
+  "i/o timeout",
+  "toomanyrequests",
+];
+const PROJECT_LOOKUP_FAILURE = "读不到 compose 项目名，没有启动隧道。";
+const ENV_WRITE_FAILURE = "写入 .env 失败，配置没有改动。";
 
 export function isReleaseTag(value) {
   if (typeof value !== "string") return false;
@@ -101,6 +131,227 @@ export function readLimitedBody(stream, limit = MAX_BODY) {
     stream.on("end", () => finish({ body: Buffer.concat(chunks).toString("utf8") }));
     stream.on("error", () => finish({ error: "too_big" }));
   });
+}
+
+function redactToken(output, token) {
+  const text = typeof output === "string" ? output : "";
+  if (typeof token !== "string" || token.length === 0) return text;
+  return text.split(token).join("[redacted]");
+}
+
+function looksLikePullFailure(text) {
+  const haystack = text.toLowerCase();
+  return PULL_MARKERS.some((marker) => haystack.includes(marker));
+}
+
+function classifyComposeOutput(output) {
+  return looksLikePullFailure(output) ? "pull_failed" : "compose_failed";
+}
+
+function lastLines(output, count) {
+  const text = String(output).replace(/\n$/, "");
+  if (text.length === 0) return "";
+  return text.split("\n").slice(-count).join("\n");
+}
+
+/** Same inspect the update script uses, so the tunnel joins this stack instead of starting a second one. */
+export async function readComposeProject(dockerText, host = hostname()) {
+  const raw = await dockerText([
+    "inspect",
+    "-f",
+    '{{ index .Config.Labels "com.docker.compose.project" }}',
+    host,
+  ]);
+  const project = String(raw ?? "").trim();
+  if (!project) throw new Error("compose project unavailable");
+  return project;
+}
+
+export function runComposeTunnel(args, deps = {}) {
+  const spawnFn = deps.spawn ?? spawn;
+  const setTimer = deps.setTimeout ?? setTimeout;
+  const clearTimer = deps.clearTimeout ?? clearTimeout;
+  const timeoutMs = deps.timeoutMs ?? TUNNEL_COMPOSE_TIMEOUT_MS;
+  return new Promise((resolve) => {
+    const child = spawnFn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
+    child.stdin?.end();
+    let output = "";
+    let settled = false;
+    let timedOut = false;
+    const timers = [];
+    const arm = (fn, ms) => timers.push(setTimer(fn, ms));
+    const finish = (code) => {
+      if (settled) return;
+      settled = true;
+      for (const timer of timers) clearTimer(timer);
+      resolve({ code: timedOut ? 1 : code, output, timedOut, pullFailure });
+    };
+    const kill = (signal) => {
+      try {
+        child.kill(signal);
+      } catch {
+        // Already exited.
+      }
+    };
+    // Settle only once docker has exited: the caller releases the shared job lock then, and an
+    // update or a second /tunnel must not start while this compose run is still going.
+    // Worst case 15 s project lookup + 250 + 10 + 5 s, inside the web's 290 s client timeout.
+    arm(() => {
+      timedOut = true;
+      kill("SIGTERM");
+      arm(() => {
+        kill("SIGKILL");
+        arm(() => finish(1), TUNNEL_KILL_WAIT_MS);
+      }, TUNNEL_TERM_GRACE_MS);
+    }, timeoutMs);
+    // Remembered across the whole run: the tail kept below may no longer contain the marker.
+    let pullFailure = false;
+    const take = (chunk) => {
+      const text = chunk.toString();
+      if (!pullFailure) pullFailure = looksLikePullFailure(output.slice(-128) + text);
+      output += text;
+      if (output.length > TUNNEL_OUTPUT_LIMIT) output = output.slice(-TUNNEL_OUTPUT_LIMIT);
+    };
+    child.stdout?.on("data", take);
+    child.stderr?.on("data", take);
+    // "error" also comes from a failed kill while docker keeps running, so it must not settle
+    // (that would release the job lock early). Node follows it with "close" once the child is
+    // gone, including when docker could not be started at all.
+    let errored = false;
+    child.on("error", () => {
+      errored = true;
+    });
+    child.on("close", (code) => finish(errored || typeof code !== "number" ? 1 : code));
+  });
+}
+
+// Same lock and same way of taking it as scripts/deploy.sh and run-update.sh: create the file
+// world-writable if missing (root here, the owner there), then flock fd 9 without waiting. The
+// shell keeps the lock until its stdin closes; if the updater dies, the pipe closes and the
+// kernel drops the lock. Where flock is missing (the macOS test host) the scripts skip it too.
+const REPO_LOCK_SCRIPT =
+  '[ -e "$1" ] || (umask 000; : > "$1") 2>/dev/null; ' +
+  'if command -v flock >/dev/null 2>&1; then exec 9>>"$1" && flock -n 9 || exit 75; fi; ' +
+  "echo locked; read _";
+
+/** Take the repo lock shared with deploy.sh / run-update.sh. Resolves to a handle with
+ *  release(), or null when someone else holds it. */
+export function holdRepoLock(lockFile, deps = {}) {
+  const spawnFn = deps.spawn ?? spawn;
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (value) => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    let child;
+    try {
+      child = spawnFn("sh", ["-c", REPO_LOCK_SCRIPT, "sh", lockFile], { stdio: ["pipe", "pipe", "ignore"] });
+    } catch {
+      done(null);
+      return;
+    }
+    let output = "";
+    child.stdout?.on("data", (chunk) => {
+      output += chunk.toString();
+      if (output.includes("locked")) {
+        done({
+          release() {
+            try {
+              child.stdin?.end();
+            } catch {
+              // Already gone: the lock went with it.
+            }
+          },
+        });
+      }
+    });
+    child.on("error", () => done(null));
+    child.on("close", () => done(null));
+  });
+}
+
+export async function performTunnel(input, deps = {}) {
+  const repoDir = deps.repoDir ?? process.env.UPDATER_REPO_DIR ?? "/repo";
+  // A manual deploy (or an update started elsewhere) must not run compose or rewrite .env while
+  // this does, and this must not while it does: hold the shared repo lock for the whole write /
+  // compose / rollback, or answer busy.
+  const lock = deps.acquireRepoLock ? await deps.acquireRepoLock(repoDir) : { release() {} };
+  if (!lock) return { ok: false, reason: "busy" };
+  try {
+    return await performTunnelLocked(input, repoDir, deps);
+  } finally {
+    lock.release();
+  }
+}
+
+async function performTunnelLocked(input, repoDir, deps) {
+  let project;
+  try {
+    project = await deps.composeProject();
+    if (typeof project !== "string" || project.trim() === "") throw new Error("empty project");
+    project = project.trim();
+  } catch {
+    return { ok: false, reason: "compose_failed", logTail: PROJECT_LOOKUP_FAILURE };
+  }
+  let written;
+  try {
+    written = await deps.writeTunnelEnv(repoDir, { token: input.token, hostname: input.hostname });
+  } catch {
+    return { ok: false, reason: "compose_failed", logTail: ENV_WRITE_FAILURE };
+  }
+  // A token left in .env for a tunnel that never started would make the next web restart
+  // report it as on: put .env back. Best effort; the compose failure is still the answer.
+  const rollBack = async () => {
+    try {
+      // Only if .env still holds what this run wrote: an edit made meanwhile stays.
+      await deps.restoreTunnelEnv?.(repoDir, written?.backup ?? null, undefined, written?.installed);
+    } catch {
+      // .env keeps the new values; the page still shows the failure and offers 重新接入.
+    }
+  };
+  // --no-deps keeps web up: recreating it would cut off a download that is still running.
+  const argv = [
+    "compose",
+    "-p",
+    project,
+    "--project-directory",
+    repoDir,
+    "--profile",
+    "tunnel",
+    "up",
+    "-d",
+    "--no-deps",
+    "cloudflared",
+  ];
+  let result;
+  try {
+    result = await deps.runCompose(argv);
+  } catch {
+    await rollBack();
+    return { ok: false, reason: "compose_failed", logTail: "启动 cloudflared 失败。" };
+  }
+  const output = redactToken(result && result.output, input.token);
+  const timedOut = Boolean(result && result.timedOut);
+  const code = result && typeof result.code === "number" ? result.code : 1;
+  if (code === 0 && !timedOut) return { ok: true };
+  await rollBack();
+  const reason = result && result.pullFailure ? "pull_failed" : classifyComposeOutput(output);
+  return { ok: false, reason, logTail: lastLines(output, 40) };
+}
+
+function parseTunnelBody(raw) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== "object") return null;
+  if (typeof value.token !== "string" || typeof value.hostname !== "string") return null;
+  if (!TUNNEL_TOKEN_RE.test(value.token) || !TUNNEL_HOSTNAME_RE.test(value.hostname)) return null;
+  return { token: value.token, hostname: value.hostname };
 }
 
 /** Write-then-rename in the same directory: a kill mid-write never leaves a truncated
@@ -394,6 +645,27 @@ export function createUpdater(opts) {
       });
       return { accepted: true };
     },
+    // Same slot as an update: either job makes the other answer busy. Nothing here is written
+    // into the persisted update status.
+    tunnel(input) {
+      if (job) return { accepted: false, reason: "busy" };
+      const done = Promise.resolve()
+        .then(() =>
+          performTunnel(input, {
+            repoDir: opts.repoDir,
+            writeTunnelEnv: opts.writeTunnelEnv,
+            restoreTunnelEnv: opts.restoreTunnelEnv,
+            composeProject: opts.composeProject,
+            runCompose: opts.runCompose,
+            acquireRepoLock: opts.acquireRepoLock,
+          }),
+        )
+        .finally(() => {
+          job = null;
+        });
+      job = done;
+      return { accepted: true, done };
+    },
     idle: () => job ?? Promise.resolve(),
   };
 }
@@ -442,8 +714,53 @@ export function createUpdaterHttp(updater, token) {
         });
       return;
     }
+    if (req.method === "POST" && req.url === "/tunnel") {
+      readLimitedBody(req, TUNNEL_MAX_BODY)
+        .then(async (result) => {
+          if (result.error) {
+            sendJson(res, 400, { ok: false, reason: "invalid_input" });
+            return;
+          }
+          const parsed = parseTunnelBody(result.body);
+          if (!parsed) {
+            sendJson(res, 400, { ok: false, reason: "invalid_input" });
+            return;
+          }
+          const outcome = updater.tunnel(parsed);
+          if (!outcome.accepted) {
+            sendJson(res, 409, { ok: false, reason: "busy" });
+            return;
+          }
+          try {
+            const applied = await outcome.done;
+            if (applied && applied.ok === true) {
+              sendJson(res, 200, { ok: true }, parsed.token);
+              return;
+            }
+            if (applied && applied.reason === "busy") {
+              sendJson(res, 409, { ok: false, reason: "busy" });
+              return;
+            }
+            const reason = applied && applied.reason === "pull_failed" ? "pull_failed" : "compose_failed";
+            const logTail = applied && typeof applied.logTail === "string" ? applied.logTail : "";
+            sendJson(res, 502, { ok: false, reason, logTail }, parsed.token);
+          } catch {
+            sendJson(res, 502, { ok: false, reason: "compose_failed", logTail: ENV_WRITE_FAILURE }, parsed.token);
+          }
+        })
+        .catch(() => {
+          if (!res.headersSent) res.writeHead(400).end();
+        });
+      return;
+    }
     res.writeHead(404).end();
   };
+}
+
+function sendJson(res, status, payload, secret) {
+  let body = JSON.stringify(payload);
+  if (typeof secret === "string" && secret.length > 0) body = body.split(secret).join("[redacted]");
+  res.writeHead(status, { "content-type": "application/json" }).end(body);
 }
 
 /** Runs run-update.sh with a release tag, or with ["rollback" | "restore", commit]. */
@@ -513,14 +830,19 @@ if (isDirectRun()) {
     now: () => new Date().toISOString(),
     waitPollMs: 30_000,
     waitLimitMs: 2 * 60 * 60 * 1000,
+    repoDir: process.env.UPDATER_REPO_DIR ?? "/repo",
+    writeTunnelEnv,
+    restoreTunnelEnv,
+    composeProject: () => readComposeProject(dockerText),
+    runCompose: (argv) => runComposeTunnel(argv),
+    // run-update.sh and deploy.sh take this file too (UPDATER_LOCK_FILE overrides it there).
+    acquireRepoLock: (repoDir) => holdRepoLock(process.env.UPDATER_LOCK_FILE ?? join(repoDir, ".update.lock")),
     // The commit the running web container was built from (its BUILD_COMMIT). Async with a
     // timeout on both calls: the recheck skips a round while the last one is still running,
     // so one hung docker call must not stop it for good.
     servingCommit: async () => {
       try {
-        const project = (
-          await dockerText(["inspect", "-f", '{{ index .Config.Labels "com.docker.compose.project" }}', hostname()])
-        ).trim();
+        const project = await readComposeProject(dockerText);
         const commit = (
           await dockerText([
             "compose",
