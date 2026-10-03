@@ -37,12 +37,13 @@ export function buildAgentPrompt(input: {
 
 目标:让用户的自托管实例经 Cloudflare Tunnel 发布到:
   https://${input.hostname}
-门禁是应用自身的访问密码(浏览器首次打开时会要求设置访问密码;设置后远程访问必须登录,局域网直连不受影响)。
+门禁是应用自身的访问密码:第一次设置访问密码只能在局域网里做(请用户在局域网打开
+http://<局域网IP>:<端口>/login,端口默认 3000);设置后远程访问必须登录,局域网直连不受影响。
 不要修改获取/网盘/LLM 业务逻辑。
 
 安全红线:
 - TUNNEL_TOKEN 是机密。不提交 git、不写进文档/截图/issue、不打印日志,只写入实例 .env。
-- 全程在你正在操作的这台机器的部署目录里执行;不要碰任何 git 源码克隆(那是源码,不是部署)。
+- 全程在你正在操作的这台机器的 compose 部署目录(通常就是当初 git clone 的目录)里执行;不改源码、不 git commit / push。
 
 第 0 步·环境门(先做,不过就停):
 1. 执行 \`docker info\` — 若报 command not found / permission denied,提示用户(需装 Docker/加 sudo/OrbStack),停止。
@@ -64,6 +65,11 @@ export function buildAgentPrompt(input: {
    注意 pansou 走 ghcr.io,不受这个变量影响(墙内通常可直连)。
    若该实例的 docker-compose.yml 还没有 DOCKER_MIRROR 支持(老版本,image 是
    硬编码的),提示用户 \`git pull\` 更新部署文件后重试。
+
+5. **先确认访问密码已经设好**(第一次设置只能在局域网里做;旧版本实例还允许外网访客抢先设):
+   问用户是否已在局域网打开 http://<局域网IP>:<端口>/login(端口默认 3000)设好访问密码。
+   没设的话请用户现在设,**等用户回复确认访问密码已设好后再继续第 1 步**;你不要替用户设,
+   也不要在用户确认之前写凭证或启动隧道。
 
 第 1 步·写凭证(原子化操作 + 自动回滚):
 ⚠️ 1a. 强制备份(不可跳过):
@@ -273,8 +279,9 @@ ${TOKEN_HEREDOC_MARKER}
 
 第 5 步·验证门禁(由人来完成,不是 agent):
 - 请用户在自己的设备浏览器打开 https://${input.hostname}
-- 应看到 Mediary Scout 的登录页(全新实例首次打开是设置访问密码的页面)
-- 请用户设置访问密码 — 这就是门禁:设置后远程访问必须登录,之后进入 Mediary Scout 面板
+- 应看到 Mediary Scout 的登录页;实例还没设访问密码时,会看到「还没有设置访问密码」的提示
+- 还没设的话,请用户回到局域网打开 http://<局域网IP>:<端口>/login 设置访问密码(第一次设置只能在局域网里做),
+  再回到上面的地址用密码登录 — 这就是门禁:设置后远程访问必须登录,之后进入 Mediary Scout 面板
 - 你(agent)不要自行声称验证结果;让用户告诉你看到了什么。
 - 若用户直接看到应用主界面而没有任何登录/设密码页,立刻停止并提示(门禁没生效,需作者检查)。
 
@@ -309,7 +316,8 @@ export function buildAgentPromptOrManual(input: {
 在此之前可以先确认环境:
 1. \`docker info\` 能跑通(装了 Docker / OrbStack)。
 2. \`docker compose ls\` 找到 mediary-scout 部署目录。
-3. 目标地址是 https://${input.hostname},门禁为应用自身的访问密码(首次打开时设置)。
+3. 目标地址是 https://${input.hostname},门禁为应用自身的访问密码(第一次设置只能在局域网里做:
+   http://<局域网IP>:<端口>/login)。
 
 安全红线:
 - TUNNEL_TOKEN 是机密。不提交 git、不写进文档/截图/issue、不打印日志。
