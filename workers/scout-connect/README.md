@@ -51,8 +51,29 @@ admin ──► mediaryconnect.app (this worker)
 | 200 | `{ checkoutUrl, orderId }` — open `checkoutUrl` (Waffo, HTTPS only) in the same tab |
 | 400 | `{ error: "unknown tier" }` (or a body-parse error) |
 | 401 | `{ error: "unauthorized" }` — no or expired session |
+| 403 | `{ error: "cross-origin request" }` — sent from another origin (see below) |
 | 429 | `{ error: "too_many_checkouts" }` — the account already created 20 checkouts in the last 24 hours |
 | 503 | `{ error: "checkout_not_open" }` / `{ error: "checkout_unavailable" }` — Waffo not configured or not approved / upstream failure |
+
+Every session-cookie POST (`/api/checkout`, `/api/provision`, `/api/claim-code`,
+and the login confirm `POST /auth/callback`) answers
+`403 { error: "cross-origin request" }` when the browser reports another origin:
+a `Sec-Fetch-Site` other than `same-origin`, or an `Origin` that is not this
+host. Customer instances live on `<slug>.<root>`, whose content their owners
+control and which is same-site with the apex, so SameSite=Lax alone would still
+attach the session cookie to their requests.
+
+The session cookie is `__Host-mc_session` (HttpOnly, Secure, SameSite=Lax,
+Path=/, no Domain). A `<slug>.<root>` page can plant cookies with
+`Domain=<root>`; a planted `mc_session` with a longer path would be sent ahead of
+the apex's own cookie. Browsers refuse `Domain` on `__Host-` names, and the
+Worker ignores any session cookie without the prefix.
+
+Login: the magic link opens `GET /auth/callback?t=…`, which only shows which
+email is about to sign in. The page's button sends `POST /auth/callback` with
+`{ t }` from this origin; that request creates the account on first login and
+sets the session cookie. A GET never signs anyone in, so another site cannot
+log a visitor into its own account by linking its magic link.
 
 ### Public endpoints (no auth)
 
@@ -221,9 +242,9 @@ run deploy/secret commands as `env -u CF_API_TOKEN npx wrangler ...`.
 Entitlements are granted only after a verified Waffo webhook or a read-only
 GraphQL payment query matches the owned external order ID, CNY amount, and
 succeeded status. Webhook and query races converge through the same durable
-idempotency key. Full refunds reconcile the entitlement and revoke access only
-when no other unrefunded entitlement remains; partial refunds are logged and do
-not remove access.
+idempotency key. A full refund removes that order's months and recomputes the
+expiry from the remaining unrefunded entitlements; access is revoked only when
+no paid time remains. Partial refunds are logged and do not remove access.
 
 The WeChat simulator only proves the integration. Production launch also
 requires KYB approval (`prodEnabled`), all three products published to

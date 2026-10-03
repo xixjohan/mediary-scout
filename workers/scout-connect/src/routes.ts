@@ -34,6 +34,7 @@ import { newId } from "./ids.js";
 import { sha256Hex } from "./crypto-token.js";
 import { signToken, verifyToken } from "./signed-token.js";
 import { buildSessionCookie, parseSessionCookie } from "./session.js";
+import { confirmLoginPage } from "./html/confirm-login-page.js";
 import { computeExpiry, isEntitlementActive, latestExpiry, reconcileEntitlementLedger } from "./entitlement.js";
 import type { WaffoApi, WaffoEnvironment, WaffoPayment } from "./waffo-api.js";
 import {
@@ -308,6 +309,23 @@ function decodeParam(s: string): string {
   }
 }
 
+/**
+ * Session-cookie POSTs must come from this origin. Every customer instance is
+ * served on <slug>.<root> and its owner controls what that origin serves; a
+ * page there is same-site with the apex, so SameSite=Lax still attaches the
+ * session cookie to its POSTs (and a text/plain body skips the CORS preflight).
+ * Browsers that send Fetch Metadata state the relationship directly; older ones
+ * still send Origin on every POST. A request with neither header did not come
+ * from a browser page, so no ambient cookie was attached on someone's behalf.
+ */
+function assertSameOriginRequest(request: Request, url: URL): void {
+  const site = request.headers.get("sec-fetch-site");
+  const origin = request.headers.get("origin");
+  if ((site !== null && site !== "same-origin") || (origin !== null && origin !== url.origin)) {
+    throw new HttpError(403, "cross-origin request");
+  }
+}
+
 async function route(request: Request, deps: RouteDeps): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
@@ -347,6 +365,7 @@ async function route(request: Request, deps: RouteDeps): Promise<Response> {
     return waffoWebhook(request, deps);
   }
   if (method === "POST" && path === "/api/checkout") {
+    assertSameOriginRequest(request, url);
     return createWaffoCheckout(request, deps);
   }
   const waffoStatusMatch = path.match(/^\/api\/orders\/([^/]+)\/status$/);
@@ -446,7 +465,11 @@ ${hreflang}
     return await requestMagicLink(request, deps);
   }
   if (method === "GET" && path === "/auth/callback") {
-    return await magicCallback(url, deps);
+    return await magicLanding(url, deps);
+  }
+  if (method === "POST" && path === "/auth/callback") {
+    assertSameOriginRequest(request, url);
+    return await confirmMagicLogin(request, deps);
   }
   if (method === "GET" && path === "/login") {
     return htmlPage(loginPage(turnstileSitekeyIfConfigured(deps)));
@@ -458,9 +481,11 @@ ${hreflang}
     return await slugCheckRoute(url, request, deps);
   }
   if (method === "POST" && path === "/api/claim-code") {
+    assertSameOriginRequest(request, url);
     return await issueClaimCode(request, deps);
   }
   if (method === "POST" && path === "/api/provision") {
+    assertSameOriginRequest(request, url);
     return await selfServeProvision(request, deps);
   }
   if (method === "POST" && path === "/api/claim/exchange") {
@@ -1242,15 +1267,29 @@ async function upsertAccount(email: string, deps: RouteDeps): Promise<AccountRow
   }
 }
 
-async function magicCallback(url: URL, deps: RouteDeps): Promise<Response> {
-  const token = url.searchParams.get("t") ?? "";
+async function verifyMagicToken(token: string, deps: RouteDeps): Promise<string> {
   const result = await verifyToken(token, {
     key: deps.sessionSecret,
     now: Date.parse(deps.now()),
     expectPurpose: "magic",
   });
   if (!result.ok) throw new HttpError(400, "invalid or expired link");
-  const email = result.subject;
+  return result.subject;
+}
+
+/** 魔法链接落地:只显示确认页,不登录。任何网页都能把访客导到这里(带上它
+ *  自己的 token),GET 直接种 cookie 就是把访客登进别人的账号。 */
+async function magicLanding(url: URL, deps: RouteDeps): Promise<Response> {
+  const email = await verifyMagicToken(url.searchParams.get("t") ?? "", deps);
+  // htmlPage 自带 referrer-policy: no-referrer —— 地址栏里有 ?t=<magic token>,
+  // 不能经 Referer 带到别处。
+  return htmlPage(confirmLoginPage(email), { noStore: true });
+}
+
+/** 确认页按钮(本站页面)提交:这一步才建号/登录、种 session cookie。 */
+async function confirmMagicLogin(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const email = await verifyMagicToken(optString(body.t) ?? "", deps);
 
   // 账号 upsert:首次登录建号,之后复用。
   const account = await upsertAccount(email, deps);
@@ -1261,17 +1300,9 @@ async function magicCallback(url: URL, deps: RouteDeps): Promise<Response> {
     ttlMs: SESSION_TTL_MS,
     now: Date.parse(deps.now()),
   });
-  return new Response(null, {
-    status: 302,
-    headers: {
-      location: "/console",
-      "set-cookie": cookie,
-      "cache-control": "no-store",
-      // URL query 里带着 ?t=<magic token>;不加 no-referrer,浏览器会把含
-      // token 的完整 referer 带到 /console 请求,进访问日志=泄露短期凭据。
-      "referrer-policy": "no-referrer",
-    },
-  });
+  const response = json({ ok: true }, 200, { noStore: true });
+  response.headers.set("set-cookie", cookie);
+  return response;
 }
 
 async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response> {
