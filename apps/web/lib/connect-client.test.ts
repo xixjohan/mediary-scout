@@ -142,7 +142,54 @@ describe("connect-client", () => {
         account,
       ),
     });
-    expect(result).toEqual({ ok: true, ...account });
+    expect(result).toEqual({ ok: true, ...account, restorable: null });
+  });
+
+  it("normalizes the tunnel id and keeps the restorable address when Connect sends them", async () => {
+    const account = {
+      email: "owner@example.com", active: true, expiresAt: null,
+      endpoint: {
+        slug: "fam",
+        hostname: "fam.mediaryconnect.app",
+        status: "active",
+        tunnelId: "  6F5A3C2E-1B4D-4E8F-9A0B-1C2D3E4F5A6B  ",
+      },
+      checkoutOpen: true, tiers: [], restorable: null,
+    };
+    for (const body of [account, { ...account, endpoint: null, restorable: { slug: "fam", hostname: "fam.mediaryconnect.app" } }]) {
+      expect(await getConnectAccount(CREDENTIAL, { baseUrl: BASE, fetchImpl: fetchOnce(() => {}, body) })).toEqual({
+        ok: true,
+        ...body,
+        ...(body.endpoint
+          ? { endpoint: { ...body.endpoint, tunnelId: "6f5a3c2e-1b4d-4e8f-9a0b-1c2d3e4f5a6b" } }
+          : {}),
+      });
+    }
+  });
+
+  it("drops malformed new fields instead of failing the whole account (older or odd Connect)", async () => {
+    const endpoint = { slug: "fam", hostname: "fam.mediaryconnect.app", status: "active" };
+    const account = { email: "owner@example.com", active: true, expiresAt: null, endpoint, checkoutOpen: true, tiers: [] };
+    for (const tunnelId of [undefined, 42, "not-a-uuid", "", "   ", null, {}]) {
+      for (const restorable of [
+        undefined,
+        null,
+        { slug: 1 },
+        { slug: "fam", hostname: "bad host" },
+        { slug: " ", hostname: "fam.mediaryconnect.app" },
+        // Not a slug Connect would ever issue: the restore button would only ever get a 400.
+        { slug: "not valid!", hostname: "fam.mediaryconnect.app" },
+        { slug: "-fam", hostname: "-fam.mediaryconnect.app" },
+        // A valid slug that is not the hostname's: restoring it would provision a different address.
+        { slug: "fam", hostname: "other.mediaryconnect.app" },
+      ]) {
+        const result = await getConnectAccount(CREDENTIAL, {
+          baseUrl: BASE, fetchImpl: fetchOnce(() => {}, { ...account, endpoint: { ...endpoint, tunnelId }, restorable }),
+        });
+        expect(result).toEqual({ ok: true, ...account, restorable: null });
+        if (result.ok) expect(result.endpoint?.tunnelId).toBeUndefined();
+      }
+    }
   });
 
   it("creates checkout with tier and return URL", async () => {
@@ -221,6 +268,16 @@ describe("connect-client", () => {
       fetchImpl: fetchOnce(() => {}, { error: "at capacity" }, 503),
     });
     expect(atCapacity).toEqual({ ok: false, reason: "at_capacity", message: "暂时售罄，请稍后再试。" });
+
+    const restoreCleanupFailed = await provisionConnectSlug(CREDENTIAL, "my-name", {
+      baseUrl: BASE,
+      fetchImpl: fetchOnce(() => {}, { error: "restore cleanup failed" }, 503),
+    });
+    expect(restoreCleanupFailed).toEqual({
+      ok: false,
+      reason: "restore_cleanup_failed",
+      message: "暂时恢复不了，请过几分钟再试；一直不行请联系我们。",
+    });
   });
 
   it("keeps the two expected provision conflict mappings", async () => {

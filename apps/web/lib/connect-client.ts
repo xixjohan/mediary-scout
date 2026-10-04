@@ -1,6 +1,7 @@
 import "server-only";
 
 import { scoutConnectBaseUrl } from "./remote-access";
+import { normalizeTunnelId } from "./connect-tunnel";
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const CONNECT_PROVISION_TIMEOUT_MS = 30_000;
@@ -29,7 +30,8 @@ export type ConnectFailureReason =
   | "already_provisioned"
   | "slug_taken"
   | "no_endpoint"
-  | "not_found";
+  | "not_found"
+  | "restore_cleanup_failed";
 
 export type ConnectFailure = {
   ok: false;
@@ -54,6 +56,8 @@ export interface ConnectEndpoint {
   slug: string;
   hostname: string;
   status: string;
+  /** Cloudflare tunnel id; absent from older Connect versions. */
+  tunnelId?: string;
 }
 
 export interface ConnectAccount {
@@ -63,6 +67,8 @@ export interface ConnectAccount {
   endpoint: ConnectEndpoint | null;
   checkoutOpen: boolean;
   tiers: ConnectTier[];
+  /** The address this account can get back after renewing, when it has none live. */
+  restorable: { slug: string; hostname: string } | null;
 }
 
 export type StartInstanceLinkResult =
@@ -150,6 +156,8 @@ function messageFor(reason: ConnectFailureReason): string {
       return "请先购买有效时长。";
     case "at_capacity":
       return "暂时售罄，请稍后再试。";
+    case "restore_cleanup_failed":
+      return "暂时恢复不了，请过几分钟再试；一直不行请联系我们。";
     case "already_provisioned":
       return "这个账号已经有一个域名。";
     case "slug_taken":
@@ -255,7 +263,7 @@ function isPollPending(value: unknown): value is { status: "pending" } {
   return record(value) && value.status === "pending";
 }
 
-function isAccount(value: unknown): value is ConnectAccount {
+function isAccount(value: unknown): value is Omit<ConnectAccount, "restorable"> & { restorable?: unknown } {
   if (!record(value) || !nonEmptyString(value.email) || typeof value.active !== "boolean" || typeof value.checkoutOpen !== "boolean") {
     return false;
   }
@@ -281,6 +289,21 @@ function isAccount(value: unknown): value is ConnectAccount {
       tier.months > 0 &&
       nonEmptyString(tier.price) &&
       typeof tier.featured === "boolean",
+  );
+}
+
+// Same rule as the Worker's SLUG_RE (workers/scout-connect/src/slug.ts).
+const CONNECT_SLUG_RE = /^(?:[a-z0-9]|[a-z0-9][a-z0-9-]{0,30}[a-z0-9])$/;
+
+/** A restorable address Connect would actually issue: a valid slug whose hostname is that slug's.
+ *  Anything else is ignored, so the wizard keeps the name form instead of a restore that cannot work. */
+function isRestorable(value: unknown): value is { slug: string; hostname: string } {
+  return (
+    record(value) &&
+    typeof value.slug === "string" &&
+    CONNECT_SLUG_RE.test(value.slug) &&
+    isConnectHostname(value.hostname) &&
+    value.hostname.startsWith(`${value.slug}.`)
   );
 }
 
@@ -341,6 +364,7 @@ function apiErrorReason(value: unknown): ConnectFailureReason | null {
     "bad slug": "bad_slug",
     "already provisioned": "already_provisioned",
     "slug taken": "slug_taken",
+    "restore cleanup failed": "restore_cleanup_failed",
   };
   return reasons[value.error] ?? null;
 }
@@ -405,7 +429,21 @@ export async function getConnectAccount(credential: string, options: ConnectClie
   if (result.response.status === 429) return failure("rate_limited");
   const bodyError = bodyFailure(result);
   if (bodyError) return bodyError;
-  if (result.response.status === 200 && isAccount(result.body)) return { ok: true, ...result.body };
+  if (result.response.status === 200 && isAccount(result.body)) {
+    const { endpoint, restorable } = result.body;
+    const normalizedEndpoint = endpoint === null ? null : { ...endpoint };
+    if (normalizedEndpoint) {
+      const tunnelId = normalizeTunnelId(normalizedEndpoint.tunnelId);
+      if (tunnelId) normalizedEndpoint.tunnelId = tunnelId;
+      else delete normalizedEndpoint.tunnelId;
+    }
+    return {
+      ok: true,
+      ...result.body,
+      endpoint: normalizedEndpoint,
+      restorable: isRestorable(restorable) ? { slug: restorable.slug, hostname: restorable.hostname } : null,
+    };
+  }
   return statusFailure(result.response, result.body);
 }
 
@@ -487,7 +525,7 @@ export async function provisionConnectSlug(
   }
   if (result.response.status === 503) {
     const reason = apiErrorReason(result.body);
-    if (reason === "at_capacity") return failure(reason);
+    if (reason === "at_capacity" || reason === "restore_cleanup_failed") return failure(reason);
   }
   return statusFailure(result.response, result.body);
 }

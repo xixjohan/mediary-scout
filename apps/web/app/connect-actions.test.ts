@@ -427,6 +427,7 @@ describe("connectProvisionAction", () => {
       endpoint: { slug: "family", hostname: "family.mediaryconnect.app", status: "active" },
       checkoutOpen: true,
       tiers: [],
+      restorable: null,
     });
     expect(await connectProvisionAction("family")).toEqual({ ok: true, hostname: "family.mediaryconnect.app" });
   });
@@ -435,6 +436,19 @@ describe("connectProvisionAction", () => {
     vi.mocked(provisionConnectSlug).mockResolvedValueOnce({ ok: false, reason: "already_provisioned", message: "x" });
     const result = await connectProvisionAction("family");
     expect(result).toMatchObject({ ok: false, reason: "already_provisioned" });
+  });
+
+  it("passes the restore cleanup failure message through to the wizard", async () => {
+    vi.mocked(provisionConnectSlug).mockResolvedValueOnce({
+      ok: false,
+      reason: "restore_cleanup_failed",
+      message: "暂时恢复不了，请过几分钟再试；一直不行请联系我们。",
+    });
+    expect(await connectProvisionAction("family")).toEqual({
+      ok: false,
+      reason: "restore_cleanup_failed",
+      message: "暂时恢复不了，请过几分钟再试；一直不行请联系我们。",
+    });
   });
 });
 
