@@ -13,6 +13,7 @@ vi.mock("../../../../lib/workflow-runtime", async () => {
     setSingleUserPassword: vi.fn(async () => ({ ok: true })),
     clearSingleUserPassword: vi.fn(async () => undefined),
     requireAuthenticatedAccountId: vi.fn(async () => "acct_default"),
+    UnauthenticatedAccountError: actual.UnauthenticatedAccountError,
   };
 });
 
@@ -34,6 +35,8 @@ function post(headers: Record<string, string> = {}, body: unknown = { password: 
 describe("POST /api/auth/password", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // clearAllMocks keeps implementations and queued one-shot values: start every test signed in.
+    vi.mocked(runtime.requireAuthenticatedAccountId).mockReset().mockResolvedValue("acct_default");
   });
 
   it("refuses to set the first password over the tunnel", async () => {
@@ -58,5 +61,24 @@ describe("POST /api/auth/password", () => {
     expect(res.status).toBe(200);
     expect(runtime.requireAuthenticatedAccountId).toHaveBeenCalled();
     expect(runtime.setSingleUserPassword).toHaveBeenCalledWith("correct horse");
+  });
+
+  it("answers 401, not 500, when an existing password is changed or cleared without signing in", async () => {
+    vi.mocked(runtime.hasLoginPassword).mockResolvedValue(true);
+    vi.mocked(runtime.requireAuthenticatedAccountId)
+      .mockRejectedValueOnce(new runtime.UnauthenticatedAccountError())
+      .mockRejectedValueOnce(new runtime.UnauthenticatedAccountError());
+    const change = await POST(post(TUNNEL));
+    const clear = await POST(post(TUNNEL, { clear: true }));
+    expect([change.status, clear.status]).toEqual([401, 401]);
+    expect(runtime.setSingleUserPassword).not.toHaveBeenCalled();
+    expect(runtime.clearSingleUserPassword).not.toHaveBeenCalled();
+  });
+
+  it("still fails loudly on an unexpected error from the session check", async () => {
+    vi.mocked(runtime.hasLoginPassword).mockResolvedValue(true);
+    vi.mocked(runtime.requireAuthenticatedAccountId).mockRejectedValueOnce(new Error("db down"));
+    await expect(POST(post(TUNNEL))).rejects.toThrow("db down");
+    expect(runtime.setSingleUserPassword).not.toHaveBeenCalled();
   });
 });
