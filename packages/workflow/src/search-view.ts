@@ -43,6 +43,26 @@ export interface MediaSearchCache {
   set(query: string, candidates: MediaSearchCandidate[]): Promise<void>;
 }
 
+/**
+ * Remembers which real title a DESCRIBED query resolved to, so a re-render does
+ * not pay for the resolution again. This matters concretely: the search page
+ * mounts the acquisition poller, which re-renders the results server-side every
+ * five seconds — without this, one typed description would bill a web search and
+ * a model call every five seconds for the whole run.
+ *
+ * A cached EMPTY result is meaningful too ("this description resolves to
+ * nothing"), so it records a miss instead of re-asking.
+ */
+export interface SearchQueryInterpretation {
+  /** The title that was eventually searched, or null when nothing resolved. */
+  title: string | null;
+}
+
+export interface SearchInterpretationCache {
+  get(query: string): Promise<SearchQueryInterpretation | null>;
+  set(query: string, value: SearchQueryInterpretation): Promise<void>;
+}
+
 export interface SearchCandidateAction {
   state: SearchActionState;
   label: string;
@@ -73,6 +93,9 @@ export interface SearchPageView {
   state: SearchPageState;
   cacheStatus: SearchCacheStatus;
   candidates: SearchCandidateCard[];
+  /** Set when the typed query was a description (or carried an unofficial
+   *  season/arc name) and a real title was found instead — the UI says which. */
+  interpretedQuery?: string;
   /** Only when state === "provider_error": the underlying provider failure, for
    *  a diagnostic line in the UI and the reporter's issue. */
   providerError?: string;
@@ -91,6 +114,72 @@ export class InMemoryMediaSearchCache implements MediaSearchCache {
   }
 }
 
+/** In-memory twin of SearchInterpretationCache (demo / tests). */
+export class InMemorySearchInterpretationCache implements SearchInterpretationCache {
+  private readonly values = new Map<string, SearchQueryInterpretation>();
+
+  async get(query: string): Promise<SearchQueryInterpretation | null> {
+    return this.values.get(normalizeSearchQuery(query)) ?? null;
+  }
+
+  async set(query: string, value: SearchQueryInterpretation): Promise<void> {
+    this.values.set(normalizeSearchQuery(query), value);
+  }
+}
+
+/**
+ * Serialise resolution per query inside one process. Two renders racing on the
+ * same description must not each pay for a web search + model call; the second
+ * one waits for the first and reuses its answer.
+ */
+const inflightInterpretations = new Map<string, Promise<SearchQueryInterpretation>>();
+
+async function resolveOnce(
+  query: string,
+  input: Parameters<typeof getSearchPageView>[0],
+): Promise<SearchQueryInterpretation> {
+  const key = normalizeSearchQuery(query);
+  const pending = inflightInterpretations.get(key);
+  if (pending) return pending;
+
+  const run = (async (): Promise<SearchQueryInterpretation> => {
+    const cached = await input.interpretations?.get(key).catch(() => null);
+    if (cached) return cached;
+    let resolverFailed = false;
+    const titles = await input.resolveTitles!(key).catch(() => {
+      resolverFailed = true;
+      return [];
+    });
+    let hadLookupError = false;
+    for (const candidateTitle of titles) {
+      const normalized = normalizeSearchQuery(candidateTitle);
+      if (!normalized || normalized === key) continue;
+      const found = await safeSearch(input, normalized);
+      if (found === null) {
+        hadLookupError = true;
+        continue;
+      }
+      if (found.length > 0) {
+        const hit: SearchQueryInterpretation = { title: candidateTitle };
+        await input.interpretations?.set(key, hit).catch(() => {});
+        return hit;
+      }
+    }
+    const miss: SearchQueryInterpretation = { title: null };
+    if (!resolverFailed && !hadLookupError) {
+      await input.interpretations?.set(key, miss).catch(() => {});
+    }
+    return miss;
+  })();
+
+  inflightInterpretations.set(key, run);
+  try {
+    return await run;
+  } finally {
+    inflightInterpretations.delete(key);
+  }
+}
+
 export async function getSearchPageView(input: {
   query: string;
   provider: MediaSearchProvider;
@@ -102,6 +191,13 @@ export async function getSearchPageView(input: {
    *  state is per-drive — obtained on drive A must still be 获取-able on drive B.
    *  Undefined = account-wide (legacy / single-drive). */
   scope?: ScopeArg;
+  /** "I don't remember the name" fallback: when the keyword search finds nothing,
+   *  turn the description into real titles and search again. Best-effort — an
+   *  absent resolver or a failure simply leaves the empty result. */
+  resolveTitles?: (query: string) => Promise<string[]>;
+  /** Remembers description → title (including "resolved to nothing") so a
+   *  re-render does not pay for the resolution again. */
+  interpretations?: SearchInterpretationCache;
 }): Promise<SearchPageView> {
   const now = input.now ?? (() => new Date().toISOString());
   const query = normalizeSearchQuery(input.query);
@@ -116,6 +212,7 @@ export async function getSearchPageView(input: {
 
   const cached = await input.cache.get(query);
   let candidates = cached;
+  let interpretedQuery: string | undefined;
   if (!candidates) {
     // A deployment that cannot reach ANY TMDB access (GFW-blocked network: direct
     // API and the workers.dev proxy both dead — issue #134) makes the provider
@@ -135,18 +232,100 @@ export async function getSearchPageView(input: {
     await input.cache.set(query, candidates);
   }
 
+  // Nothing found for what the user typed. Two common causes are NOT "the work
+  // does not exist": (a) they appended an unofficial season/arc name
+  // ("咒术回战 第三季" / "死灭回游"), or (b) they described the plot instead of
+  // the title. The suffix strip is free and deterministic; the description
+  // resolution costs one web search plus one model call, so it runs only after —
+  // and its ANSWER is cached, because this page re-renders every five seconds
+  // while an acquisition runs.
+  if (candidates.length === 0) {
+    const interpreted = await interpretUnfoundQuery(query, input);
+    if (interpreted) {
+      interpretedQuery = interpreted;
+      candidates = (await safeSearch(input, interpreted)) ?? [];
+    }
+  }
+
   return {
     query,
     state: "ready",
     cacheStatus: cached ? "hit" : "miss",
+    ...(interpretedQuery === undefined ? {} : { interpretedQuery }),
     candidates: await Promise.all(
       candidates.map((candidate) => toCandidateCard(candidate, input.repository, now(), input.scope)),
     ),
   };
 }
 
+/** Keyword search through the provider + cache; null when the provider throws. */
+async function safeSearch(
+  input: Parameters<typeof getSearchPageView>[0],
+  query: string,
+): Promise<MediaSearchCandidate[] | null> {
+  const normalized = normalizeSearchQuery(query);
+  try {
+    const cached = await input.cache.get(normalized);
+    if (cached) return cached;
+    const found = await input.provider.searchMedia({ query: normalized });
+    await input.cache.set(normalized, found);
+    return found;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Turn an unfound query into a real, searchable title — or null.
+ *
+ * Order: the free deterministic suffix strip first (covers most cases), then the
+ * paid description resolution. Either way the conclusion is remembered, so a
+ * repeated render re-uses it instead of paying again.
+ */
+async function interpretUnfoundQuery(
+  query: string,
+  input: Parameters<typeof getSearchPageView>[0],
+): Promise<string | null> {
+  const cached = await input.interpretations?.get(query).catch(() => null);
+  if (cached) return cached.title;
+
+  const stripped = stripSeasonMarkers(query);
+  if (stripped) {
+    const found = await safeSearch(input, stripped);
+    if (found && found.length > 0) {
+      await input.interpretations?.set(query, { title: stripped }).catch(() => {});
+      return stripped;
+    }
+  }
+
+  if (!input.resolveTitles) {
+    // Do not write { title: null } when no model was configured: if the user
+    // later configures a BYO model in Settings, the query must be allowed to
+    // resolve instead of being stuck on a cached false negative.
+    return null;
+  }
+
+  const interpretation = await resolveOnce(query, input);
+  return interpretation.title;
+}
+
 function normalizeSearchQuery(query: string): string {
   return query.trim().replace(/\s+/g, " ");
+}
+
+/**
+ * Drop a trailing season / part marker so "咒术回战 第三季" and "庆余年 第二季"
+ * still reach their series. Deterministic and free — it runs before any model
+ * call, because these suffixes are the single most common way a title search
+ * returns nothing. Returns null when there is nothing to strip.
+ */
+export function stripSeasonMarkers(query: string): string | null {
+  const stripped = query
+    .replace(/\s*(?:第\s*[0-9一二三四五六七八九十百]+\s*[季部篇]|season\s*\d+|s\d{1,2})\s*$/iu, "")
+    .replace(/\s*(?:上|下|中)\s*篇\s*$/u, "")
+    .replace(/\s*(?:final\s*season|完结篇|剧场版)\s*$/iu, "")
+    .trim();
+  return stripped.length > 0 && stripped !== query.trim() ? stripped : null;
 }
 
 /** The diagnostic line must stay readable for ANY throw shape: bare String()
