@@ -57,13 +57,29 @@ describe("raw snapshot pre-warming", () => {
     // 预热:系统发起的 raw 搜索
     await sandbox.primeRawSnapshot("铁拳教育");
 
-    // viewResourceSnapshot 返回预搜候选的结构化文档
+    // viewResourceSnapshot 返回预搜候选的结构化文档（含 snapshotId，让 agent 直接传给 transferCandidate）
     const snapshot = sandbox.viewResourceSnapshot();
 
-    expect(snapshot.document).toBeTruthy();
+    expect(snapshot.snapshotId).toBeTruthy();
+    expect(snapshot.document).toContain(`snapshotId: ${snapshot.snapshotId}`);
     expect(snapshot.document).toContain("c0"); // 含 id
     expect(snapshot.document).toContain("铁拳教育 S01"); // 含 title
     expect(snapshot.candidateCount).toBe(3);
+  });
+
+  it("transferCandidate accepts either the returned snapshotId or a 'raw' / '活期文档' alias for a pre-warmed candidate", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { 咒术回战: [{ id: "jjk-s3", title: "咒术回战 第三季 全12集" }] },
+    });
+    const storage = new Storage115Simulator({
+      packs: { "jjk-s3": { files: [{ path: "S3 - 01.mkv", sizeBytes: 1 }] } },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const sandbox = new TaskSandbox({ provider, storage, stagingDirectoryId, need: ["S01E48"] });
+
+    await sandbox.primeRawSnapshot("咒术回战");
+    const result = await sandbox.transferCandidate({ snapshotId: "raw", candidateId: "jjk-s3" });
+    expect(result.attempt.status).toBe("succeeded");
   });
 
   it("pre-warmed search does NOT consume the agent's distinct search budget", async () => {

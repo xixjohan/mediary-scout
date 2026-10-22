@@ -940,13 +940,26 @@ export class TaskSandbox {
         `SANDBOX_COVERAGE_ALREADY_MET: every needed item (${this.need.join(",")}) is obtained; no further transfers`,
       );
     }
-    const snapshot = this.observedSnapshots.get(input.snapshotId);
+    let snapshot = this.observedSnapshots.get(input.snapshotId);
+    // Ergonomic raw-snapshot alias: viewResourceSnapshot calls its output "Raw
+    // snapshot (活期文档)", so models occasionally pass "raw" / "活期文档" (or omit
+    // the exact id) when transferring a candidate they just read from the raw
+    // snapshot. If the candidate IS in this task's pre-warmed rawSnapshot,
+    // resolve to it rather than burning a turn on a pedantic id refusal.
+    if (
+      !snapshot &&
+      this.rawSnapshot &&
+      this.rawSnapshot.candidates.some((c) => c.id === input.candidateId) &&
+      (!input.snapshotId || /^(raw|raw[-_ ]snapshot|snapshot[-_ ]raw|活期文档)$/iu.test(input.snapshotId.trim()))
+    ) {
+      snapshot = this.rawSnapshot;
+    }
     if (!snapshot) {
       throw new Error(`SANDBOX_SNAPSHOT_NOT_OBSERVED: ${input.snapshotId} was not seen in this task`);
     }
-    const candidate = this.findObservedCandidate(input.candidateId, input.snapshotId);
+    const candidate = this.findObservedCandidate(input.candidateId, snapshot.id);
     if (!candidate) {
-      throw new Error(`SANDBOX_CANDIDATE_NOT_IN_SNAPSHOT: ${input.candidateId} is not in ${input.snapshotId}`);
+      throw new Error(`SANDBOX_CANDIDATE_NOT_IN_SNAPSHOT: ${input.candidateId} is not in ${snapshot.id}`);
     }
     this.assertRejectedFirst();
     if (this.isRejected && (await this.isRejected({ id: candidate.id, title: candidate.title }))) {
@@ -2169,7 +2182,7 @@ export class TaskSandbox {
    *  Free, repeatable, does NOT consume search budget. Each row is id + title,
    *  plus · 发布 YYYY-MM-DD when postedAt is known, then · 近 30 天转过… when
    *  linkHistory is set (truncated at 120 if excessive). */
-  viewResourceSnapshot(): { document: string; candidateCount: number } {
+  viewResourceSnapshot(): { snapshotId?: string; document: string; candidateCount: number } {
     if (!this.rawSnapshot) {
       return {
         document: "No raw snapshot available. Call primeRawSnapshot first.",
@@ -2182,12 +2195,13 @@ export class TaskSandbox {
     // target's name. Kept and flagged so the agent looks twice.
     // Same presenter as searchResources: one story, two read paths.
     const view = presentSnapshotForAgent(this.rawSnapshot, RAW_SNAPSHOT_ROW_LIMIT);
+    const snapshotId = view.snapshot.id;
     const candidates = view.snapshot.candidates;
     const total = candidates.length;
     const truncated = candidates.slice(0, RAW_SNAPSHOT_ROW_LIMIT);
     const remaining = total - truncated.length;
 
-    let document = `📋 Raw snapshot (${total} candidates):\n\n`;
+    let document = `📋 Raw snapshot (snapshotId: ${snapshotId}, ${total} candidates):\n\n`;
 
     for (const candidate of truncated) {
       const posted = candidate.postedAt ? ` · 发布 ${candidate.postedAt}` : "";
@@ -2201,7 +2215,7 @@ export class TaskSandbox {
     if (view.legend) document += `\n${view.legend}\n`;
     if (view.allDroppedWarning) document += `\n${view.allDroppedWarning}\n`;
 
-    return { document, candidateCount: total };
+    return { snapshotId, document, candidateCount: total };
   }
 
   /** Pre-warm the assrt subtitle snapshot (system-initiated, like primeRawSnapshot).
