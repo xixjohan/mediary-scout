@@ -86,7 +86,9 @@ Mediary Scout 有两种部署方式:
 
 ```bash
 git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout
-docker compose up -d        # 首次会构建 web 镜像,几分钟
+cp .env.example .env
+docker compose pull web worker   # 拉发布镜像(单镜像模式,不本地构建)
+docker compose up -d
 ```
 
 > ### ⚠️ 墙内先看这个:Docker Hub 大概率拉不动
@@ -458,21 +460,26 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 ./scripts/deploy.sh
 ```
 
-`scripts/deploy.sh` 会 `git pull` → 重建 `web` → `up -d` → **验证跑起来的容器确实是刚拉取的 commit**(读容器内 `BUILD_COMMIT` 和 `HEAD` 比对,不一致直接报错退出)。等价于 `docker compose up -d --build`,但多了那道**自校验**,并且不用 `--no-cache`。
+`scripts/deploy.sh` 会取最新发布标签 → 把 `MEDIARY_IMAGE` 钉到它 → `compose pull` → `up -d` → **验证跑起来的容器确实是该标签的 commit**(读容器内 `BUILD_COMMIT` 和标签 commit 比对,不一致直接报错退出)。单镜像模式下不再本地构建 `web`;`updater` 仍本地构建(它不随应用发布)。
 
 > **为什么要自校验?** 升级最阴的失败是**静默回退**:`git pull` 之后容器仍在跑**旧代码**,而所有常规信号都在骗你——宿主 `git rev-parse HEAD` 显示的是新 commit(和容器里实际跑的代码无关),盯镜像 hash 也没用(`--no-cache` 重建每次 hash 都不同,纯粹是构建不确定性)。#88–#98 就是这样连续五次「部署成功」实则一整天跑旧代码。所以真正的护栏不是缓存技巧,而是**一道检查**:把镜像构建时刻的 commit 盖进 `BUILD_COMMIT`,部署后比对运行容器的 `BUILD_COMMIT` 是否等于 `HEAD`,不等就报错——无论病根是构建缓存、`git pull` 空转、还是容器没被重建,都会当场暴露而非静默溜过。
 >
-> `deploy.sh` 顺带传 `GIT_SHA=$(git rev-parse HEAD)` 作构建参数,Dockerfile 用它在 `COPY . .` 前触发缓存失效(ARG 在**首次使用**时 cache-miss,连带其后各层重建),每换 commit 强制重传源码 + 重建,而慢的 `npm ci` 依赖层仍走缓存。**不必 `--no-cache`**(那会把依赖层也丢掉,慢几分钟)。装了 buildx / 用内置 BuildKit 的宿主本就内容寻址、`COPY` 可靠,这层主要是给用**经典构建器**(`DOCKER_BUILDKIT=0` 或很老的 Docker)的自部署者兜底;两种构建器下都正确无副作用。
+> **关于 `GIT_SHA` / `BUILD_COMMIT`**:镜像模式下 `GIT_SHA` 由 `Release Docker` 工作流在构建发布镜像时写入(同时写进镜像的 `org.opencontainers.image.revision` label,一键更新交换镜像前会核对它)。只有**本地自建镜像**(README「方式二」)时才需要你自己传:`GIT_SHA=$(git rev-parse HEAD) docker build --build-arg GIT_SHA=$GIT_SHA -t mediary-scout:local .`——Dockerfile 用它在 `COPY . .` 前触发缓存失效,每换 commit 强制重传源码 + 重建,而慢的 `npm ci` 依赖层仍走缓存,**不必 `--no-cache`**。
 >
 > 手动等价执行 + 校验:
 > ```bash
-> # 一键更新后部署目录停在发布标签上,pull 需要一个分支(deploy.sh 自己也会先做这一步):
-> git checkout main
-> git pull --ff-only
-> GIT_SHA=$(git rev-parse HEAD) docker compose up -d --build
-> # 核对容器真在跑新代码(应等于上面的 HEAD):
+> git fetch --tags
+> TAG=$(git tag --list 'v*' --sort=-creatordate | head -n 1)
+> git -c advice.detachedHead=false checkout "refs/tags/$TAG"
+> sed -i "s|^MEDIARY_IMAGE=.*|MEDIARY_IMAGE=ghcr.io/fancydirty/mediary-scout:$TAG|" .env
+> docker compose pull web worker
+> docker compose up -d
+> # 核对容器真在跑该标签的代码(应等于 git rev-parse HEAD):
 > docker compose exec web cat BUILD_COMMIT
 > ```
+>
+> 镜像没发出来时(打了标签但 `Release Docker` 还在构建),`compose pull` 会拉到旧镜像或失败,
+> 校验一环随即报错——去 Actions 页看 `Release Docker` 跑完再部署。
 
 ### 在网页里一键更新
 

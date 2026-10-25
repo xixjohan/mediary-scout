@@ -94,6 +94,9 @@ jobs:
           labels: |
             org.opencontainers.image.title=Mediary Scout
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            # updater 交换前用它确认「这个镜像确实是目标 commit 构建的」
+            # （updater/run-update.sh 的 image_revision）。
+            org.opencontainers.image.revision=${{ needs.preflight.outputs.ref }}
 
       - name: Build and push
         uses: docker/build-push-action@v6

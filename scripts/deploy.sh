@@ -1,6 +1,7 @@
 #!/bin/sh
-# Reliable, SELF-VERIFYING self-host redeploy: pull latest, rebuild web, restart the
-# stack, then PROVE the running container actually serves the pulled commit.
+# Reliable, SELF-VERIFYING self-host redeploy (single-image mode): fetch tags, pin the
+# newest release tag, pull its published image, restart the stack, then PROVE the running
+# container actually serves that tag's commit.
 #
 # Why this exists (2026-07-04 #88–#98): five deploys in a row silently kept serving OLD
 # code — the box ran a stale image for a whole day before anyone noticed. The failure
@@ -8,12 +9,13 @@
 # commit even when the container runs an old image, and watching the image hash is noisy
 # (a fresh `--no-cache` build changes the hash purely from build non-determinism). So the
 # real fix isn't a cache trick — it's a check: this script compares the RUNNING
-# container's stamped commit (BUILD_COMMIT) against HEAD and exits non-zero on mismatch,
-# which catches a stale build, a no-op `git pull`, or a container that wasn't recreated.
+# container's stamped commit (BUILD_COMMIT) against the tag's commit and exits non-zero
+# on mismatch, which catches a stale image, a no-op fetch, or a container that wasn't
+# recreated.
 #
-# It also does NOT use `--no-cache` (that throws away the cached `npm ci`, ~minutes):
-# GIT_SHA=$(git rev-parse HEAD) is passed as a build arg the Dockerfile uses right before
-# `COPY . .`, forcing a fresh source COPY + build per commit while deps stay cached.
+# 单镜像模式（2026-10-26）：web/worker 不再本地构建，而是拉取 Release Docker 为发布
+# 标签推送的 GHCR 镜像。部署因此跟「最新的发布标签」而不是 main 的尖端——想部署任意
+# commit 请自行 `docker build` 并用 MEDIARY_IMAGE 指向本地镜像。
 #
 # Usage (on the host, in the repo dir):   ./scripts/deploy.sh [extra `up` args]
 set -eu
@@ -23,7 +25,7 @@ set -eu
 cd "$(dirname "$0")/.."
 
 # Take the same repository lock the updater's run-update.sh takes, so a one-click update and
-# this manual deploy never build/checkout/swap the same repo and compose project at once. The
+# this manual deploy never pull/checkout/swap the same repo and compose project at once. The
 # lock is a git/docker-ignored file at the repo root; the updater sees the same inode through
 # its bind mount, and flock is an inode-level advisory lock the kernel shares across the two.
 # The updater only holds it during a normal update, not during its own recovery, so a deploy
@@ -40,28 +42,43 @@ if command -v flock >/dev/null 2>&1; then
   fi
 fi
 
-# The updater leaves the deploy folder on a release tag; pull needs a branch.
-git symbolic-ref -q HEAD >/dev/null || git checkout main
+echo "==> git fetch --tags"
+git fetch --tags --quiet
 
-echo "==> git pull --ff-only"
-git pull --ff-only
+# 最新的发布标签（vYYYY.MM.DD[.N]，与 apps/web/lib/release-version.ts 同一规则）。
+TAG="$(git tag --list 'v*' --sort=-creatordate | head -n 1)"
+[ -n "$TAG" ] || { echo "==> 没有找到任何 v* 发布标签——先打一个标签并等 Release Docker 发布完成。"; exit 1; }
 
+echo "==> Deploying release tag ${TAG}"
+# 切到该标签（detached，与 updater 留下的状态一致）。已在同一 commit 上时跳过，
+# 免得无谓地动工作区。
+if [ "$(git rev-parse HEAD)" != "$(git rev-parse -q --verify "refs/tags/${TAG}^{commit}")" ]; then
+  git -c advice.detachedHead=false checkout "refs/tags/${TAG}"
+fi
 GIT_SHA="$(git rev-parse HEAD)"
 export GIT_SHA
-echo "==> Building web at commit ${GIT_SHA}"
-# compose reads build.args GIT_SHA=${GIT_SHA} from the exported env above — no need to
-# pass --build-arg. No --no-cache either: the GIT_SHA cache-bust already forces the
-# source COPY + build to re-run, while keeping the (slow) npm ci layer cached.
-# Build the updater too: `docker compose up -d` never rebuilds an existing image, and
-# one-click updates only replace web (the updater can't swap its own container) — a
-# manual deploy is the only way the updater itself gets new code.
-docker compose build web updater
+
+# 把镜像引用钉进 .env：compose 的 ${MEDIARY_IMAGE} 读它，后续 up/pull 都停在这个版本，
+# 而不是被 :latest 悄悄覆盖。以文件属主身份写，避免 root 拥有的 .env 让用户改不动。
+IMAGE="${MEDIARY_IMAGE_BASE:-ghcr.io/fancydirty/mediary-scout}:${TAG}"
+if [ -f .env ] && grep -q '^MEDIARY_IMAGE=' .env; then
+  sed -i "s|^MEDIARY_IMAGE=.*|MEDIARY_IMAGE=${IMAGE}|" .env
+elif [ -f .env ]; then
+  printf '%s\n' "MEDIARY_IMAGE=${IMAGE}" >> .env
+else
+  printf '%s\n' "MEDIARY_IMAGE=${IMAGE}" > .env
+fi
+
+echo "==> Pulling ${IMAGE}"
+# 拉发布镜像。updater 仍本地构建（它不随应用发布，改了 updater/ 才需要重建）。
+docker compose pull web worker
+docker compose build updater
 
 echo "==> Starting stack"
 docker compose up -d "$@"
 
-# Verify: the running container reports the commit we just built. This is the check
-# that host `git rev-parse HEAD` CANNOT give you (a stale image outlives a pulled HEAD).
+# Verify: the running container reports the commit of the tag we just deployed. This is the
+# check that host `git rev-parse HEAD` CANNOT give you (a stale image outlives a fetched tag).
 echo "==> Verifying running container commit"
 # Retry rather than a fixed sleep: `up -d` returns before the container is
 # exec-able, and slow hosts need longer — a flat `sleep 2` gives false negatives.
@@ -73,8 +90,8 @@ while [ "$i" -lt 15 ]; do
   i=$((i + 1))
   sleep 1
 done
-[ -n "$RUNNING" ] || RUNNING='<no BUILD_COMMIT — image predates this fix; rebuild once more>'
-echo "    expected (HEAD):        ${GIT_SHA}"
+[ -n "$RUNNING" ] || RUNNING='<no BUILD_COMMIT — image predates this fix; deploy a newer tag>'
+echo "    expected (${TAG}):        ${GIT_SHA}"
 echo "    running container:      ${RUNNING}"
 if [ "${RUNNING}" = "${GIT_SHA}" ]; then
   echo "==> Verifying application readiness"
@@ -89,14 +106,15 @@ if [ "${RUNNING}" = "${GIT_SHA}" ]; then
     sleep 1
   done
   if [ "$READY" = "1" ]; then
-    echo "==> OK: container serves the freshly built commit and passes the DB-backed health probe."
+    echo "==> OK: container serves the ${TAG} image and passes the DB-backed health probe."
   else
-    echo "==> WARNING: container commit matches HEAD but /api/health never became ready."
+    echo "==> WARNING: container commit matches the tag but /api/health never became ready."
     docker compose logs --tail=100 web || true
     exit 1
   fi
 else
-  echo "==> WARNING: running container commit != HEAD. The build may have been cached"
-  echo "    stale, or the container did not recreate. Investigate before trusting it."
+  echo "==> WARNING: running container commit != ${TAG}. The image may not have been"
+  echo "    published yet (check the Release Docker run), or the container did not"
+  echo "    recreate. Investigate before trusting it."
   exit 1
 fi

@@ -43,9 +43,28 @@
 
 ### Docker（NAS / 软路由 / 服务器）
 
+**方式一：发布镜像（推荐）**——每个发布版本都会自动构建并推送到 GHCR，不用本地编译：
+
 ```bash
 git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout
+cp .env.example .env        # 按需修改；镜像版本在 .env 里用 MEDIARY_IMAGE 指定
+docker compose pull web worker
 docker compose up -d
+```
+
+**方式二：本地构建**（要改构建参数，比如跨域访问的 `MEDIA_TRACK_ALLOWED_ORIGINS`）：
+
+```bash
+git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout
+docker build -t mediary-scout:local .
+MEDIARY_IMAGE=mediary-scout:local docker compose up -d
+```
+
+也可以不用 compose，单容器直接跑：
+
+```bash
+docker run -d --name mediary-scout -p 3000:3000 -v mediary-data:/app/data \
+  ghcr.io/fancydirty/mediary-scout:v2026.10.22
 ```
 
 打开 `http://<主机IP>:3000`，在设置里配置。以后在 **设置 → 更新** 里一键升级，也可以设成每天自动更新。国内构建加速、Tailscale / Cloudflare Tunnel 远程访问、多用户、备份，以及让 AI agent 替你部署的提示词，都在 **[部署指南](docs/deploy.md)**。
@@ -58,6 +77,8 @@ docker compose up -d
 | 手机、出门访问 | 仅本机 | Tailscale / Cloudflare Tunnel |
 
 两种形态下，自带 OpenAI 兼容的 AI 模型接口都是可选升级（key 只存在你自己的实例里）。未配置 AI 模型时，默认使用 Kilo Code 的公共免费模型池（无需注册；获取任务的对话上下文——搜索查询、任务与留言内容、候选结果、文件名等——会发送给 Kilo 及其上游模型提供商）。影视信息开箱即用。资源搜索用 PanSou：Docker 版自带一个，桌面版默认用公共实例，可以在设置里换成你自己的；可选再接 Prowlarr 找磁力。
+
+**关于 Docker 镜像**：`ghcr.io/fancydirty/mediary-scout:<版本标签>` 随每个发布版本自动构建（GitHub Actions 的 `Release Docker`，同时更新 `:latest`）。web 与 worker 是同一个镜像的不同启动命令，版本永远一致；fork 用户在 `.env` 里把 `MEDIARY_IMAGE` 指向自己的 namespace 即可。镜像只含程序，凭据密钥 `credential.key` 只在你的数据卷里、不随镜像分发。镜像里**不含**跨域访问域名（构建时烘焙）——需要跨域访问就用方式二自建，或走反向代理透传 `x-forwarded-host`。
 
 ## 支持的网盘
 
