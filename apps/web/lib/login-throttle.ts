@@ -201,7 +201,7 @@ export function normalizeThrottleKey(key: string): string {
  * 避免攻击者用超长 username 放大单条桶的内存占用。
  *
  * **不做 `toLowerCase()`**：账号查询是 `WHERE username = ?` 精确匹配
- * （SQLite/Postgres 皆然，`username text UNIQUE`），大小写敏感。若在此折叠大小写，
+ * （SQLite `username text UNIQUE` 亦然），大小写敏感。若在此折叠大小写，
  * `Owner` 与 `owner` 这两个**不同账号**会共用一个桶——攻击者猛猜 `owner`
  * 就能把 `Owner` 的合法用户锁在门外。限流身份必须与登录身份严格一致。
  *

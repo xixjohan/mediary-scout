@@ -374,11 +374,12 @@ echo "==> STEP backing_up"
 mkdir -p ./backups
 chown "$OWNER" ./backups
 # A backup killed mid-way (container stop = SIGKILL, no trap) leaves these behind forever,
-# and the keep-5 rule below only counts .sql.gz. Clear just these temp names before starting.
-rm -f ./backups/pre-update-*.sql.tmp ./backups/pre-update-*.sql.tmp.gz
+# and the keep-5 rule below only counts .db.gz. Clear just these temp names before starting.
+rm -f ./backups/pre-update-*.db.tmp ./backups/pre-update-*.db.tmp.gz
 STAMP="$(date +%Y%m%d-%H%M%S)"
-# Dump to a temp file first: `pg_dump | gzip` would hide a failed dump behind gzip's exit 0.
-TMP="./backups/pre-update-${STAMP}.sql.tmp"
+# Copy to a temp file first: a failed backup must not leave a truncated .db.gz that
+# the keep-5 rule would count.
+TMP="./backups/pre-update-${STAMP}.db.tmp"
 # shellcheck disable=SC2329 # invoked by the EXIT trap below
 cleanup() {
   code=$?
@@ -403,22 +404,25 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
-# umask in a subshell so the dump files are owner-only (they hold the 115 cookie and LLM
+# umask in a subshell so the backup files are owner-only (they hold the 115 cookie and LLM
 # keys) without making the later git checkout create owner-only files in the repo.
 (
   umask 077
-  compose exec -T postgres pg_dump -U mediatrack -d mediatrack > "$TMP"
-  # Compress next to it and rename: a full disk must not leave a truncated .sql.gz that
+  # 纯 SQLite 热备份（任务单 S1.4b）：VACUUM INTO 在 web 容器内生成一致性快照
+  # （WAL 模式下与 pg_dump 同级的正确性），写到 stdout 由宿主重定向进临时文件 ——
+  # 与 Postgres 时代的 `compose exec -T postgres pg_dump ...` 同构，仍是一次调用。
+  compose exec -T web node -e "const D=require('better-sqlite3');const fs=require('fs');const d=new D(process.env.MEDIA_TRACK_SQLITE_PATH||'/app/data/mediary.db');d.exec(\"VACUUM INTO '/tmp/mediary-pre-update.db'\");d.close();process.stdout.write(fs.readFileSync('/tmp/mediary-pre-update.db'))" > "$TMP"
+  # Compress next to it and rename: a full disk must not leave a truncated .db.gz that
   # the keep-5 rule would count as a backup.
   gzip -c "$TMP" > "$TMP.gz"
 )
-mv "$TMP.gz" "./backups/pre-update-${STAMP}.sql.gz"
-chown "$OWNER" "./backups/pre-update-${STAMP}.sql.gz"
+mv "$TMP.gz" "./backups/pre-update-${STAMP}.db.gz"
+chown "$OWNER" "./backups/pre-update-${STAMP}.db.gz"
 rm -f "$TMP"
 # Keep the newest 5. `|| true`: the read loop's EOF status is 1, and `set -e` would
 # abort a successful backup. Not `xargs -r` — macOS xargs has no -r, and the unit
 # test runs this script there. Busybox find/sort/tail behave the same.
-find ./backups -name 'pre-update-*.sql.gz' -type f -print | sort -r | tail -n +6 | while IFS= read -r old; do
+find ./backups -name 'pre-update-*.db.gz' -type f -print | sort -r | tail -n +6 | while IFS= read -r old; do
   [ -n "$old" ] || continue
   rm -f "$old"
 done || true

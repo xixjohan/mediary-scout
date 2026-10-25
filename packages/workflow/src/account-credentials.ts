@@ -1,6 +1,6 @@
 /**
  * Pure decision logic for §7 multi-account storage binding + category directory
- * provisioning. No I/O here — the Postgres repository (binding) and the real 115
+ * provisioning. No I/O here — the repository (binding) and the real 115
  * storage adapter (dir provisioning) inject their effects. Keeping the rules pure
  * keeps the instance-wide uniqueness invariant and the idempotent find-or-create
  * testable without a database or a live 网盘.

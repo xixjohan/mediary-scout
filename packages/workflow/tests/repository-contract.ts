@@ -6,12 +6,14 @@ import {
   type WorkflowRepository,
 } from "../src/repository.js";
 import type { Account } from "../src/account-credentials.js";
+import type { WorkflowKind } from "../src/domain.js";
 import type { TransferAttempt } from "../src/domain.js";
 import { workflowPersistenceFixture } from "./workflow-fixtures.js";
 import { queueReplaceRequest } from "../src/replace-request.js";
+import { claimNextQueuedRun } from "../src/repository.js";
 import { handleWorkflowRunFailure } from "../src/worker.js";
 
-/** A factory that yields a FRESH, empty repository and a teardown. Postgres/SQLite
+/** A factory that yields a FRESH, empty repository and a teardown. SQLite/InMemory
  *  return async; InMemory is sync — accept both. */
 export interface RepoHarness {
   make: () => Promise<WorkflowRepository> | WorkflowRepository;
@@ -923,7 +925,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         ...over,
       });
 
-      // The implicit default account exists as a seeded schema row on SQLite/Postgres
+      // The implicit default account exists as a seeded schema row on SQLite
       // but not on InMemory. Establish it through the public interface so the
       // adoptDefaultAccount contract starts from identical state on every engine.
       async function ensureDefaultAccount(repo: WorkflowRepository): Promise<void> {
@@ -1051,6 +1053,122 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         const later = await repo.listDeadLinkKeys({ now: "2026-07-04T00:00:02.000Z" });
         expect(new Set(later)).toEqual(new Set(["k_perm"]));
       });
+
+      it("reapExpiredDeadLinks: 只回收过期软链，永久链与未过期软链不动；幂等", async () => {
+        const repo = await fresh();
+        await repo.recordDeadLink({ key: "k_soft_live", kind: "magnet", reason: "r", permanent: false, ttlMs: 60_000, now: "2026-07-04T00:00:00.000Z" });
+        await repo.recordDeadLink({ key: "k_soft_dead", kind: "magnet", reason: "r", permanent: false, ttlMs: 1000, now: "2026-07-04T00:00:00.000Z" });
+        await repo.recordDeadLink({ key: "k_perm", kind: "pan115", reason: "r", permanent: true, now: "2026-07-04T00:00:00.000Z" });
+
+        // 未到期：什么都没有可回收
+        expect(await repo.reapExpiredDeadLinks({ now: "2026-07-04T00:00:00.500Z" })).toBe(0);
+
+        // 到期后：只走 k_soft_dead（expires 00:00:01）
+        expect(await repo.reapExpiredDeadLinks({ now: "2026-07-04T00:00:02.000Z" })).toBe(1);
+        // k_soft_live 的 60s TTL 还没到（00:01 才过期），仍在屏蔽列表
+        expect(new Set(await repo.listDeadLinkKeys({ now: "2026-07-04T00:00:30.000Z" }))).toEqual(
+          new Set(["k_soft_live", "k_perm"]),
+        );
+        // 幂等：同一时刻再回收 → 0
+        expect(await repo.reapExpiredDeadLinks({ now: "2026-07-04T00:00:02.000Z" })).toBe(0);
+        // 更晚：k_soft_live 此时也过期，被回收；永久链不动
+        expect(await repo.reapExpiredDeadLinks({ now: "2026-07-04T02:00:00.000Z" })).toBe(1);
+        expect(new Set(await repo.listDeadLinkKeys({ now: "2026-07-04T02:00:00.000Z" }))).toEqual(new Set(["k_perm"]));
+        // 永久链永不被回收（即使过很久）
+        expect(await repo.reapExpiredDeadLinks({ now: "2027-01-01T00:00:00.000Z" })).toBe(0);
+        expect(new Set(await repo.listDeadLinkKeys({ now: "2027-01-01T00:00:00.000Z" }))).toEqual(new Set(["k_perm"]));
+      });
+
+    describe("queue claim（claimNextQueuedRun：双实现，S4.2 补齐）", () => {
+      // 认领是系统里并发最关键的 SQL（事务内 read+flip），此前只有 InMemory
+      // oracle 覆盖；这里进共享契约，SQLite 实现同样被证明。
+      const NOW = "2026-10-04T15:00:00.000Z";
+      const queuedOn = (id: string, kind: WorkflowKind, drive: string | null, startedAt: string) => {
+        const base = workflowPersistenceFixture();
+        const seasonId = `season_${id}`;
+        return {
+          ...base,
+          connectedStorageId: drive,
+          season: { ...base.season, id: seasonId },
+          workflowRun: { ...base.workflowRun, id, kind, trackedSeasonId: seasonId, status: "queued" as const, startedAt, finishedAt: null },
+          episodes: [],
+          resourceSnapshots: [],
+          decisions: [],
+          transferAttempts: [],
+          notifications: [],
+        };
+      };
+      const claimOf = (repo: WorkflowRepository, kind: WorkflowKind, options?: Parameters<typeof claimNextQueuedRun>[3]) =>
+        claimNextQueuedRun(repo, kind, NOW, options);
+
+      it("FIFO：认领最老的可认领 run", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queuedOn("newer", "movie_init", "cs_a", "2026-10-04T14:16:04.000Z"));
+        await repo.saveWorkflowRunSnapshot(queuedOn("older", "movie_init", "cs_b", "2026-10-04T14:12:16.000Z"));
+        const claimed = await claimOf(repo, "movie_init");
+        expect(claimed?.workflowRun.id).toBe("older");
+        expect(claimed?.workflowRun.status).toBe("running");
+      });
+
+      it("跨 drive：忙碌盘被排除，认领跳到下一块盘", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queuedOn("on-115", "movie_init", "cs_115", "2026-10-04T14:12:16.000Z"));
+        await repo.saveWorkflowRunSnapshot(queuedOn("on-guangya", "movie_init", "cs_guangya", "2026-10-04T14:16:04.000Z"));
+        const claimed = await claimOf(repo, "movie_init", { excludeConnectedStorageIds: ["cs_115"] });
+        expect(claimed?.workflowRun.id).toBe("on-guangya");
+        expect(claimed?.connectedStorageId).toBe("cs_guangya");
+      });
+
+      it("全部盘忙碌 → 无可认领（null）", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queuedOn("on-115", "movie_init", "cs_115", "2026-10-04T14:12:16.000Z"));
+        expect(await claimOf(repo, "movie_init", { excludeConnectedStorageIds: ["cs_115"] })).toBeNull();
+      });
+
+      it("kind 之间是独立队列", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queuedOn("movie-a", "movie_init", "cs_a", "2026-10-04T14:12:16.000Z"));
+        await repo.saveWorkflowRunSnapshot(queuedOn("series-a", "type2_init", "cs_b", "2026-10-04T14:12:20.000Z"));
+        expect((await claimOf(repo, "movie_init"))?.workflowRun.id).toBe("movie-a");
+        expect((await claimOf(repo, "type2_init"))?.workflowRun.id).toBe("series-a");
+      });
+
+      it("认领后翻转 running，不会被二次认领", async () => {
+        const repo = await fresh();
+        await repo.saveWorkflowRunSnapshot(queuedOn("only", "movie_init", "cs_a", "2026-10-04T14:12:16.000Z"));
+        expect((await claimOf(repo, "movie_init"))?.workflowRun.id).toBe("only");
+        expect(await claimOf(repo, "movie_init")).toBeNull();
+        // 落库状态确实是 running
+        const reloaded = await repo.getWorkflowRunSnapshot("only");
+        expect(reloaded?.workflowRun.status).toBe("running");
+      });
+
+      it("空库认领 → null", async () => {
+        const repo = await fresh();
+        expect(await claimOf(repo, "movie_init")).toBeNull();
+      });
+    });
+
+      it("deadLinkStats: 分类计数 + 可回收数（P8 风控感知）", async () => {
+        const repo = await fresh();
+        await repo.recordDeadLink({ key: "k_soft_live", kind: "magnet", reason: "r", permanent: false, ttlMs: 60_000, now: "2026-07-04T00:00:00.000Z" });
+        await repo.recordDeadLink({ key: "k_soft_dead", kind: "magnet", reason: "r", permanent: false, ttlMs: 1000, now: "2026-07-04T00:00:00.000Z" });
+        await repo.recordDeadLink({ key: "k_perm_115", kind: "pan115", reason: "r", permanent: true, now: "2026-07-04T00:00:00.000Z" });
+        await repo.recordDeadLink({ key: "k_perm_gy", kind: "guangya", reason: "r", permanent: true, now: "2026-07-04T00:00:00.000Z" });
+
+        const stats = await repo.deadLinkStats({ now: "2026-07-04T00:00:02.000Z" });
+        expect(stats.total).toBe(4);
+        expect(stats.permanent).toBe(2);
+        expect(stats.softActive).toBe(1);
+        expect(stats.softExpired).toBe(1); // 这就是 reap 会删的数
+        expect(stats.byKind).toEqual({ pan115: 1, magnet: 2, guangya: 1 });
+
+        // reap 之后可回收数归零
+        await repo.reapExpiredDeadLinks({ now: "2026-07-04T00:00:02.000Z" });
+        const after = await repo.deadLinkStats({ now: "2026-07-04T00:00:02.000Z" });
+        expect(after.total).toBe(3);
+        expect(after.softExpired).toBe(0);
+      });
     });
 
     describe("snapshot persist + reserve", () => {
@@ -1091,7 +1209,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
       it("two concurrent title-locked reservations for the same title: exactly one is reserved", async () => {
         const repo = await fresh();
         // Different seasons AND kinds, so only the title lock (not the per-season+kind
-        // check) can keep the second one out. Postgres runs both transactions at once.
+        // check) can keep the second one out. A concurrent engine runs both at once.
         const base = workflowPersistenceFixture();
         const reserveFor = (id: string, seasonId: string, kind: "type2_init" | "replace_request") =>
           repo.reserveWorkflowRun(
@@ -1372,7 +1490,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         const repo = await fresh();
         // A claimable run (older startedAt) alongside one gated by a FUTURE
         // nextAttemptAt (newer startedAt). Every engine claims the claimable run:
-        //  - the gating-aware engines (SQLite/Postgres via claimableQueuedRuns) filter
+        //  - the gating-aware engines (SQLite via claimableQueuedRuns) filter
         //    the gated run out entirely;
         //  - the InMemory oracle ignores nextAttemptAt but its FIFO-by-startedAt still
         //    picks the older claimable run first.
@@ -1909,7 +2027,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
       });
 
       // NOTE: idempotency on (run, ordinal) is a PRODUCTION-engine invariant
-      // (SQLite/Postgres ON CONFLICT DO NOTHING). The InMemory oracle intentionally
+      // (SQLite ON CONFLICT DO NOTHING). The InMemory oracle intentionally
       // just pushes (no dedup), so a duplicate-ordinal append legitimately diverges
       // across engines and is asserted engine-specifically (repository-contract-sqlite
       // / agent-steps.pg), NOT in this shared contract.
@@ -2551,7 +2669,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
           const replaceId = `race${round}_replace`;
           const untrack = () => repo.untrackTitle(tmdbId, scope, "tv");
           const reserve = () => repo.reserveWorkflowRun(replaceReservationFrom(read, replaceId, { requireTrackedSeason: true }));
-          // Alternate which one starts first (Postgres runs both transactions at once).
+          // Alternate which one starts first (a concurrent engine runs both at once).
           const [untrackResult, reservation] =
             round % 2 === 0
               ? await Promise.all([untrack(), reserve()])
@@ -2974,7 +3092,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
     // NOTE: backfillConnectedStorageId is deliberately NOT in the shared contract.
     // It is a genuine, pre-existing engine divergence: at runtime a null-storage
     // persist collapses to the UNSCOPED_STORAGE sentinel, so SQLite's backfill (which
-    // targets the sentinel) actively pins the row (count 1), while Postgres's backfill
+    // targets the sentinel) actively pins the row (count 1), while the backfill
     // targets literal NULL and is effectively dead code post-persist (count 0). The
     // shared contract only asserts behavior ALL engines agree on; SQLite's backfill is
     // locked in repository-contract-sqlite.test.ts, InMemory's in migrate-backfill-storage-id.test.ts.

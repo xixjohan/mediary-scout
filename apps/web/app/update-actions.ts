@@ -3,7 +3,6 @@
 import { isDemoMode } from "../lib/demo-mode";
 import { isAutoUpdateTime } from "../lib/auto-update-schedule";
 import { invalidateReleaseFeedCache } from "../lib/release-feed-server";
-import { resolveCurrentIsOwner } from "../lib/settings-attention-server";
 import { loadUpdateView } from "../lib/update-view-server";
 import { requestUpdate } from "../lib/updater-client";
 
@@ -23,6 +22,9 @@ export async function startUpdateAction(
   message: string;
   reason?: "no_updater" | "busy" | "needs_recovery" | "serving_unknown" | "bad_tag" | "unreachable" | "denied" | "stale";
 }> {
+  // 动态导入：本文件被设置页客户端组件经「use server」边界引用，静态导入会把
+  // workflow-runtime 整棵树拖进客户端 chunk（S4.3 构建回归；node:fs 不可打包）。
+  const { resolveCurrentIsOwner } = await import("../lib/settings-attention-server");
   if (isDemoMode() || !(await resolveCurrentIsOwner()))
     return { ok: false, message: "没有权限。", reason: "denied" };
   // Only the release the view itself offers — never an arbitrary string from the client,
@@ -44,6 +46,9 @@ export async function startUpdateAction(
 
 /** The 「每天自动更新」 switch and its hour, whole hours in Beijing time. */
 export async function saveAutoUpdateAction(enabled: boolean, time: string): Promise<{ ok: boolean; message: string }> {
+  // 动态导入：本文件被设置页客户端组件经「use server」边界引用，静态导入会把
+  // workflow-runtime 整棵树拖进客户端 chunk（S4.3 构建回归；node:fs 不可打包）。
+  const { resolveCurrentIsOwner } = await import("../lib/settings-attention-server");
   if (isDemoMode() || !(await resolveCurrentIsOwner())) return { ok: false, message: "没有权限。" };
   if (!isAutoUpdateTime(time)) return { ok: false, message: "时间只能选整点。" };
   const { getWorkflowRepository, AUTO_UPDATE_ENABLED_SETTING_KEY, AUTO_UPDATE_TIME_SETTING_KEY } = await import(
@@ -68,6 +73,7 @@ let lastManualCheck = 0;
  *  At most once a minute: a refill costs up to 11 GitHub calls, and anonymous calls
  *  are limited to 60 an hour per IP. */
 export async function checkForUpdatesAction(): Promise<void> {
+  const { resolveCurrentIsOwner } = await import("../lib/settings-attention-server");
   if (isDemoMode() || !(await resolveCurrentIsOwner())) return;
   if (Date.now() - lastManualCheck < 60_000) return;
   lastManualCheck = Date.now();

@@ -8,8 +8,9 @@ import { readFileSync } from "node:fs";
  * (`failed to fetch anonymous token: ... EOF` / `connection reset by peer`)。
  * 作者实测:重试十余次全失败,换公共镜像站一次成功。
  *
- * 三个 Docker Hub 镜像(postgres / node / cloudflared)必须都能被同一个
- * DOCKER_MIRROR 变量改写。**漏掉任何一个,用户的表现是「拉了两个成功、
+ * 纯 SQLite 化(任务单 S1.4b)后 compose 里的 Docker Hub 镜像只剩
+ * cloudflared(node 在 Dockerfile、updater 的 docker:27-cli 在 updater/Dockerfile,
+ * 分别由下面的用例看守)。**漏掉任何一个,用户的表现是「拉了两个成功、
  * 第三个卡住」,而报错发生在流程末尾(最费时间),很难联想到是同一个原因。**
  */
 describe("DOCKER_MIRROR 覆盖全部 Docker Hub 镜像", () => {
@@ -19,8 +20,8 @@ describe("DOCKER_MIRROR 覆盖全部 Docker Hub 镜像", () => {
   const envExample = readFileSync(new URL(".env.example", root), "utf8");
   const connectSh = readFileSync(new URL("assets/connect.sh", import.meta.url.replace(/src\/[^/]+$/, "")), "utf8");
 
-  it("compose 里的 postgres 与 cloudflared 都走变量", () => {
-    for (const img of ["postgres:16-alpine", "cloudflare/cloudflared:latest"]) {
+  it("compose 里的 cloudflared 走变量", () => {
+    for (const img of ["cloudflare/cloudflared:latest"]) {
       const line = compose.split("\n").find((l) => l.includes(`image:`) && l.includes(img));
       expect(line, `没找到 ${img} 的 image 行`).toBeDefined();
       expect(line, `${img} 没有走 DOCKER_MIRROR —— 墙内用户会卡在这个镜像`).toContain(

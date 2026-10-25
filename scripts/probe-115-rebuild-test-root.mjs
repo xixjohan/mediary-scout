@@ -37,13 +37,13 @@ if (TEST_ROOT === PROD) {
   process.exit(1);
 }
 
-// The live 115 cookie lives in Postgres (app_settings.pan115.cookie), set via
-// QR login; the .env value is a stale bootstrap fallback. Hydrate from Postgres,
+// The live 115 cookie lives in SQLite (app_settings.pan115.cookie), set via
+// QR login; the .env value is a stale bootstrap fallback. Hydrate from SQLite,
 // exactly like the runtime does. Tolerant: fall back to the .env cookie if absent.
 try {
   await loadPan115Cookie();
 } catch (error) {
-  console.error(`(could not hydrate cookie from Postgres: ${String(error)}; using .env)`);
+  console.error(`(could not hydrate cookie from SQLite: ${String(error)}; using .env)`);
 }
 
 const apply = process.argv.includes("--apply");

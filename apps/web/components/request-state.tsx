@@ -38,7 +38,7 @@ export function AcquireResultNotice({
  *  to the live 活动 page so the real, persistent progress is one click away instead
  *  of a manual nav (the 投产 feedback gap the author flagged: "真实情况要去活动里看").
  *  The href is built inline (mirrors workflow's globalNavHref) — NOT imported from
- *  the @media-track/workflow barrel, which would drag pg/postgres into this client
+ *  the @media-track/workflow barrel, which would drag server-only code into this client
  *  bundle and break the Next build. */
 export function RequestedBadge({
   title,

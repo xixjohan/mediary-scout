@@ -7,23 +7,34 @@
     "packages/*"
   ],
   "scripts": {
-    "build:workflow": "tsc --project packages/workflow/tsconfig.json",
+    "build:shared": "tsc --project packages/shared/tsconfig.json",
+    "build:workflow": "npm run build:shared && tsc --project packages/workflow/tsconfig.json",
+    "build:worker": "tsc --project apps/host-worker/tsconfig.json",
     "dev:web": "npm run build:workflow && next dev apps/web --turbopack",
     "build:web": "npm run build:workflow && next build apps/web",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint . --max-warnings 0"
+    "lint": "eslint . --max-warnings 0",
+    "gate:layout": "node scripts/check-layout.mjs",
+    "drill:restore": "node scripts/sqlite-restore-drill.mjs",
+    "gate:deps": "depcruise --config .dependency-cruiser.cjs --ignore-known=.dependency-cruiser-known-violations.json apps packages workers",
+    "gate": "npm run gate:layout && npm run gate:deps && npm run lint",
+    "e2e:server": "next start apps/web -p 3100",
+    "e2e": "playwright test --config e2e/playwright.config.ts",
+    "e2e:ci": "npm run build:web && npm run e2e"
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "^16.2.9",
+    "@playwright/test": "^1.64.1",
     "@types/node": "^22.12.0",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
+    "dependency-cruiser": "^16.10.4",
     "eslint": "^10.5.0",
     "playwright": "^1.60.0",
     "typescript": "^5.9.0",

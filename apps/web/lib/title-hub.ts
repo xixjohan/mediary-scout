@@ -20,7 +20,8 @@ import {
   type TitleAggregateState,
 } from "./title-aggregate";
 import { createTtlMemo } from "./series-target-memo";
-import { InMemoryJsonCache, PostgresMediaSearchCache, type DurableJsonCache } from "./tmdb-cache";
+import { getDurableJsonCache } from "./durable-cache";
+import type { DurableJsonCache } from "@media-track/workflow";
 import {
   ensureDemoSeeded,
   getAccountScopedSettings,
@@ -29,7 +30,6 @@ import {
   getTmdbAccesses,
   getWorkflowRepository,
   movieTargetFromTmdbId,
-  postgresConnectionString,
   queueCandidateTracking,
   type CandidateTrackingRequestResult,
 } from "./workflow-runtime";
@@ -95,19 +95,16 @@ const SERIES_TARGET_TTL_MS = 6 * 60 * 60 * 1000;
  *  that follows the load which just learned it. Short on purpose: a real
  *  outage should not hide season metadata for the success TTL. */
 const SERIES_TARGET_MISS_TTL_MS = 60_000;
-// L2: durable Postgres cache, so the season list + artwork survive restarts and
+// L2: durable SQLite cache, so the season list + artwork survive restarts and
 // the page renders from the DB instead of re-hitting TMDB on every cold load.
 let durableTargetCache: DurableJsonCache | null = null;
 function getDurableTargetCache(): DurableJsonCache {
   if (durableTargetCache) {
     return durableTargetCache;
   }
-  // Desktop (SQLite) build has no Postgres — calling postgresConnectionString()
-  // would throw, so the durable L2 degrades to an in-memory JSON cache (a lost
-  // cache on restart is fine; L1 already resets per process).
-  durableTargetCache = process.env.MEDIA_TRACK_SQLITE_PATH?.trim()
-    ? new InMemoryJsonCache()
-    : new PostgresMediaSearchCache({ connectionString: postgresConnectionString() });
+  // 纯 SQLite 单引擎（任务单 S1.4b）：与 workflow 仓储同库同文件，docker 与
+  // 桌面端行为一致——重启不丢 L2。
+  durableTargetCache = getDurableJsonCache();
   return durableTargetCache;
 }
 

@@ -17,7 +17,7 @@ import {
   type WorkflowStatus,
 } from "./domain.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
-import type { DeadLink, DeadLinkStore } from "./acquisition-v2/dead-links.js";
+import type { DeadLink, DeadLinkStats, DeadLinkStore } from "./acquisition-v2/dead-links.js";
 import {
   memoryDriveAllows,
   memoryFullError,
@@ -217,7 +217,7 @@ export interface ReserveWorkflowRunInput extends PersistWorkflowRunSnapshotInput
    * Refuse — `not_tracked`, nothing written — unless the (season, drive) is still
    * tracked when the reservation decides. For a caller that reserves from states it
    * read earlier (queueReplaceRequest, the patrol): the season may have been untracked
-   * in between, and writing the run would track it again. Postgres checks it under the
+   * in between, and writing the run would track it again. The database checks it under the
    * title lock, which untrackTitle takes too; SQLite and InMemory decide synchronously.
    */
   requireTrackedSeason?: boolean;
@@ -320,7 +320,7 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   appendAgentStep(workflowRunId: string, step: AgentStep): Promise<void>;
   /** The run's ordered step trace for post-mortem复盘. When a scope is given it is
    *  fail-closed (returns [] if the run isn't visible to that scope); no scope =
-   *  raw read (psql-style复盘 / autonomous diagnosis). */
+   *  raw read (direct-SQL复盘 / autonomous diagnosis). */
   listAgentSteps(workflowRunId: string, scope?: ScopeArg): Promise<AgentStep[]>;
   /** Drop a run's existing step trace. Called once when a (re)run's trace sink
    *  starts: manual retry / auto-requeue reuse the SAME run id, so the prior
@@ -348,7 +348,7 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
    *  anime(同一 tv 命名空间)。seasonNumber 给定=只删该季。任一目标季有 running run
    *  时拒绝(in_flight);这部作品在本盘有排队中或进行中的 replace_request 时也拒绝
    *  (它记在最低一季上,结束时会给覆盖到的每一季写记录,中途取消的季会被写回来)。
-   *  与换源预留互斥(Postgres 共用作品锁;预留带 requireTrackedSeason 复核季仍在追踪):
+   *  与换源预留互斥(共用作品锁;预留带 requireTrackedSeason 复核季仍在追踪):
    *  先预留的让这里 in_flight,先取消的让预留 not_tracked,不会两边都成功。
    *  不碰网盘文件。 */
   untrackTitle(
@@ -572,7 +572,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       moviesCid: row.moviesCid ?? null,
       tvCid: row.tvCid ?? null,
       animeCid: row.animeCid ?? null,
-      // Mirror Postgres: ON CONFLICT refresh does NOT touch status, so a re-scan
+      // ON CONFLICT refresh does NOT touch status, so a re-scan
       // (refresh) keeps an existing frozen state until an explicit unfreeze.
       status: existing?.status ?? "active",
       frozenReason: existing?.frozenReason ?? null,
@@ -744,6 +744,40 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return [...this.deadLinks.values()]
       .filter((link) => link.expiresAt === null || link.expiresAt > now)
       .map((link) => link.key);
+  }
+
+  async reapExpiredDeadLinks(options?: { now?: string }): Promise<number> {
+    const now = options?.now ?? new Date().toISOString();
+    let reaped = 0;
+    for (const [key, link] of this.deadLinks) {
+      if (link.expiresAt !== null && link.expiresAt <= now) {
+        this.deadLinks.delete(key);
+        reaped += 1;
+      }
+    }
+    return reaped;
+  }
+
+  async deadLinkStats(options?: { now?: string }): Promise<DeadLinkStats> {
+    const now = options?.now ?? new Date().toISOString();
+    const stats: DeadLinkStats = {
+      total: this.deadLinks.size,
+      permanent: 0,
+      softActive: 0,
+      softExpired: 0,
+      byKind: { pan115: 0, magnet: 0, guangya: 0 },
+    };
+    for (const link of this.deadLinks.values()) {
+      stats.byKind[link.kind] += 1;
+      if (link.expiresAt === null) {
+        stats.permanent += 1;
+      } else if (link.expiresAt > now) {
+        stats.softActive += 1;
+      } else {
+        stats.softExpired += 1;
+      }
+    }
+    return stats;
   }
 
   async listAgentMemories(input: Parameters<AgentMemoryStore["listAgentMemories"]>[0]): Promise<AgentMemory[]> {
@@ -1060,7 +1094,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
     const cloned = cloneWorkflowValue(snapshot);
     cloned.accountId = cloned.accountId ?? DEFAULT_ACCOUNT_ID;
-    // Mirror Postgres' upsert (connected_storage_id set on insert, PRESERVED on
+    // Upsert (connected_storage_id set on insert, PRESERVED on
     // conflict): a re-persist that omits the storage (the worker finalize path
     // doesn't re-thread it) must keep the storage the run was queued onto, not
     // null it out. This is the storage analogue of §7's account-ownership lesson.

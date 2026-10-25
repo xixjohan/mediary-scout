@@ -1,7 +1,7 @@
 /**
  * 光鸭 token 智能粘贴 + 清洗 —— 纯函数,客户端安全(不引入任何 server 模块,
  * 故意不从 @media-track/workflow 引入 sanitizeLlmApiKey:那条 barrel 会把
- * postgres/worker 等服务端代码拖进客户端 bundle)。这里复刻 agent-model.ts 里
+ * sqlite/worker 等服务端代码拖进客户端 bundle)。这里复刻 agent-model.ts 里
  * sanitizeLlmApiKey 用的同一套不可见码点集。
  *
  * 用户在光鸭 Console 跑的 snippet 会把

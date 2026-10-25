@@ -113,6 +113,12 @@ class FakeDeadLinkStore {
   async listDeadLinkKeys(): Promise<string[]> {
     return this.recorded.map((r) => r.key);
   }
+  async reapExpiredDeadLinks(): Promise<number> {
+    return 0;
+  }
+  async deadLinkStats() {
+    return { total: this.recorded.length, permanent: 0, softActive: 0, softExpired: 0, byKind: { pan115: 0, magnet: 0, guangya: 0 } };
+  }
 }
 
 function adapter(executor: StorageExecutor, registry = new CandidateRegistry(), deadLinkStore?: FakeDeadLinkStore) {
@@ -476,7 +482,7 @@ describe("RealStorageV2.transferSubtitleUrls — batch-first, per-file fallback 
 describe("RealStorageV2 — 光鸭 share dead-links are recorded softly", () => {
   it("a proven-dead 光鸭 share is recorded with the 14-day soft TTL; a pending timeout is not", async () => {
     const recorded: Array<Record<string, unknown>> = [];
-    const deadLinkStore = { recordDeadLink: async (input: Record<string, unknown>) => { recorded.push(input); }, listDeadLinkKeys: async () => [] };
+    const deadLinkStore = { recordDeadLink: async (input: Record<string, unknown>) => { recorded.push(input); }, listDeadLinkKeys: async () => [], reapExpiredDeadLinks: async () => 0, deadLinkStats: async () => ({ total: 0, permanent: 0, softActive: 0, softExpired: 0, byKind: { pan115: 0, magnet: 0, guangya: 0 } }) };
     const { CandidateRegistry } = await import("../src/acquisition-v2/candidate-registry.js");
     const { RealStorageV2 } = await import("../src/acquisition-v2/real-storage-adapter.js");
     const { GUANGYA_DEAD_LINK_TTL_MS } = await import("../src/acquisition-v2/dead-links.js");

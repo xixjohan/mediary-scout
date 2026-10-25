@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  */
 
 const prevSqlite = process.env.MEDIA_TRACK_SQLITE_PATH;
-const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
 const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
 const prevAgentAdapter = process.env.MEDIA_TRACK_AGENT_ADAPTER;
 const prevStorageAdapter = process.env.MEDIA_TRACK_STORAGE_ADAPTER;
@@ -23,7 +23,6 @@ const ACCOUNT_ID = "acct_default";
  *  the fake agent-model + storage adapters (no credentials, no HTTP). */
 const boot = async () => {
   process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
-  delete process.env.MEDIA_TRACK_POSTGRES_URL;
   delete process.env.MEDIA_TRACK_MULTI_USER; // single-user → getCurrentAccountId() = acct_default
   delete process.env.MEDIA_TRACK_AGENT_ADAPTER; // → fake model
   delete process.env.MEDIA_TRACK_STORAGE_ADAPTER; // → fake storage executor
@@ -35,7 +34,7 @@ const boot = async () => {
 afterEach(() => {
   if (prevSqlite !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlite;
   else delete process.env.MEDIA_TRACK_SQLITE_PATH;
-  if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+  if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
   if (prevMultiUser !== undefined) process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
   if (prevAgentAdapter !== undefined) process.env.MEDIA_TRACK_AGENT_ADAPTER = prevAgentAdapter;
   if (prevStorageAdapter !== undefined) process.env.MEDIA_TRACK_STORAGE_ADAPTER = prevStorageAdapter;

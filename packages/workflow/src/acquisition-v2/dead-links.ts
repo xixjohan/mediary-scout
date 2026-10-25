@@ -40,6 +40,18 @@ export interface DeadLink {
   expiresAt: string | null;
 }
 
+/** 死链健康快照（P8 风控感知）：总量 + 分类 + 可回收数。 */
+export interface DeadLinkStats {
+  total: number;
+  /** 永不死链（115 分享没了）——只增不减，永不回收。 */
+  permanent: number;
+  /** 软链且仍在 TTL 内（正在屏蔽搜索）。 */
+  softActive: number;
+  /** 软链且已过 TTL——还占着表，reap 会删掉的就是这些。 */
+  softExpired: number;
+  byKind: Record<DeadLinkKind, number>;
+}
+
 /** The DB-backed store of known-dead links (a narrow view of WorkflowRepository). */
 export interface DeadLinkStore {
   recordDeadLink(input: {
@@ -55,6 +67,10 @@ export interface DeadLinkStore {
    *  every soft one still within its TTL. Expired soft links are omitted (the
    *  resource gets another chance). */
   listDeadLinkKeys(options?: { now?: string }): Promise<string[]>;
+  /** 回收已过 TTL 的软链（永久链永不回收）。返回删除行数；幂等。 */
+  reapExpiredDeadLinks(options?: { now?: string }): Promise<number>;
+  /** 死链健康快照（总量/分类/可回收数）——排障与「风控感知」的读数。 */
+  deadLinkStats(options?: { now?: string }): Promise<DeadLinkStats>;
 }
 
 const PAN115_SHARE = /(?:115\.com|115cdn\.com|anxia\.com)\/s\/([0-9a-z]+)/i;

@@ -9,19 +9,10 @@
 //   npx tsx scripts/multi-drive-concurrent-e2e.mts
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { loadDotEnv, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-for (const line of readFileSync(path.join(repoRoot, ".env"), "utf8").split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  let v = t.slice(eq + 1).trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  process.env[k] ??= v;
-}
-process.env.MEDIA_TRACK_POSTGRES_URL = "postgresql://mediatrack:mediatrack@localhost:5432/media_track";
+loadDotEnv();
 
 const PRIMARY = "cs_100000001"; // 主 115
 const QUARK = "cs_quark_quark-demo-uid"; // 夸克
@@ -30,8 +21,9 @@ const SEASON = "tmdb_tv_42009_s1";
 
 const rt = await import(path.join(repoRoot, "apps/web/lib/workflow-runtime.ts"));
 const repo = rt.getWorkflowRepository();
-const pg = (await import("pg")).default;
-const pool = new pg.Pool({ connectionString: process.env.MEDIA_TRACK_POSTGRES_URL });
+// Pure-SQLite single engine (task S1.4b): raw assertions go through the app's DB
+// file. payload is JSON text here, so `payload->>'x'` becomes json_extract.
+const raw = () => openAppDb();
 
 let failed = 0;
 const ok = (n: string, c: boolean) => { console.log(`${c ? "ok  " : "FAIL"} ${n}`); if (!c) failed++; };
@@ -44,8 +36,10 @@ async function runState(runId: string, drive: string): Promise<string> {
 
 try {
   // Pre: 黑镜 on NEITHER drive (clean concurrent demo).
-  const pre = await pool.query("select connected_storage_id from tracked_seasons where id=$1", [SEASON]);
-  ok("precondition: 黑镜 s1 tracked on neither drive", pre.rows.length === 0);
+  const db0 = raw();
+  const pre = db0.prepare("SELECT connected_storage_id FROM tracked_seasons WHERE id = ?").all(SEASON) as Array<{ connected_storage_id: string }>;
+  db0.close();
+  ok("precondition: 黑镜 s1 tracked on neither drive", pre.length === 0);
 
   // === Enqueue on BOTH drives (= two 获取 clicks, back-to-back) ===
   const qa = await rt.queueCandidateTracking(CANDIDATE, PRIMARY);
@@ -57,15 +51,16 @@ try {
   ok("the two runs are distinct workflow_runs", qa.workflowRunId !== qb.workflowRunId);
 
   // === (2) Concurrent DB state right after enqueue ===
-  const active = await pool.query(
-    "select id, connected_storage_id, (payload->>'status') as status from workflow_runs where tracked_season_id=$1 order by connected_storage_id",
-    [SEASON],
-  );
+  const db1 = raw();
+  const active = db1
+    .prepare("SELECT id, connected_storage_id, json_extract(payload, '$.status') AS status FROM workflow_runs WHERE tracked_season_id = ? ORDER BY connected_storage_id")
+    .all(SEASON) as Array<{ id: string; connected_storage_id: string; status: string }>;
   console.log("\n=== 并发瞬时 DB 状态(两条 run,各自盘) ===");
-  for (const r of active.rows) console.log(`  run ${r.id.slice(0, 12)}… | drive=${r.connected_storage_id} | status=${r.status}`);
-  ok("两条 run 分属两块盘(各自 scope)", new Set(active.rows.map((r: any) => r.connected_storage_id)).size === 2 &&
-    active.rows.some((r: any) => r.connected_storage_id === PRIMARY) &&
-    active.rows.some((r: any) => r.connected_storage_id === QUARK));
+  for (const r of active) console.log(`  run ${r.id.slice(0, 12)}… | drive=${r.connected_storage_id} | status=${r.status}`);
+  ok("两条 run 分属两块盘(各自 scope)", new Set(active.map((r) => r.connected_storage_id)).size === 2 &&
+    active.some((r) => r.connected_storage_id === PRIMARY) &&
+    active.some((r) => r.connected_storage_id === QUARK));
+  db1.close();
 
   // === (3) Let the :3000 background worker drain both (serial, claim-first) ===
   console.log("\n=== 等 :3000 后台 worker 串行跑完两条(每条解析各自盘 cookie) ===");
@@ -87,24 +82,26 @@ try {
   ok("夸克 run 跑到终态", termB);
 
   // === Assert two INDEPENDENT tracked_seasons + episodes obtained, per drive ===
-  const post = await pool.query("select connected_storage_id from tracked_seasons where id=$1 order by connected_storage_id", [SEASON]);
-  const drives = post.rows.map((r: any) => r.connected_storage_id);
+  const db2 = raw();
+  const post = db2.prepare("SELECT connected_storage_id FROM tracked_seasons WHERE id = ? ORDER BY connected_storage_id").all(SEASON) as Array<{ connected_storage_id: string }>;
+  const drives = post.map((r) => r.connected_storage_id);
   console.log("\n=== 终态:黑镜 s1 追踪所在盘 ===", JSON.stringify(drives));
   ok("黑镜 s1 在主115 独立追踪", drives.includes(PRIMARY));
   ok("黑镜 s1 在夸克 独立追踪", drives.includes(QUARK));
   ok("没有 __unscoped__ 幽灵行(获取标记落对盘,非空作用域)", !drives.includes("__unscoped__"));
 
   for (const [label, drive] of [["主115", PRIMARY], ["夸克", QUARK]] as const) {
-    const eps = await pool.query(
-      "select episode_code, (payload->>'obtained') AS obtained from episode_states where tracked_season_id=$1 and connected_storage_id=$2 order by episode_code",
-      [SEASON, drive],
-    );
-    const obtained = eps.rows.filter((r: any) => r.obtained === "true").length;
-    console.log(`  ${label}: ${obtained}/${eps.rows.length} 集已获取 — ${eps.rows.map((r: any) => r.episode_code).join(",")}`);
+    const eps = db2
+      .prepare("SELECT episode_code, json_extract(payload, '$.obtained') AS obtained FROM episode_states WHERE tracked_season_id = ? AND connected_storage_id = ? ORDER BY episode_code")
+      .all(SEASON, drive) as Array<{ episode_code: string; obtained: number | string | null }>;
+    // json_extract 把 JSON true 解析成 1;兼容字符串形式。
+    const obtained = eps.filter((r) => r.obtained === 1 || r.obtained === "1" || r.obtained === "true").length;
+    console.log(`  ${label}: ${obtained}/${eps.length} 集已获取 — ${eps.map((r) => r.episode_code).join(",")}`);
     ok(`${label} 至少获取到 1 集`, obtained >= 1);
   }
+  db2.close();
 } finally {
-  await pool.end();
+  await repo.close?.();
 }
 console.log(failed
   ? `\n${failed} CHECK(S) FAILED`

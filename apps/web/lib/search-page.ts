@@ -8,7 +8,8 @@ import {
   type SearchPageView,
 } from "@media-track/workflow";
 import { demoMediaSearchProvider } from "./demo-candidates";
-import { InMemoryJsonCache, PostgresMediaSearchCache, SearchInterpretationCacheAdapter } from "./tmdb-cache";
+import { getDurableJsonCache } from "./durable-cache";
+import { SearchInterpretationCacheAdapter } from "./tmdb-cache";
 import {
   ensureDemoSeeded,
   getAccountScopedSettings,
@@ -17,15 +18,10 @@ import {
   getCurrentAccountId,
   getTmdbAccesses,
   getWorkflowRepository,
-  postgresConnectionString,
   resolveTitleResearchOptions,
 } from "./workflow-runtime";
 
 let demoSearchCache: InMemoryMediaSearchCache | null = null;
-let durableSearchCache: PostgresMediaSearchCache | null = null;
-// Desktop (SQLite) build: no Postgres, so the durable cache degrades to in-memory
-// (a lost cache on restart is fine — a 2nd SQLite schema isn't worth it).
-let sqliteSearchCache: InMemoryMediaSearchCache | null = null;
 // Description → title memory (see SearchInterpretationCache): the search page
 // re-renders every 5s while an acquisition runs, so this must outlive one render.
 let interpretationCache: SearchInterpretationCache | null = null;
@@ -59,14 +55,10 @@ export async function getSearchView(query: string, storageId?: string): Promise<
   });
 }
 
-/** Postgres-backed in production, in-memory on the desktop (SQLite) build/demo. */
+/** 纯 SQLite 持久化（任务单 S1.4b）：所有环境共用同一个 durable store。 */
 function getInterpretationCache(): SearchInterpretationCache {
   if (interpretationCache) return interpretationCache;
-  const store =
-    process.env.MEDIA_TRACK_SQLITE_PATH?.trim() || process.env.MEDIA_TRACK_SEARCH_PROVIDER !== "tmdb"
-      ? new InMemoryJsonCache()
-      : (durableSearchCache ??= new PostgresMediaSearchCache({ connectionString: postgresConnectionString() }));
-  interpretationCache = new SearchInterpretationCacheAdapter(store);
+  interpretationCache = new SearchInterpretationCacheAdapter(getDurableJsonCache());
   return interpretationCache;
 }
 
@@ -88,17 +80,10 @@ async function resolveSearchTitlesWithModel(
 }
 
 function getSearchCache() {
-  // Live TMDB searches are cached durably in Postgres (6h TTL) so casual browsing
-  // never becomes an API storm; the desktop (SQLite) build degrades this to in-memory
-  // (below), and the demo provider stays in-memory too.
+  // Live TMDB searches are cached durably in SQLite (6h TTL) so casual browsing
+  // never becomes an API storm; the demo provider stays in-memory.
   if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
-    // Desktop (SQLite) build has no Postgres — calling postgresConnectionString()
-    // would throw, so degrade the durable cache to in-memory instead.
-    if (process.env.MEDIA_TRACK_SQLITE_PATH?.trim()) {
-      return (sqliteSearchCache ??= new InMemoryMediaSearchCache());
-    }
-    durableSearchCache ??= new PostgresMediaSearchCache({ connectionString: postgresConnectionString() });
-    return durableSearchCache;
+    return getDurableJsonCache();
   }
   demoSearchCache ??= new InMemoryMediaSearchCache();
   return demoSearchCache;

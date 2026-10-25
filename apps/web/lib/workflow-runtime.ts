@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { LanguageModel } from "ai";
 import { isAgentMemoryEnabled } from "./agent-memory-server";
+import { sqliteDbPath } from "./durable-cache";
 import { cache } from "react";
 import {
   checkLoginAllowed,
@@ -53,7 +54,6 @@ import {
   runScheduledType3Monitoring,
   sweepOrphanStagingDirs,
   sendPushNotifications,
-  createPostgresWorkflowRepositorySync,
   createSqliteWorkflowRepository,
   migrateLegacyCookieToDefaultAccount,
   resolveStorageBinding,
@@ -141,26 +141,12 @@ let fakeStorageExecutor: StorageExecutor | null = null;
 // slot would thrash between accounts in multi-user mode.
 const agentModelCache = new Map<string, ReturnType<typeof createAgentModelFromEnv>>();
 
-/** The Postgres connection string for durable dev/prod state. SQLite has been
- *  retired — dev runs on OrbStack Postgres. */
-export function postgresConnectionString(): string {
-  const url = process.env.MEDIA_TRACK_POSTGRES_URL?.trim();
-  if (!url) {
-    throw new Error("MEDIA_TRACK_POSTGRES_URL is required (the SQLite dev DB has been retired)");
-  }
-  return url;
-}
-
 export function getWorkflowRepository(): WorkflowRepository {
   if (!repository) {
-    // Desktop build: a MEDIA_TRACK_SQLITE_PATH selects the bundled SQLite repo so
-    // the app runs with no Postgres. Checked BEFORE postgresConnectionString(),
-    // which throws when MEDIA_TRACK_POSTGRES_URL is unset. Container/prod is
-    // unchanged: without the SQLite path, it still resolves the Postgres repo.
-    const sqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH?.trim();
-    repository = sqlitePath
-      ? createSqliteWorkflowRepository({ path: sqlitePath })
-      : createPostgresWorkflowRepositorySync({ connectionString: postgresConnectionString() });
+    // 纯 SQLite：任何环境都不再回退 Postgres。父目录由工厂自建（docker 首启
+    // 挂空卷场景），此处不碰 node:fs —— 本模块在客户端动作链上可达，
+    // node: 内置会炸 Turbopack 客户端 chunk（S4.3 实测回归）。
+    repository = createSqliteWorkflowRepository({ path: sqliteDbPath() });
   }
   return repository;
 }
@@ -1305,9 +1291,10 @@ export async function getTmdbAccesses(
  *  MEDIA_TRACK_DESKTOP=1). Unlike the docker/compose stack, the desktop shell
  *  does NOT bundle a PanSou container — so the settings copy points the user at
  *  the self-host tutorial instead of claiming "内置、开箱即用". */
-export function resolveIsDesktop(env: Record<string, string | undefined> = process.env): boolean {
-  return env.MEDIA_TRACK_DESKTOP === "1";
-}
+// 零依赖叶子模块（S4.3）：客户端动作链上的模块不得 reaches 到本文件的重依赖，
+// 见 desktop-flag.ts 顶部说明。
+import { resolveIsDesktop } from "./desktop-flag";
+export { resolveIsDesktop };
 
 export const PANSOU_BASE_URL_SETTING_KEY = "pansou_base_url";
 
@@ -2012,6 +1999,26 @@ async function runScheduledType3Now(options?: { force?: boolean }): Promise<Sche
   } catch (error) {
     console.error(
       `[patrol] pruneFinishedWorkflowRuns failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  // 机会性死链回收（任务单 S3.4，P8）：过期软链此前只被读取过滤、从不删除，
+  // 表无限增长。永久链（115 分享没了）永不回收。Best-effort，不阻断了巡检。
+  try {
+    const reaped = await repository.reapExpiredDeadLinks();
+    if (reaped > 0) {
+      console.log(`[patrol] reaped ${reaped} expired soft dead-link(s)`);
+    }
+    const stats = await repository.deadLinkStats();
+    if (stats.softExpired > 0 || stats.permanent > 50) {
+      // 可回收残留（不该发生）或永久链堆积时的可见信号（P8 风控感知）。
+      console.log(
+        `[patrol] dead-links: total=${stats.total} permanent=${stats.permanent} ` +
+          `softActive=${stats.softActive} softExpired=${stats.softExpired}`,
+      );
+    }
+  } catch (error) {
+    console.error(
+      `[patrol] dead-link reap failed: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   let result: Awaited<ReturnType<typeof runScheduledType3Monitoring>>;

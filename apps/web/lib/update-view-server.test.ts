@@ -11,7 +11,9 @@ vi.mock("./updater-client", async () => {
   const actual = await vi.importActual<typeof import("./updater-client")>("./updater-client");
   return { ...actual, getUpdaterStatus: vi.fn(), isUpdaterInstalled: vi.fn(async () => false) };
 });
-vi.mock("./workflow-runtime", () => ({
+// resolveIsDesktop 已迁到零依赖叶子模块（S4.3 构建回归修复：客户端链不得
+// reaches workflow-runtime），mock 跟着迁。
+vi.mock("./desktop-flag", () => ({
   resolveIsDesktop: vi.fn(() => false),
 }));
 
@@ -19,7 +21,7 @@ import { readBuildCommit } from "./deployment-update-server";
 import { fetchCommitRelation, fetchLatestDesktopRelease, fetchReleaseFeed } from "./release-feed-server";
 import { loadUpdateView } from "./update-view-server";
 import { getUpdaterStatus, isUpdaterInstalled } from "./updater-client";
-import { resolveIsDesktop } from "./workflow-runtime";
+import { resolveIsDesktop } from "./desktop-flag";
 
 const feed = [
   { tag: "v2026.10.02", date: "2026-10-02", commit: "c".repeat(40), notes: [] },

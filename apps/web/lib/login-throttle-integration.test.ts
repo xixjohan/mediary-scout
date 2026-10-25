@@ -14,12 +14,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  */
 const CRYPTO_TIMEOUT_MS = 30_000;
 
-const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
 const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
 
 const boot = async () => {
   process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
-  delete process.env.MEDIA_TRACK_POSTGRES_URL;
   process.env.MEDIA_TRACK_MULTI_USER = "1"; // 登录路由/账号体系启用
   vi.resetModules();
   return import("./workflow-runtime");
@@ -27,7 +26,7 @@ const boot = async () => {
 
 afterEach(() => {
   delete process.env.MEDIA_TRACK_SQLITE_PATH;
-  if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+  if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
   // 原值为 undefined 时必须删除而非跳过，否则 MEDIA_TRACK_MULTI_USER=1
   // 会泄漏给后续测试文件，造成与执行顺序相关的失败
   if (prevMultiUser !== undefined) {

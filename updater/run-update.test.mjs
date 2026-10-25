@@ -184,9 +184,9 @@ if [ "\${1-}" = "inspect" ]; then
   exit 0
 fi
 args="$*"
-if printf '%s' "$args" | grep -q pg_dump; then
-  if [ -f "$STUB_DIR/fail-pg-dump" ]; then exit 1; fi
-  printf '%s\\n' DUMP
+if printf '%s' "$args" | grep -q 'VACUUM INTO'; then
+  if [ -f "$STUB_DIR/fail-backup" ]; then exit 1; fi
+  printf '%s\\n' SQLITE-SNAPSHOT
   exit 0
 fi
 if printf '%s' "$args" | grep -q 'build web'; then
@@ -287,7 +287,7 @@ function signatures(log) {
     .map((line) => {
       if (line.startsWith("hold ")) return line.includes('{"hold":true}') ? "hold" : "release";
       if (line.startsWith("wget ")) return "wget";
-      if (line.includes("pg_dump")) return "pg_dump";
+      if (line.includes("VACUUM INTO")) return "backup";
       if (line.includes("build web")) return "build";
       if (line.includes(" up ")) return "up";
       if (line.includes("BUILD_COMMIT")) return "cat_commit";
@@ -316,7 +316,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       "status",
       "inspect",
       "rev-parse",
-      "pg_dump",
+      "backup",
       "fetch",
       "rev-parse",
       `checkout refs/tags/${TAG}`,
@@ -339,7 +339,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       expect(line).toMatch(/ -T 10 /);
     }
     const dockerLines = linesOf(log).filter((line) => line.startsWith("docker "));
-    const dumpAt = dockerLines.findIndex((line) => line.includes("pg_dump"));
+    const dumpAt = dockerLines.findIndex((line) => line.includes("VACUUM INTO"));
     const buildAt = dockerLines.findIndex((line) => line.includes("build web"));
     expect(dumpAt).toBeGreaterThanOrEqual(0);
     expect(buildAt).toBeGreaterThan(dumpAt);
@@ -352,8 +352,8 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     expect(wget).toContain("Bearer t0k3n");
     expect(gitShas(stubDir)).toEqual([TAG_COMMIT]);
     const backups = readdirSync(join(repo, "backups"));
-    const gz = backups.filter((name) => name.endsWith(".sql.gz"));
-    expect(gz).toEqual([expect.stringMatching(/^pre-update-\d{8}-\d{6}\.sql\.gz$/)]);
+    const gz = backups.filter((name) => name.endsWith(".db.gz"));
+    expect(gz).toEqual([expect.stringMatching(/^pre-update-\d{8}-\d{6}\.db\.gz$/)]);
     expect(backups.some((name) => name.endsWith(".tmp"))).toBe(false);
     expect(result.stdout).toContain(`==> DONE ${TAG}`);
   });
@@ -379,7 +379,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       "status",
       "inspect",
       "rev-parse",
-      "pg_dump",
+      "backup",
       "fetch",
       "rev-parse",
       `checkout refs/tags/${TAG}`,
@@ -905,7 +905,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     expect(result.stdout).toContain("==> DEPLOY_IN_PROGRESS");
     const steps = signatures(log);
     // Nothing was touched: no backup, no fetch/checkout, no build, no swap.
-    expect(steps).not.toContain("pg_dump");
+    expect(steps).not.toContain("backup");
     expect(steps).not.toContain("build");
     expect(steps).not.toContain("up");
     expect(steps.some((step) => step.startsWith("checkout"))).toBe(false);
@@ -1045,14 +1045,14 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     const { repo, env } = setup();
     mkdirSync(join(repo, "backups"));
     // A backup killed mid-way (SIGKILL, no trap) leaves these behind; they must be cleared.
-    writeFileSync(join(repo, "backups", "pre-update-20200101-000000.sql.tmp"), "stale");
-    writeFileSync(join(repo, "backups", "pre-update-20200101-000000.sql.tmp.gz"), "stale");
+    writeFileSync(join(repo, "backups", "pre-update-20200101-000000.db.tmp"), "stale");
+    writeFileSync(join(repo, "backups", "pre-update-20200101-000000.db.tmp.gz"), "stale");
     const result = await run(env);
     expect(result.code).toBe(0);
     const backups = readdirSync(join(repo, "backups"));
     expect(backups.some((name) => name.endsWith(".tmp"))).toBe(false);
     expect(backups.some((name) => name.endsWith(".tmp.gz"))).toBe(false);
-    const gz = backups.find((name) => name.endsWith(".sql.gz"));
+    const gz = backups.find((name) => name.endsWith(".db.gz"));
     expect(gz).toBeDefined();
     // No group or other permission bits: the dump holds the 115 cookie and LLM keys.
     expect(statSync(join(repo, "backups", gz)).mode & 0o077).toBe(0);
@@ -1070,15 +1070,15 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     expect(steps.at(-1)).toBe(`checkout ${FROM}`); // back on the old commit
   });
 
-  it("stops before checkout or build when pg_dump fails, and leaves no temp dump", async () => {
+  it("stops before checkout or build when the SQLite backup fails, and leaves no temp backup", async () => {
     const { repo, stubDir, log, env } = setup();
-    writeFileSync(join(stubDir, "fail-pg-dump"), "1");
+    writeFileSync(join(stubDir, "fail-backup"), "1");
     const result = await run(env);
     expect(result.code).not.toBe(0);
-    expect(signatures(log)).toEqual(["status", "inspect", "rev-parse", "pg_dump"]);
+    expect(signatures(log)).toEqual(["status", "inspect", "rev-parse", "backup"]);
     const backups = readdirSync(join(repo, "backups"));
-    expect(backups.filter((name) => name.endsWith(".sql.tmp"))).toEqual([]);
-    expect(backups.filter((name) => name.endsWith(".sql.gz"))).toEqual([]);
+    expect(backups.filter((name) => name.endsWith(".db.tmp"))).toEqual([]);
+    expect(backups.filter((name) => name.endsWith(".db.gz"))).toEqual([]);
   });
 
   it("fails clearly and touches nothing when the release cannot be downloaded", async () => {

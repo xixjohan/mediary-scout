@@ -8,19 +8,10 @@
 // acct_default, so one account has two drives. Lands SMALL targets on each.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import pg from "pg";
+import { loadDotEnv, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-for (const line of readFileSync(path.join(repoRoot, ".env"), "utf8").split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  let v = t.slice(eq + 1).trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  process.env[k] ??= v;
-}
+loadDotEnv();
 
 const ACCT = "acct_default";
 const DEFAULT_UID = "100000001";
@@ -30,7 +21,8 @@ const friendCookie = readFileSync("/tmp/friend-115-cookie.txt", "utf8").trim();
 const rt = await import(path.join(repoRoot, "apps/web/lib/workflow-runtime.ts"));
 const wf = await import("@media-track/workflow");
 const repo = rt.getWorkflowRepository();
-const pool = new pg.Pool({ connectionString: process.env.MEDIA_TRACK_POSTGRES_URL! });
+// Pure-SQLite single engine (task S1.4b): raw rows via the app's DB file.
+const raw = () => openAppDb();
 
 let failed = 0;
 const ok = (n: string, c: boolean) => { console.log(`${c ? "ok  " : "FAIL"} ${n}`); if (!c) failed++; };
@@ -43,16 +35,21 @@ async function tmdbId(query: string): Promise<number> {
   if (!id) throw new Error(`TMDB resolve failed for ${query}`);
   return id;
 }
-async function cleanupTitle(titleId: string) {
-  for (const sql of [
-    "DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)",
-    "DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)",
-    "DELETE FROM tracked_seasons WHERE media_title_id=$1",
-  ]) await pool.query(sql, [titleId]);
+function cleanupTitle(titleId: string) {
+  const db = raw();
+  try {
+    for (const sql of [
+      "DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)",
+      "DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)",
+      "DELETE FROM tracked_seasons WHERE media_title_id = ?",
+    ]) db.prepare(sql).run(titleId);
+  } finally {
+    db.close();
+  }
 }
 async function driveOnce(runId: string) {
   for (let i = 0; i < 5; i++) {
@@ -69,7 +66,9 @@ try {
   ok("acct_default owns drive1 (its own 115)", (await repo.findConnectedStorageByUid("pan115", DEFAULT_UID))?.accountId === ACCT);
 
   // Release friend's drive from any prior account, then bind it to acct_default.
-  await pool.query("DELETE FROM connected_storages WHERE provider_uid=$1", [FRIEND_UID]);
+  const dbSetup = raw();
+  dbSetup.prepare("DELETE FROM connected_storages WHERE provider_uid = ?").run(FRIEND_UID);
+  dbSetup.close();
   // Executor (provisioning: listChildDirectories/createDirectory); cookie client
   // (raw listItems for the physical proof).
   const friendExec = wf.createProtectedPan115CookieStorageExecutorFromEnv({
@@ -118,8 +117,8 @@ try {
   // ---- per-drive acquisition ----
   const idA = await tmdbId("这个杀手不太冷"); // → drive1 (default 115 test root)
   const idB = await tmdbId("肖申克的救赎"); // → drive2 (friend 15GB) — reliably has a 1080p
-  await cleanupTitle(`tmdb_movie_${idA}`);
-  await cleanupTitle(`tmdb_movie_${idB}`);
+  cleanupTitle(`tmdb_movie_${idA}`);
+  cleanupTitle(`tmdb_movie_${idB}`);
   await repo.setAccountSetting(ACCT, rt.QUALITY_PREFERENCE_SETTING_KEY, "medium");
 
   const qA = await rt.queueCandidateTracking(`tmdb_movie_${idA}`, drive1.id);
@@ -145,18 +144,22 @@ try {
   ok("B physically landed a NEW file in the FRIEND drive (drive2)", newInFriend.length > 0);
 
   // ---- 掉线冻结 ----
-  await pool.query("UPDATE connected_storages SET payload=$2 WHERE id=$1", [drive2.id, JSON.stringify({ cookie: "UID=dead_invalid; CID=x; SEID=x" })]);
+  const dbFreeze = raw();
+  dbFreeze.prepare("UPDATE connected_storages SET payload = ? WHERE id = ?").run(JSON.stringify({ cookie: "UID=dead_invalid; CID=x; SEID=x" }), drive2.id);
+  dbFreeze.close();
   const probe = await rt.testConnection(ACCT, drive2.id);
   ok("testConnection on a dead cookie → frozen", probe.status === "frozen" && !probe.ok);
   ok("frozen drive2 is marked frozen in DB", (await repo.findConnectedStorageByUid("pan115", FRIEND_UID))?.status === "frozen");
   const blocked = await rt.queueCandidateTracking(`tmdb_movie_${idB}`, drive2.id);
   ok("acquisition onto a frozen drive is refused", blocked.status === "unsupported");
   // re-bind with the real cookie → active
-  await pool.query("UPDATE connected_storages SET payload=$2 WHERE id=$1", [drive2.id, JSON.stringify({ cookie: friendCookie })]);
+  const dbRebind = raw();
+  dbRebind.prepare("UPDATE connected_storages SET payload = ? WHERE id = ?").run(JSON.stringify({ cookie: friendCookie }), drive2.id);
+  dbRebind.close();
   const reprobe = await rt.testConnection(ACCT, drive2.id);
   ok("re-bind (good cookie) + testConnection → active again", reprobe.status === "active" && reprobe.ok);
 } finally {
-  await pool.end();
+  await repo.close?.();
 }
 console.log(failed ? `\n${failed} CHECK(S) FAILED` : "\nTREE-MODEL TWO-DRIVE E2E PASSED — one account, two drives, isolated + per-drive landing + freeze");
 process.exit(failed ? 1 : 0);

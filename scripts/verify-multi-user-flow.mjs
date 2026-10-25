@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 // P1 verify: exercise the multi-user auth + data-isolation flow end-to-end at the
-// data layer against the REAL dev Postgres (mirrors registerAccount/loginAccount/
+// data layer against the REAL dev SQLite DB (mirrors registerAccount/loginAccount/
 // resolveSessionAccountId + account-scoped reads). Throwaway accounts, cleaned up.
-import pg from "pg";
 import {
-  PostgresWorkflowRepository,
-  initializeWorkflowPostgresSchema,
+  createSqliteWorkflowRepository,
   hashPassword,
   verifyPassword,
   signSession,
@@ -13,12 +11,12 @@ import {
   isSessionExpired,
   generateSessionId,
 } from "../packages/workflow/dist/index.js";
+import { appDbPath, openAppDb } from "./_lib/sqlite-db.mjs";
 
-const url = "postgresql://mediatrack:mediatrack@localhost:5432/media_track";
 const SECRET = "verify-secret";
-const pool = new pg.Pool({ connectionString: url });
-await initializeWorkflowPostgresSchema(pool);
-const repo = new PostgresWorkflowRepository(pool, Promise.resolve());
+// Pure-SQLite single engine (task S1.4b): the repository constructor creates the
+// schema on first open (no separate initialize step).
+const repo = createSqliteWorkflowRepository({ path: appDbPath() });
 
 let failed = 0;
 const ok = (n, c) => { console.log(`${c ? "ok  " : "FAIL"} ${n}`); if (!c) failed++; };
@@ -55,17 +53,22 @@ function snap(accountId, suffix) {
     resourceSnapshots: [], decisions: [], transferAttempts: [], notifications: [] };
 }
 
-async function cleanup() {
-  await pool.query("DELETE FROM episode_states WHERE tracked_season_id LIKE 'seas_vtest_%'");
-  await pool.query("DELETE FROM workflow_runs WHERE id LIKE 'run_vtest_%'");
-  await pool.query("DELETE FROM tracked_seasons WHERE id LIKE 'seas_vtest_%'");
-  await pool.query("DELETE FROM media_titles WHERE id LIKE 'ttl_vtest_%'");
-  await pool.query("DELETE FROM sessions WHERE account_id LIKE 'acct_vtest_%'");
-  await pool.query("DELETE FROM accounts WHERE id LIKE 'acct_vtest_%'");
+function cleanup() {
+  const db = openAppDb();
+  try {
+    db.prepare("DELETE FROM episode_states WHERE tracked_season_id LIKE 'seas_vtest_%'").run();
+    db.prepare("DELETE FROM workflow_runs WHERE id LIKE 'run_vtest_%'").run();
+    db.prepare("DELETE FROM tracked_seasons WHERE id LIKE 'seas_vtest_%'").run();
+    db.prepare("DELETE FROM media_titles WHERE id LIKE 'ttl_vtest_%'").run();
+    db.prepare("DELETE FROM sessions WHERE account_id LIKE 'acct_vtest_%'").run();
+    db.prepare("DELETE FROM accounts WHERE id LIKE 'acct_vtest_%'").run();
+  } finally {
+    db.close();
+  }
 }
 
 try {
-  await cleanup();
+  cleanup();
   const alice = await register("vtest_alice", "alicepw");
   const bob = await register("vtest_bob", "bobpw");
   ok("register alice → cookie resolves to alice", (await resolve(alice.signedCookie)) === alice.accountId);
@@ -93,8 +96,8 @@ try {
   // tampered cookie rejected
   ok("tampered cookie rejected", (await resolve(alice.signedCookie.replace(/.$/, "0"))) === null);
 } finally {
-  await cleanup();
-  await pool.end();
+  cleanup();
+  await repo.close?.();
 }
 
 console.log(failed === 0 ? "\nMULTI-USER FLOW VERIFIED" : `\n${failed} CHECKS FAILED`);

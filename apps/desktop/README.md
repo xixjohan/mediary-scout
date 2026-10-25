@@ -43,28 +43,24 @@ npm run build:web
 Produces `apps/web/.next/standalone/apps/web/server.js` (plus a traced
 `node_modules`, including `better-sqlite3`).
 
-### 3. ⚠️ Rebuild the BUNDLED better-sqlite3 for Electron's ABI (the key gotcha)
+### 3. better-sqlite3 的 Electron ABI —— 已自动化，无需手动
 
-The server child runs under **Electron-as-Node**, so every native `.node` it
-loads must match **Electron's** ABI — not the build machine's system Node. Next
-traces a *copy* of `better-sqlite3` into the standalone bundle at
-`apps/web/.next/standalone/node_modules/better-sqlite3`, and that copy is built
-for system Node. It must be swapped for the pinned Electron version's ABI or the
-server child crashes on launch (`ERR_DLOPEN_FAILED` / wrong `NODE_MODULE_VERSION`).
+The server child runs under **Electron-as-Node**, so the bundled `better-sqlite3`
+native binary must match **Electron's** ABI — not the build machine's system Node.
+`after-pack.js`（electron-builder 的 `afterPack` 钩子）现在自动做三件事，**任何一步
+失败都会让打包构建失败**，绝不会静默产出一个打不开数据库的桌面端：
 
-Verified working approach — fetch the official Electron prebuild directly into
-the standalone copy (`@electron/rebuild --module-dir` was tried first and
-reported success without actually replacing the binary; do not rely on it):
+1. 在打包产物里定位 Next standalone  traced 的那份 `better-sqlite3`；
+2. 用 `prebuild-install -r electron -t <electronVersion>` 抓 Electron ABI 的预编译
+   二进制换上（免本地编译工具链；实测抓取 `better-sqlite3-v12.11.1-electron-v130-*.tar.gz`）；
+3. **强制验证**：① 二进制内容哈希必须真的变了（杀死 `@electron/rebuild`
+   「报成功却没换二进制」的 silent no-op 前科）；② 让打包产物里的 Electron 以
+   `ELECTRON_RUN_AS_NODE=1` 实际 `require()` 这份二进制并读回 ABI，必须等于 130。
 
-```bash
-# Electron 33 = ABI 130. Keep -t in sync with electronVersion in electron-builder.yml.
-cd apps/web/.next/standalone/node_modules/better-sqlite3
-npx prebuild-install -r electron -t 33.4.11
-cd -
-```
+改 Electron 大版本时，同步 `electron-builder.yml` 的 `electronVersion` 与
+`after-pack.js` 里的 `ELECTRON_ABI`（33 → 130）。
 
-Verify the swap actually happened before packaging (this catches the silent
-no-op failure mode):
+想手动复核产物里的二进制（排障用）：
 
 ```bash
 cat > /tmp/abi-check.js <<'EOF'

@@ -71,7 +71,7 @@ describe("getTrackedSeasonStatusView", () => {
   // page must show THAT drive's episodes — passing only accountId drops the
   // storage filter and the unscoped lookup returns an arbitrary drive's copy
   // (the 115 copy at 0/22) while the library card correctly said 21/22 for 123.
-  // Which copy "wins" unscoped is repository-specific: Postgres takes the first
+  // Which copy "wins" unscoped is repository-specific: the DB takes the first
   // row, InMemoryWorkflowRepository takes the latest run across drives.
   it("scopes the view to the requested drive when the season is tracked on multiple drives", async () => {
     const repository = new InMemoryWorkflowRepository();

@@ -6,7 +6,7 @@ import { getWorkflowRepository } from "../../../lib/workflow-runtime";
  * monitors. It goes through the repository's REAL read path (getSetting →
  * ensureSchema), so it reports whether the app can actually USE the database, not
  * merely whether a TCP socket opens. During the 2026-07-21 wedge (schema-init
- * latched while postgres was reachable) a raw `SELECT 1` would have reported
+ * latched while the database was reachable) a raw `SELECT 1` would have reported
  * healthy; this returns 503 instead, which is what makes it useful for catching
  * that class of failure. The raw error is logged server-side (docker logs) but
  * kept out of the response body so the endpoint is safe to expose.

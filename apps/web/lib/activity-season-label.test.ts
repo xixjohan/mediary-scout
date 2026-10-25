@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { EpisodeState } from "@media-track/workflow";
 // Import from the PURE module (not activity-view) — this is the client-safe home
-// for these helpers, kept free of the Postgres-backed runtime.
+// for these helpers, kept free of the server-only runtime.
 import { activeRunLabel, distinctSeasons, seasonLabelText } from "./activity-season-label";
 
 function episode(seasonNumber: number, episodeNumber: number): EpisodeState {

@@ -41,7 +41,7 @@ export async function getTrackedSeasonStatusView(input: {
   /** Full (account, drive) scope — deliberately NOT `ScopeArg`, so a bare
    *  accountId string cannot be passed here and silently drop the drive filter.
    *  The same season can be tracked on several drives with different episode
-   *  states; an unscoped lookup returns an arbitrary drive's copy (Postgres:
+   *  states; an unscoped lookup returns an arbitrary drive's copy (the database:
    *  first row; in-memory: latest run across drives) — the 123 醒来 detail page
    *  showed the 115 copy's 0/22 while the card correctly said 21/22. Callers
    *  rendering a specific workspace MUST pass its connectedStorageId. */

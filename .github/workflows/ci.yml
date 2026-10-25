@@ -8,27 +8,9 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: mediatrack
-          POSTGRES_PASSWORD: mediatrack
-          POSTGRES_DB: media_track
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U mediatrack"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    env:
-      MEDIA_TRACK_POSTGRES_URL: postgresql://mediatrack:mediatrack@localhost:5432/media_track
-      # Admin URL for repository-contract-postgres (CREATE/DROP disposable DB).
-      MEDIA_TRACK_TEST_POSTGRES_ADMIN_URL: postgresql://mediatrack:mediatrack@localhost:5432/postgres
-      # Fail (don't describe.skip) if the Postgres contract cannot provision a DB.
-      MEDIA_TRACK_CI_REQUIRE_POSTGRES: "1"
+    # 纯 SQLite 单引擎（任务单 S1.4b）：不再需要 postgres service container。
+    # 数据库是一个文件——测试用默认的 data/mediary.db（gitignored），
+    # 生产构建用一次性临时文件，两者都零外部依赖。
 
     steps:
       - uses: actions/checkout@v7
@@ -39,25 +21,23 @@ jobs:
       - run: npm ci
       - run: npm run build:workflow
       - run: npm run lint
+      # 架构门禁（S4.1）：L0 物理布局 / L1 依赖图与循环（存量基线接管）/ L2+L3 在 lint 内
+      - run: npm run gate:layout
+      - run: npm run gate:deps
       - run: npm run typecheck
       - run: npx tsc -p apps/web/tsconfig.json --noEmit
       - run: npx tsc -p apps/desktop/tsconfig.json --noEmit
       - run: npx tsc -p workers/tmdb-proxy/tsconfig.json --noEmit
       - run: npx tsc -p workers/scout-connect/tsconfig.json --noEmit
-      # Production build with NO database — mirrors `docker compose build` (no .env
-      # at image-build time). cacheComponents prerenders pages at build; any server
-      # component that reads the DB outside a connection()/cookies()/searchParams
-      # guard crashes here. This step is what catches that class before it reaches a
-      # self-hoster's `docker compose up`. (next.config reads .env with `??=`, so a
-      # set-but-empty value is NOT overridden → the real no-DB build condition.)
+      # Production build with a throwaway SQLite file — mirrors `docker compose build`
+      # (no .env at image-build time). cacheComponents prerenders pages at build; any
+      # server component that reads the DB outside a connection()/cookies()/searchParams
+      # guard writes into this file instead of crashing. With SQLite there is no external
+      # DB to be "missing", so this step now proves the build completes cleanly with an
+      # isolated (never committed, never shipped) database.
       - run: npm run build:web
         env:
-          MEDIA_TRACK_POSTGRES_URL: ""
-      - run: npx vitest run --exclude '**/*.pg.test.ts'
-      # The PG integration files share MEDIA_TRACK_POSTGRES_URL and each performs
-      # schema/init + cleanup. Run those files serially to prevent test-only DDL/DML
-      # deadlocks while still proving every PG suite actually executes in CI.
-      - run: npx vitest run --no-file-parallelism packages/workflow/tests/*.pg.test.ts
-      # MEDIA_TRACK_CI_REQUIRE_POSTGRES=1 makes the contract hard-fail if it cannot
-      # reach/provision Postgres (vitest alone exits 0 on pure describe.skip).
-      - run: npx vitest run packages/workflow/tests/repository-contract-postgres.test.ts packages/workflow/src/postgres-schema-init.test.ts
+          MEDIA_TRACK_SQLITE_PATH: ${{ runner.temp }}/mediary-build.db
+      # One run: the suite is SQLite-only now (the *.pg.test.ts integration files and
+      # repository-contract-postgres were removed together with the Postgres dependency).
+      - run: npx vitest run

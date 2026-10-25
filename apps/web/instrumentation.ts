@@ -25,8 +25,30 @@ export async function register(): Promise<void> {
   validateRuntimeConfig(process.env);
 
   console.log("[instrumentation] register() — running startup migrations + worker");
-  const { runStartupMigrations } = await import("./lib/workflow-runtime");
+  const { runStartupMigrations, recoverOrphanedRuns } = await import("./lib/workflow-runtime");
   await runStartupMigrations();
+
+  // P1 解药（任务单 S2.2）：常驻 drain 循环默认不再住在 Next 服务进程里。
+  //   MEDIA_TRACK_WORKER_MODE=external   → 循环交给独立宿主 apps/host-worker（compose 部署）
+  //   MEDIA_TRACK_INPROCESS_WORKER=0     → 旧开关，等价 external（兼容老部署）
+  //   MEDIA_TRACK_INPROCESS_WORKER=1     → 显式逃生门：即使 MODE=external 也进程内跑
+  // 默认（都未设）保持进程内循环：桌面端与单进程部署零变化。
+  const mode = process.env.MEDIA_TRACK_WORKER_MODE ?? "inprocess";
+  const externalWorker = mode === "external" && process.env.MEDIA_TRACK_INPROCESS_WORKER !== "1";
+  const legacyOptOut = process.env.MEDIA_TRACK_INPROCESS_WORKER === "0";
+  if (externalWorker || legacyOptOut) {
+    // 孤儿恢复是有界一次性动作（不是常驻循环），留在 web 启动路径，
+    // 保证崩溃恢复不依赖 worker 宿主的首次 poke。
+    const recovered = await recoverOrphanedRuns();
+    if (recovered > 0) {
+      console.log(`[instrumentation] recovered ${recovered} orphaned run(s) after crash`);
+    }
+    console.log(
+      "[instrumentation] worker mode=external — in-process loop NOT started; " +
+        "run the dedicated host (apps/host-worker) to drain the queue",
+    );
+    return;
+  }
   const { startBackgroundWorker } = await import("./lib/background-worker");
   startBackgroundWorker();
 }

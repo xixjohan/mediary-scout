@@ -12,7 +12,7 @@ class FakePan115QrLoginClient {
   }
 }
 
-const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
 const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
 const prevCookie = process.env.PAN115_COOKIE;
 
@@ -22,7 +22,6 @@ const COLD_IMPORT_TIMEOUT_MS = 30_000;
 let rt: typeof import("./workflow-runtime");
 beforeEach(async () => {
   process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
-  delete process.env.MEDIA_TRACK_POSTGRES_URL;
   delete process.env.MEDIA_TRACK_MULTI_USER;
   vi.resetModules();
   vi.doMock("@media-track/workflow", async () => {
@@ -35,7 +34,7 @@ beforeEach(async () => {
 afterEach(() => {
   vi.doUnmock("@media-track/workflow");
   delete process.env.MEDIA_TRACK_SQLITE_PATH;
-  if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+  if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
   if (prevMultiUser !== undefined) process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
   if (prevCookie === undefined) delete process.env.PAN115_COOKIE;
   else process.env.PAN115_COOKIE = prevCookie;

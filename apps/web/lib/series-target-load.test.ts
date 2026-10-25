@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 // @ts-expect-error Vitest's runtime supports virtual mocks, but its v4 typings omit the option.
 vi.mock("server-only", () => ({}), { virtual: true });
 import type { PreparedSeriesTarget } from "@media-track/workflow";
-import type { DurableJsonCache } from "./tmdb-cache";
+import type { DurableJsonCache } from "@media-track/workflow";
 import { createTtlMemo } from "./series-target-memo";
 import { loadSeriesTargetWithCache } from "./title-hub";
 
@@ -22,7 +22,7 @@ describe("loadSeriesTargetWithCache", () => {
     const durable: DurableJsonCache = {
       getJson: async () => null,
       setJson: async () => {
-        throw new Error("postgres down");
+        throw new Error("db down");
       },
     };
     const get = createTtlMemo<PreparedSeriesTarget>({

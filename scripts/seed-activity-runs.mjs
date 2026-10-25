@@ -1,17 +1,16 @@
 // Queue several REAL movie acquisitions via queueMovieAcquisition (the same entry
-// point the web action uses) into the dev Postgres, for the activity-page live e2e:
+// point the web action uses) into the dev SQLite DB, for the activity-page live e2e:
 // the in-process worker consumes them one at a time, so there's a running one (watch
 // the ticker) plus queued ones (test cancel-via-UI). Args = title:year pairs, or a
 // default fresh set.
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadDotEnv } from "./_lib/pan115-cookie.mjs";
+import { loadDotEnv, appDbPath } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 loadDotEnv();
-const conn = process.env.MEDIA_TRACK_POSTGRES_URL ?? "postgresql://mediatrack:mediatrack@localhost:5432/media_track";
 const mod = await import(path.join(repoRoot, "packages/workflow/dist/index.js"));
-const repo = mod.createPostgresWorkflowRepositorySync({ connectionString: conn });
+const repo = mod.createSqliteWorkflowRepository({ path: appDbPath() });
 
 // title|year|tmdbId — fresh (not already tracked) so each reserves a new run.
 const movies = [

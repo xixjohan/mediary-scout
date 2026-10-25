@@ -5,7 +5,7 @@ Mediary Scout 有两种部署方式:
 | | 桌面版(macOS / Windows) | Docker Compose (服务器) |
 |---|---|---|
 | 适合 | 自己用,不想折腾 Docker | NAS / 软路由 / VPS / 闲置 PC |
-| 数据层 | SQLite(本地文件) | Postgres |
+| 数据层 | SQLite(本地文件) | SQLite(同一套代码,卷持久化) |
 | 部署 | 下载 DMG / EXE 安装 | `docker compose up -d` |
 | 下载 | [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases) | 本指南下方 |
 
@@ -15,9 +15,9 @@ Mediary Scout 有两种部署方式:
 
 ---
 
-> **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js + in-process worker) + Postgres + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your drive (115 / Quark / 123 / Tianyi by QR; GuangYaPan by pasted token), add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
+> **English summary.** Self-host with one command — `docker compose up -d` brings up web (Next.js) + a dedicated worker host + a bundled PanSou. Open `http://<host>:3000`, go to Settings, scan-login your drive (115 / Quark / 123 / Tianyi by QR; GuangYaPan by pasted token), add an OpenAI-compatible LLM endpoint, and you're running. To reach it from your phone / TV / on the go, use **Tailscale** (private mesh — safest) or a **Cloudflare Tunnel** (public HTTPS, no public IP). **Never expose `:3000` raw to the internet.** Full walkthrough below (Chinese).
 
-一行命令起整套:**web(Next + 进程内 worker)+ Postgres + 自带 PanSou**。本指南覆盖:选宿主 → compose 起服务 → 从自己的设备访问 → 安全/升级。
+一行命令起整套:**web(Next)+ 独立 worker 宿主 + 自带 PanSou**,数据落在 SQLite 单文件(compose 卷持久化,无外部数据库容器);常驻队列循环跑在 worker 容器,不在 Next 进程内。本指南覆盖:选宿主 → compose 起服务 → 从自己的设备访问 → 安全/升级。
 
 ## 目录
 - [让 AI agent 帮你部署](#让-ai-agent-帮你部署)
@@ -90,7 +90,7 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
 > ### ⚠️ 墙内先看这个:Docker Hub 大概率拉不动
 >
-> 本项目有三个镜像来自 Docker Hub(`postgres`、构建 web 用的 `node`、`cloudflared`),
+> 本项目的 Docker Hub 镜像(构建 web 用的 `node`、`cloudflared`,以及 updater 的 `docker`),
 > 而 **Docker Hub 在中国大陆常年不稳定**。典型报错:
 >
 > ```
@@ -136,8 +136,8 @@ docker compose up -d        # 首次会构建 web 镜像,几分钟
 
 | 服务 | 镜像 | 说明 |
 |---|---|---|
-| `web` | 本仓库 `Dockerfile` | Next.js + 进程内 worker(`instrumentation.ts` 自启),`:3000` |
-| `postgres` | `postgres:16-alpine` | 持久卷 `pgdata`;表首次查询自建,无需迁移 |
+| `web` | 本仓库 `Dockerfile` | Next.js 服务(常驻循环已迁出),`:3000`;SQLite 落在 `mediary-data` 卷 |
+| `worker` | 同 web 镜像 | 独立 Worker 宿主:HTTP poke web 的 run-next / run-type3,零数据库访问;常驻队列循环在这里,不在 Next 进程内 |
 | `pansou` | `ghcr.io/fish2018/pansou-web` | 网盘搜索源,compose 内经服务名 `http://pansou` 调用 |
 
 ### 覆盖配置
@@ -443,7 +443,7 @@ DeadlineExceeded / dial tcp ...:443: i/o timeout
 docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 ```
 
-> 镜像地址会失效/限速,`docker.1ms.run` 只是示例;搜「Docker 镜像加速 可用」找当前能用的即可。配好后,所有 **Docker Hub** 镜像(`postgres`、构建 web 用的 `node`、`cloudflared`)都会走镜像 —— 本仓库 Dockerfile 已**特意不写 `# syntax=` 指令**,避免它绕过镜像、第一步就卡死(见 #46)。
+> 镜像地址会失效/限速,`docker.1ms.run` 只是示例;搜「Docker 镜像加速 可用」找当前能用的即可。配好后,所有 **Docker Hub** 镜像(构建 web 用的 `node`、`cloudflared`、updater 的 `docker`)都会走镜像 —— 本仓库 Dockerfile 已**特意不写 `# syntax=` 指令**,避免它绕过镜像、第一步就卡死(见 #46)。
 
 **⚠️ 注意 `pansou` 例外**:它来自 **ghcr.io**(`ghcr.io/fish2018/pansou-web`),而 Docker 的 `registry-mirrors` **只对 Docker Hub 生效、管不到 ghcr**。若 ghcr 也连不上,二选一:
 - 在 `.env` 设 `PANSOU_IMAGE=` 指向一个 ghcr 镜像/代理(如 `ghcr.nju.edu.cn/fish2018/pansou-web:latest`,镜像可用性自行确认),再 `docker compose up -d`;
@@ -483,7 +483,7 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 ./scripts/deploy.sh
 ```
 
-一次更新会等正在跑的任务结束，把数据库备份到 `backups/pre-update-*.sql.gz`（只留最近 5 份），然后构建新版本——这段时间旧版本继续服务。构建好了先暂停开始新任务（已经排队的会留到新版本再跑），等正在跑的任务结束再替换，网页大约有一分钟打不开。接着检查新版本，没通过就自动回到旧版本；更新助手中途被重启，也会在重新启动后自动回到旧版本。
+一次更新会等正在跑的任务结束，把数据库备份到 `backups/pre-update-*.db.gz`（只留最近 5 份，凭据密钥 `credential.key` 在卷内、不随备份流出，见下文「备份与恢复」），然后构建新版本（web 与 worker 同镜像，一起重建）——这段时间旧版本继续服务。构建好了先暂停开始新任务（已经排队的会留到新版本再跑），等正在跑的任务结束再替换，网页大约有一分钟打不开。接着检查新版本，没通过就自动回到旧版本；更新助手中途被重启，也会在重新启动后自动回到旧版本。
 
 它不会覆盖你改过的已跟踪文件。配置写在 `.env`。
 
@@ -493,34 +493,58 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 
 只有更新助手容器挂 Docker socket。它不映射任何端口，只接受「更新到这个发布标签」，令牌只有 web 容器能读。更新助手不会更新自己：一键更新只替换 web 容器。某个版本如果改了 `updater/`，发布说明会写明，那时在部署目录运行 `docker compose up -d --build updater`；运行 `./scripts/deploy.sh` 时它也会一并重建。
 
-## 备份与恢复（pgdata）
+## 备份与恢复（mediary-data 卷）
 
-自托管时 Postgres 数据在 compose 卷 `pgdata` 里，是媒体库/追踪状态的唯一真相。建议定期备份：
+自托管时 SQLite 数据在 compose 卷 `mediary-data`（`/app/data/mediary.db`）里，是媒体库/追踪状态的唯一真相。建议定期备份——**备份 = 拷贝一个文件**：
 
 ```bash
 # 在仓库根目录
-./scripts/pg-backup.sh ./backups
-# → backups/mediatrack-YYYYMMDD-HHMMSS.sql.gz
+./scripts/sqlite-backup.sh ./backups
+# → backups/mediatrack-YYYYMMDD-HHMMSS.db.gz
 ```
 
-恢复（会覆盖当前库内容，先停写入/worker）：
+备份走 `VACUUM INTO` 热快照（WAL 模式下的一致性转储），应用保持在线。
+
+恢复（会覆盖当前库内容，先停掉 web 容器）：
 
 ```bash
-gunzip -c backups/mediatrack-YYYYMMDD-HHMMSS.sql.gz \
-  | docker compose exec -T postgres psql -U mediatrack -d mediatrack
+docker compose stop web
+gunzip -c backups/mediatrack-YYYYMMDD-HHMMSS.db.gz > /tmp/mediary.db
+docker compose cp /tmp/mediary.db web:/app/data/mediary.db
+docker compose start web
 ```
 
-也可直接备份 Docker 卷目录（停库后拷贝），但逻辑备份（pg_dump）更便携。
+**⚠️ 凭据密钥要一起备**：各网盘 cookie / API key / 推送 sendkey 以 AES-256-GCM 加密落盘，
+密钥在数据库同目录的 `credential.key`（卷内）。只恢复数据库不恢复密钥 = 所有已绑网盘
+要重新扫码。把 `credential.key` 一并拷贝（或备份整个 `mediary-data` 卷）：
+
+```bash
+docker compose cp web:/app/data/credential.key ./backups/credential.key
+```
+
+也可以直接备份整个卷目录（`docker compose down` 后操作），最省事也不会漏密钥。
+
+### 恢复演练（备份没验证过就等于没有备份）
+
+定期对备份跑一次演练——解压、校验完整性、逐表行数与源库比对，任何不过即失败：
+
+```bash
+# 对某个备份文件演练（.db 或 .db.gz 均可；给 --source 则与线上库逐表比对）
+node scripts/sqlite-restore-drill.mjs backups/mediatrack-20261024-030000.db.gz --source data/mediary.db
+```
+
+输出 `✓ 恢复演练通过` 才算数；`✗ 备份损坏，不可恢复` 或行数不一致会以非零退出码失败，
+可以直接接监控。建议把这条挂进和备份同一套 crontab（备份后立即演练最新一份）。
 
 ### 定时备份（host crontab 示例）
 
 在部署机用户 crontab 里加一行即可（路径改成你的仓库目录）：
 
 ```cron
-# 每天 03:30 备份 pgdata；保留最近 14 天
+# 每天 03:30 备份 SQLite；保留最近 14 天
 # 若要固定北京时间，在 crontab 顶部加: TZ=Asia/Shanghai
-30 3 * * * cd /path/to/mediary-scout && ./scripts/pg-backup.sh ./backups >>./backups/cron.log 2>&1
-0 4 * * * find /path/to/mediary-scout/backups -name 'mediatrack-*.sql.gz' -mtime +14 -delete
+30 3 * * * cd /path/to/mediary-scout && ./scripts/sqlite-backup.sh ./backups >>./backups/cron.log 2>&1
+0 4 * * * find /path/to/mediary-scout/backups -name 'mediatrack-*.db.gz' -mtime +14 -delete
 ```
 
 把 `backups/` 目录同步到机外（对象存储 / NAS / 另一台机器）再算真正有备份。

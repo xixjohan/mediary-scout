@@ -466,16 +466,15 @@ describe("isCookieSecure (the LAN/HTTP login-bounce fix, #60)", () => {
 
 describe("getWorkflowRepository (desktop SQLite selection)", () => {
   it("selects the SQLite repository when MEDIA_TRACK_SQLITE_PATH is set", async () => {
-    const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+    const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
-    delete process.env.MEDIA_TRACK_POSTGRES_URL;
     vi.resetModules();
     try {
       const { getWorkflowRepository } = await import("./workflow-runtime");
       expect(getWorkflowRepository().constructor.name).toBe("SqliteWorkflowRepository");
     } finally {
       delete process.env.MEDIA_TRACK_SQLITE_PATH;
-      if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+      if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
       vi.resetModules();
     }
   });
@@ -489,7 +488,7 @@ describe("runScheduledType3（per-slot 认领 + 合并补跑）", () => {
   // 北京钟（UTC+8）、stub runScheduledType3Monitoring 免真盘真模型。
   const monitor = vi.fn(async () => []);
   const janitor = vi.fn(async () => ({ held: false }));
-  const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
   let rt: typeof import("./workflow-runtime");
 
   const boot = async (settings: Record<string, string>, beijingISO: string) => {
@@ -498,7 +497,6 @@ describe("runScheduledType3（per-slot 认领 + 合并补跑）", () => {
     janitor.mockClear();
     janitor.mockImplementation(async () => ({ held: false }));
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
-    delete process.env.MEDIA_TRACK_POSTGRES_URL;
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(`${beijingISO}:00.000+08:00`));
     vi.resetModules();
@@ -518,7 +516,7 @@ describe("runScheduledType3（per-slot 认领 + 合并补跑）", () => {
     vi.useRealTimers();
     vi.doUnmock("@media-track/workflow");
     delete process.env.MEDIA_TRACK_SQLITE_PATH;
-    if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
     vi.resetModules();
   });
 
@@ -825,7 +823,6 @@ describe("workerHasConfiguredDrive (C1: any account's drive counts)", () => {
   const prev = {
     adapter: process.env.MEDIA_TRACK_STORAGE_ADAPTER,
     cookie: process.env.PAN115_COOKIE,
-    pg: process.env.MEDIA_TRACK_POSTGRES_URL,
     sqlite: process.env.MEDIA_TRACK_SQLITE_PATH,
   };
 
@@ -833,7 +830,6 @@ describe("workerHasConfiguredDrive (C1: any account's drive counts)", () => {
     for (const [k, v] of Object.entries({
       MEDIA_TRACK_STORAGE_ADAPTER: prev.adapter,
       PAN115_COOKIE: prev.cookie,
-      MEDIA_TRACK_POSTGRES_URL: prev.pg,
       MEDIA_TRACK_SQLITE_PATH: prev.sqlite,
     })) {
       if (v === undefined) delete process.env[k];
@@ -844,7 +840,6 @@ describe("workerHasConfiguredDrive (C1: any account's drive counts)", () => {
 
   async function boot() {
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
-    delete process.env.MEDIA_TRACK_POSTGRES_URL;
     process.env.MEDIA_TRACK_STORAGE_ADAPTER = "115";
     delete process.env.PAN115_COOKIE;
     vi.resetModules();
@@ -1170,7 +1165,7 @@ describe("importForeignWorkFiles rechecks the update hold inside the in-flight g
 describe("runAutoUpdateIfDue（每日自动更新）", () => {
   // 内存 SQLite 真读写设置、fake Date 钉北京钟；更新视图和更新助手客户端 mock 掉
   // （runAutoUpdateIfDue 是动态 import 它们的，vi.doMock 可以顶掉）。
-  const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
   const TAG = "v2026.10.02";
   const idle = {
     phase: "idle",
@@ -1195,7 +1190,6 @@ describe("runAutoUpdateIfDue（每日自动更新）", () => {
     requestUpdate.mockReset();
     requestUpdate.mockImplementation(async () => ({ ok: true }));
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
-    delete process.env.MEDIA_TRACK_POSTGRES_URL;
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(`${beijingISO}:00.000+08:00`));
     vi.resetModules();
@@ -1221,7 +1215,7 @@ describe("runAutoUpdateIfDue（每日自动更新）", () => {
     delete process.env.MEDIA_TRACK_SQLITE_PATH;
     delete process.env.MEDIA_TRACK_DESKTOP;
     delete process.env.MEDIA_TRACK_DEMO_MODE;
-    if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
     const { clearUpdateHold } = await import("./update-hold");
     clearUpdateHold();
     vi.resetModules();
@@ -1415,13 +1409,12 @@ describe("runAutoUpdateIfDue（每日自动更新）", () => {
 
 describe("queueing on a drive whose login died names that drive's brand", () => {
   // 在内存 SQLite 里绑一块已冻结的 123 网盘；这两个入口在碰网络之前就会查冻结。
-  const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
   const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
   let rt: typeof import("./workflow-runtime");
 
   beforeEach(async () => {
     delete process.env.MEDIA_TRACK_MULTI_USER;
-    delete process.env.MEDIA_TRACK_POSTGRES_URL;
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
     vi.resetModules();
     rt = await import("./workflow-runtime");
@@ -1439,7 +1432,7 @@ describe("queueing on a drive whose login died names that drive's brand", () => 
 
   afterEach(() => {
     delete process.env.MEDIA_TRACK_SQLITE_PATH;
-    if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
     if (prevMultiUser !== undefined) process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
     vi.resetModules();
   });
@@ -1465,7 +1458,7 @@ describe("runNextQueuedWorkflow — queued runs going side by side", () => {
     enqueueUrgentReplaceRequests: vi.fn(async () => undefined),
     sendPushNotifications: vi.fn(async () => undefined),
   };
-  const prevPg = process.env.MEDIA_TRACK_POSTGRES_URL;
+  const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
   let rt: typeof import("./workflow-runtime");
 
   const boot = async () => {
@@ -1480,7 +1473,6 @@ describe("runNextQueuedWorkflow — queued runs going side by side", () => {
       runner.mockImplementation(idle);
     }
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
-    delete process.env.MEDIA_TRACK_POSTGRES_URL;
     vi.resetModules();
     vi.doMock("@media-track/workflow", async () => {
       const actual = await vi.importActual<typeof import("@media-track/workflow")>("@media-track/workflow");
@@ -1493,7 +1485,7 @@ describe("runNextQueuedWorkflow — queued runs going side by side", () => {
   afterEach(() => {
     vi.doUnmock("@media-track/workflow");
     delete process.env.MEDIA_TRACK_SQLITE_PATH;
-    if (prevPg !== undefined) process.env.MEDIA_TRACK_POSTGRES_URL = prevPg;
+    if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
     vi.resetModules();
   });
 

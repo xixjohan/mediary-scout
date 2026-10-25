@@ -91,7 +91,12 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
       provider: { search: async () => snapshot },
       registry: new CandidateRegistry(),
       workflowRunId: "run-1",
-      deadLinkStore: { recordDeadLink: async () => {}, listDeadLinkKeys: async () => ["115:deadcode"] },
+      deadLinkStore: {
+        recordDeadLink: async () => {},
+        listDeadLinkKeys: async () => ["115:deadcode"],
+        reapExpiredDeadLinks: async () => 0,
+        deadLinkStats: async () => ({ total: 1, permanent: 1, softActive: 0, softExpired: 0, byKind: { pan115: 1, magnet: 0, guangya: 0 } }),
+      },
     });
     expect((await adapter.search("k")).candidates.map((c) => c.id)).toEqual(["s1-2"]);
   });
@@ -119,6 +124,8 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
     const deadLinkStore = {
       recordDeadLink: async () => {},
       listDeadLinkKeys: async () => deadKeys,
+      reapExpiredDeadLinks: async () => 0,
+      deadLinkStats: async () => ({ total: 0, permanent: 0, softActive: 0, softExpired: 0, byKind: { pan115: 0, magnet: 0, guangya: 0 } }),
     };
     const provider: ResourceProvider = { search: async () => snapshotWithDead };
     const registry = new CandidateRegistry();
@@ -154,6 +161,8 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
         listDeadLinkKeys: async () => {
           throw new Error("db down");
         },
+        reapExpiredDeadLinks: async () => 0,
+        deadLinkStats: async () => ({ total: 0, permanent: 0, softActive: 0, softExpired: 0, byKind: { pan115: 0, magnet: 0, guangya: 0 } }),
       },
       // The rejected list reads fine: it is the dead-link read that must not fail open.
       rejectedResources: { list: async () => [] },
@@ -225,7 +234,7 @@ describe("RealResourceProviderV2 — pansou → ResourceProviderV2 adapter", () 
     };
     const deadLinkStore = {
       recordDeadLink: async () => {},
-      listDeadLinkKeys: async () => ["115:deadcode"],
+      listDeadLinkKeys: async () => ["115:deadcode"], reapExpiredDeadLinks: async () => 0, deadLinkStats: async () => ({ total: 0, permanent: 0, softActive: 0, softExpired: 0, byKind: { pan115: 0, magnet: 0, guangya: 0 } })
     };
     const registry = new CandidateRegistry();
     const adapter = new RealResourceProviderV2({
