@@ -33,6 +33,7 @@ Mediary Scout 有两种部署方式:
 - [多用户与忘记密码](#多用户与忘记密码)
 - [国内构建加速](#国内构建加速docker-hub-常年不稳定)
 - [升级](#升级)
+- [使用发布镜像（GHCR）](#使用发布镜像ghcr)
 - [备份与恢复](#备份与恢复pgdata)
 
 ## 让 AI agent 帮你部署
@@ -492,6 +493,38 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 从 GitHub 下载新版本时，设了 `.env` 里的 `HTTPS_PROXY` / `HTTP_PROXY` 就走它——和应用其余出站请求（TMDB / PanSou 等）同一个代理；没设就直连。改了 `.env` 要在部署目录运行 `docker compose up -d` 才会生效。
 
 只有更新助手容器挂 Docker socket。它不映射任何端口，只接受「更新到这个发布标签」，令牌只有 web 容器能读。更新助手不会更新自己：一键更新只替换 web 容器。某个版本如果改了 `updater/`，发布说明会写明，那时在部署目录运行 `docker compose up -d --build updater`；运行 `./scripts/deploy.sh` 时它也会一并重建。
+
+## 使用发布镜像（GHCR）
+
+每次打 `v*` 发布标签，GitHub Actions（`Release Docker`）会自动构建并推送镜像到
+GHCR：`ghcr.io/<owner>/mediary-scout:<标签>`（同时更新 `:latest`）。fork 的用户
+镜像在自己的 namespace 下（如 `ghcr.io/xixjohan/mediary-scout`）。
+
+拉取发布镜像部署，免去本地构建：
+
+```bash
+# docker-compose.override.yml（放在仓库根，compose 自动合并）
+services:
+  web:
+    image: ghcr.io/xixjohan/mediary-scout:v2026.10.22
+  worker:
+    image: ghcr.io/xixjohan/mediary-scout:v2026.10.22
+```
+
+```bash
+docker compose pull web worker   # 拉发布镜像（而不是本地 build）
+docker compose up -d
+```
+
+web 与 worker 是**同一个镜像、不同启动命令**（worker 只 HTTP poke web），版本始终一致。
+
+注意：
+
+- **允许的域名在构建时烘进镜像**（`MEDIA_TRACK_ALLOWED_ORIGINS`）。发布前在仓库
+  Settings → Variables 里设好；留空表示只接受同机访问，跨域访问请配反向代并透传
+  `x-forwarded-host`（见「国内构建加速」上一节的 allowedOrigins 说明）。
+- 镜像里**不含** `credential.key`（凭据密钥只在数据卷内，不随镜像分发——这是设计）。
+- 想自己验证构建而不发布：仓库 Actions 页手动跑 `Release Docker`，勾选 dry_run。
 
 ## 备份与恢复（mediary-data 卷）
 

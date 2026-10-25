@@ -1,0 +1,124 @@
+name: Release Docker
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag (e.g. v2026.10.22). Empty = build the selected commit, publish nothing."
+        required: false
+      dry_run:
+        description: "Build only — do not push to GHCR."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  packages: write # GHCR 推送
+
+# 与 Release Desktop 一样串行：标签推得比构建快时，只跑最新的一个。
+concurrency:
+  group: release-docker
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  # 秒级前置：标签形态合法 + 解析出构建 commit 与是否发布。
+  preflight:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      ref: ${{ steps.resolve.outputs.ref }}
+      push: ${{ steps.resolve.outputs.push }}
+    steps:
+      - name: Resolve tag and commit
+        id: resolve
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          REF_NAME: ${{ github.ref_name }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          PUSH=false
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            TAG="${INPUT_TAG:-}"
+            if [ -n "$TAG" ]; then
+              printf '%s' "$TAG" | grep -qE '^v[0-9]' || {
+                echo "::error::tag 必须是 v 开头的发布标签（如 v2026.10.22）"; exit 1; }
+              [ "$DRY_RUN" = "true" ] || PUSH=true
+            fi
+          else
+            TAG="$REF_NAME"
+            printf '%s' "$TAG" | grep -qE '^v[0-9]' || {
+              echo "::error::非发布标签 $TAG"; exit 1; }
+            PUSH=true
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "ref=$SHA" >> "$GITHUB_OUTPUT"
+          echo "push=$PUSH" >> "$GITHUB_OUTPUT"
+
+  build-and-push:
+    needs: preflight
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+
+      - name: Log in to GHCR
+        if: ${{ needs.preflight.outputs.push == 'true' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          # 发布时打 版本标签 + latest；dry_run 不带标签，仅验证可构建。
+          tags: |
+            type=ref,event=tag
+            type=raw,value=latest,enable=${{ needs.preflight.outputs.push == 'true' }}
+          labels: |
+            org.opencontainers.image.title=Mediary Scout
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ needs.preflight.outputs.push == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            GIT_SHA=${{ needs.preflight.outputs.ref }}
+            MEDIA_TRACK_ALLOWED_ORIGINS=${{ vars.MEDIA_TRACK_ALLOWED_ORIGINS }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Release Docker (${{ needs.preflight.outputs.tag || 'untagged' }})"
+            echo ""
+            if [ "${{ needs.preflight.outputs.push }}" = "true" ]; then
+              echo "Published \`${{ env.IMAGE }}\` tags:"
+              echo '```'
+              echo "${{ steps.meta.outputs.tags }}"
+              echo '```'
+            else
+              echo "Build only — nothing pushed."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

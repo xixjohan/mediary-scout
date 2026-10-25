@@ -28,6 +28,7 @@ const ROOT_DIR_ALLOWLIST = new Set([
   "apps", "packages", "workers", "scripts", "docs", "site", "updater",
   "deploy", "references", "release-notes", "skills", "tests", "data", "backups",
   "e2e", // Playwright E2E（S4.3）
+  "e2e-run", "test-results", "playwright-report", // E2E 运行时产物（gitignored）
 ]);
 
 const problems = [];
