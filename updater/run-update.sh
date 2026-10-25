@@ -1,6 +1,8 @@
 #!/bin/sh
 # One self-host update to a release tag. Runs inside the updater container.
-# The build happens BEFORE the swap, so a failed build never touches the running web container.
+# 单镜像模式（2026-10-26）：不再本地 build web，而是拉取 Release Docker 工作流为
+# 该标签发布的 GHCR 镜像。拉取发生在交换之前，所以拉取失败绝不触碰运行中的 web。
+# 标签推送后发布是异步的，因此会等待镜像带上目标 commit 的 OCI label 再继续。
 # Paths default to the container layout and can be pointed at a temp dir by the unit test.
 # Exit: 0 ok · 10 rolled back · 20 rollback failed · 30 local edits (nothing touched)
 #       · 40 could not pause new tasks before the swap (nothing swapped)
@@ -139,10 +141,58 @@ PROJECT="$(docker inspect -f '{{ index .Config.Labels "com.docker.compose.projec
 [ -n "$PROJECT" ] || { echo "==> ERROR cannot read compose project name"; exit 2; }
 compose() { docker compose -p "$PROJECT" --project-directory "$REPO" "$@"; }
 # `compose` is a shell function, so `timeout compose ...` would run an external `compose`,
-# not it. Call docker compose directly under a wall-clock limit: a build that hangs must
-# count as a failed build, not leave the update "in progress" forever.
-compose_build() {
-  timeout "${UPDATER_BUILD_LIMIT_S:-5400}" docker compose -p "$PROJECT" --project-directory "$REPO" build web
+# not it. Call docker compose directly under a wall-clock limit: a pull that hangs must
+# count as a failed pull, not leave the update "in progress" forever.
+#
+# 单镜像模式：镜像是 ghcr.io 上的发布产物（Release Docker 在 v* 标签推送时构建推送）。
+# MEDIA_IMAGE_BASE 与 docker-compose.yml 的默认值保持一致；fork 覆盖自己的 namespace。
+IMAGE_BASE="${MEDIA_IMAGE_BASE:-ghcr.io/fancydirty/mediary-scout}"
+
+# 镜像里烘焙的 commit（Release Docker 的 org.opencontainers.image.revision label）。
+# 交换前用它确认「这个镜像确实是目标 commit 构建的」——比 BUILD_COMMIT 更早发现问题，
+# 也不用先把容器拉起来才能验证。
+image_revision() {
+  docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$1" 2>/dev/null || true
+}
+
+# 拉取 base:<tag> 并等到它带上目标 commit。发布是异步的（打标签 → CI 构建十几分钟），
+# 所以轮询而非一次拉取；超时按 UPDATER_PUBLISH_WAIT_S（默认 30 分钟）。
+pull_image_for_tag() {
+  REF="$IMAGE_BASE:$1"
+  WANT="$2"
+  LIMIT=$(( ${UPDATER_PUBLISH_WAIT_S:-1800} / 15 ))
+  i=0
+  echo "==> Pulling $REF (waiting until it carries $WANT)"
+  while :; do
+    # 单次拉取也限时：网络 stall 必须算失败，而不是把更新挂死。
+    timeout "${UPDATER_PULL_TIMEOUT_S:-900}" docker pull "$REF" >/dev/null 2>&1 || true
+    if [ "$(image_revision "$REF")" = "$WANT" ]; then
+      echo "==> $REF carries $WANT"
+      return 0
+    fi
+    i=$((i + 1))
+    if [ "$i" -ge "$LIMIT" ]; then
+      echo "==> IMAGE_NOT_PUBLISHED — $REF never carried $WANT (waited ${UPDATER_PUBLISH_WAIT_S:-1800}s; the Release Docker run may still be building)"
+      return 1
+    fi
+    sleep 15
+  done
+}
+
+# 把镜像引用钉进 .env（compose 的 ${MEDIARY_IMAGE} 读它），让后续 `compose up`/`pull`
+# 也停在同一个版本，而不是被 :latest 悄悄覆盖回退。以文件属主身份写，避免 root
+# 拥有的 .env 让用户自己改不动。
+set_pin() {
+  ENV_FILE="$REPO/.env"
+  if [ -f "$ENV_FILE" ]; then
+    if su-exec "$OWNER" sh -c "grep -q '^MEDIARY_IMAGE=' '$ENV_FILE'"; then
+      su-exec "$OWNER" sh -c "sed -i 's|^MEDIARY_IMAGE=.*|MEDIARY_IMAGE=$1|' '$ENV_FILE'"
+    else
+      su-exec "$OWNER" sh -c "printf '%s\n' 'MEDIARY_IMAGE=$1' >> '$ENV_FILE'"
+    fi
+  else
+    su-exec "$OWNER" sh -c "printf '%s\n' 'MEDIARY_IMAGE=$1' > '$ENV_FILE'"
+  fi
 }
 
 # Only an explicit "busy":false means idle. A failed request, the login page, or any
@@ -295,18 +345,23 @@ roll_back() {
   fi
   GIT_SHA="$1"
   export GIT_SHA
+  # 单镜像模式：回滚目标也必须是一个发布标签的镜像。该 commit 若没有对应标签
+  # （镜像模式下每个部署都来自标签，正常不会发生），明确失败而不是拉错镜像。
+  BACK_TAG="$(g describe --tags --exact-match "$1" 2>/dev/null || true)"
+  [ -n "$BACK_TAG" ] || { echo "==> ROLLBACK_FAILED — no release tag points at $1"; web_post '{"hold":false}' >/dev/null 2>&1 || true; exit 20; }
   pause_before_rollback_swap
-  if ! compose_build; then
+  if ! pull_image_for_tag "$BACK_TAG" "$1"; then
     echo "==> ROLLBACK_FAILED"
     # Giving up: let whatever version is up start runs again instead of staying paused.
     web_post '{"hold":false}' >/dev/null 2>&1 || true
     exit 20
   fi
-  # The build can outlast the pause (it lapses 40 minutes after the last refresh, the build
-  # may take up to UPDATER_BUILD_LIMIT_S), so the version being replaced may have started work
-  # meanwhile: pause it again and let that finish right before the swap.
+  set_pin "$IMAGE_BASE:$BACK_TAG"
+  # The pull can outlast the pause (it lapses 40 minutes after the last refresh, the wait
+  # may take up to UPDATER_PUBLISH_WAIT_S), so the version being replaced may have started
+  # work meanwhile: pause it again and let that finish right before the swap.
   pause_before_rollback_swap
-  if compose up -d --no-deps web && verify "$1"; then
+  if compose up -d --no-deps web worker && verify "$1"; then
     echo "==> ROLLED_BACK"
     exit 10
   fi
@@ -444,10 +499,11 @@ ON_TAG=1
 g -c advice.detachedHead=false checkout "refs/tags/$TAG"
 GIT_SHA="$(g rev-parse HEAD)"
 export GIT_SHA
-if ! compose_build; then
-  echo "==> BUILD_FAILED"
+if ! pull_image_for_tag "$TAG" "$GIT_SHA"; then
+  echo "==> IMAGE_FAILED"
   back_to_from 10
 fi
+set_pin "$IMAGE_BASE:$TAG"
 
 
 # Stop the old version from starting new runs before the final wait, so nothing starts
@@ -475,7 +531,7 @@ SWAPPED=1
 # inside the updater, not on the host, and start a second empty stack.
 # Not left to set -e: the old container may already be stopped, so a failed `up`
 # goes to the rollback below like a failed check.
-if compose up -d --no-deps web; then
+if compose up -d --no-deps web worker; then
   echo "==> STEP verifying"
   if verify "$GIT_SHA"; then
     echo "==> DONE $TAG"

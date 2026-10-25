@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -57,7 +57,7 @@ function installStubs(bin) {
   writeExe(
     bin,
     "timeout",
-    `#!/bin/sh\n${LOG_FN}\nlog_call timeout "$@"\nshift\nif [ -f "$STUB_DIR/hang-build" ]; then exit 124; fi\nexec "$@"\n`,
+    `#!/bin/sh\n${LOG_FN}\nlog_call timeout "$@"\nshift\nif [ -f "$STUB_DIR/hang-pull" ]; then exit 124; fi\nexec "$@"\n`,
   );
   writeExe(
     bin,
@@ -119,7 +119,7 @@ log_call git "$@"
 cmd=""
 for arg in "$@"; do
   case "$arg" in
-    status|rev-parse|fetch|checkout|symbolic-ref) cmd="$arg" ;;
+    status|rev-parse|fetch|checkout|symbolic-ref|describe) cmd="$arg" ;;
   esac
 done
 case "$cmd" in
@@ -148,6 +148,12 @@ case "$cmd" in
     # On a branch only when a test put it there (a person ran deploy.sh, which checks out main).
     if [ -f "$STUB_DIR/on-branch" ]; then printf '%s\\n' refs/heads/main; exit 0; fi
     exit 1
+    ;;
+  describe)
+    # 单镜像模式：回滚要把 commit 换回它的发布标签（镜像引用）。缺 marker 时
+    # 默认指向 FROM 的标签；no-describe-tag marker 模拟「该 commit 没有标签」。
+    if [ -f "$STUB_DIR/no-describe-tag" ]; then exit 128; fi
+    printf '%s\n' "\${GIT_DESCRIBE_TAG:-v2026.09.28}"
     ;;
   checkout)
     # Checking out a tag or a commit id leaves HEAD detached, as real git does.
@@ -179,6 +185,11 @@ esac
     `#!/bin/sh
 ${LOG_FN}
 log_call docker "$@"
+if [ "\${1-}" = "image" ] && [ "\${2-}" = "inspect" ]; then
+  # 镜像的 revision label：最后一次成功 pull 的 sha；从未拉成过 → 空。
+  if [ -f "$STUB_DIR/git-shas" ]; then tail -n 1 "$STUB_DIR/git-shas"; fi
+  exit 0
+fi
 if [ "\${1-}" = "inspect" ]; then
   printf '%s\\n' mediary
   exit 0
@@ -189,13 +200,14 @@ if printf '%s' "$args" | grep -q 'VACUUM INTO'; then
   printf '%s\\n' SQLITE-SNAPSHOT
   exit 0
 fi
-if printf '%s' "$args" | grep -q 'build web'; then
-  printf '%s\\n' "\${GIT_SHA-}" >> "$STUB_DIR/git-shas"
+# 单镜像模式：拉取发布镜像代替本地 build。拉成功即「镜像带上目标 commit」。
+if printf '%s' "$args" | grep -q '^pull '; then
   if [ -f "$STUB_DIR/branch-during-build" ]; then : > "$STUB_DIR/on-branch"; fi
   if [ -f "$STUB_DIR/unreadable-during-build" ]; then : > "$STUB_DIR/unreadable-head"; fi
   if [ -f "$STUB_DIR/busy-after-build" ]; then printf '%s\n' '{"busy":true}' '{"busy":false}' >> "$STUB_DIR/wget-lines"; fi
   if [ -f "$STUB_DIR/head-during-build" ]; then cat "$STUB_DIR/head-during-build" > "$STUB_DIR/head"; fi
   if [ -f "$STUB_DIR/fail-build" ]; then exit 1; fi
+  printf '%s\\n' "\${GIT_SHA-}" >> "$STUB_DIR/git-shas"
   exit 0
 fi
 if printf '%s' "$args" | grep -q ' up '; then
@@ -253,6 +265,9 @@ function setup() {
     STUB_DIR: stubDir,
     STUB_LOG: log,
     GIT_TAG_COMMIT: TAG_COMMIT,
+    // 单镜像模式：等发布镜像的轮询上限压到 2 次（30s/15s），让「拉不到」的
+    // 用例确定性地产出两次 pull+inspect，而不是 120 次。
+    UPDATER_PUBLISH_WAIT_S: "30",
   };
   return { repo, stubDir, log, env };
 }
@@ -288,7 +303,7 @@ function signatures(log) {
       if (line.startsWith("hold ")) return line.includes('{"hold":true}') ? "hold" : "release";
       if (line.startsWith("wget ")) return "wget";
       if (line.includes("VACUUM INTO")) return "backup";
-      if (line.includes("build web")) return "build";
+      if (line.startsWith("docker pull ")) return "pull";
       if (line.includes(" up ")) return "up";
       if (line.includes("BUILD_COMMIT")) return "cat_commit";
       if (line.includes("node -e") || line.includes(" node ")) return "health";
@@ -303,11 +318,13 @@ function signatures(log) {
 }
 
 function gitShas(stubDir) {
-  return readFileSync(join(stubDir, "git-shas"), "utf8").trim().split("\n");
+  const file = join(stubDir, "git-shas");
+  if (!existsSync(file)) return []; // 镜像从未拉成过：没有任何记录
+  return readFileSync(file, "utf8").trim().split("\n").filter(Boolean);
 }
 
 describe("run-update.sh", { timeout: 60_000 }, () => {
-  it("updates, backing up before the build and swapping only web", async () => {
+  it("updates, backing up before pulling the image and swapping web+worker", async () => {
     const { repo, stubDir, log, env } = setup();
     const result = await run(env);
     expect(result.stderr).toBe("");
@@ -321,7 +338,8 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       "rev-parse",
       `checkout refs/tags/${TAG}`,
       "rev-parse",
-      "build",
+      "pull",
+      "inspect",
       "hold",
       "hold",
       "wget",
@@ -340,12 +358,12 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     }
     const dockerLines = linesOf(log).filter((line) => line.startsWith("docker "));
     const dumpAt = dockerLines.findIndex((line) => line.includes("VACUUM INTO"));
-    const buildAt = dockerLines.findIndex((line) => line.includes("build web"));
+    const buildAt = dockerLines.findIndex((line) => line.startsWith("docker pull "));
     expect(dumpAt).toBeGreaterThanOrEqual(0);
     expect(buildAt).toBeGreaterThan(dumpAt);
     const ups = dockerLines.filter((line) => line.includes(" up "));
     expect(ups).toHaveLength(1);
-    expect(ups[0]).toMatch(/up -d --no-deps web$/);
+    expect(ups[0]).toMatch(/up -d --no-deps web worker$/);
     expect(ups[0]).toContain(`--project-directory ${repo}`);
     const wget = linesOf(log).find((line) => line.startsWith("wget "));
     expect(wget).toContain("http://web.test:3000/api/update/busy");
@@ -369,12 +387,12 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     expect(signatures(log).every((step) => step === "status")).toBe(true);
   });
 
-  it("checks the previous commit back out when the build fails, and does not swap", async () => {
+  it("checks the previous commit back out when the image pull fails, and does not swap", async () => {
     const { stubDir, log, env } = setup();
     writeFileSync(join(stubDir, "fail-build"), "1");
     const result = await run(env);
     expect(result.code).toBe(10);
-    expect(result.stdout).toContain("==> BUILD_FAILED");
+    expect(result.stdout).toContain("==> IMAGE_FAILED");
     expect(signatures(log)).toEqual([
       "status",
       "inspect",
@@ -384,12 +402,15 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       "rev-parse",
       `checkout refs/tags/${TAG}`,
       "rev-parse",
-      "build",
+      "pull",
+      "inspect",
+      "pull",
+      "inspect",
       "rev-parse",
       "symbolic-ref",
       `checkout ${FROM}`,
     ]);
-    expect(gitShas(stubDir)).toEqual([TAG_COMMIT]);
+    expect(gitShas(stubDir)).toEqual([]); // 拉失败：从未记录任何已拉取的 sha
   });
 
   it("rolls back when the new container never reports the target commit", async () => {
@@ -402,10 +423,10 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     expect(result.stdout).not.toContain("ROLLBACK_FAILED");
     const steps = signatures(log);
     expect(steps.filter((step) => step === "cat_commit")).toHaveLength(91);
-    expect(steps.filter((step) => step === "build")).toHaveLength(2);
+    expect(steps.filter((step) => step === "pull")).toHaveLength(2);
     expect(steps.filter((step) => step === "up")).toHaveLength(2);
     for (const line of linesOf(log).filter((entry) => entry.includes(" up "))) {
-      expect(line).toMatch(/up -d --no-deps web$/);
+      expect(line).toMatch(/up -d --no-deps web worker$/);
     }
     expect(gitShas(stubDir)).toEqual([TAG_COMMIT, FROM]);
     expect(steps.filter((step) => step.startsWith("checkout "))).toEqual([
@@ -424,7 +445,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     const steps = signatures(log);
     expect(steps.filter((step) => step === "cat_commit")).toHaveLength(180);
     expect(steps.filter((step) => step === "health")).toHaveLength(0);
-    expect(steps.filter((step) => step === "build")).toHaveLength(2);
+    expect(steps.filter((step) => step === "pull")).toHaveLength(2);
     expect(gitShas(stubDir)).toEqual([TAG_COMMIT, FROM]);
     expect(steps).toContain(`checkout ${FROM}`);
   });
@@ -523,7 +544,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     }
   });
 
-  it("never takes the hold when the build fails", async () => {
+  it("never takes the hold when the image pull fails", async () => {
     const { stubDir, log, env } = setup();
     writeFileSync(join(stubDir, "fail-build"), "1");
     await run(env);
@@ -665,10 +686,12 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       "rev-parse",
       "symbolic-ref",
       `checkout ${FROM}`,
+      "git describe --tags --exact-match " + FROM,
       "hold",
       "hold",
       "wget",
-      "build",
+      "pull",
+      "inspect",
       "hold",
       "hold",
       "wget",
@@ -742,7 +765,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     writeFileSync(join(stubDir, "branch-during-build"), "");
     const result = await run(env);
     expect(result.code).toBe(10);
-    expect(result.stdout).toContain("==> BUILD_FAILED");
+    expect(result.stdout).toContain("==> IMAGE_FAILED");
     expect(result.stdout).toContain("==> FOLDER_CHANGED");
     expect(signatures(log)).not.toContain(`checkout ${FROM}`);
   });
@@ -870,9 +893,9 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     const result = await runArgs(env, ["rollback", FROM, TAG_COMMIT]);
     expect(result.code).toBe(10);
     const steps = signatures(log);
-    const afterBuild = steps.slice(steps.indexOf("build") + 1, steps.indexOf("up"));
-    expect(afterBuild[0]).toBe("hold"); // pause taken again right after the build
-    expect(afterBuild.filter((step) => step === "wget")).toHaveLength(2); // busy, then idle
+    const afterPull = steps.slice(steps.indexOf("pull") + 2, steps.indexOf("up"));
+    expect(afterPull[0]).toBe("hold"); // pause taken again right after the build
+    expect(afterPull.filter((step) => step === "wget")).toHaveLength(2); // busy, then idle
   });
 
   it("restore releases the pause even when its checkout fails, and stays pending", async () => {
@@ -952,7 +975,8 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     const result = await run(env);
     expect(result.code).toBe(0);
     const steps = signatures(log);
-    const waitSteps = steps.slice(steps.indexOf("build") + 1, steps.indexOf("up"));
+    // pull 之后紧跟一次镜像 revision 探测（inspect），等待序列从它之后算起。
+    const waitSteps = steps.slice(steps.indexOf("pull") + 2, steps.indexOf("up"));
     // One hold to take it, then one refresh before each of the four probes, then the
     // pre-swap HEAD check just before the swap.
     expect(waitSteps).toEqual(["hold", "hold", "wget", "hold", "wget", "hold", "wget", "hold", "wget", "rev-parse", "symbolic-ref"]);
@@ -974,7 +998,7 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
   });
 
   it("exits 50 when it stops before the swap and cannot check the old commit back out", async () => {
-    for (const setupCase of ["build", "hold"]) {
+    for (const setupCase of ["pull", "hold"]) {
       const { stubDir, env } = setup();
       writeFileSync(join(stubDir, setupCase === "build" ? "fail-build" : "fail-hold"), "1");
       writeFileSync(join(stubDir, "fail-checkout-from"), "1");
@@ -1058,15 +1082,15 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     expect(statSync(join(repo, "backups", gz)).mode & 0o077).toBe(0);
   });
 
-  it("treats a build that hangs as a failed build in update mode, and does not swap", async () => {
+  it("treats an image pull that hangs as a failed pull in update mode, and does not swap", async () => {
     const { stubDir, log, env } = setup();
-    writeFileSync(join(stubDir, "hang-build"), "1");
+    writeFileSync(join(stubDir, "hang-pull"), "1");
     const result = await run(env);
     expect(result.code).toBe(10);
-    expect(result.stdout).toContain("==> BUILD_FAILED");
+    expect(result.stdout).toContain("==> IMAGE_FAILED");
     const steps = signatures(log);
     expect(steps).not.toContain("up"); // never swapped
-    expect(steps).not.toContain("build"); // timeout stopped it before it ran
+    expect(steps).not.toContain("pull"); // timeout stopped it before it ran
     expect(steps.at(-1)).toBe(`checkout ${FROM}`); // back on the old commit
   });
 
