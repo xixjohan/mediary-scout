@@ -518,6 +518,31 @@ docker compose up -d
 
 web 与 worker 是**同一个镜像、不同启动命令**（worker 只 HTTP poke web），版本始终一致。
 
+### docker run 单容器（不用 compose）
+
+镜像默认就是单容器可用的：未设任何 `MEDIA_TRACK_*` 时用 demo 搜索源 + fake 存储，
+worker 在进程内跑（compose 才拆成独立容器），SQLite 落 `/app/data`。
+
+```bash
+docker run -d --name mediary-scout \
+  -p 3000:3000 \
+  -v mediary-data:/app/data \
+  ghcr.io/xixjohan/mediary-scout:v2026.10.22
+```
+
+打开 `http://<ip>:3000`，进设置页扫码连 115、填 LLM key，即可真实获取。
+`/app/data` 必须挂卷——SQLite 库和凭据密钥都在里面，不挂卷重建容器即丢。
+
+想把 worker 也拆成独立容器（与 compose 拓扑一致）时，web 加
+`-e MEDIA_TRACK_WORKER_MODE=external`，再起一个同镜像的 worker：
+
+```bash
+docker run -d --name mediary-worker \
+  -e MEDIA_TRACK_WEB_BASE=http://<web容器IP>:3000 \
+  ghcr.io/xixjohan/mediary-scout:v2026.10.22 \
+  node apps/host-worker/dist/main.js
+```
+
 注意：
 
 - **允许的域名在构建时烘进镜像**（`MEDIA_TRACK_ALLOWED_ORIGINS`）。发布前在仓库
