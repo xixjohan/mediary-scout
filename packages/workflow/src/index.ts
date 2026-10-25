@@ -15,8 +15,14 @@ export * from "./auth/password.js";
 export * from "./auth/session.js";
 export * from "./repository.js";
 export * from "./resource-source-health.js";
-export * from "./postgres.js";
-export { SqliteWorkflowRepository, createSqliteWorkflowRepository } from "./sqlite.js";
+export { SqliteWorkflowRepository, createSqliteWorkflowRepository, isSecretSettingKey } from "./sqlite.js";
+export { SqliteJobQueue } from "./sqlite-queue.js";
+export {
+  SqliteJsonCache,
+  openSqliteJsonCache,
+  sqliteDbPathFromEnv,
+  DEFAULT_SQLITE_DB_PATH,
+} from "./sqlite-json-cache.js";
 export * from "./worker.js";
 export * from "./commands.js";
 export * from "./pansou-provider.js";

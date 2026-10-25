@@ -2,7 +2,7 @@ import { readBuildCommit } from "./deployment-update-server";
 import { fetchCommitRelation, fetchLatestDesktopRelease, fetchReleaseFeed } from "./release-feed-server";
 import { buildUpdateView, desktopDownload, desktopFeed, desktopView, type UpdateView } from "./update-state";
 import { getUpdaterStatus, isUpdaterInstalled, servingRepoCommit } from "./updater-client";
-import { resolveIsDesktop } from "./workflow-runtime";
+import { resolveIsDesktop } from "./desktop-flag";
 
 /** Shared by the 「更新」 tab, 「立即更新」, the daily auto-update and the settings badge.
  *  The badge polls every 8 s per open tab, so it passes `{ updaterStatus: false }` to skip the updater call.

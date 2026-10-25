@@ -1,0 +1,104 @@
+[
+  {
+    "type": "cycle",
+    "from": "packages/workflow/src/acquisition-v2/task-agents.ts",
+    "to": "packages/workflow/src/acquisition-v2/user-request-block.ts",
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/workflow/src/acquisition-v2/user-request-block.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "packages/workflow/src/acquisition-v2/task-agents.ts",
+        "dependencyTypes": [
+          "local",
+          "type-only",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/workflow/src/pan115-cookie-client.ts",
+    "to": "packages/workflow/src/storage-115-executor.ts",
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/workflow/src/storage-115-executor.ts",
+        "dependencyTypes": [
+          "local",
+          "type-only",
+          "import"
+        ]
+      },
+      {
+        "name": "packages/workflow/src/pan115-cookie-client.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "packages/workflow/src/replace-request.ts",
+    "to": "packages/workflow/src/worker.ts",
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "packages/workflow/src/worker.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "packages/workflow/src/replace-request.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  },
+  {
+    "type": "cycle",
+    "from": "workers/scout-connect/src/instance-link.ts",
+    "to": "workers/scout-connect/src/routes.ts",
+    "rule": {
+      "severity": "error",
+      "name": "no-circular"
+    },
+    "cycle": [
+      {
+        "name": "workers/scout-connect/src/routes.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      },
+      {
+        "name": "workers/scout-connect/src/instance-link.ts",
+        "dependencyTypes": [
+          "local",
+          "import"
+        ]
+      }
+    ]
+  }
+]

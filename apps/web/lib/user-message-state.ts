@@ -6,7 +6,7 @@
  * docs/superpowers/design/2026-09-26-user-message-mockup.html.
  */
 // The narrow subpath, NOT the root barrel: client components import this module, and
-// the barrel `export *`s ./postgres.js (pg) — see request-track-button.tsx. user-requests
+// the barrel is server-heavy (sqlite/worker) — see request-track-button.tsx. user-requests
 // has no imports at all, so nothing can carry pg in.
 import type { PendingReplacement, UserMessage, UserMessageReply } from "@media-track/workflow/user-requests";
 import { relativeDayLabel } from "./relative-day";

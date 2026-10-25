@@ -8,6 +8,7 @@
  * in env/protected-wrapper concerns the brand-identity registry must stay free of.
  */
 import { GuangYaClient } from "./guangya-client.js";
+import { withBrandPacing } from "./brand-pacing.js";
 import type { GuangYaClientOptions } from "./guangya-client.js";
 import { GuangYaStorageExecutor } from "./guangya-storage-executor.js";
 import { createProtectedPan115CookieStorageExecutorFromEnv } from "./pan115-storage-factory.js";
@@ -48,7 +49,12 @@ export function createExecutorForBrand(input: {
   }
   if (input.provider === "quark") {
     return new QuarkStorageExecutor({
-      client: new QuarkCookieClient({ cookie: input.cookie ?? "" }),
+      // P13：夸克 client 过令牌桶限速（3/s burst 5，治理文档参数）——此前完全
+      // 无 pacing，是封号风险的真实缺口（115 早有 1.2s 漏桶）。
+      client: withBrandPacing(new QuarkCookieClient({ cookie: input.cookie ?? "" }), "quark", {
+        clock: () => Date.now(),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      }),
       writeScopeDirectoryIds: input.scopeCids,
     });
   }

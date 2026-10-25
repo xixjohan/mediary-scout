@@ -15,6 +15,16 @@ venv/
 *.db
 *.sqlite
 *.sqlite3
+# Playwright E2E 产物（S4.3）
+e2e-run/
+test-results/
+playwright-report/
+
+# SQLite WAL 侧车文件（默认 data/mediary.db 运行时的 -wal/-shm）
+*.db-wal
+*.db-shm
+# 凭据加密密钥（与数据库同目录；绝不入库，备份时须与库一起拷贝）
+credential.key
 
 node_modules/
 dist/
@@ -62,7 +72,7 @@ docs/images/devto-cover.*
 # 根目录截图残留（agent 浏览器会话产物，不该入库）
 /*.png
 
-# Database dumps from ./scripts/pg-backup.sh and the updater (backups/pre-update-*.sql.gz).
+# Database backups from ./scripts/sqlite-backup.sh and the updater (backups/pre-update-*.db.gz).
 /backups/
 
 # The updater/deploy shared lock file (scripts/deploy.sh + updater/run-update.sh).

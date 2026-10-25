@@ -68,6 +68,8 @@ COPY . .
 # allowedOrigins is baked here — change it ⇒ rebuild (docker compose up -d --build).
 ENV MEDIA_TRACK_ALLOWED_ORIGINS=${MEDIA_TRACK_ALLOWED_ORIGINS}
 RUN npm run build:web
+# 独立 Worker 宿主（任务单 S2.1）：与 web 同镜像、独立进程，零依赖极简 poker。
+RUN npm run build:worker
 
 # runner 阶段要重新声明:ARG 的作用域在 FROM 处结束。
 # 漏了它 ${DOCKER_MIRROR} 会展开成空串 → 这一层悄悄回落到 Docker Hub,
@@ -88,9 +90,12 @@ COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder /app/apps/web/public ./apps/web/public
 # Admin CLI escape hatch (forgot-password). standalone ships no scripts/ — copy it
 # in so `docker compose exec web node scripts/reset-password.mjs <user>` works. The
-# script is self-contained (raw pg + scrypt), so it needs no workflow dist (which
-# standalone bundles into .next and doesn't expose as a module).
+# script is self-contained (raw better-sqlite3 + scrypt — the same native module the
+# standalone web process opens /app/data/mediary.db with), so it needs no workflow
+# dist (which standalone bundles into .next and doesn't expose as a module).
 COPY --from=builder /app/scripts/reset-password.mjs ./scripts/reset-password.mjs
+# 独立 Worker 宿主的编译产物（worker 服务用它覆盖 CMD）。
+COPY --from=builder /app/apps/host-worker/dist ./apps/host-worker/dist
 # Records the git commit this image was built from. `docker compose exec web cat
 # BUILD_COMMIT` tells you exactly which code the running container serves — the host's
 # `git rev-parse HEAD` does NOT (a stale image can outlive a pulled HEAD). scripts/deploy.sh

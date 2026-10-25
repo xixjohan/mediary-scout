@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useRef, useState, type JSX, type KeyboardEvent } from "react";
 import { CalendarClock, CheckCircle2, Clock3, LoaderCircle, Search, TriangleAlert, X } from "lucide-react";
 // Client components must take the /scope subpath, not the barrel — the barrel
-// drags pg/postgres into the client bundle (see request-state.tsx).
+// drags server-only code into the client bundle (see request-state.tsx).
 import { showHref } from "@media-track/workflow/scope";
 import type { InProgressTitle, LibraryWallEntry } from "../lib/title-hub";
 

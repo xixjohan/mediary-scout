@@ -1,0 +1,6 @@
+{
+  "name": "@media-track/host-worker",
+  "private": true,
+  "type": "module",
+  "description": "独立 Worker 宿主：HTTP poke web 的两个工作路由，常驻循环不经过 Next 进程"
+}

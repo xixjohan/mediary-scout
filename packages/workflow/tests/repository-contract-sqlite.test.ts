@@ -18,7 +18,7 @@ runRepositoryContract("SQLite", {
 });
 
 // SQLite-specific: the shared contract can't assert nextAttemptAt gating because the
-// InMemory oracle intentionally does NOT gate (pure FIFO), while Postgres AND SQLite do
+// InMemory oracle intentionally does NOT gate (pure FIFO), while the DBs do
 // (via claimableQueuedRuns). This locks the PRODUCTION engine's gate directly — and, more
 // SQLite-specifically, proves nextAttemptAt survives the JSON *text* payload round-trip so
 // the gate can actually see it.
@@ -61,7 +61,7 @@ describe("SQLite claim honors nextAttemptAt backoff gate", () => {
 // (ON CONFLICT DO NOTHING), so a re-appended ordinal is a no-op. The InMemory oracle
 // intentionally just pushes (no dedup), so this invariant can't live in the shared
 // contract — it's asserted directly against the PRODUCTION engine here (mirrors
-// agent-steps.pg for Postgres).
+// agent-steps trace).
 describe("SQLite appendAgentStep is idempotent on (run, ordinal)", () => {
   const step = (ordinal: number, toolName: string) => ({
     ordinal,
@@ -94,7 +94,7 @@ describe("SQLite appendAgentStep is idempotent on (run, ordinal)", () => {
 // SQLite-specific: backfillConnectedStorageId. This is a genuine engine divergence, so
 // it can't live in the shared contract (see the note there). A null-storage persist
 // collapses to the UNSCOPED_STORAGE sentinel; SQLite's backfill targets that sentinel
-// and actively pins the row to the account's primary drive (Postgres targets literal
+// and actively pins the row to the account's primary drive (targets literal
 // NULL and is dead code post-persist). This locks the PRODUCTION (desktop) engine.
 describe("SQLite backfillConnectedStorageId pins sentinel rows to the primary drive", () => {
   it("pins a storage-less row (and its episodes) to the account's earliest drive, idempotently", async () => {

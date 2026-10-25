@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // #15 live verification: prove the dead-link loop against REAL PanSou + REAL 115
-// test root + REAL Postgres (dev DB). Two halves:
+// test root + REAL SQLite (dev DB). Two halves:
 //   (a) FILTER: record a real candidate's key as dead → search again → it's gone
 //       from the agent's view.
 //   (b) RECORD-ON-FAILURE: transfer the malformed magnet (fail-loud 错误的链接 from
@@ -10,40 +10,22 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { loadDotEnv, appDbPath, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-function loadDotEnv(p) {
-  let raw;
-  try {
-    raw = readFileSync(p, "utf8");
-  } catch {
-    return;
-  }
-  for (const line of raw.split("\n")) {
-    const t = line.trim();
-    if (!t || t.startsWith("#")) continue;
-    const eq = t.indexOf("=");
-    if (eq === -1) continue;
-    const k = t.slice(0, eq).trim();
-    let v = t.slice(eq + 1).trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    if (process.env[k] === undefined) process.env[k] = v;
-  }
-}
-loadDotEnv(path.join(repoRoot, ".env"));
+loadDotEnv();
 
 const {
   createPanSouResourceProviderFromEnv,
   createProtectedPan115CookieStorageExecutorFromEnv,
-  createPostgresWorkflowRepositorySync,
+  createSqliteWorkflowRepository,
   CandidateRegistry,
   RealResourceProviderV2,
   RealStorageV2,
   deadLinkKey,
 } = await import(path.join(repoRoot, "packages/workflow/dist/index.js"));
 
-const POSTGRES = process.env.MEDIA_TRACK_POSTGRES_URL || "postgresql://mediatrack:mediatrack@localhost:5432/media_track";
-const repo = createPostgresWorkflowRepositorySync({ connectionString: POSTGRES });
+const repo = createSqliteWorkflowRepository({ path: appDbPath() });
 const provider = createPanSouResourceProviderFromEnv();
 const executor = createProtectedPan115CookieStorageExecutorFromEnv({ env: process.env });
 const testRoot = process.env.MEDIA_TRACK_115_TEST_ROOT_CID;
@@ -108,14 +90,12 @@ try {
 } finally {
   // Cleanup: never leave a real resource permanently filtered in the dev DB.
   console.log("\n=== cleanup ===");
-  const { Client } = await import("pg");
-  const c = new Client(POSTGRES);
-  await c.connect();
+  const db = openAppDb();
   for (const key of recordedForCleanup) {
-    const r = await c.query("delete from dead_links where key=$1", [key]);
-    console.log(`  removed dead_link ${JSON.stringify(key)} (${r.rowCount} row)`);
+    const r = db.prepare("DELETE FROM dead_links WHERE key = ?").run(key);
+    console.log(`  removed dead_link ${JSON.stringify(key)} (${r.changes} row)`);
   }
-  await c.end();
+  db.close();
   if (stagingDir) {
     try {
       await executor.removeDirectory(stagingDir);

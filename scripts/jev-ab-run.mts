@@ -4,7 +4,7 @@
 // Runs from the operator's machine and drives an ISOLATED compose project on the home
 // router over short ssh calls (the CF tunnel kills long sessions, so every step is one
 // fresh `ssh <host> '<cmd>'`). Nothing here touches the production stack: the isolated
-// project has its own Postgres, its own web container, and a 115 drive row whose CIDs
+// project has its own SQLite DB, its own web container, and a 115 drive row whose CIDs
 // point at scratch folders — the storage executor's write scope is derived from those
 // CIDs, so the run cannot write anywhere else. The harness holds up its end: --project
 // must be a plain compose project name and never the production one (mediary-scout), and
@@ -186,7 +186,13 @@ if (!DRY) {
   }
 }
 
-const PG = `docker exec -e PGPASSWORD=mediatrack ${PROJECT}-postgres-1 psql -U mediatrack -d mediatrack -tA`;
+// 纯 SQLite 单引擎（任务单 S1.4b）：昔日这里在项目的 postgres 容器里跑 psql。
+// 数据库现在是 web 容器中的一个文件——同一条语句改走容器内的 better-sqlite3。
+// SQL 用 base64 经环境变量传递（任何引号都不可能破坏命令），输出按 psql -tA 的
+// 习惯打成 TSV（每行一条记录，制表符分隔）。
+const PG_RUNNER =
+  "node -e \"const D=require('better-sqlite3');const d=new D(process.env.MEDIA_TRACK_SQLITE_PATH||'/app/data/mediary.db');const sql=Buffer.from(process.env.AB_SQL,'base64').toString('utf8');for(const r of d.prepare(sql).all()){console.log(Object.values(r).map(v=>v===null?'':String(v)).join('\\t'))}\"";
+const PG = `${PROJECT}-web-1`;
 const WEB = `${PROJECT}-web-1`;
 
 /** One short ssh call. Output trimmed. Throws on non-zero exit. Transient transport
@@ -217,7 +223,8 @@ function ssh(remote: string): string {
   throw lastError;
 }
 const sq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
-const psql = (sql: string) => ssh(`${PG} -c ${sq(sql)}`);
+const psql = (sql: string) =>
+  ssh(`docker exec -e AB_SQL=${Buffer.from(sql, "utf8").toString("base64")} ${PG} ${PG_RUNNER}`);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A failed preflight: the arguments were fine, the target is not usable. Nothing ran. */
@@ -265,7 +272,7 @@ function routerNow(): string {
 async function waitForIdle(): Promise<void> {
   const deadline = Date.now() + TIMEOUT_MIN * 60_000;
   while (Date.now() < deadline) {
-    const busy = psql("SELECT count(*) FROM workflow_runs WHERE payload->>'status' IN ('queued','running')");
+    const busy = psql("SELECT count(*) FROM workflow_runs WHERE json_extract(payload,'$.status') IN ('queued','running')");
     if (DRY || busy === "0") return;
     console.log(`    waiting for ${busy} in-flight run(s) to finish before resetting…`);
     await sleep(20_000);
@@ -274,10 +281,10 @@ async function waitForIdle(): Promise<void> {
 }
 
 function resetTracking(): void {
-  // Everything that describes a title or a run. Accounts, settings, drive rows, sessions stay.
-  psql(
-    "TRUNCATE media_titles, tracked_seasons, episode_states, workflow_runs, resource_snapshots, agent_decisions, agent_steps, transfer_attempts, notifications, dead_links",
-  );
+  // SQLite 没有 TRUNCATE；逐表 DELETE（无外键，顺序无关）。
+  for (const t of ["media_titles", "tracked_seasons", "episode_states", "workflow_runs", "resource_snapshots", "agent_decisions", "agent_steps", "transfer_attempts", "notifications", "dead_links"]) {
+    psql(`DELETE FROM ${t}`);
+  }
 }
 
 function pointDriveAt(arm: Arm): void {
@@ -314,7 +321,7 @@ async function waitForRun(runId: string): Promise<string> {
   const deadline = Date.now() + TIMEOUT_MIN * 60_000;
   let last = "";
   while (Date.now() < deadline) {
-    const status = psql(`SELECT payload->>'status' FROM workflow_runs WHERE id='${runId}'`);
+    const status = psql(`SELECT json_extract(payload,'$.status') FROM workflow_runs WHERE id='${runId}'`);
     if (DRY) return "dry";
     if (status !== last) { process.stdout.write(`    ${new Date().toISOString().slice(11, 19)} ${runId.slice(0, 8)} ${status}\n`); last = status; }
     if (status && status !== "queued" && status !== "running") return status;
@@ -324,24 +331,24 @@ async function waitForRun(runId: string): Promise<string> {
 }
 
 function collect(runId: string, tmdbId: number, window: { since: string; until: string }): RunFacts {
-  const status = psql(`SELECT payload->>'status' FROM workflow_runs WHERE id='${runId}'`);
+  const status = psql(`SELECT json_extract(payload,'$.status') FROM workflow_runs WHERE id='${runId}'`);
   const steps = Number(psql(`SELECT count(*) FROM agent_steps WHERE workflow_run_id='${runId}'`) || 0);
-  const searches = Number(psql(`SELECT count(*) FROM agent_steps WHERE workflow_run_id='${runId}' AND payload->>'toolName'='searchResources'`) || 0);
+  const searches = Number(psql(`SELECT count(*) FROM agent_steps WHERE workflow_run_id='${runId}' AND json_extract(payload,'$.toolName')='searchResources'`) || 0);
   const transfers = Number(psql(`SELECT count(*) FROM transfer_attempts WHERE workflow_run_id='${runId}'`) || 0);
-  const durationS = Number(psql(`SELECT round(extract(epoch from ((payload->>'finishedAt')::timestamptz-(payload->>'startedAt')::timestamptz))) FROM workflow_runs WHERE id='${runId}'`) || 0);
+  const durationS = Number(psql(`SELECT round((julianday(json_extract(payload,'$.finishedAt'))-julianday(json_extract(payload,'$.startedAt')))*86400) FROM workflow_runs WHERE id='${runId}'`) || 0);
   const obtainedRaw = psql(
-    `SELECT string_agg(es.episode_code, ',' ORDER BY es.episode_code) FROM episode_states es JOIN tracked_seasons ts ON ts.id=es.tracked_season_id JOIN media_titles mt ON mt.id=ts.media_title_id WHERE (mt.payload->>'tmdbId')='${tmdbId}' AND (es.payload->>'obtained')::boolean`,
+    `SELECT group_concat(es.episode_code, ',' ORDER BY es.episode_code) FROM episode_states es JOIN tracked_seasons ts ON ts.id=es.tracked_season_id JOIN media_titles mt ON mt.id=ts.media_title_id WHERE json_extract(mt.payload,'$.tmdbId')='${tmdbId}' AND json_extract(es.payload,'$.obtained')=1`,
   );
   const obtained = obtainedRaw ? obtainedRaw.split(",").filter(Boolean) : [];
   // One token per search: status:dropped/floored/total (or '-' when no prefilter ran).
   const prefilter = psql(
-    `SELECT coalesce(string_agg(coalesce(payload->'prefilter'->>'status','none')||':'||coalesce(jsonb_array_length(payload->'prefilter'->'dropped'),0)||'/'||coalesce(jsonb_array_length(payload->'prefilter'->'floored'),0)||'/'||jsonb_array_length(payload->'candidates'), ' ' ORDER BY ordinal),'-') FROM resource_snapshots WHERE workflow_run_id='${runId}'`,
+    `SELECT coalesce(group_concat(coalesce(json_extract(payload,'$.prefilter.status'),'none')||':'||coalesce(json_array_length(json_extract(payload,'$.prefilter.dropped')),0)||'/'||coalesce(json_array_length(json_extract(payload,'$.prefilter.floored')),0)||'/'||json_array_length(json_extract(payload,'$.candidates')), ' ' ORDER BY ordinal),'-') FROM resource_snapshots WHERE workflow_run_id='${runId}'`,
   );
-  const jevCalls = Number(psql(`SELECT count(*) FROM resource_snapshots WHERE workflow_run_id='${runId}' AND payload->'prefilter'->>'status'='applied'`) || 0);
-  const prefiltered = Number(psql(`SELECT count(*) FROM resource_snapshots WHERE workflow_run_id='${runId}' AND payload->'prefilter' IS NOT NULL`) || 0);
+  const jevCalls = Number(psql(`SELECT count(*) FROM resource_snapshots WHERE workflow_run_id='${runId}' AND json_extract(payload,'$.prefilter.status')='applied'`) || 0);
+  const prefiltered = Number(psql(`SELECT count(*) FROM resource_snapshots WHERE workflow_run_id='${runId}' AND json_extract(payload,'$.prefilter') IS NOT NULL`) || 0);
   const jevDegraded = Number(
     psql(
-      `SELECT count(*) FROM resource_snapshots WHERE workflow_run_id='${runId}' AND (payload->'prefilter'->>'status'='failed' OR coalesce((payload->'prefilter'->>'failedChunks')::int,0)>0)`,
+      `SELECT count(*) FROM resource_snapshots WHERE workflow_run_id='${runId}' AND (json_extract(payload,'$.prefilter.status')='failed' OR coalesce(cast(json_extract(payload,'$.prefilter.failedChunks') AS integer),0)>0)`,
     ) || 0,
   );
   const logs = (filter: string) => ssh(`docker logs --since ${sq(window.since)} --until ${sq(window.until)} ${WEB} 2>&1 | ${filter}`);

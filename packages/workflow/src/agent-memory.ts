@@ -146,7 +146,7 @@ export function validateMemoryInput(input: AgentMemoryWrite): string | null {
 }
 
 /** The flat row shape both SQL engines store (text columns, `title_key` '' for global
- *  so the unique index works without NULL semantics). Shared so SQLite and Postgres
+ *  so the unique index works without NULL semantics). Shared so the schema is
  *  cannot drift in how a row maps back to AgentMemory. */
 export interface AgentMemoryRow {
   id: string;

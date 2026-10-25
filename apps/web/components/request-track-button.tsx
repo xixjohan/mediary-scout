@@ -6,7 +6,7 @@ import { useRouter } from "../lib/use-router";
 import { requestTrackingAction, type RequestTrackingActionResult } from "../app/actions";
 import { runAction } from "../lib/run-action";
 // Import the type from the narrow subpath, NOT the root barrel: the barrel
-// `export *`s ./postgres.js (pg), and Turbopack intermittently fails to erase a
+// is server-heavy, and Turbopack intermittently fails to erase a
 // type-only barrel import, dragging pg into THIS client bundle → "pg in Client
 // Component Browser" build failures. The /search-view subpath pulls only pg-free
 // leaf modules (domain, workflow-scope), so the type can never carry pg in.

@@ -9,22 +9,17 @@
 
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import pg from "pg";
-import { loadDotEnv } from "./_lib/pan115-cookie.mjs";
+import { loadDotEnv, appDbPath, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv.includes("--clean") ? "clean" : "seed";
 
-// The web app reads OrbStack Postgres now; the SQLite dev DB has been retired.
-// This seeder writes to the SAME Postgres the notifications UI renders from.
+// Pure-SQLite single engine (task S1.4b): the web app reads this same file, so
+// the seeder writes to the DB the notifications UI renders from.
 loadDotEnv();
-const connectionString = process.env.MEDIA_TRACK_POSTGRES_URL?.trim();
-if (!connectionString) {
-  throw new Error("MEDIA_TRACK_POSTGRES_URL is required (the SQLite dev DB has been retired)");
-}
 
 const {
-  createPostgresWorkflowRepositorySync,
+  createSqliteWorkflowRepository,
   createEpisodeStates,
   episodeCode,
   buildSeasonReport,
@@ -33,7 +28,7 @@ const {
   formatReportPushText,
 } = await import(path.join(repoRoot, "packages/workflow/dist/index.js"));
 
-const repository = createPostgresWorkflowRepositorySync({ connectionString });
+const repository = createSqliteWorkflowRepository({ path: appDbPath() });
 
 const PREFIX = "preview_demo_";
 
@@ -104,12 +99,11 @@ async function save({ runId, t, s, eps, kind, trigger, report, createdAt }) {
 }
 
 async function clean() {
-  // Trigger lazy schema init so the DELETEs don't error on a fresh DB. The PG
-  // schema has no FK constraints, so deletion order is irrelevant. The 115 cookie
+  // Trigger lazy schema init so the DELETEs don't error on a fresh DB. The schema
+  // has no FK constraints, so deletion order is irrelevant. The 115 cookie
   // lives in app_settings, which is never touched here.
   await repository.listNotifications({ limit: 1 });
-  const client = new pg.Client({ connectionString });
-  await client.connect();
+  const db = openAppDb();
   try {
     const tables = [
       ["notifications", "workflow_run_id"],
@@ -122,10 +116,10 @@ async function clean() {
       ["media_titles", "id"],
     ];
     for (const [table, column] of tables) {
-      await client.query(`DELETE FROM ${table} WHERE ${column} LIKE $1`, [`${PREFIX}%`]);
+      db.prepare(`DELETE FROM ${table} WHERE ${column} LIKE ?`).run(`${PREFIX}%`);
     }
   } finally {
-    await client.end();
+    db.close();
   }
   console.log("cleaned preview_demo_ rows");
 }

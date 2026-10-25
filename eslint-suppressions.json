@@ -1,0 +1,399 @@
+{
+  "apps/web/app/actions.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/app/connect-actions.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/app/login/page.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/app/notifications/page.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/app/page.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/app/settings/page.tsx": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/app/show/[tmdbId]/page.tsx": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/components/library-quick-find.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/components/pan115-qr-connect.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/components/pan123-qr-connect.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/components/request-track-button.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/components/season-request-menu.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/components/settings/connect-wizard.tsx": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/components/settings/remote-access-section.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/components/settings/update-section.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/components/tianyi-qr-connect.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/components/title-action-buttons.tsx": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "apps/web/components/user-message-thread.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/agent-api/config-io.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/connect-client.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "apps/web/lib/guangya-token-paste.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/jev-probe.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/settings-attention-server.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/tianyi-qr-session.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/title-hub.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/update-state.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/update-view-server.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/updater-client.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/workflow-runtime.ts": {
+    "complexity": {
+      "count": 5
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/activity.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/agent-loop-guards.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/agent-loop.ts": {
+    "complexity": {
+      "count": 3
+    }
+  },
+  "packages/workflow/src/acquisition-v2/directory-lifecycle.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/orchestrator.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/real-storage-adapter.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/run-tv-v2.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/sandbox.ts": {
+    "complexity": {
+      "count": 8
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/task-agents.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/workflow-v2-bridge.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/acquisition-v2/workflow-v2.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/agent-model.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/fallback-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/guangya-storage-executor.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/jev-client.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/jev-prefilter-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/media-title-parser.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/movie-workflow-v2.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "packages/workflow/src/natural-language-search.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/notification-report.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "packages/workflow/src/notify.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
+  "packages/workflow/src/pan123-client.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/pan123-storage-executor.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/replace-request.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/repository.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/runner-v2.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/sqlite.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/staging-janitor.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/storage-115-executor.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/storage-executor-factory.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/subtitle-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/tmdb-provider.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/worker.ts": {
+    "complexity": {
+      "count": 8
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/tests/repository-contract.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/db.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/expiry-sweep.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/html/home-page.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/instance-link.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/provision.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/restore.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/routes.ts": {
+    "complexity": {
+      "count": 5
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "workers/tmdb-proxy/src/handler.ts": {
+    "complexity": {
+      "count": 1
+    }
+  }
+}

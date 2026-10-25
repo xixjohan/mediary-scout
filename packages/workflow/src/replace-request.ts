@@ -388,7 +388,7 @@ export async function runQueuedReplaceRequest(
       // itself fails does the queue-time copy stand in (never wipe a real library).
       //
       // "No longer tracked" still saves the season (with no episodes): the repository port
-      // has no status-only run write, and a run row without its season is worse — Postgres
+      // has no status-only run write, and a run row without its season is worse — the DB
       // and SQLite load a run through its tracked_seasons row (loading it throws; SQLite's
       // tracked list, built from run rows, throws too), and InMemory derives tracking from
       // the run records themselves. It does not happen to a claimed run in practice:

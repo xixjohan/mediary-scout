@@ -23,13 +23,17 @@
     }
   },
   "dependencies": {
-    "pg": "^8.21.0"
+    "@media-track/contracts": "*",
+    "@media-track/shared": "*",
+    "anitomy": "^0.0.35",
+    "kysely": "^0.29.7",
+    "parse-torrent-title": "^3.0.1",
+    "xstate": "^5.33.3"
   },
   "optionalDependencies": {
     "better-sqlite3": "^12.11.1"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.13",
-    "@types/pg": "^8.20.0"
+    "@types/better-sqlite3": "^7.6.13"
   }
 }

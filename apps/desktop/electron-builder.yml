@@ -50,8 +50,9 @@ extraResources:
 # DISABLED in this hoisted monorepo: electron-builder's install/rebuild step runs
 # `npm install --omit=dev` in apps/desktop, which prunes the ROOT node_modules'
 # dev deps — deleting electron-builder itself mid-build. The main process never
-# loads better-sqlite3 (the server child uses the standalone bundle's copy, which
-# README step 3 rebuilds explicitly), so skipping this is safe.
+# loads better-sqlite3; the server child's copy (in the standalone bundle) is
+# swapped to the Electron ABI + verified by the afterPack hook (after-pack.js),
+# which is the authoritative step — skipping npmRebuild is safe.
 npmRebuild: false
 
 mac:

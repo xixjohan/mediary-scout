@@ -342,7 +342,7 @@ export function pendingReplacementFromRow(row: PendingReplacementRow): PendingRe
   };
 }
 
-/** Row shape of rejected_resources. size_bytes is bigint in Postgres (pg returns
+/** Row shape of rejected_resources. size_bytes is bigint (the driver returns
  *  it as a string) and integer in SQLite. */
 export interface RejectedResourceRow {
   id: string;

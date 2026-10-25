@@ -13,25 +13,17 @@
 // physical 115 account → user-driven.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import pg from "pg";
+import { loadDotEnv, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-for (const line of readFileSync(path.join(repoRoot, ".env"), "utf8").split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  let v = t.slice(eq + 1).trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  process.env[k] ??= v;
-}
+loadDotEnv();
 
 const mode = process.argv[2] === "multi" ? "multi" : "single";
 const rt = await import(path.join(repoRoot, "apps/web/lib/workflow-runtime.ts"));
 const wf = await import("@media-track/workflow");
 const repo = rt.getWorkflowRepository();
-const pool = new pg.Pool({ connectionString: process.env.MEDIA_TRACK_POSTGRES_URL! });
+// Pure-SQLite single engine (task S1.4b): raw row cleanup via the app's DB file.
+const raw = () => openAppDb();
 
 async function tmdbId(kind: "movie", query: string): Promise<number> {
   const url = `https://api.themoviedb.org/3/search/${kind}?query=${encodeURIComponent(query)}&language=zh-CN`;
@@ -43,14 +35,19 @@ async function tmdbId(kind: "movie", query: string): Promise<number> {
 }
 
 /** Wipe any prior tracking for a movie title so the run is always a fresh queue. */
-async function cleanupTitle(titleId: string) {
-  await pool.query("DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))", [titleId]);
-  await pool.query("DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))", [titleId]);
-  await pool.query("DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))", [titleId]);
-  await pool.query("DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))", [titleId]);
-  await pool.query("DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)", [titleId]);
-  await pool.query("DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)", [titleId]);
-  await pool.query("DELETE FROM tracked_seasons WHERE media_title_id=$1", [titleId]);
+function cleanupTitle(titleId: string) {
+  const db = raw();
+  try {
+    db.prepare("DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))").run(titleId);
+    db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))").run(titleId);
+    db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))").run(titleId);
+    db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))").run(titleId);
+    db.prepare("DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)").run(titleId);
+    db.prepare("DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)").run(titleId);
+    db.prepare("DELETE FROM tracked_seasons WHERE media_title_id = ?").run(titleId);
+  } finally {
+    db.close();
+  }
 }
 
 async function driveUntilTerminal(runId: string, accountId: string, label: string) {
@@ -72,7 +69,7 @@ if (mode === "single") {
   console.log("=== SINGLE-USER real acquisition (acct_default) ===");
   const id = await tmdbId("movie", "流浪地球2");
   const titleId = `tmdb_movie_${id}`;
-  await cleanupTitle(titleId);
+  cleanupTitle(titleId);
   const res = await rt.queueCandidateTracking(`tmdb_movie_${id}`);
   console.log("queued →", res);
   ok("queued under default account", res.status === "queued" && !!res.workflowRunId);
@@ -94,8 +91,10 @@ if (mode === "single") {
   ok(`acct_default owns the only physical 115 (uid ${realUid})`, ownerConn?.accountId === "acct_default");
 
   // fresh bob
-  await pool.query("DELETE FROM connected_storages WHERE account_id=$1", [bobId]);
-  await pool.query("DELETE FROM accounts WHERE id=$1", [bobId]);
+  const dbBob = raw();
+  dbBob.prepare("DELETE FROM connected_storages WHERE account_id = ?").run(bobId);
+  dbBob.prepare("DELETE FROM accounts WHERE id = ?").run(bobId);
+  dbBob.close();
   await repo.createAccount({ id: bobId, username: "bob_e2e", passwordHash: "", groupId: null, isOwner: false, createdAt: new Date().toISOString() });
 
   // INVARIANT 1 — binding decision REJECTS bob binding the same physical 115.
@@ -115,11 +114,13 @@ if (mode === "single") {
   console.log("invariant + ownership backstop are verified here; data isolation by");
   console.log("verify-multi-user-flow.mjs; per-account credential RESOLUTION by worker.test.");
 
-  await pool.query("DELETE FROM connected_storages WHERE account_id=$1", [bobId]);
-  await pool.query("DELETE FROM accounts WHERE id=$1", [bobId]);
+  const dbBob2 = raw();
+  dbBob2.prepare("DELETE FROM connected_storages WHERE account_id = ?").run(bobId);
+  dbBob2.prepare("DELETE FROM accounts WHERE id = ?").run(bobId);
+  dbBob2.close();
   console.log("(bob cleaned up)");
 }
 
-await pool.end();
+await repo.close?.();
 console.log(failed === 0 ? `\n${mode.toUpperCase()} E2E PASSED` : `\n${failed} CHECKS FAILED`);
 process.exit(failed === 0 ? 0 : 1);

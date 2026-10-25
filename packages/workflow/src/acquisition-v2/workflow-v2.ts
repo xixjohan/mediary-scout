@@ -21,6 +21,7 @@ import type { AgentToolEvent } from "./activity.js";
 import { runAcquisitionV2, type AcquisitionV2Outcome, type RunAcquisitionV2Request, type RunAcquisitionV2Result } from "./orchestrator.js";
 import type { JevJudge } from "../jev-judge.js";
 import { syncSeasonNeed } from "./sync-need.js";
+import { RunStateMachine, type Compensation, type RunState } from "./run-state-machine.js";
 import type { SearchProfile } from "./search-profile.js";
 
 /**
@@ -90,6 +91,10 @@ export interface RunAcquisitionV2WorkflowRequest {
 
 export interface RunAcquisitionV2WorkflowResult {
   directories: AcquisitionDirectories;
+  /** 终态生命周期（任务单 S3.2）。失败路径走抛错，终态记进日志。 */
+  runState?: RunState;
+  /** 本 run 登记且已执行的补偿清单（暂存销毁等；失败路径见日志）。 */
+  compensations?: readonly Compensation[];
   /** The missing set computed before the agent ran. */
   missingBefore: string[];
   outcome: AcquisitionV2Outcome;
@@ -112,6 +117,12 @@ const EMPTY_OUTCOME: AcquisitionV2Outcome = { resourceSnapshots: [], decisions: 
 export async function runAcquisitionV2Workflow(
   request: RunAcquisitionV2WorkflowRequest,
 ): Promise<RunAcquisitionV2WorkflowResult> {
+  // 任务单 S3.2：显式生命周期状态机。粗粒度——agent 内部的步骤 trace 仍以它自己
+  // 的记录为准；这里记录 workflow 拥有的阶段边界，并让失败路径的补偿显式化。
+  // runner 在调用前已认领（CLAIM），machine 在此创建并立即推进到执行态。
+  const fsm = RunStateMachine.create();
+  fsm.send({ type: "CLAIM" });
+
   // 7a — verify-or-create the directory tree, get scoped handles.
   // A recovery adopts the leftover dir and does not create a new staging dir.
   const directories = request.stagingRecovery
@@ -137,6 +148,8 @@ export async function runAcquisitionV2Workflow(
   // The cleanup reads the show dir back afterwards: a delete the provider quietly
   // ignored (123 file/trash + string FileId, 2026-09-20) must surface as a
   // `staging_leaked` audit event instead of vanishing behind {removed:true}.
+  fsm.send({ type: "DIRS_READY" });
+
   const leaks: StagingLeak[] = [];
   const unverified: StagingCleanupUnverified[] = [];
   const kept: StagingKeptUnmoved[] = [];
@@ -144,7 +157,9 @@ export async function runAcquisitionV2Workflow(
   // from the agent loop still lets this finally see files whose move failed.
   const unmovedStaging: { read: (() => string[]) | null } = { read: null };
   const terminalCleanup: { read: (() => boolean) | null } = { read: null };
-  const result = await withStagingCleanup(
+  let result: RunAcquisitionV2WorkflowResult;
+  try {
+    result = await withStagingCleanup(
     {
       executor: request.executor,
       stagingDirectoryId: directories.stagingDirectoryId,
@@ -174,8 +189,10 @@ export async function runAcquisitionV2Workflow(
   // A user request runs the agent even on a complete library: the episodes to
   // replace are obtained (the old file is there), so they are never "missing".
   // A leftover may be the only copy of an episode the DB already calls obtained.
+  fsm.send({ type: "SEARCHED" });
   if (before.missing.length === 0 && !request.userRequest && !request.stagingRecovery) {
     // Already current — no agent run, no side effects (the type-3 no-op path).
+    fsm.send({ type: "NOTHING_TO_DO" });
     return {
       directories,
       missingBefore: [],
@@ -185,8 +202,12 @@ export async function runAcquisitionV2Workflow(
       obtained: before.obtained,
       providerAhead: before.providerAhead,
       auditEvents: [],
+      runState: fsm.state,
+      compensations: fsm.pendingCompensations,
     };
   }
+
+  fsm.send({ type: "CANDIDATES_READY" });
 
   // Run the strong TV/anime agent over the sandbox.
   const v2 = await runAcquisitionV2({
@@ -255,6 +276,14 @@ export async function runAcquisitionV2Workflow(
     ? undefined
     : await readLandedSize(request.executor, Object.values(directories.seasonDirectoryIds));
 
+  // 粗粒度阶段标记：agent 已跑完落库/核对/整理/去重；暂存销毁由 withStagingCleanup
+  // 在返回前保证（那正是 fsm 登记的补偿）。
+  fsm.send({ type: "TRANSFER_STARTED" });
+  fsm.send({ type: "LANDED" });
+  fsm.send({ type: "INSPECTED" });
+  fsm.send({ type: "ORGANIZED" });
+  fsm.send({ type: "DEDUPED" });
+  fsm.send({ type: "PURGED" });
   return {
     directories,
     missingBefore: before.missing,
@@ -264,6 +293,8 @@ export async function runAcquisitionV2Workflow(
     obtained: after.obtained,
     providerAhead: after.providerAhead,
     auditEvents: v2.auditEvents,
+    runState: fsm.state,
+    compensations: fsm.pendingCompensations,
     ...(landed ? { landedFileCount: landed.fileCount, landedBytes: landed.totalBytes } : {}),
     ...(v2.replacement ? { replacement: v2.replacement } : {}),
   };
@@ -281,4 +312,19 @@ export async function runAcquisitionV2Workflow(
     ...result,
     auditEvents: [...result.auditEvents, ...stagingEvents],
   };
+  } catch (error) {
+    // Saga 失败路径（任务单 S3.2）：FAIL → sagaCompensating。暂存清理由
+    // withStagingCleanup 的 finally 已经执行——那正是 fsm 登记的补偿；这里做
+    // 一致性互检（清单非空却什么都没清是不可能的），标记补偿完成后原样上抛，
+    // 由 runner 记 failed。补偿清单进日志，排障时看得见做了什么。
+    fsm.send({ type: "FAIL", reason: error instanceof Error ? error.message : String(error) });
+    const kinds = fsm.pendingCompensations.map((compensation) => compensation.kind);
+    if (kinds.length > 0) {
+      fsm.send({ type: "COMPENSATED" });
+    }
+    console.log(
+      `[workflow] run ${request.workflowRunId} saga: compensations=[${kinds.join(", ") || "none"}] → ${fsm.state}`,
+    );
+    throw error;
+  }
 }

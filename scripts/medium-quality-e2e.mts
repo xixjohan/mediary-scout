@@ -14,24 +14,16 @@
 // main 115 — lots of space; never the friend's 15GB drive.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import pg from "pg";
+import { loadDotEnv, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-for (const line of readFileSync(path.join(repoRoot, ".env"), "utf8").split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  let v = t.slice(eq + 1).trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  process.env[k] ??= v;
-}
+loadDotEnv();
 
 const rt = await import(path.join(repoRoot, "apps/web/lib/workflow-runtime.ts"));
 const wf = await import("@media-track/workflow");
 const repo = rt.getWorkflowRepository();
-const pool = new pg.Pool({ connectionString: process.env.MEDIA_TRACK_POSTGRES_URL! });
+// Pure-SQLite single engine (task S1.4b): raw rows via the app's DB file.
+const raw = () => openAppDb();
 
 const ACCT = "acct_default";
 // Blockbusters whose PanSou recall reliably carries a TRUE 2160p/4K REMUX (the
@@ -64,16 +56,21 @@ async function tmdbId(query: string): Promise<number | null> {
   return json.results?.[0]?.id ?? null;
 }
 
-async function cleanupTitle(titleId: string) {
-  for (const sql of [
-    "DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)",
-    "DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)",
-    "DELETE FROM tracked_seasons WHERE media_title_id=$1",
-  ]) await pool.query(sql, [titleId]);
+function cleanupTitle(titleId: string) {
+  const db = raw();
+  try {
+    for (const sql of [
+      "DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)",
+      "DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)",
+      "DELETE FROM tracked_seasons WHERE media_title_id = ?",
+    ]) db.prepare(sql).run(titleId);
+  } finally {
+    db.close();
+  }
 }
 
 async function driveUntilTerminal(runId: string) {
@@ -122,7 +119,7 @@ try {
     if (!id) { console.log(`(skip ${query}: TMDB miss)`); continue; }
     const titleId = `tmdb_movie_${id}`;
     console.log(`\n=== TRY ${query} (${titleId}) ===`);
-    await cleanupTitle(titleId);
+    cleanupTitle(titleId);
 
     const before = await listMovieVideos();
 
@@ -179,7 +176,7 @@ try {
     failed++;
   }
 } finally {
-  await pool.end();
+  await repo.close?.();
 }
-console.log(failed === 0 ? `\nMEDIUM-QUALITY CEILING E2E PASSED — agent skipped 4K/remux, landed 1080p` : `\n${failed} CHECK(S) FAILED`);
+console.log(failed === 0 ? `MEDIUM-QUALITY CEILING E2E PASSED — agent skipped 4K/remux, landed 1080p` : `\n${failed} CHECK(S) FAILED`);
 process.exit(failed === 0 ? 0 : 1);

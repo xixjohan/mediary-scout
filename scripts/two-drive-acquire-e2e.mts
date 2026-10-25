@@ -5,26 +5,18 @@
 //   npx tsx scripts/two-drive-acquire-e2e.mts
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import pg from "pg";
+import { loadDotEnv, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-for (const line of readFileSync(path.join(repoRoot, ".env"), "utf8").split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  let v = t.slice(eq + 1).trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  process.env[k] ??= v;
-}
+loadDotEnv();
 
 const FRIEND_ACCT = "acct_friend_e2e", FRIEND_UID = "100000002";
 const friendCookie = readFileSync("/tmp/friend-115-cookie.txt", "utf8").trim();
 const rt = await import(path.join(repoRoot, "apps/web/lib/workflow-runtime.ts"));
 const wf = await import("@media-track/workflow");
 const repo = rt.getWorkflowRepository();
-const pool = new pg.Pool({ connectionString: process.env.MEDIA_TRACK_POSTGRES_URL! });
+// Pure-SQLite single engine (task S1.4b): raw cleanup goes through the app's DB file.
+const raw = () => openAppDb();
 
 let failed = 0;
 const ok = (n: string, c: boolean) => { console.log(`${c ? "ok  " : "FAIL"} ${n}`); if (!c) failed++; };
@@ -37,14 +29,19 @@ async function tmdbId(query: string): Promise<number> {
   if (!id) throw new Error(`TMDB resolve failed for ${query}`);
   return id;
 }
-async function cleanupTitle(titleId: string) {
-  await pool.query("DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))", [titleId]);
-  await pool.query("DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))", [titleId]);
-  await pool.query("DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))", [titleId]);
-  await pool.query("DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))", [titleId]);
-  await pool.query("DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)", [titleId]);
-  await pool.query("DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)", [titleId]);
-  await pool.query("DELETE FROM tracked_seasons WHERE media_title_id=$1", [titleId]);
+function cleanupTitle(titleId: string) {
+  const db = raw();
+  try {
+    db.prepare("DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))").run(titleId);
+    db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))").run(titleId);
+    db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))").run(titleId);
+    db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))").run(titleId);
+    db.prepare("DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)").run(titleId);
+    db.prepare("DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)").run(titleId);
+    db.prepare("DELETE FROM tracked_seasons WHERE media_title_id = ?").run(titleId);
+  } finally {
+    db.close();
+  }
 }
 
 try {
@@ -59,7 +56,7 @@ try {
 
   const id = await tmdbId("这个杀手不太冷");
   const titleId = `tmdb_movie_${id}`;
-  await cleanupTitle(titleId);
+  cleanupTitle(titleId);
   const target = await rt.movieTargetFromTmdbId(id);
   if (!target) throw new Error("movie target resolve failed");
   const runId = `run_friend_acq_${id}`;
@@ -96,7 +93,7 @@ try {
   ok("movie file physically landed in FRIEND's 115 drive", !!landedVideo);
   ok("landed file fits the 15GB free quota", !!landedVideo && landedVideo.size < 15e9);
 } finally {
-  await pool.end();
+  await repo.close?.();
 }
 console.log(failed ? `\n${failed} CHECK(S) FAILED` : "\nTWO-DRIVE ACQUIRE (stage B) PASSED — friend acquired into friend's own 115");
 process.exit(failed ? 1 : 0);

@@ -1,9 +1,10 @@
-# media-track 自部署:一把拉起 web(Next + 进程内 worker) / Postgres / PanSou。
+# media-track 自部署:一把拉起 web(Next + 进程内 worker) / PanSou。
 #   docker compose up -d   →   打开 http://<host>:3000   →   设置页扫码连 115 即用
 # TMDB 经 §1 CF Worker 开箱即用;LLM key / 自己的 TMDB key / Prowlarr 在设置页填。
+# 持久化走纯 SQLite(单文件 /app/data/mediary.db,挂 mediaray-data 卷)——无外部数据库容器。
 # ---- Docker Hub 镜像源(墙内必读) ----
 #
-# 本文件里四个镜像来自 Docker Hub:postgres、node(见 Dockerfile)、cloudflared、
+# 本文件里剩余镜像来自 Docker Hub:node(见 Dockerfile)、cloudflared、
 # updater 的 docker:27-cli(见 updater/Dockerfile)。
 # **在中国大陆,Docker Hub 经常拉不动** —— 表现为
 # `failed to fetch anonymous token: ... EOF` 或 `connection reset by peer`。
@@ -31,23 +32,6 @@ x-default-logging: &default-logging
     max-file: "3"
 
 services:
-  postgres:
-    # ${DOCKER_MIRROR:+...} 的写法:变量非空时才加前缀和斜杠,空则退化成官方镜像名。
-    image: ${DOCKER_MIRROR:+${DOCKER_MIRROR}/library/}postgres:16-alpine
-    environment:
-      POSTGRES_DB: mediatrack
-      POSTGRES_USER: mediatrack
-      POSTGRES_PASSWORD: mediatrack
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mediatrack -d mediatrack"]
-      interval: 5s
-      timeout: 3s
-      retries: 12
-    logging: *default-logging
-    restart: unless-stopped
-
   pansou:
     # From ghcr.io — a Docker Hub registry mirror does NOT cover this. If ghcr is
     # blocked (mainland China), set PANSOU_IMAGE in .env to a ghcr mirror/proxy.
@@ -72,17 +56,20 @@ services:
         GIT_SHA: ${GIT_SHA:-unknown}
         # 与上面三个 image 共用同一个镜像源值,自动传进 Dockerfile ——
         # 否则用户还得记得手敲 `--build-arg DOCKER_MIRROR=...`,而漏了它的表现是
-        # 「compose 拉 postgres 成功、build web 却卡在 node:22-slim」,很难联想到
+        # 「compose 拉 pansou 成功、build web 却卡在 node:22-slim」,很难联想到
         # 是同一个原因。
         DOCKER_MIRROR: ${DOCKER_MIRROR:-}
     depends_on:
-      postgres:
-        condition: service_healthy
       pansou:
         condition: service_started
     environment:
+      # 纯 SQLite 单引擎（任务单 S1.4b）：单文件数据库，落 mediaray-data 卷。
       # App self-creates its schema on first query (CREATE TABLE IF NOT EXISTS).
-      MEDIA_TRACK_POSTGRES_URL: postgres://mediatrack:mediatrack@postgres:5432/mediatrack
+      MEDIA_TRACK_SQLITE_PATH: /app/data/mediary.db
+      # P1 解药（任务单 S2.2）：常驻 drain 循环搬出 Next 进程，由独立 worker 服务
+      # （下方）HTTP poke 驱动。设 INPROCESS_WORKER=1 可强制回进程内（逃生门）。
+      MEDIA_TRACK_WORKER_MODE: external
+      MEDIA_TRACK_WORKER_SECRET: ${MEDIA_TRACK_WORKER_SECRET:-}
       # Bundled PanSou via the compose service name (override per-instance in 设置).
       PANSOU_BASE_URL: http://pansou
       MEDIA_TRACK_SEARCH_PROVIDER: tmdb
@@ -98,7 +85,7 @@ services:
       # 的实例会把自己显示成「未开通」。cloudflared 那边同样需要它,两处读同一个
       # .env 变量。未设时为空 → tab 显示未开通,这正是自建/未开通实例的正确状态。
       TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
-      # 可观测性:完整有序的 agent 逐步轨迹始终落 agent_steps 表(psql 即可复盘)。
+      # 可观测性:完整有序的 agent 逐步轨迹始终落 agent_steps 表(sqlite3 即可复盘)。
       # 额外把每一步打到 stdout(docker compose logs web)是 OPT-IN —— 它会把工具参数
       # (搜索关键词 / 候选 id / 文件 id)写进容器日志与日志聚合器,默认不开。需要排障时
       # 在 .env 里设 MEDIA_TRACK_AGENT_LOG=1 自行启用(env_file 已加载 .env)。
@@ -110,12 +97,14 @@ services:
     # 更新令牌和状态。只读：web 不挂 Docker socket，socket 只给下面的 updater。
     volumes:
       - updater-state:/updater-state:ro
+      # SQLite 单文件数据库（/app/data/mediary.db）。备份 = 拷贝这一个卷。
+      - mediaray-data:/app/data
     # Host port configurable (WEB_PORT) in case 3000 is taken on the host.
     ports:
       - "${WEB_PORT:-3000}:3000"
     # Probes /api/health, which reads the DB through the app's real query path —
-    # so `docker ps` shows "unhealthy" if the app can't reach postgres (e.g. the
-    # 2026-07-21 wedge), not just when the process dies. Runs inside the container
+    # so `docker ps` shows "unhealthy" if the app can't reach its SQLite file, not
+    # just when the process dies. Runs inside the container
     # against localhost (bypasses any Cloudflare Access). node:22-slim has global
     # fetch and no curl/wget, so probe with node. r.ok is true only for 2xx.
     healthcheck:
@@ -132,6 +121,27 @@ services:
   # 一键更新的执行者。只有它能操作 Docker；不映射任何端口，只在 compose 内网。
   # 网页通过共享卷里的令牌让它「更新到某个发布标签」，其它什么都不做。
   # 它不会更新自己：改了 updater/ 要手动 `docker compose up -d --build updater`。
+  # 独立 Worker 宿主（任务单 S2.1/S2.2）：常驻 drain 循环不经过 Next 进程。
+  # 极简 poker——HTTP poke web 的 /api/workflows/run-next 与 run-type3，
+  # 零数据库访问、零业务代码共享；web 保留全部逻辑。
+  worker:
+    build:
+      context: .
+      args:
+        MEDIA_TRACK_ALLOWED_ORIGINS: ${MEDIA_TRACK_ALLOWED_ORIGINS:-}
+        GIT_SHA: ${GIT_SHA:-unknown}
+        DOCKER_MIRROR: ${DOCKER_MIRROR:-}
+    command: ["node", "apps/host-worker/dist/main.js"]
+    environment:
+      MEDIA_TRACK_WEB_BASE: http://web:3000
+      # 与 web 侧一致；多用户模式必配（见 .env.example）
+      MEDIA_TRACK_WORKER_SECRET: ${MEDIA_TRACK_WORKER_SECRET:-}
+    depends_on:
+      web:
+        condition: service_started
+    restart: unless-stopped
+    logging: *default-logging
+
   updater:
     build:
       context: ./updater
@@ -189,5 +199,5 @@ services:
       - tunnel
 
 volumes:
-  pgdata:
+  mediaray-data:
   updater-state:

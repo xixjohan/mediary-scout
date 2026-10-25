@@ -44,6 +44,16 @@ export interface MediaSearchCache {
 }
 
 /**
+ * 通用持久化 JSON 缓存端口：命名空间键 + 每条目 TTL。
+ * 由 SqliteJsonCache（纯 SQLite 实现，sqlite-json-cache.ts）承载；
+ * 语义契约：过期即未命中（懒删）、读写返回克隆。
+ */
+export interface DurableJsonCache {
+  getJson<T>(key: string): Promise<T | null>;
+  setJson(key: string, value: unknown, ttlMs?: number): Promise<void>;
+}
+
+/**
  * Remembers which real title a DESCRIBED query resolved to, so a re-render does
  * not pay for the resolution again. This matters concretely: the search page
  * mounts the acquisition poller, which re-renders the results server-side every

@@ -11,7 +11,7 @@ import type {
   RetryRefusalReason,
 } from "../lib/activity-view";
 // The run kind via the view type, NOT the workflow root barrel: the barrel `export *`s
-// ./postgres.js (pg), and a type-only barrel import can drag pg into this client bundle
+// is server-heavy, and a type-only barrel import can drag server-only code into this client bundle
 // (see request-track-button.tsx).
 type RunKind = ActivityActiveRun["kind"];
 import { activeRunLabel } from "../lib/activity-season-label";

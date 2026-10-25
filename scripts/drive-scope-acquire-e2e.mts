@@ -6,19 +6,10 @@
 //   npx tsx scripts/drive-scope-acquire-e2e.mts
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import { loadDotEnv, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-for (const line of readFileSync(path.join(repoRoot, ".env"), "utf8").split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  let v = t.slice(eq + 1).trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  process.env[k] ??= v;
-}
-process.env.MEDIA_TRACK_POSTGRES_URL = "postgresql://mediatrack:mediatrack@localhost:5432/media_track";
+loadDotEnv();
 
 const QUARK = "cs_quark_quark-demo-uid";
 const TITLE = "tmdb_movie_278"; // 肖申克的救赎
@@ -28,16 +19,19 @@ const cookie = readFileSync("/tmp/quark-cookie.txt", "utf8").trim();
 const rt = await import(path.join(repoRoot, "apps/web/lib/workflow-runtime.ts"));
 const wf = await import("@media-track/workflow");
 const repo = rt.getWorkflowRepository();
-const pg = (await import("pg")).default;
-const pool = new pg.Pool({ connectionString: process.env.MEDIA_TRACK_POSTGRES_URL });
+// Pure-SQLite single engine (task S1.4b): raw assertions/cleanup go through the
+// app's own DB file instead of a pg Pool.
+const raw = () => openAppDb();
 
 let failed = 0;
 const ok = (n: string, c: boolean) => { console.log(`${c ? "ok  " : "FAIL"} ${n}`); if (!c) failed++; };
 
 try {
   // Precondition: 278 tracked on a 115 drive, NOT on quark.
-  const before = await pool.query("select connected_storage_id from tracked_seasons where id=$1", [SEASON]);
-  ok("precondition: 278 tracked on a 115 drive only", before.rows.some((r: any) => r.connected_storage_id === "cs_100000002") && !before.rows.some((r: any) => r.connected_storage_id === QUARK));
+  const db0 = raw();
+  const before = db0.prepare("SELECT connected_storage_id FROM tracked_seasons WHERE id = ?").all(SEASON) as Array<{ connected_storage_id: string }>;
+  db0.close();
+  ok("precondition: 278 tracked on a 115 drive only", before.some((r) => r.connected_storage_id === "cs_100000002") && !before.some((r) => r.connected_storage_id === QUARK));
 
   // THE FIX: queue 278 onto the quark drive — must NOT be blocked as already_tracked.
   const q = await rt.queueCandidateTracking(TITLE, QUARK);
@@ -57,31 +51,33 @@ try {
   }
 
   // 278 now tracked on BOTH drives, independently.
-  const after = await pool.query("select connected_storage_id from tracked_seasons where id=$1", [SEASON]);
-  const drives = after.rows.map((r: any) => r.connected_storage_id);
+  const db1 = raw();
+  const after = db1.prepare("SELECT connected_storage_id FROM tracked_seasons WHERE id = ?").all(SEASON) as Array<{ connected_storage_id: string }>;
+  const drives = after.map((r) => r.connected_storage_id);
   ok("278 now tracked on the quark drive too", drives.includes(QUARK));
   ok("278 STILL tracked on the original 115 drive (untouched)", drives.includes("cs_100000002"));
 
   // Physical proof: 肖申克 landed in the quark drive's Movies dir.
-  const cs = await pool.query("select movies_cid from connected_storages where id=$1", [QUARK]);
+  const cs = db1.prepare("SELECT movies_cid FROM connected_storages WHERE id = ?").get(QUARK) as { movies_cid: string } | undefined;
   const client = new wf.QuarkCookieClient({ cookie });
-  const movieDirs = await client.listItems({ directoryId: cs.rows[0].movies_cid });
+  const movieDirs = await client.listItems({ directoryId: cs?.movies_cid });
   const shawshankDir = movieDirs.find((d: any) => String(d.file_name).includes("肖申克"));
   console.log("quark Movies now:", movieDirs.map((d: any) => d.file_name).join(" | ") || "(empty)");
   ok("肖申克 physically landed in the quark drive's Movies dir", !!shawshankDir);
 
   // ---- cleanup: recycle from quark + remove the quark-scoped tracking ----
   if (shawshankDir) await client.deleteFiles([String((shawshankDir as any).fid)]);
-  await pool.query("DELETE FROM episode_states WHERE tracked_season_id=$1 AND connected_storage_id=$2", [SEASON, QUARK]);
-  await pool.query("DELETE FROM workflow_runs WHERE tracked_season_id=$1 AND connected_storage_id=$2", [SEASON, QUARK]);
-  await pool.query("DELETE FROM tracked_seasons WHERE id=$1 AND connected_storage_id=$2", [SEASON, QUARK]);
+  db1.prepare("DELETE FROM episode_states WHERE tracked_season_id = ? AND connected_storage_id = ?").run(SEASON, QUARK);
+  db1.prepare("DELETE FROM workflow_runs WHERE tracked_season_id = ? AND connected_storage_id = ?").run(SEASON, QUARK);
+  db1.prepare("DELETE FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?").run(SEASON, QUARK);
   console.log("cleaned up quark-scoped 278 + recycled the file");
 
   // verify cleanup didn't touch the 115 drive's row
-  const final = await pool.query("select connected_storage_id from tracked_seasons where id=$1", [SEASON]);
-  ok("after cleanup, the 115 drive's 278 tracking survives", final.rows.some((r: any) => r.connected_storage_id === "cs_100000002"));
+  const final = db1.prepare("SELECT connected_storage_id FROM tracked_seasons WHERE id = ?").all(SEASON) as Array<{ connected_storage_id: string }>;
+  ok("after cleanup, the 115 drive's 278 tracking survives", final.some((r) => r.connected_storage_id === "cs_100000002"));
+  db1.close();
 } finally {
-  await pool.end();
+  await repo.close?.();
 }
 console.log(failed ? `\n${failed} CHECK(S) FAILED` : "\nDRIVE-SCOPE ACQUIRE E2E PASSED — same title independently tracked + acquired on a second drive");
 process.exit(failed ? 1 : 0);

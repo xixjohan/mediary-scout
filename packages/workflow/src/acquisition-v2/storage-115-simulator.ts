@@ -8,6 +8,8 @@
  * Built test-first, one capability at a time. No real 115, ever.
  */
 
+import type { MediaFileNameParse } from "../media-title-parser.js";
+
 export interface SimTreeFile {
   /** Stable file id (provider file id analogue). */
   id: string;
@@ -18,6 +20,9 @@ export interface SimTreeFile {
   /** Extension hint: an external subtitle (§1.14) — kept with its video, never
    *  deleted as residue. (.sub/.idx are the VobSub pair.) */
   isSubtitle: boolean;
+  /** 确定性文件名解析（任务单 S3.1）：agent 证据里直接带集号/画质/字幕组，
+   *  不必再靠 LLM 读名字猜。旧构造方不填 → undefined，消费方按无可选字段处理。 */
+  parsed?: MediaFileNameParse;
 }
 
 export interface TransferAttemptResult {

@@ -1,24 +1,10 @@
-/** Release tags are `vYYYY.MM.DD` (first release that day) or `vYYYY.MM.DD.N` (N ≥ 2).
- *  Only author-verified commits get a tag; instances auto-update to these and nothing else. */
-export interface ReleaseTag {
-  tag: string;
-  /** YYYY-MM-DD */
-  date: string;
-  /** 0 for the day's first release, N for `.N`. */
-  seq: number;
-}
+// 窄子路径导入：barrel 会带上 credential-crypto（node:module），而本模块在
+// 客户端可达链上（update-actions.tsx → update-state → release-feed-server → 此处），
+// node: 内置会炸 Turbopack 客户端 chunk（S4.3 构建回归）。
+import { parseReleaseTag, type ReleaseTag } from "@media-track/shared/release-tag";
 
-const TAG_RE = /^v(20\d{2})\.(0[1-9]|1[0-2])\.(0[1-9]|[12]\d|3[01])(?:\.([2-9]|[1-9]\d+))?$/;
-
-export function parseReleaseTag(value: string): ReleaseTag | null {
-  const match = TAG_RE.exec(value);
-  if (!match) return null;
-  const [year, month, day] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  // The pattern allows 31 for every month; a date that rolls over (02.31 → 03.03) does not exist.
-  const calendar = new Date(Date.UTC(year, month - 1, day));
-  if (calendar.getUTCMonth() !== month - 1 || calendar.getUTCDate() !== day) return null;
-  return { tag: value, date: `${match[1]}-${match[2]}-${match[3]}`, seq: match[4] ? Number(match[4]) : 0 };
-}
+// 单一事实源在 packages/shared（S4.1）：此处 re-export 保持既有调用方表面。
+export { parseReleaseTag, type ReleaseTag };
 
 export function compareReleaseTags(a: string, b: string): number {
   const left = parseReleaseTag(a);

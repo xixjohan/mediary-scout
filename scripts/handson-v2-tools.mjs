@@ -340,7 +340,7 @@ if (!handler) {
   process.exit(1);
 }
 
-await loadPan115Cookie(); // loads .env + sets PAN115_COOKIE from Postgres app_settings
+await loadPan115Cookie(); // loads .env + sets PAN115_COOKIE from SQLite app_settings
 await loadDeps();
 console.log(`test root: ${process.env.MEDIA_TRACK_115_TEST_ROOT_CID}  (production ${PRODUCTION_CID} is protected/out-of-scope)`);
 await handler(parseArgs(rest));

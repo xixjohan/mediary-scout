@@ -8,6 +8,7 @@ import {
 import type { AssrtCandidate, AssrtSubtitleFile, AssrtProviderPort } from "../subtitle-provider.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
+import { parseMediaFileName } from "../media-title-parser.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
 import type { AuditEvent } from "../domain.js";
@@ -363,6 +364,15 @@ export interface SearchHistoryEntry {
   note?: string;
 }
 
+/** 给一条 listing 附上确定性文件名解析（任务单 S3.1）。幂等：已有 parsed 不重算；
+ *  解析本身不抛异常，垃圾名得到全 null 的 parsed。 */
+export function withParsedFileName(file: SimTreeFile): SimTreeFile {
+  if (file.parsed) {
+    return file;
+  }
+  return { ...file, parsed: parseMediaFileName(file.path) };
+}
+
 export class TaskSandbox {
   private readonly provider: ResourceProviderV2;
   private readonly searchBudget: number;
@@ -497,10 +507,13 @@ export class TaskSandbox {
     if (!this.storage) {
       throw new Error("SANDBOX: no storage configured");
     }
-    if (directoryId === this.stagingDirectoryId && this.stagingListDepth !== undefined) {
-      return this.storage.listTree({ directoryId, maxDepth: this.stagingListDepth });
-    }
-    return this.storage.listTree({ directoryId });
+    const listed =
+      directoryId === this.stagingDirectoryId && this.stagingListDepth !== undefined
+        ? this.storage.listTree({ directoryId, maxDepth: this.stagingListDepth })
+        : this.storage.listTree({ directoryId });
+    // 任务单 S3.1：每条 listing 都附上确定性解析——agent 的证据自带集号/画质/
+    // 字幕组，微秒级、零 token、100% 可复现；判不出的留 null 交给 AI 裁决。
+    return listed.then((files) => files.map(withParsedFileName));
   }
 
   /** Every scoped target directory (all seasons + the movie) — the union used for

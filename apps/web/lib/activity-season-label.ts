@@ -1,7 +1,7 @@
 // Client-safe, pure season-label helpers. This module MUST have ZERO runtime
 // imports — only `import type` — so it can be value-imported from a "use client"
-// component without dragging the server runtime (and transitively the `pg`
-// Postgres driver) into the browser bundle. `activity-view.ts` re-exports these
+// component without dragging the server runtime (and transitively the
+// server-only database code) into the browser bundle. `activity-view.ts` re-exports these
 // for server-side callers; the activity-feed client component imports them here.
 import type { EpisodeState, MediaType, WorkflowKind } from "@media-track/workflow";
 

@@ -12,25 +12,16 @@
 // Lands into the TEST Movies root; recycles anything that landed.
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import pg from "pg";
+import { loadDotEnv, openAppDb } from "./_lib/sqlite-db.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-for (const line of readFileSync(path.join(repoRoot, ".env"), "utf8").split("\n")) {
-  const t = line.trim();
-  if (!t || t.startsWith("#")) continue;
-  const eq = t.indexOf("=");
-  if (eq === -1) continue;
-  const k = t.slice(0, eq).trim();
-  let v = t.slice(eq + 1).trim();
-  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-  process.env[k] ??= v;
-}
-process.env.MEDIA_TRACK_POSTGRES_URL ??= "postgresql://mediatrack:mediatrack@localhost:5432/media_track";
+loadDotEnv();
 
 const rt = await import(path.join(repoRoot, "apps/web/lib/workflow-runtime.ts"));
 const wf = await import("@media-track/workflow");
 const repo = rt.getWorkflowRepository();
-const pool = new pg.Pool({ connectionString: process.env.MEDIA_TRACK_POSTGRES_URL! });
+// Pure-SQLite single engine (task S1.4b): raw rows via the app's DB file.
+const raw = () => openAppDb();
 
 const ACCT = "acct_default";
 // Big recent films whose 115 recall usually carries BOTH an English scene rip AND a
@@ -51,21 +42,30 @@ async function tmdbId(query: string): Promise<number | null> {
   return json.results?.[0]?.id ?? null;
 }
 
-async function isTracked(titleId: string): Promise<boolean> {
-  const r = await pool.query("SELECT 1 FROM tracked_seasons WHERE media_title_id=$1 LIMIT 1", [titleId]);
-  return r.rows.length > 0;
+function isTracked(titleId: string): boolean {
+  const db = raw();
+  try {
+    return !!db.prepare("SELECT 1 FROM tracked_seasons WHERE media_title_id = ? LIMIT 1").get(titleId);
+  } finally {
+    db.close();
+  }
 }
 
-async function cleanup(titleId: string) {
-  for (const sql of [
-    "DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1))",
-    "DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)",
-    "DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id=$1)",
-    "DELETE FROM tracked_seasons WHERE media_title_id=$1",
-  ]) await pool.query(sql, [titleId]);
+function cleanup(titleId: string) {
+  const db = raw();
+  try {
+    for (const sql of [
+      "DELETE FROM notifications WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM transfer_attempts WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM agent_decisions WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM resource_snapshots WHERE workflow_run_id IN (SELECT id FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?))",
+      "DELETE FROM workflow_runs WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)",
+      "DELETE FROM episode_states WHERE tracked_season_id IN (SELECT id FROM tracked_seasons WHERE media_title_id = ?)",
+      "DELETE FROM tracked_seasons WHERE media_title_id = ?",
+    ]) db.prepare(sql).run(titleId);
+  } finally {
+    db.close();
+  }
 }
 
 async function driveUntilTerminal(runId: string) {
@@ -96,14 +96,14 @@ try {
     const id = await tmdbId(query);
     if (!id) { console.log(`(skip ${query}: TMDB miss)`); continue; }
     const titleId = `tmdb_movie_${id}`;
-    if (await isTracked(titleId)) { console.log(`(skip ${query}: already in your library — won't clobber)`); continue; }
+    if (isTracked(titleId)) { console.log(`(skip ${query}: already in your library — won't clobber)`); continue; }
     console.log(`\n=== TRY ${query} (${titleId}) ===`);
-    await cleanup(titleId);
+    cleanup(titleId);
 
     const res = await rt.queueCandidateTracking(titleId);
     if (res.status !== "queued" || !res.workflowRunId) { console.log(`(skip ${query}: not queued — ${JSON.stringify(res)})`); continue; }
     const snap = await driveUntilTerminal(res.workflowRunId);
-    if (!snap) { console.log(`(skip ${query}: no snapshot)`); await cleanup(titleId); continue; }
+    if (!snap) { console.log(`(skip ${query}: no snapshot)`); cleanup(titleId); continue; }
 
     const allCandidates = snap.resourceSnapshots.flatMap((s) => s.candidates);
     const sceneInRecall = allCandidates.filter((c) => SCENE.test(c.title));
@@ -119,7 +119,7 @@ try {
         const landed = items.filter((it: any) => new RegExp(query.slice(0, 3)).test(String(it.n ?? "")));
         if (landed.length) await client.deleteFiles(landed.map((it: any) => String(it.fid ?? it.fileId)));
       }
-      await cleanup(titleId);
+      cleanup(titleId);
       continue;
     }
 
@@ -140,13 +140,13 @@ try {
       const landed = items.filter((it: any) => new RegExp(query.slice(0, 3)).test(String(it.n ?? "")));
       if (landed.length) { await client.deleteFiles(landed.map((it: any) => String(it.fid ?? it.fileId))); console.log(`  recycled: ${landed.map((it: any) => it.n).join(" | ")}`); }
     }
-    await cleanup(titleId);
+    cleanup(titleId);
     break;
   }
 
   if (!chosen) { console.log("\nINCONCLUSIVE: no target's 115 recall had BOTH an English-scene AND a 中字 candidate this run (PanSou jitter / brand filter). Re-run."); failed++; }
 } finally {
-  await pool.end();
+  await repo.close?.();
 }
 console.log(failed ? `\n${failed} CHECK(S) FAILED` : "\nCHINESE-SUBS SELECTION E2E PASSED — agent 选了中文社区中字源,没选英文 scene 版");
 process.exit(failed ? 1 : 0);

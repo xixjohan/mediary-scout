@@ -1,7 +1,7 @@
 // Live e2e trigger for the quality-preference feature. Sets quality_preference=high,
 // then queues a MOVIE + a single-season SHOW via the REAL server-action logic
 // (queueCandidateTracking — exactly what the 获取 button calls). The dev server's
-// in-process worker (same Postgres) auto-consumes. We then watch /api/activity +
+// in-process worker (same SQLite DB) auto-consumes. We then watch /api/activity +
 // logs. ONLY touches the TEST 115 roots (env MEDIA_TRACK_*_PARENT_CID).
 //
 //   npx tsx scripts/quality-live-queue.mts

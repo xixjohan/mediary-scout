@@ -5,11 +5,11 @@ import { isUpdateHoldActive, whileInFlight } from "./update-hold";
  * In-process queue drainer.
  *
  * A browser "获取" click only ENQUEUES a workflow run (so it survives a closed
- * browser / reload — the queued/running state lives in Postgres). Something then
+ * browser / reload — the queued/running state lives in SQLite). Something then
  * has to CLAIM and EXECUTE that run, or the UI spins "获取中" forever. On the
  * single long-running Node server (dev, and a single-instance deploy like
  * Railway) that something is this in-process loop: it claims queued runs and
- * runs the long workflows in the background, with all state in Postgres so it
+ * runs the long workflows in the background, with all state in SQLite so it
  * stays resumable. A multi-instance deploy would instead run a dedicated worker
  * process that pokes /api/workflows/run-next; this loop is the single-instance
  * form of the same thing. Wired up from instrumentation.ts on server start.
@@ -176,7 +176,7 @@ let started = false;
 
 /**
  * The runtime the worker drives. Injectable so the loop is testable without a
- * real Postgres / Next server; production defaults to the workflow-runtime glue.
+ * real Next server; production defaults to the workflow-runtime glue.
  */
 export interface WorkerRuntime {
   /** Claim+run the next queued workflow; "idle" = nothing claimable (see DrainDeps). */

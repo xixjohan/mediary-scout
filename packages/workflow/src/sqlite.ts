@@ -1,5 +1,19 @@
 import { createRequire } from "node:module";
 import type Database from "better-sqlite3";
+import { Kysely, SqliteDialect } from "kysely";
+import {
+  decryptSecret,
+  encryptSecret,
+  initCredentialCrypto,
+  initCredentialCryptoForDatabase,
+  isCredentialCryptoInitialized,
+} from "@media-track/shared";
+import type { MediaryDatabase } from "./db-schema.js";
+import {
+  CredentialStore,
+  connectedStorageFromRecord,
+  type ConnectedStorageRecord,
+} from "./credential-store.js";
 import {
   DEFAULT_ACCOUNT_ID,
   episodeNumberFromCode,
@@ -56,6 +70,7 @@ import {
   userMessageDrive,
 } from "./user-requests.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
+import type { DeadLinkKind, DeadLinkStats } from "./acquisition-v2/dead-links.js";
 import type {
   Account,
   ConnectedStorage,
@@ -98,13 +113,12 @@ import type {
 } from "./repository.js";
 
 /**
- * The SQLite schema mirrors the Postgres schema (`packages/workflow/src/postgres.ts`),
- * with `text` payload columns instead of `jsonb` (SQLite has no jsonb; payloads are
- * JSON.stringify'd text). The tree-model scope columns (account_id,
- * connected_storage_id) and the composite primary keys that Postgres reaches through
- * a chain of idempotent ALTERs are declared inline here — a fresh SQLite database
- * needs the FINAL shape up front, not the migration steps. The acct_default seed row
- * matches Postgres so later tasks behave identically.
+ * The single SQLite schema (pure-SQLite single engine, task S1.4b — the Postgres
+ * twin and its migration chain were removed with it). `text` payload columns hold
+ * JSON.stringify'd objects (SQLite has no jsonb). The tree-model scope columns
+ * (account_id, connected_storage_id) and the composite primary keys are declared
+ * inline: a fresh SQLite database needs the FINAL shape up front, not migration
+ * steps. The acct_default seed row matches what the old twin produced.
  */
 export const SQLITE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS media_titles (
@@ -289,9 +303,31 @@ export const SQLITE_SCHEMA = `
 
 // Lazy-load the native better-sqlite3 at CALL time (the desktop path), NOT at module
 // evaluation time. This keeps `import "@media-track/workflow"` (container, Vercel
-// serverless demo — Postgres-only) free of the native module, so those paths never pay
+// serverless demo) free of the native module, so those paths never pay
 // the native load and can't hard-crash on a platform where better-sqlite3 isn't built.
 const requireNative = createRequire(import.meta.url);
+
+/**
+ * 敏感设置键注册表（任务单 S1.5，P15）。命中的值落盘前经 AES-256-GCM 加密；
+ * 其余配置（URL、模型 id、开关、时间戳……）保持明文，便于排障与迁移。
+ * `push_*` 整族都是推送通道凭据（Server酱 sendkey / Bark / Webhook …）。
+ */
+const SECRET_SETTING_KEYS = new Set([
+  "pan115.cookie",
+  "session_secret",
+  "agent_api_token",
+  "assrt_token",
+  "connect_instance_credential",
+  "connect_tunnel_token",
+  "jev_api_key",
+  "llm_api_key",
+  "prowlarr_api_key",
+  "tmdb_api_key",
+]);
+
+export function isSecretSettingKey(key: string): boolean {
+  return SECRET_SETTING_KEYS.has(key) || key.startsWith("push_");
+}
 
 export function createSqliteWorkflowRepository(options: { path: string }): SqliteWorkflowRepository {
   let DatabaseCtor: typeof import("better-sqlite3");
@@ -307,12 +343,33 @@ export function createSqliteWorkflowRepository(options: { path: string }): Sqlit
       { cause: error },
     );
   }
+  // 凭据加密密钥与数据库同目录（备份 / 迁移时连 credential.key 一起拷贝）；
+  // :memory:（测试）用进程内临时密钥，不落盘。
+  initCredentialCryptoForDatabase(options.path);
   return new SqliteWorkflowRepository(new DatabaseCtor(options.path));
 }
 
 export class SqliteWorkflowRepository implements WorkflowRepository {
+  /** 凭据相关持久化切片（Kysely 类型安全查询，任务单 S1.6）。 */
+  private readonly credentials: CredentialStore;
+
   constructor(private readonly db: Database.Database) {
+    // 凭据加密（任务单 S1.5）：工厂已按密钥文件初始化；直接 new（:memory: 测试等）
+    // 未经初始化时，用进程内临时密钥保证 roundtrip，绝不用空密钥静默写明文。
+    if (!isCredentialCryptoInitialized()) {
+      initCredentialCrypto({ ephemeral: true });
+    }
+    this.credentials = new CredentialStore(
+      new Kysely<MediaryDatabase>({ dialect: new SqliteDialect({ database: db }) }),
+    );
+    // 黄金 PRAGMA（规约见 docs/architecture-remediation-and-governance.md §1.3，
+    // 测试见 tests/sqlite-pragmas.test.ts）：WAL 读写互不阻塞；synchronous=NORMAL
+    // 在 WAL 下兼顾极速与断电安全；busy_timeout 让写锁冲突退避等待而非直接报错。
     this.db.pragma("journal_mode = WAL");
+    this.db.pragma("synchronous = NORMAL");
+    this.db.pragma("busy_timeout = 5000");
+    this.db.pragma("temp_store = MEMORY");
+    this.db.pragma("cache_size = -64000"); // 64MB 页面缓存
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SQLITE_SCHEMA);
   }
@@ -403,7 +460,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
       if (input.keepCurrentEpisodes === true) {
         // Only the run: the title, season record and episode states are not written at
-        // all (see postgres.ts). The reply is the run as stored, with the season's current state.
+        // all. The reply is the run as stored, with the season's current state.
         this.replaceWorkflowRunSnapshot(snapshot, { runOnly: true });
         const reserved = this.loadSnapshot(snapshot.workflowRun.id);
         if (!reserved) {
@@ -436,7 +493,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return snapshot;
   }
 
-  // ----- snapshot persist + reserve helpers (mirror postgres.ts) -----
+  // ----- snapshot persist + reserve helpers -----
 
   private loadSnapshot(workflowRunId: string): PersistedWorkflowRunSnapshot | null {
     const runRow = this.db
@@ -642,7 +699,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(workflowRunId);
     this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(workflowRunId);
     this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(workflowRunId);
-    // NOTE: do NOT delete agent_steps here (see postgres.ts) — they're written
+    // NOTE: do NOT delete agent_steps here — they're written
     // incrementally by the trace sink and are NOT part of the snapshot.
     this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(workflowRunId);
   }
@@ -869,7 +926,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   ): Promise<void> {
     // Read the run's payload, clamp percent monotonically (a retry never rewinds the
     // bar), and re-upsert. Unknown run → no-op. upsertWorkflowRun preserves the
-    // account/storage columns on conflict. Mirrors postgres.ts.
+    // account/storage columns on conflict.
     const row = this.db
       .prepare("SELECT payload FROM workflow_runs WHERE id = ?")
       .get(workflowRunId) as { payload: string } | undefined;
@@ -909,7 +966,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
   /** Lightweight (account, storage) visibility check: reads just the two scope
    *  columns and applies the shared scopeMatches predicate. Fail-closed — an
-   *  unknown run is not visible to any scope. Mirrors postgres.ts. */
+   *  unknown run is not visible to any scope. */
   private runMatchesScope(workflowRunId: string, scopeArg: ScopeArg): boolean {
     const scope = normalizeScope(scopeArg);
     const owner = this.db
@@ -994,7 +1051,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   /** Tear down one (season, drive): delete its episodes + tracked_seasons row, then
    *  delete the global media_titles row only when NO tracked_seasons reference that
    *  title anywhere (another drive tracking the same show must survive). Shared by
-   *  cancelQueuedWorkflowRun and untrackTitle. Mirrors postgres.ts. */
+   *  cancelQueuedWorkflowRun and untrackTitle. */
   private teardownSeasonScoped(seasonId: string, storageValue: string): void {
     this.db
       .prepare("DELETE FROM episode_states WHERE tracked_season_id = ? AND connected_storage_id = ?")
@@ -1249,7 +1306,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       // Key by (season, drive), NOT season alone: season.id is drive-independent
       // (`${title.id}_s${n}`), so the same season tracked on two drives is two distinct
       // tracked entities. Collapsing by season id would drop a drive (and make the
-      // desktop sweep skip it) — Postgres keys tracked_seasons by (id, storage) too.
+      // desktop sweep skip it) — tracked_seasons is keyed by (id, storage) too.
       const key = seasonScopeKey(row.trackedSeasonId, row.connectedStorageId);
       if (!latest.has(key)) {
         latest.set(key, row);
@@ -1300,7 +1357,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         ? undefined
         : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null },
     );
-    // Push the (account, storage) scope + `since` cutoff into SQL — matching Postgres —
+    // Push the (account, storage) scope + `since` cutoff into SQL —
     // so we don't scan every account's notifications and filter in JS. A concrete-storage
     // scope compares the raw column (an unscoped/sentinel row can't match a concrete drive);
     // an account-only scope passes null → the `? IS NULL` arm matches all of the account's
@@ -1357,18 +1414,16 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async getSetting(key: string): Promise<string | null> {
-    const row = this.db.prepare("SELECT value FROM app_settings WHERE key = ?").get(key) as
-      | { value: string }
-      | undefined;
-    return row?.value ?? null;
+    // 旧明文无前缀 → 原样返回（迁移兼容）；密文 → 解密。
+    const value = await this.credentials.getGlobalSetting(key);
+    if (value === null || !isSecretSettingKey(key)) {
+      return value;
+    }
+    return decryptSecret(value);
   }
 
   async setSetting(key: string, value: string): Promise<void> {
-    this.db
-      .prepare(
-        "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-      )
-      .run(key, value);
+    await this.credentials.setGlobalSetting(key, isSecretSettingKey(key) ? encryptSecret(value) : value);
   }
 
   async deleteSetting(key: string): Promise<void> {
@@ -1376,18 +1431,15 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async getAccountSetting(accountId: string, key: string): Promise<string | null> {
-    const row = this.db
-      .prepare("SELECT value FROM account_settings WHERE account_id = ? AND key = ?")
-      .get(accountId, key) as { value: string } | undefined;
-    return row?.value ?? null;
+    const value = await this.credentials.getAccountSetting(accountId, key);
+    if (value === null || !isSecretSettingKey(key)) {
+      return value;
+    }
+    return decryptSecret(value);
   }
 
   async setAccountSetting(accountId: string, key: string, value: string): Promise<void> {
-    this.db
-      .prepare(
-        "INSERT INTO account_settings (account_id, key, value) VALUES (?, ?, ?) ON CONFLICT (account_id, key) DO UPDATE SET value = excluded.value",
-      )
-      .run(accountId, key, value);
+    await this.credentials.setAccountSetting(accountId, key, isSecretSettingKey(key) ? encryptSecret(value) : value);
   }
 
   async backfillConnectedStorageId(): Promise<number> {
@@ -1446,6 +1498,11 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     })();
   }
 
+  private connectedStorageFromRecord(record: ConnectedStorageRecord): ConnectedStorage {
+    // payload 里是网盘凭据（cookie）：落盘加密，出库解密（任务单 S1.5）。
+    return connectedStorageFromRecord(record, JSON.parse(decryptSecret(record.payload)));
+  }
+
   private connectedStorageFromRow(row: Record<string, unknown>): ConnectedStorage {
     return {
       id: String(row.id),
@@ -1453,7 +1510,8 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       provider: String(row.provider),
       providerUid: String(row.provider_uid),
       label: (row.label as string | null | undefined) ?? null,
-      payload: JSON.parse(String(row.payload)),
+      // payload 里是网盘凭据（cookie）：落盘加密，出库解密（任务单 S1.5）。
+      payload: JSON.parse(decryptSecret(String(row.payload))),
       rootCid: (row.root_cid as string | null | undefined) ?? null,
       moviesCid: (row.movies_cid as string | null | undefined) ?? null,
       tvCid: (row.tv_cid as string | null | undefined) ?? null,
@@ -1466,20 +1524,12 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   async listConnectedStorages(accountId: string): Promise<ConnectedStorage[]> {
-    const rows = this.db
-      .prepare(
-        "SELECT id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, status, frozen_reason, frozen_at, created_at " +
-          "FROM connected_storages WHERE account_id = ? ORDER BY created_at",
-      )
-      .all(accountId) as Array<Record<string, unknown>>;
-    return rows.map((row) => this.connectedStorageFromRow(row));
+    const records = await this.credentials.listConnectedStorages(accountId);
+    return records.map((record) => this.connectedStorageFromRecord(record));
   }
 
   async hasAnyConnectedStorage(): Promise<boolean> {
-    const row = this.db.prepare("SELECT 1 AS ok FROM connected_storages LIMIT 1").get() as
-      | { ok: number }
-      | undefined;
-    return row !== undefined;
+    return this.credentials.hasAnyConnectedStorage();
   }
 
   async upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void> {
@@ -1487,41 +1537,19 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     if (row.accountId === "acct_unauthenticated") {
       throw new Error("cannot bind storage to unauthenticated account");
     }
-    // Instance-wide UNIQUE(provider, provider_uid) ownership: on conflict NEVER
-    // reassign account_id, and only refresh the row when the SAME account owns it
-    // (the WHERE makes a cross-account conflict a no-op — it can't steal or
-    // overwrite another account's 网盘). status/frozen are intentionally absent
-    // from the column list and the SET, so a re-scan preserves a frozen state.
-    this.db
-      .prepare(
-        "INSERT INTO connected_storages " +
-          "(id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, created_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-          "ON CONFLICT (provider, provider_uid) DO UPDATE SET " +
-          "label = excluded.label, payload = excluded.payload, " +
-          "root_cid = excluded.root_cid, movies_cid = excluded.movies_cid, tv_cid = excluded.tv_cid, anime_cid = excluded.anime_cid " +
-          "WHERE connected_storages.account_id = excluded.account_id",
-      )
-      .run(
-        row.id,
-        row.accountId,
-        row.provider,
-        row.providerUid,
-        row.label ?? null,
-        JSON.stringify(row.payload),
-        row.rootCid ?? null,
-        row.moviesCid ?? null,
-        row.tvCid ?? null,
-        row.animeCid ?? null,
-        row.createdAt,
-      );
+    // 所有权铁律（UNIQUE(provider, provider_uid)：跨账号冲突 no-op、同账号刷新、
+    // frozen 保留）与 payload 加密都在 CredentialStore 的 Kysely 查询里
+    // （任务单 S1.5 / S1.6；语义由 tests/credential-store.test.ts 钉死）。
+    const { payload, ...rest } = row;
+    await this.credentials.upsertConnectedStorage({
+      ...rest,
+      payloadText: encryptSecret(JSON.stringify(payload)),
+    });
   }
 
   async deleteConnectedStorage(accountId: string, storageId: string): Promise<void> {
     // account_id in the WHERE is fail-closed: can't delete another account's drive.
-    this.db
-      .prepare("DELETE FROM connected_storages WHERE id = ? AND account_id = ?")
-      .run(storageId, accountId);
+    await this.credentials.deleteConnectedStorage(storageId, accountId);
   }
 
   async tryUnbindConnectedStorage(
@@ -2106,5 +2134,49 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       .prepare("SELECT key FROM dead_links WHERE expires_at IS NULL OR expires_at > ?")
       .all(now) as { key: string }[];
     return rows.map((row) => String(row.key));
+  }
+
+  async reapExpiredDeadLinks(options?: { now?: string }): Promise<number> {
+    // 只回收软链（expires_at 非空且已到期）；永久链 expires_at IS NULL 永不被删。
+    const now = options?.now ?? new Date().toISOString();
+    const result = this.db
+      .prepare("DELETE FROM dead_links WHERE expires_at IS NOT NULL AND expires_at <= ?")
+      .run(now);
+    return Number(result.changes);
+  }
+
+  async deadLinkStats(options?: { now?: string }): Promise<DeadLinkStats> {
+    const now = options?.now ?? new Date().toISOString();
+    const totals = this.db
+      .prepare(
+        `SELECT
+           COUNT(*) AS total,
+           SUM(CASE WHEN expires_at IS NULL THEN 1 ELSE 0 END) AS permanent,
+           SUM(CASE WHEN expires_at IS NOT NULL AND expires_at > ? THEN 1 ELSE 0 END) AS soft_active,
+           SUM(CASE WHEN expires_at IS NOT NULL AND expires_at <= ? THEN 1 ELSE 0 END) AS soft_expired
+         FROM dead_links`,
+      )
+      .get(now, now) as {
+      total: number;
+      permanent: number | null;
+      soft_active: number | null;
+      soft_expired: number | null;
+    };
+    const kindRows = this.db
+      .prepare("SELECT kind, COUNT(*) AS n FROM dead_links GROUP BY kind")
+      .all() as Array<{ kind: string; n: number }>;
+    const byKind: Record<DeadLinkKind, number> = { pan115: 0, magnet: 0, guangya: 0 };
+    for (const row of kindRows) {
+      if (row.kind === "pan115" || row.kind === "magnet" || row.kind === "guangya") {
+        byKind[row.kind] = Number(row.n);
+      }
+    }
+    return {
+      total: Number(totals.total),
+      permanent: Number(totals.permanent ?? 0),
+      softActive: Number(totals.soft_active ?? 0),
+      softExpired: Number(totals.soft_expired ?? 0),
+      byKind,
+    };
   }
 }

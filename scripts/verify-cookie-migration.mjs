@@ -1,12 +1,11 @@
 #!/usr/bin/env node
-// P0.6 verify: run the legacy-cookie migration against the REAL dev Postgres and
+// P0.6 verify: run the legacy-cookie migration against the REAL dev SQLite DB and
 // assert acct_default gets a connected_storage matching the global cookie + env
 // CIDs, and that it is idempotent. Loads .env manually (no dotenv at root).
 import fs from "node:fs";
-import pg from "pg";
+import { appDbPath, loadDotEnv } from "./_lib/sqlite-db.mjs";
 import {
-  PostgresWorkflowRepository,
-  initializeWorkflowPostgresSchema,
+  createSqliteWorkflowRepository,
   migrateLegacyCookieToDefaultAccount,
   parsePan115Uid,
   DEFAULT_ACCOUNT_ID,
@@ -21,11 +20,11 @@ for (const line of fs.readFileSync(new URL("../.env", import.meta.url), "utf8").
   const k = t.slice(0, i).trim();
   if (!(k in process.env)) process.env[k] = t.slice(i + 1).trim();
 }
+loadDotEnv();
 
-const url = process.env.MEDIA_TRACK_POSTGRES_URL || "postgresql://mediatrack:mediatrack@localhost:5432/media_track";
-const pool = new pg.Pool({ connectionString: url });
-await initializeWorkflowPostgresSchema(pool);
-const repo = new PostgresWorkflowRepository(pool, Promise.resolve());
+// SqliteWorkflowRepository's constructor execs the schema itself — no separate
+// initialize step needed (that was the Postgres advisory-lock dance).
+const repo = createSqliteWorkflowRepository({ path: appDbPath() });
 
 let failed = 0;
 const check = (name, cond) => {
@@ -52,7 +51,7 @@ try {
   check("idempotent: second run migrates nothing", second.migrated === false);
   check("idempotent: still exactly one pan115 connection", (await repo.listConnectedStorages(DEFAULT_ACCOUNT_ID)).filter((c) => c.provider === "pan115").length === 1);
 } finally {
-  await pool.end();
+  await repo.close?.();
 }
 
 console.log(failed === 0 ? "\nMIGRATION VERIFIED" : `\n${failed} CHECKS FAILED`);

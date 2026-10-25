@@ -10,5 +10,9 @@
     "declaration": true,
     "outDir": "dist"
   },
-  "include": ["packages/**/*.ts", "vitest.config.ts"]
+  "include": [
+    "packages/**/*.ts",
+    "e2e/**/*.ts",
+    "vitest.config.ts"
+  ]
 }

@@ -9,7 +9,7 @@ vi.mock("next/server", async () => {
 
 // The health probe must go through the repository's real read path so it reflects
 // whether the app can actually USE the database. Mock the repo getter so we can
-// drive the reachable / unreachable cases without a live postgres.
+// drive the reachable / unreachable cases without a live database.
 vi.mock("../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: vi.fn(),
 }));

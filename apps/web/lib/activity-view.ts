@@ -12,7 +12,7 @@ import { activeRunLabel, distinctSeasons, seasonLabelText } from "./activity-sea
 // Re-export the pure season-label helpers so existing server-side imports from
 // this module keep working. The CANONICAL home is the runtime-free
 // `activity-season-label.ts` — the "use client" activity-feed must import from
-// there (not here), since this module pulls the Postgres-backed runtime.
+// there (not here), since this module pulls the server-only runtime.
 export { activeRunLabel, distinctSeasons, seasonLabelText };
 
 /** One title currently in the pipeline (queued or running). */

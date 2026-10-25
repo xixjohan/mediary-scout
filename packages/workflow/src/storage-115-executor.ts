@@ -1,3 +1,4 @@
+import { LeakyBucketPacer } from "@media-track/shared";
 import type {
   PackageTreeFile,
   ResourceCandidate,
@@ -245,7 +246,8 @@ export class Pan115ApiGuard {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly onEvent: (event: Pan115ApiGuardEvent) => void;
-  private lastCallAt: number | null = null;
+  /** 恒定间隔限速（任务单 S3.3）：minDelayMs 的权威执行者。 */
+  private readonly pacer: LeakyBucketPacer;
   private callCount = 0;
   private cleanupDepth = 0;
   private circuitOpenReason: string | null = null;
@@ -261,6 +263,11 @@ export class Pan115ApiGuard {
     this.riskMessagePatterns = options.riskMessagePatterns ?? DEFAULT_PAN115_RISK_PATTERNS;
     this.now = options.now ?? Date.now;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.pacer = new LeakyBucketPacer({
+      intervalMs: this.minDelayMs,
+      clock: this.now,
+      sleep: (ms) => this.sleep(ms),
+    });
     this.onEvent = options.onEvent ?? (() => undefined);
   }
 
@@ -324,7 +331,6 @@ export class Pan115ApiGuard {
     await this.applyDelay(operation);
     this.assertBudget(operation);
     this.callCount += 1;
-    this.lastCallAt = this.now();
 
     try {
       const result = await call();
@@ -352,21 +358,21 @@ export class Pan115ApiGuard {
   }
 
   private async applyDelay(operation: Pan115Operation): Promise<void> {
-    if (this.minDelayMs <= 0 || this.lastCallAt === null) {
+    if (this.minDelayMs <= 0) {
       return;
     }
-    const elapsedMs = this.now() - this.lastCallAt;
-    const delayMs = Math.max(0, this.minDelayMs - elapsedMs);
-    if (delayMs <= 0) {
-      return;
+    // 限速原语化（任务单 S3.3）：恒定间隔由共享的 LeakyBucketPacer 负责，
+    // 这里只保留可观测事件。行为与旧的内联算术一致（1200ms 默认 / env 覆盖）。
+    const delayMs = this.pacer.pendingDelayMs();
+    if (delayMs > 0) {
+      this.onEvent({
+        kind: "delay",
+        operation,
+        delayMs,
+        message: `waiting ${delayMs}ms before ${operation}`,
+      });
     }
-    this.onEvent({
-      kind: "delay",
-      operation,
-      delayMs,
-      message: `waiting ${delayMs}ms before ${operation}`,
-    });
-    await this.sleep(delayMs);
+    await this.pacer.wait();
   }
 
   private assertBudget(operation: Pan115Operation): void {
