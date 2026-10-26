@@ -38,9 +38,20 @@ else
   ok "已安装 $(gh --version | head -1)"
 fi
 
-# 登录态在 /root（宿主卷）里，重建不丢；丢了这里会明确说出来。
+# 凭据 helper 也要修：gh 装的路径每次可能不同（这几次分别是 /usr/local/bin/gh、
+# /usr/bin/gh），而 ~/.gitconfig 里写死的是绝对路径——重建后会指向不存在的文件，
+# 表现为 git push 报 "could not read Username"。gh auth setup-git 会把 helper
+# 重写成当前安装路径，是官方做法。
 if gh auth status >/dev/null 2>&1; then
   ok "已登录：$(gh api user --jq .login 2>/dev/null || echo '?')"
+  gh auth setup-git >/dev/null 2>&1 || true
+  # 仓库本地配置里的空 credential.helper= 会重置 helper 列表、吃掉全局的 gh
+  # helper —— 这是本次重建后 push 失败的真实原因，见到就清掉。
+  if git config --local --get-all credential.helper 2>/dev/null | grep -q '^$'; then
+    say "清掉仓库本地的空 credential.helper（它会屏蔽全局 gh helper）"
+    git config --local --unset-all credential.helper 2>/dev/null || true
+  fi
+  ok "git 凭据 helper 已配置：$(git config --global --get-all credential.https://github.com.helper | grep gh | head -1)"
 else
   echo "  ⚠ 未登录（/root/.config/gh 里的登录态没跟上）——按 docs/research/2026-10-23-gh-cli-headless-login.md 重新授权"
 fi
