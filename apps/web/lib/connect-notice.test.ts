@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import { shouldShowConnectNotice } from "./connect-notice";
 import type { ConnectNoticeConditions } from "./connect-notice";
 
+/**
+ * S5.1（2026-10-27）：付费远程访问横幅已整体移除（用户需求 #1）。
+ * 保留纯函数作为"永久关闭"的保险丝：即便将来有人重新接线，
+ * 它也永远返回 false，横幅不可能再出现在任何页面上。
+ */
 describe("shouldShowConnectNotice", () => {
   const baseConditions: ConnectNoticeConditions = {
     isDemo: false,
@@ -11,43 +16,12 @@ describe("shouldShowConnectNotice", () => {
     hasTunnelToken: false,
   };
 
-  it("shows when all conditions are met", () => {
-    expect(shouldShowConnectNotice(baseConditions)).toBe(true);
-  });
-
-  it("hides in demo mode", () => {
+  it("横幅已移除：任何条件组合都不再显示", () => {
+    expect(shouldShowConnectNotice(baseConditions)).toBe(false);
     expect(shouldShowConnectNotice({ ...baseConditions, isDemo: true })).toBe(false);
-  });
-
-  it("hides on desktop (桌面版无远程访问)", () => {
     expect(shouldShowConnectNotice({ ...baseConditions, isDesktop: true })).toBe(false);
-  });
-
-  it("hides when not logged in", () => {
     expect(shouldShowConnectNotice({ ...baseConditions, accountId: null })).toBe(false);
-  });
-
-  it("hides when already dismissed", () => {
-    expect(shouldShowConnectNotice({ ...baseConditions, dismissedAt: "2026-08-01T12:00:00Z" })).toBe(
-      false
-    );
-  });
-
-  it("shows even when tunnel token exists (已开通也显示「已上线」确认横幅)", () => {
-    // 之前「有 token 不显示」导致已开通实例(软路由)永远看不到横幅 —— 真实反馈。
-    // 有 token = 已开通,横幅切换为「远程访问已上线」确认文案(组件层区分)。
-    expect(shouldShowConnectNotice({ ...baseConditions, hasTunnelToken: true })).toBe(true);
-  });
-
-  it("hides when multiple conditions fail", () => {
-    expect(
-      shouldShowConnectNotice({
-        isDemo: true,
-        isDesktop: false,
-        accountId: null,
-        dismissedAt: "2026-08-01T12:00:00Z",
-        hasTunnelToken: true,
-      })
-    ).toBe(false);
+    expect(shouldShowConnectNotice({ ...baseConditions, dismissedAt: "2026-10-27T00:00:00.000Z" })).toBe(false);
+    expect(shouldShowConnectNotice({ ...baseConditions, hasTunnelToken: true })).toBe(false);
   });
 });
