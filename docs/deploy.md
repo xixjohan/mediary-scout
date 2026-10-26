@@ -501,6 +501,17 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 
 只有更新助手容器挂 Docker socket。它不映射任何端口，只接受「更新到这个发布标签」，令牌只有 web 容器能读。更新助手不会更新自己：一键更新只替换 web 容器。某个版本如果改了 `updater/`，发布说明会写明，那时在部署目录运行 `docker compose up -d --build updater`；运行 `./scripts/deploy.sh` 时它也会一并重建。
 
+## 在线更新源（指向哪个仓库）
+
+「设置 → 更新」检查的发布标签、更新说明、桌面安装包，全部来自一个仓库。默认上游
+`fancydirty/mediary-scout`；fork 用 `MEDIA_TRACK_UPDATE_REPO=<owner>/<name>` 指向自己：
+
+- **发布镜像已自带**：`Release Docker` 构建时把 `github.repository` 烤进镜像，
+  所以 fork 拉自己的镜像部署，开箱即检查自己的发布，无需任何配置。
+- 临时改指向：`.env` 里设 `MEDIA_TRACK_UPDATE_REPO`（compose 会透传进容器）。
+- 一键更新的镜像基址同样由它推导（`ghcr.io/<owner>/<name>`），
+  也可用 `MEDIA_IMAGE_BASE` 整体覆盖。
+
 ## 使用发布镜像（GHCR）
 
 每次打 `v*` 发布标签，GitHub Actions（`Release Docker`）会自动构建并推送镜像到

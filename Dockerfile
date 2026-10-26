@@ -62,11 +62,17 @@ RUN npm config set registry "$NPM_REGISTRY" && npm ci
 # unreliable. Passed per commit by scripts/deploy.sh (build.args → ${GIT_SHA}); an
 # unset value defaults to "unknown".
 ARG GIT_SHA=unknown
+# S5.6：在线更新源（owner/name）。Release Docker 传 github.repository，
+# fork 于是检查/下载自己的发布而不是上游的。
+ARG UPDATE_REPO=
+
 RUN echo "media-track build commit: ${GIT_SHA}" && echo "${GIT_SHA}" > /app/BUILD_COMMIT
 COPY . .
 # build:web = build:workflow (tsc) + next build apps/web (output: standalone).
 # allowedOrigins is baked here — change it ⇒ rebuild (docker compose up -d --build).
 ENV MEDIA_TRACK_ALLOWED_ORIGINS=${MEDIA_TRACK_ALLOWED_ORIGINS}
+ENV MEDIA_TRACK_UPDATE_REPO=${UPDATE_REPO}
+
 RUN npm run build:web
 # 独立 Worker 宿主（任务单 S2.1）：与 web 同镜像、独立进程，零依赖极简 poker。
 RUN npm run build:worker

@@ -146,7 +146,10 @@ compose() { docker compose -p "$PROJECT" --project-directory "$REPO" "$@"; }
 #
 # 单镜像模式：镜像是 ghcr.io 上的发布产物（Release Docker 在 v* 标签推送时构建推送）。
 # MEDIA_IMAGE_BASE 与 docker-compose.yml 的默认值保持一致；fork 覆盖自己的 namespace。
-IMAGE_BASE="${MEDIA_IMAGE_BASE:-ghcr.io/fancydirty/mediary-scout}"
+# S5.6：镜像基址默认由更新源推导（ghcr.io/<owner>/<name>），fork 拉自己的镜像。
+# MEDIA_IMAGE_BASE 仍可整体覆盖；UPDATE_REPO 与 compose 的 MEDIA_TRACK_UPDATE_REPO 同源。
+UPDATE_REPO="${MEDIA_TRACK_UPDATE_REPO:-fancydirty/mediary-scout}"
+IMAGE_BASE="${MEDIA_IMAGE_BASE:-ghcr.io/${UPDATE_REPO}}"
 
 # 镜像里烘焙的 commit（Release Docker 的 org.opencontainers.image.revision label）。
 # 交换前用它确认「这个镜像确实是目标 commit 构建的」——比 BUILD_COMMIT 更早发现问题，

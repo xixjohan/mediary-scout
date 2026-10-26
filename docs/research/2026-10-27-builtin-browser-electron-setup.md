@@ -51,11 +51,22 @@ for dsh-builtin-browser this means no spawnable Electron binary was found
 | 包装器脚本 | 同上 | ✅ **保留** |
 | apt 装的系统库（gtk3/gbm/asound/xvfb） | 容器层 `/usr` | ❌ **丢失，必须重装** |
 | Xvfb 进程 | 进程表 | ❌ **丢失，必须重启** |
+| `gh` CLI 二进制 | 容器层 `/usr/local` | ❌ **丢失**；但 `/root/.config/gh/hosts.yml` 登录态保留，重装后免登录 |
 | 仓库 / `.next` / `node_modules` / `data/` | `/root/mediary-scout`（同卷） | ✅ 保留 |
 
-**结论：重建后只需跑一次 `./scripts/setup-builtin-browser.sh`**（它会补上容器层缺失的
-系统库并重启 Xvfb，二进制和包装器不动）。②的 ldd 驱动检测正是为这种「下次缺的可能
-是别的库」准备的。
+**结论：重建后跑一条命令即可**：
+
+```bash
+./scripts/setup-after-rebuild.sh      # = setup-gh-cli.sh + setup-builtin-browser.sh
+```
+
+它补齐容器层丢失的部分（gh CLI、系统库、Xvfb），`/root` 卷上的东西原样保留。
+②的 ldd 驱动检测正是为这种「下次缺的可能是别的库」准备的。
+
+**gh CLI 特别说明**：`gh` 二进制在容器层会丢，但登录态
+`/root/.config/gh/hosts.yml` 在 `/root` 卷上**不丢**——所以 `setup-gh-cli.sh`
+装完就是**已登录**状态，不需要重走设备码授权（本次重建后实测确认：
+装完 `gh auth status` 直接显示 xixjohan）。
 
 ## 4. 已知遗留：客户端交互未通
 
@@ -67,5 +78,7 @@ for dsh-builtin-browser this means no spawnable Electron binary was found
 ## 5. 快速自检
 
 ```bash
-./scripts/setup-builtin-browser.sh     # 四步全 ✅ 即可用
+./scripts/setup-after-rebuild.sh       # 重建后：一条命令恢复 gh + 内置浏览器
+./scripts/setup-gh-cli.sh              # 只恢复 gh
+./scripts/setup-builtin-browser.sh     # 只恢复内置浏览器
 ```
