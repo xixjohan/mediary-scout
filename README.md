@@ -78,7 +78,7 @@ docker run -d --name mediary-scout -p 3000:3000 -v mediary-data:/app/data \
 
 两种形态下，自带 OpenAI 兼容的 AI 模型接口都是可选升级（key 只存在你自己的实例里）。未配置 AI 模型时，默认使用 Kilo Code 的公共免费模型池（无需注册；获取任务的对话上下文——搜索查询、任务与留言内容、候选结果、文件名等——会发送给 Kilo 及其上游模型提供商）。影视信息开箱即用。资源搜索用 PanSou：Docker 版自带一个，桌面版默认用公共实例，可以在设置里换成你自己的；可选再接 Prowlarr 找磁力。
 
-**关于 Docker 镜像**：`ghcr.io/fancydirty/mediary-scout:<版本标签>` 随每个发布版本自动构建（GitHub Actions 的 `Release Docker`，同时更新 `:latest`）。web 与 worker 是同一个镜像的不同启动命令，版本永远一致；fork 用户在 `.env` 里把 `MEDIARY_IMAGE` 指向自己的 namespace 即可。镜像只含程序，凭据密钥 `credential.key` 只在你的数据卷里、不随镜像分发。镜像里**不含**跨域访问域名（构建时烘焙）——需要跨域访问就用方式二自建，或走反向代理透传 `x-forwarded-host`。
+**关于 Docker 镜像**：`ghcr.io/fancydirty/mediary-scout:<版本标签>` 随每个发布版本自动构建（GitHub Actions 的 `Release Docker`，同时更新 `:latest`）。web 与 worker 是同一个镜像的不同启动命令，版本永远一致；fork 用户在 `.env` 里把 `MEDIARY_IMAGE` 指向自己的 namespace 即可。镜像只含程序，凭据密钥 `credential.key` 只在你的数据卷里、不随镜像分发（`.env`、数据库、备份也都被 `.dockerignore` 排除，镜像里没有任何秘密）。首次推送时 GHCR 自动建的包默认私有，要让大家免登录拉取，去 Package settings 把它改成公开即可——步骤见[部署指南](docs/deploy.md#把镜像包改为公开免登录拉取)。镜像里**不含**跨域访问域名（构建时烘焙）——需要跨域访问就用方式二自建，或走反向代理透传 `x-forwarded-host`。
 
 ## 支持的网盘
 
