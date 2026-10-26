@@ -1,19 +1,38 @@
 import { compareReleaseTags, parseReleaseNotes, parseReleaseTag, type ReleaseNote } from "./release-version";
 import { normalizeCommit } from "./deployment-update";
 
-const REPO = "fancydirty/mediary-scout";
+/**
+ * 在线更新源（S5.6，需求 #5）：默认上游 `fancydirty/mediary-scout`，可用
+ * `MEDIA_TRACK_UPDATE_REPO=<owner>/<name>` 覆盖成当前仓库（fork 发布时由
+ * Release Docker 写入 `github.repository`，见 .github/workflows/release-docker.yml）。
+ * 空值/空白按未设处理；畸形值直接抛错——拼出一个坏 URL 会让更新检查静默失败，
+ * 而那正是「更新源指错了」最难发现的形式。
+ */
+export const DEFAULT_UPDATE_REPO = "fancydirty/mediary-scout";
+
+export function updateRepoSlug(): string {
+  const raw = (process.env.MEDIA_TRACK_UPDATE_REPO ?? "").trim();
+  if (!raw) return DEFAULT_UPDATE_REPO;
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(raw)) {
+    throw new Error(
+      `MEDIA_TRACK_UPDATE_REPO_INVALID: "${raw}" — 必须是 owner/name 形态（如 xixjohan/mediary-scout）`,
+    );
+  }
+  return raw;
+}
+
 /** Every `v…` tag in one response (the tags list API pages at 30, which would lose the
  *  running release once 30 newer ones exist). Old semver tags come back too and are
  *  dropped by parseReleaseTag. Release tags must be lightweight: an annotated tag's
  *  ref points at a tag object, not a commit. */
-const TAGS_URL = `https://api.github.com/repos/${REPO}/git/matching-refs/tags/v`;
+const TAGS_URL = () => `https://api.github.com/repos/${updateRepoSlug()}/git/matching-refs/tags/v`;
 const OK_TTL_MS = 60 * 60 * 1000;
 const FAIL_TTL_MS = 5 * 60 * 1000;
 /** Notes fetched for the newest N releases only (the tab shows 3, "更早" expands to 10). */
 const NOTES_LIMIT = 10;
-const LATEST_RELEASE_URL = `https://api.github.com/repos/${REPO}/releases/latest`;
+const LATEST_RELEASE_URL = () => `https://api.github.com/repos/${updateRepoSlug()}/releases/latest`;
 /** Installers are only trusted from this repo's own release downloads. */
-const DOWNLOAD_PREFIX = `https://github.com/${REPO}/releases/download/`;
+const DOWNLOAD_PREFIX = () => `https://github.com/${updateRepoSlug()}/releases/download/`;
 
 export interface ReleaseEntry {
   tag: string;
@@ -77,7 +96,7 @@ export async function fetchCommitRelation(
 async function loadCommitRelation(key: string, fetchImpl: typeof fetch, started: number): Promise<CommitRelation | null> {
   let relation: CommitRelation | null = null;
   try {
-    const raw = await getText(fetchImpl, `https://api.github.com/repos/${REPO}/compare/${key}`);
+    const raw = await getText(fetchImpl, `https://api.github.com/repos/${updateRepoSlug()}/compare/${key}`);
     const status = raw ? (JSON.parse(raw) as { status?: unknown }).status : null;
     relation = typeof status === "string" && RELATIONS.has(status as CommitRelation) ? (status as CommitRelation) : null;
   } catch {
@@ -116,7 +135,7 @@ async function loadReleaseFeed(fetchImpl: typeof fetch, started: number): Promis
   let feed: ReleaseEntry[] = [];
   let ttl = FAIL_TTL_MS;
   try {
-    const raw = await getText(fetchImpl, TAGS_URL);
+    const raw = await getText(fetchImpl, TAGS_URL());
     const list = raw ? (JSON.parse(raw) as Array<{ ref?: unknown; object?: { sha?: unknown; type?: unknown } }>) : [];
     const releases = list
       .map((item) => {
@@ -133,7 +152,7 @@ async function loadReleaseFeed(fetchImpl: typeof fetch, started: number): Promis
         if (index >= NOTES_LIMIT) return { ...release, notes: [] };
         const md = await getText(
           fetchImpl,
-          `https://api.github.com/repos/${REPO}/contents/release-notes/${release.tag}.md?ref=${release.tag}`,
+          `https://api.github.com/repos/${updateRepoSlug()}/contents/release-notes/${release.tag}.md?ref=${release.tag}`,
           "application/vnd.github.raw",
         ).catch(() => null);
         return { ...release, notes: md ? parseReleaseNotes(md) : [] };
@@ -167,7 +186,7 @@ async function loadLatestDesktopRelease(fetchImpl: typeof fetch, started: number
   let release: DesktopRelease | null = null;
   let ttl = FAIL_TTL_MS;
   try {
-    const raw = await getText(fetchImpl, LATEST_RELEASE_URL);
+    const raw = await getText(fetchImpl, LATEST_RELEASE_URL());
     if (raw) release = desktopReleaseFrom(JSON.parse(raw));
     if (release) ttl = OK_TTL_MS;
   } catch {
@@ -186,7 +205,7 @@ function desktopReleaseFrom(body: unknown): DesktopRelease | null {
   const installer = (extension: string): string | null => {
     for (const asset of assets) {
       const url = asset?.browser_download_url;
-      if (typeof asset?.name === "string" && asset.name.endsWith(extension) && typeof url === "string" && url.startsWith(DOWNLOAD_PREFIX)) {
+      if (typeof asset?.name === "string" && asset.name.endsWith(extension) && typeof url === "string" && url.startsWith(DOWNLOAD_PREFIX())) {
         return url;
       }
     }
@@ -198,7 +217,7 @@ function desktopReleaseFrom(body: unknown): DesktopRelease | null {
   if (!dmgUrl || !exeUrl) return null;
   return {
     tag: data.tag_name,
-    pageUrl: `https://github.com/${REPO}/releases/tag/${data.tag_name}`,
+    pageUrl: `https://github.com/${updateRepoSlug()}/releases/tag/${data.tag_name}`,
     dmgUrl,
     exeUrl,
   };

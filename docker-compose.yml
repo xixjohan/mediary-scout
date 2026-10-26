@@ -72,6 +72,8 @@ services:
       # "real" is not a valid value — it fails the policy and the worker can never drain the
       # queue (获取 stuck "排队", category dirs never provisioned). Must be vercel-ai.
       MEDIA_TRACK_AGENT_ADAPTER: vercel-ai
+      # S5.6：留空则用镜像构建时烘焙的更新源（Release Docker 写入的 github.repository）。
+      MEDIA_TRACK_UPDATE_REPO: ${MEDIA_TRACK_UPDATE_REPO:-}
       MEDIA_TRACK_DEMO_SEED: "0"
       # 隧道 token 也给 web:设置页「远程访问」用它作实例身份，向 Mediary Connect
       # 报到查状态(仅发 Bearer 头做存活探针,不回传任何端点信息)。不传的话已开通

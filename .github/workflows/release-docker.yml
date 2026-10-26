@@ -108,6 +108,8 @@ jobs:
           build-args: |
             GIT_SHA=${{ needs.preflight.outputs.ref }}
             MEDIA_TRACK_ALLOWED_ORIGINS=${{ vars.MEDIA_TRACK_ALLOWED_ORIGINS }}
+            # S5.6：更新源 = 本仓库（fork 检查/下载自己的发布）
+            UPDATE_REPO=${{ github.repository }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

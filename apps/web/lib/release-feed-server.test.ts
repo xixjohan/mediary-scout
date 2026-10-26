@@ -1,9 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import {
   fetchCommitRelation,
   fetchLatestDesktopRelease,
   fetchReleaseFeed,
   invalidateReleaseFeedCache,
+  updateRepoSlug,
 } from "./release-feed-server";
 
 function fakeFetch(routes: Record<string, { status: number; body: string }>) {
@@ -276,5 +277,50 @@ describe("fetchLatestDesktopRelease", () => {
     expect(await fetchLatestDesktopRelease(fetchImpl)).toBeNull();
     expect(await fetchLatestDesktopRelease(fetchImpl)).toBeNull();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("updateRepoSlug（S5.6：在线更新源可配置）", () => {
+  const original = process.env.MEDIA_TRACK_UPDATE_REPO;
+
+  afterEach(() => {
+    if (original === undefined) delete process.env.MEDIA_TRACK_UPDATE_REPO;
+    else process.env.MEDIA_TRACK_UPDATE_REPO = original;
+    invalidateReleaseFeedCache();
+  });
+
+  it("默认是上游 fancydirty/mediary-scout（未设 env 时）", () => {
+    delete process.env.MEDIA_TRACK_UPDATE_REPO;
+    expect(updateRepoSlug()).toBe("fancydirty/mediary-scout");
+  });
+
+  it("env 覆盖为自己 fork 的 owner/name", () => {
+    process.env.MEDIA_TRACK_UPDATE_REPO = "xixjohan/mediary-scout";
+    expect(updateRepoSlug()).toBe("xixjohan/mediary-scout");
+  });
+
+  it("空串/空白按未设处理（回落到默认）", () => {
+    process.env.MEDIA_TRACK_UPDATE_REPO = "   ";
+    expect(updateRepoSlug()).toBe("fancydirty/mediary-scout");
+  });
+
+  it("拒绝畸形值（缺 owner、含空格、URL 形态、三段路径）", () => {
+    for (const bad of ["just-a-name", "owner/name with space", "https://github.com/a/b", "a/b/c"]) {
+      process.env.MEDIA_TRACK_UPDATE_REPO = bad;
+      expect(() => updateRepoSlug()).toThrow();
+    }
+  });
+
+  it("feed 指向 env 指定的仓库", async () => {
+    process.env.MEDIA_TRACK_UPDATE_REPO = "xixjohan/mediary-scout";
+    invalidateReleaseFeedCache();
+    const tags = "https://api.github.com/repos/xixjohan/mediary-scout/git/matching-refs/tags/v";
+    const fetchImpl = fakeFetch({
+      [tags]: { status: 200, body: JSON.stringify([ref("v2026.10.26", "f".repeat(40))]) },
+      ["https://api.github.com/repos/xixjohan/mediary-scout/contents/release-notes/v2026.10.26.md?ref=v2026.10.26"]:
+        { status: 200, body: "- 新增 自包含更新" },
+    });
+    const feed = await fetchReleaseFeed(fetchImpl);
+    expect(feed.map((entry) => entry.tag)).toEqual(["v2026.10.26"]);
   });
 });
