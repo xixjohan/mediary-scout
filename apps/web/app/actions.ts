@@ -998,42 +998,6 @@ export async function requestConnectLoginAction(email: string): Promise<ConnectL
   return await requestConnectLogin(email);
 }
 
-export interface DismissConnectNoticeResult {
-  ok: boolean;
-}
-
-/**
- * 关闭 Connect 通知横幅 —— 写 settings 表记录关闭时间。
- * 
- * demo 站禁用。
- */
-export async function dismissConnectNoticeAction(): Promise<DismissConnectNoticeResult> {
-  assertNotDemo();
-  const { getWorkflowRepository, requireAuthenticatedAccountId, UnauthenticatedAccountError } = await import("../lib/workflow-runtime");
-  const { CONNECT_NOTICE_DISMISSED_KEY } = await import("../lib/connect-notice");
-  
-  const repository = getWorkflowRepository();
-  try {
-    // Copilot 指出:未登录时 getCurrentAccountId() 返回 acct_unauthenticated,
-    // 而不是 null。若继续用它写设置,会污染哨兵账号的 account_settings。
-    const accountId = await requireAuthenticatedAccountId();
-    const now = new Date().toISOString();
-    await repository.setAccountSetting(accountId, CONNECT_NOTICE_DISMISSED_KEY, now);
-    return { ok: true };
-  } catch (e) {
-    // **只捕获 UnauthenticatedAccountError**(Copilot PR #221 suppressed #5)。
-    // catch {} 会吞掉所有异常(包括 DB 写入失败、仓库实现异常等),
-    // 把真实故障伪装成"未登录",并导致问题难以排查。
-    if (e instanceof UnauthenticatedAccountError) {
-      // 未登录 → 返回 { ok: false } 而不是抛错,
-      // 否则客户端看到的是"点了关闭没反应/500"。
-      return { ok: false };
-    }
-    // DB 写入失败、仓库实现异常等 → 继续抛出,让错误可见。
-    throw e;
-  }
-}
-
 // tagged union 而非 { ok: boolean; detail: ... }(Copilot 意见):
 // 后者允许 { ok: true, detail: "unreachable" } 这种不可能组合编译通过。
 // 判别字段 detail 与 ok 一一对应,不可能状态在类型层面就不存在。

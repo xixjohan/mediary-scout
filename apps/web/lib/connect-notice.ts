@@ -20,27 +20,13 @@ export interface ConnectNoticeConditions {
 
 /**
  * 判断是否显示 Connect 通知横幅。
- * 
- * 出现条件（必须全部满足）：
- * 1. 不是 demo 模式
- * 2. 已登录（有 accountId）
- * 3. 从未关闭过横幅（dismissedAt 为 null）
- * 
- * hasTunnelToken 不参与显示判定(已开通的实例同样显示「已上线」确认横幅,
- * 文案由 banner 组件按 hasTunnelToken 区分)。之前「有 token 不显示」导致
- * 软路由(已配置 TUNNEL_TOKEN)永远看不到横幅 —— 用户期望看到「远程访问
- * 已上线」确认。
+ *
+ * S5.1（2026-10-27，用户需求 #1）：**横幅已整体移除**。此函数保留为
+ * 永久保险丝——无论条件如何都返回 false，任何将来的重新接线都不可能
+ * 让「🎉 付费远程访问现已上线」再次出现在页面上。
  */
 export function shouldShowConnectNotice(
-  conditions: ConnectNoticeConditions
+  _conditions: ConnectNoticeConditions
 ): boolean {
-  const { isDemo, isDesktop, accountId, dismissedAt } = conditions;
-
-  // 任一条件不满足就不显示
-  if (isDemo) return false;
-  if (isDesktop) return false;
-  if (!accountId) return false;
-  if (dismissedAt !== null) return false;
-
-  return true;
+  return false;
 }
