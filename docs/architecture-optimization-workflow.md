@@ -125,6 +125,44 @@ node node_modules/vitest/vitest.mjs run   # L4
 5. **更新文档**：改 §4 状态、§7 执行日志；基线数字变化时同步 §2。
 6. **提交**：一个任务一个 commit（message 引用任务 ID，如 `refactor(sqlite): S1.2 SqliteJobQueue 原子认领`）。
 
+## 6.5 与上游同步（fork 的防覆盖纪律）
+
+本仓库是 `fancydirty/mediary-scout` 的 fork，开发直接在自己的 `main` 上（标准 fork
+工作流，**不需要切换分支**；GitHub 的 Sync fork 是「把上游合进你的 main」，你的提交
+全部保留，不存在覆盖）。
+
+**标签不能改名**：`vYYYY.MM.DD` 是仓库自身的机器可读约定——`Release Docker` /
+`Release Desktop` 的 `on: push: tags: v*` 触发器、`updater/run-update.sh` 的
+`is_release_tag()`、`apps/web/lib/release-version.ts` 解析器、`scripts/deploy.sh`
+找最新标签，全都认这套格式。加 `fork-` 前缀会一次性全部破坏。
+
+**但上游用的正是同一套命名**（已 `git ls-remote --tags upstream` 验证：
+v2026.09.29 / v2026.09.30 / v2026.10.04 / v2026.10.12 / v2026.10.22 …），
+所以拉上游时必须隔离标签，否则与你将来的发布标签撞名：
+
+```bash
+git remote add upstream https://github.com/fancydirty/mediary-scout.git   # 仅一次
+
+git fetch --no-tags upstream                       # 只拿分支（推荐）
+# 或让上游标签落到独立命名空间，永不撞名：
+git fetch upstream 'refs/tags/*:refs/tags/upstream/*'
+
+git checkout main
+git merge --no-ff upstream/main                    # 上游合进你；别 reset --hard，别 force-push
+```
+
+两个已核实的兜底：
+
+1. git 对撞名标签**拒绝覆盖**（fetch 报错中止），不会静默丢失你的标签——
+   坏处只是同步动作失败而非数据受损。
+2. 一键更新只 `fetch origin`（你自己的 fork，见 `updater/run-update.sh` 的
+   `fetch --tags --force origin`），发布与更新链路天然看不到上游标签。
+
+冲突预判（本分支与上游分叉最深的文件）：`packages/workflow/src/sqlite.ts`
+（PG→SQLite 重写）、`docker-compose.yml`（单镜像模式）、
+`updater/run-update.sh`（拉镜像）、`scripts/deploy.sh`（标签化部署）、
+`.github/workflows/*`。
+
 ## 7. 执行日志
 
 | 时间 | 任务 | 动作与证据 |
