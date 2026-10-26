@@ -127,9 +127,10 @@ node node_modules/vitest/vitest.mjs run   # L4
 
 ## 6.5 与上游同步（fork 的防覆盖纪律）
 
-本仓库是 `fancydirty/mediary-scout` 的 fork，开发直接在自己的 `main` 上（标准 fork
-工作流，**不需要切换分支**；GitHub 的 Sync fork 是「把上游合进你的 main」，你的提交
-全部保留，不存在覆盖）。
+本仓库是 `fancydirty/mediary-scout` 的 fork，但**默认分支已改名为 `mediary`**
+（2026-10-27，与上游彻底分家的护栏）：一键同步是按分支名匹配的，上游没有
+`mediary` 这个分支，Web 按钮与 `gh repo sync` 都无从同步；远端 `main` 已删除。
+你自己的提交只存在于 `mediary`，任何同步都必须是显式的 `git merge upstream/main`。
 
 **标签不能改名**：`vYYYY.MM.DD` 是仓库自身的机器可读约定——`Release Docker` /
 `Release Desktop` 的 `on: push: tags: v*` 触发器、`updater/run-update.sh` 的
@@ -147,7 +148,7 @@ git fetch --no-tags upstream                       # 只拿分支（推荐）
 # 或让上游标签落到独立命名空间，永不撞名：
 git fetch upstream 'refs/tags/*:refs/tags/upstream/*'
 
-git checkout main
+git checkout mediary
 git merge --no-ff upstream/main                    # 上游合进你；别 reset --hard，别 force-push
 ```
 

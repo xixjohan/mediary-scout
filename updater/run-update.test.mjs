@@ -145,8 +145,8 @@ case "$cmd" in
     if [ -f "$STUB_DIR/fail-fetch" ]; then exit 1; fi
     ;;
   symbolic-ref)
-    # On a branch only when a test put it there (a person ran deploy.sh, which checks out main).
-    if [ -f "$STUB_DIR/on-branch" ]; then printf '%s\\n' refs/heads/main; exit 0; fi
+    # On a branch only when a test put it there (a person ran deploy.sh, which checks out a release tag).
+    if [ -f "$STUB_DIR/on-branch" ]; then printf '%s\\n' refs/heads/mediary; exit 0; fi
     exit 1
     ;;
   describe)
