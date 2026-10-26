@@ -156,7 +156,7 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | 任务 | 状态 | 说明 |
 |---|---|---|
 | S5.1 移除横幅 | ⬜ | |
-| S5.2 API Key 策略+端口 | ⬜ | |
+| S5.2 API Key 策略+端口 | ✅ | `packages/shared/src/api-key-source.ts`（resolveApiKey DB>env>none 四象限 + maskApiKey）+ `packages/contracts` 的 IApiKeyStore 端口 + `api_key` 入 SECRET_SETTING_KEYS（AES-256-GCM 透明加密，实测落盘是 enc:v1: 密文、读回明文）。12/12 单测 |
 | S5.3 JWT 颁发/验证 | ⬜ | |
 | S5.4 全接口认证 | ⬜ | |
 | S5.5 设置页管理 | ⬜ | |
