@@ -556,7 +556,26 @@ docker run -d --name mediary-worker \
   Settings → Variables 里设好；留空表示只接受同机访问，跨域访问请配反向代并透传
   `x-forwarded-host`（见「国内构建加速」上一节的 allowedOrigins 说明）。
 - 镜像里**不含** `credential.key`（凭据密钥只在数据卷内，不随镜像分发——这是设计）。
+  `.env` / `*.sqlite` / `backups/` 也都被 `.dockerignore` 排除，镜像里没有任何秘密，
+  代码本身是 0BSD 开源——**把包改成公开是安全的**。
 - 想自己验证构建而不发布：仓库 Actions 页手动跑 `Release Docker`，勾选 dry_run。
+
+### 把镜像包改为公开（免登录拉取）
+
+首次推送时 GHCR 自动建的包默认是**私有**——别人 `docker pull` 前得先
+`docker login ghcr.io`。希望自建者免登录，就把包改成公开。可见性是**包级**设置
+（对该包下所有标签生效），不在工作流里控制：
+
+```bash
+# 网页：头像 → Your profile → Packages → mediary-scout
+#       → Package settings → Danger Zone → Change visibility → Public
+
+# 命令行（token 需要 write:packages scope：gh auth refresh -s write:packages）
+gh api -X PATCH users/xixjohan/packages/container/mediary-scout -f visibility=public
+```
+
+上游 `fancydirty/mediary-scout` 的包是否公开取决于上游维护者；fork 用户请把自己
+namespace 的包设为公开，并让使用者把 `.env` 的 `MEDIARY_IMAGE` 指向它。
 
 ## 备份与恢复（mediary-data 卷）
 
