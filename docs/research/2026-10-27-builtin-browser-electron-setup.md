@@ -68,6 +68,19 @@ for dsh-builtin-browser this means no spawnable Electron binary was found
 装完就是**已登录**状态，不需要重走设备码授权（本次重建后实测确认：
 装完 `gh auth status` 直接显示 xixjohan）。
 
+但光装上还不够，**凭据 helper 有两处会坏**（本次重建后两个都踩到了，
+表现为 `git push` 报 `could not read Username for 'https://github.com'`）：
+
+1. `~/.gitconfig` 里 helper 写的是**绝对路径**（gh 自己安装时写死的），
+   gh 重装后路径可能变（`/usr/local/bin/gh` → `/usr/bin/gh`）→ helper 指向
+   不存在的文件。解法：`gh auth setup-git` 重写为当前路径。
+2. **仓库本地** `.git/config` 里的空 `credential.helper=` 会**重置 helper
+   列表**，把全局的 gh helper 吃掉——这是最隐蔽的一个。解法：见到就
+   `git config --local --unset-all credential.helper`。
+
+`setup-gh-cli.sh` 现在两件都自动处理，并用 `git credential fill` 级别的
+端到端验证兜底。
+
 ## 4. 已知遗留：客户端交互未通
 
 浏览器能打开页面、能读 DOM、能 `execute`（JS 在执行），但**点击不触发 React 事件**
