@@ -477,6 +477,40 @@ export function customDirNamesFromEnv(env: NodeJS.ProcessEnv): {
 }
 
 const SESSION_SECRET_SETTING_KEY = "session_secret";
+const JWT_SECRET_SETTING_KEY = "jwt_secret";
+
+/**
+ * S5.3：JWT 签名 secret。env 覆盖优先，否则取 app_settings 里自动生成的值
+ * （自托管：重启稳定，运营者无需管理）。与 session_secret 分开——
+ * 轮换会话 secret 不会一次性吊销所有 API token，反之亦然。
+ */
+let jwtSecretCache: string | null = null;
+export async function getJwtSecret(): Promise<string> {
+  if (jwtSecretCache) return jwtSecretCache;
+  const envSecret = process.env.MEDIA_TRACK_JWT_SECRET?.trim();
+  if (envSecret) {
+    jwtSecretCache = envSecret;
+    return envSecret;
+  }
+  const repository = getWorkflowRepository();
+  const stored = (await repository.getSetting(JWT_SECRET_SETTING_KEY))?.trim();
+  if (stored) {
+    jwtSecretCache = stored;
+    return stored;
+  }
+  const generated = randomBytes(32).toString("hex");
+  await repository.setSetting(JWT_SECRET_SETTING_KEY, generated);
+  jwtSecretCache = generated;
+  return generated;
+}
+
+/** token 存活期（秒）。默认 12h——足够一天使用，又不至于泄露后长期有效。 */
+export function getJwtTtlSeconds(): number | null {
+  const raw = process.env.MEDIA_TRACK_JWT_TTL_SECONDS?.trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+}
 /** Sentinel account that owns no data — returned in multi-user mode when there
  *  is no valid session, so reads fail CLOSED (empty) instead of leaking the
  *  default account's data to an unauthenticated caller. Middleware normally

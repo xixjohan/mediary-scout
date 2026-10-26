@@ -14,5 +14,9 @@
       "types": "./dist/release-tag.d.ts",
       "default": "./dist/release-tag.js"
     }
+  },
+  "devDependencies": {},
+  "dependencies": {
+    "jose": "^6.2.13"
   }
 }
