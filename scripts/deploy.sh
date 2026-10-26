@@ -14,7 +14,7 @@
 # recreated.
 #
 # 单镜像模式（2026-10-26）：web/worker 不再本地构建，而是拉取 Release Docker 为发布
-# 标签推送的 GHCR 镜像。部署因此跟「最新的发布标签」而不是 main 的尖端——想部署任意
+# 标签推送的 GHCR 镜像。部署因此跟「最新的发布标签」而不是 mediary 分支的尖端——想部署任意
 # commit 请自行 `docker build` 并用 MEDIARY_IMAGE 指向本地镜像。
 #
 # Usage (on the host, in the repo dir):   ./scripts/deploy.sh [extra `up` args]

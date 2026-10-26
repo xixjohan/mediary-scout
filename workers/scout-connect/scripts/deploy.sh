@@ -19,14 +19,14 @@ if [ -n "$(git status --porcelain -- . 2>/dev/null)" ]; then
   exit 1
 fi
 
-# 2) 默认只允许部署 origin/main；显式逃生开关保留给事故恢复。
-git -C "$REPO_ROOT" fetch -q origin main
+# 2) 默认只允许部署 origin/mediary（fork 的默认分支）；显式逃生开关保留给事故恢复。
+git -C "$REPO_ROOT" fetch -q origin mediary
 LOCAL=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse origin/main)
+REMOTE=$(git rev-parse origin/mediary)
 if [ "$LOCAL" != "$REMOTE" ]; then
-  echo "❌ HEAD 与 origin/main 不一致，拒绝从未合并或落后的版本部署。" >&2
+  echo "❌ HEAD 与 origin/mediary 不一致，拒绝从未合并或落后的版本部署。" >&2
   echo "   HEAD:        $LOCAL" >&2
-  echo "   origin/main: $REMOTE" >&2
+  echo "   origin/mediary: $REMOTE" >&2
   echo "   确需事故恢复：DEPLOY_ALLOW_DIVERGED=1 ./scripts/deploy.sh" >&2
   [ "${DEPLOY_ALLOW_DIVERGED:-}" = "1" ] || exit 1
   echo "   ⚠️ DEPLOY_ALLOW_DIVERGED=1，继续。" >&2
