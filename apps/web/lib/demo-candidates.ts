@@ -1,3 +1,8 @@
+import {
+  buildTitleId,
+  buildTvCandidateId,
+  parseTvCandidateId,
+} from "@media-track/workflow";
 import type { MediaSearchCandidate, MediaSearchProvider } from "@media-track/workflow";
 
 export const demoMediaSearchProvider: MediaSearchProvider = {
@@ -18,10 +23,12 @@ export const demoMediaSearchProvider: MediaSearchProvider = {
 };
 
 export function findDemoCandidateById(candidateId: string): MediaSearchCandidate | null {
-  // Candidate ids may reference ANY season (tmdb_tv_{id}_s{n}); match by tmdbId.
-  const tvMatch = /^tmdb_tv_(\d+)_s\d+$/.exec(candidateId);
-  if (tvMatch) {
-    return findDemoCandidateByTmdbId(Number(tvMatch[1]));
+  // Candidate ids may reference ANY season; match by tmdbId.
+  // 委托给 media-identity：这里原来有一份自己的正则，与 workflow-runtime.ts 里的
+  // 同一格式两份写法（那边捕获 season、这边不捕获）——正是收敛要消除的漂移。
+  const tvParsed = parseTvCandidateId(candidateId);
+  if (tvParsed.ok) {
+    return findDemoCandidateByTmdbId(tvParsed.value.id);
   }
   return demoCandidates.find((candidate) => demoCandidateId(candidate) === candidateId) ?? null;
 }
@@ -33,9 +40,13 @@ export function findDemoCandidateByTmdbId(tmdbId: number): MediaSearchCandidate 
 export function demoCandidateId(candidate: MediaSearchCandidate): string {
   const firstSeason = candidate.seasons[0];
   if (candidate.mediaType === "tv" && firstSeason) {
-    return `tmdb_tv_${candidate.tmdbId}_s${firstSeason.seasonNumber}`;
+      return buildTvCandidateId({
+        source: "tmdb",
+        id: candidate.tmdbId,
+        seasonNumber: firstSeason.seasonNumber,
+      });
   }
-  return `tmdb_${candidate.mediaType}_${candidate.tmdbId}`;
+    return buildTitleId({ source: "tmdb", mediaKind: candidate.mediaType, id: candidate.tmdbId });
 }
 
 export const demoCandidates: MediaSearchCandidate[] = [

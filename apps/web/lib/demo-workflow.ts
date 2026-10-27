@@ -1,3 +1,4 @@
+import { buildTitleId, buildTvCandidateId, buildMovieCandidateId } from "@media-track/workflow";
 import {
   createEpisodeStates,
   episodeNumberFromCode,
@@ -54,7 +55,7 @@ function movieFixture(input: {
 }): { title: MediaTitle; season: TrackedSeason; episodes: EpisodeState[] } {
   const obtained = input.obtained ?? true;
   const title: MediaTitle = {
-    id: `tmdb_movie_${input.tmdbId}`,
+    id: buildMovieCandidateId({ source: "tmdb", id: input.tmdbId }),
     tmdbId: input.tmdbId,
     type: "movie",
     title: input.title,
@@ -66,7 +67,7 @@ function movieFixture(input: {
     ...(input.releaseDate ? { releaseDate: input.releaseDate } : {}),
   };
   const season: TrackedSeason = {
-    id: `tmdb_movie_${input.tmdbId}_movie`,
+    id: buildMovieCandidateId({ source: "tmdb", id: input.tmdbId }),
     mediaTitleId: title.id,
     seasonNumber: 1,
     status: obtained ? "completed" : "active",
@@ -93,7 +94,7 @@ function seriesFixture(input: {
   status: "active" | "completed";
 }): { title: MediaTitle; season: TrackedSeason; episodes: EpisodeState[] } {
   const title: MediaTitle = {
-    id: `tmdb_tv_${input.tmdbId}`,
+    id: buildTitleId({ source: "tmdb", mediaKind: "tv", id: input.tmdbId }),
     tmdbId: input.tmdbId,
     type: input.type,
     title: input.title,
@@ -104,7 +105,7 @@ function seriesFixture(input: {
     backdropPath: input.backdropPath,
   };
   const season: TrackedSeason = {
-    id: `tmdb_tv_${input.tmdbId}_s1`,
+    id: buildTvCandidateId({ source: "tmdb", id: input.tmdbId, seasonNumber: 1 }),
     mediaTitleId: title.id,
     seasonNumber: 1,
     status: input.status,

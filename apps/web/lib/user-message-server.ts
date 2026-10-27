@@ -4,6 +4,7 @@
  * apart from the server actions so it can be unit-tested against a plain repository.
  * Design: docs/superpowers/specs/2026-09-26-user-message-replace-design.md.
  */
+import { buildTitleId, buildTvCandidateId, buildMovieCandidateId } from "@media-track/workflow";
 import {
   userMessageDrive,
   type PersistedWorkflowRunSnapshot,
@@ -34,7 +35,10 @@ export async function resolveMessageWork(input: {
   // Server actions receive whatever the client sent — the type alone guarantees nothing.
   if (input.mediaType !== "movie" && input.mediaType !== "tv") return null;
   if (!Number.isInteger(input.tmdbId) || input.tmdbId <= 0) return null;
-  const titleKey = input.mediaType === "movie" ? `tmdb_movie_${input.tmdbId}` : `tmdb_tv_${input.tmdbId}`;
+  const titleKey =
+      input.mediaType === "movie"
+        ? buildMovieCandidateId({ source: "tmdb", id: input.tmdbId })
+        : buildTitleId({ source: "tmdb", mediaKind: "tv", id: input.tmdbId });
   const states = (await input.repo.listTrackedSeasonStates(input.scope)).filter((s) => s.title.id === titleKey);
   const first = states[0];
   if (!first) return null;

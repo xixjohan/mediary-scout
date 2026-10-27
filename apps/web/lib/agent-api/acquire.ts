@@ -1,3 +1,4 @@
+import { buildMovieCandidateId, buildTvCandidateId } from "@media-track/workflow";
 import { createTmdbSearchProvider, type MediaSearchProvider } from "@media-track/workflow";
 import { getTmdbAccesses, getAccountScopedSettings, queueCandidateTracking } from "../workflow-runtime";
 
@@ -93,11 +94,12 @@ async function queueByTmdbId(
   storageId: string | null | undefined,
   matchedTitle?: { title: string; year: number | null },
 ): Promise<AcquireResult> {
-  // candidateId formats from workflow-runtime.ts parsers:
-  //   movie: tmdb_movie_<tmdbId>   (parseMovieCandidateId)
-  //   tv:    tmdb_tv_<tmdbId>_s<n> (parseTvCandidateId)
+  // candidateId 由 media-identity 统一构造：这里原来是手写模板，格式知识与
+  // workflow-runtime.ts 的解析正则分居两地，改格式要同时记得改两边。
   const candidateId =
-    type === "movie" ? `tmdb_movie_${tmdbId}` : `tmdb_tv_${tmdbId}_s${season ?? 1}`;
+    type === "movie"
+      ? buildMovieCandidateId({ source: "tmdb", id: tmdbId })
+      : buildTvCandidateId({ source: "tmdb", id: tmdbId, seasonNumber: season ?? 1 });
 
   const result = await queueCandidateTracking(candidateId, storageId ?? undefined);
 

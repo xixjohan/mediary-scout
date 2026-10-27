@@ -1,3 +1,4 @@
+import { buildMovieCandidateId } from "@media-track/workflow";
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../../lib/page-auth-guard";
 import Link from "next/link";
@@ -328,7 +329,7 @@ function MovieHub({
   const nowIso = new Date().toISOString();
   const unreleased =
     view.state === "untracked" && isMovieUnreleased(view.releaseDate, nowIso);
-  const movieCandidateId = `tmdb_movie_${view.tmdbId}`;
+  const movieCandidateId = buildMovieCandidateId({ source: "tmdb", id: view.tmdbId });
   const chips: Array<{ label: string; value: string }> = [];
   if (view.releaseDate) chips.push({ label: "上映", value: formatMovieDate(view.releaseDate) });
   if (view.originalTitle && view.originalTitle !== view.title) {

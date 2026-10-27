@@ -117,6 +117,37 @@ interface StorageDriverEntry {
 
 **现在改是一行类型的代价；等接了第二个源再改，是要动 `media_titles`/`tracked_seasons`/`user_messages`/`resource_snapshots` 一串表的迁移。**
 
+#### 执行状态（2026-10-28）：已收敛，但**不是**按原文说的那样
+
+原文写「本项目当前是裸 `tmdbId`（`tmdb_tv_283428` 形式）」——这两句自相矛盾。实测产出的
+就是 `tmdb_tv_283428` / `tmdb_movie_238`，**来源前缀本来就在字符串里**。所以真正缺的
+不是前缀，而是三样东西：
+
+| 缺口 | 实测证据 |
+|---|---|
+| 没有 `MediaSource` 类型，来源只是字符串里的一段 | 全仓 0 处 `MediaSource` 声明；拼错格式编译器无感 |
+| 5 种 id 格式由约 10 处模板字面量构造、3 处手写正则解析，散在 8 个文件 | `demo-candidates.ts` 写 `/^tmdb_tv_(\d+)_s\d+$/`，`workflow-runtime.ts` 写 `/^tmdb_tv_(\d+)_s(\d+)$/`——同一格式两份写法 |
+| 解析失败一律返回裸 `null` | 「id 写错了」和「这片不在库里」在上层无法区分 |
+
+也因此**不需要 format 迁移**：wire format 未改，四张表的 title_key 原样有效。
+「一行类型的代价」在格式那一层早已付过，剩下要付的是类型层。
+
+落地见 `docs/doublecheck-media-identity.md`。要点：
+
+- `packages/workflow/src/media-identity.ts`：`MediaSource` 联合（今天只有 `"tmdb"`）、
+  四个 builder、四个 parser（返回带 `reason` 的判别联合，绝不返回裸 null）。
+- **入口收 `string`、出口打品牌类型**：id 来自数据库/网络/用户，入口不能信任；
+  品牌类型只保护出口，防止把 trackedSeason id 当 title id 传。
+- 8 个生产文件的字面量与正则已全部迁走，grep 归零；漂移守护测试把守这一点。
+- 测试夹具里的字面量（`replace-request.test.ts` 一家约 40 处）**有意保留**：若测试也全用
+  builder，builder 格式一改夹具会跟着静默改，没有任何东西能发现 wire format 变了。
+  真正的格式守护是「格式契约」那一条测试。
+
+顺带查出一个 gate 的结构性盲区：`packages/workflow/tsconfig.json` 的 include 只收
+`src/**/*.ts`，**tests/ 从来不被 tsc 检查**。根 tsconfig 能扫出 37 个测试文件类型错误，
+而 `npm run gate` 一个都看不到。本任务的编译期穷尽性断言因此必须落在 `src/` 里
+（落在测试里是空的）——这一点已用变异实证。
+
 ### 2.3 风控与性能（这一层最需要克制）
 
 【事实】115 漏桶 1.2s/发（[rate-limiter.ts:102](../packages/shared/src/rate-limiter.ts#L102)），夸克令牌桶 3/s burst 5。`withBrandPacing` 是装饰器，只包 pacing 不改语义。
