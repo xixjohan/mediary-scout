@@ -46,6 +46,8 @@ export * from "./candidate-selector.js";
 export * from "./resource-search-run.js";
 // 批次 3：关键词阶梯的多份快照合并成用户看到的那一份。
 export * from "./merged-search-snapshot.js";
+// 批次 3：手动入库排队命令（reserveWorkflowRun + 新 WorkflowKind）。
+export * from "./manual-import-command.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
