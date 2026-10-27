@@ -49,7 +49,8 @@ services:
   # 镜像引用可用 MEDIARY_IMAGE 覆盖——fork 指向自己的 namespace
   # （MEDIARY_IMAGE=ghcr.io/<你的ID>/mediary-scout:v2026.10.22），
   # 或指向本地自建镜像（docker build -t mediary-scout . 后
-  # MEDIARY_IMAGE=mediary-scout:latest）。留空默认取上游 canonical 镜像。
+  # MEDIARY_IMAGE=mediary-scout:latest）。留空的默认值见下面 web 的注释
+  # （由更新源推导，不写死任何一家）。
   web:
     # 镜像默认值由更新源推导（与 updater/run-update.sh、deploy.sh、网页 feed 同一
     # 个 knob）：默认部署「跑的镜像」与「一键更新拉的镜像」必须是同一个仓库，

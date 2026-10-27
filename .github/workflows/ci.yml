@@ -29,6 +29,10 @@ jobs:
       - run: npx tsc -p apps/desktop/tsconfig.json --noEmit
       - run: npx tsc -p workers/tmdb-proxy/tsconfig.json --noEmit
       - run: npx tsc -p workers/scout-connect/tsconfig.json --noEmit
+      # host-worker（S2.1/S2.2 的独立 drain 宿主）：根 tsconfig 只 include
+      # packages/** 与 e2e/**，这个工程此前**没有任何类型检查门禁**——文档却一直
+      # 把它列在名录里（第五轮复核的实证缺口）。补上，六处 tsc 与文档对齐。
+      - run: npx tsc -p apps/host-worker/tsconfig.json --noEmit
       # Production build with a throwaway SQLite file — mirrors `docker compose build`
       # (no .env at image-build time). cacheComponents prerenders pages at build; any
       # server component that reads the DB outside a connection()/cookies()/searchParams
