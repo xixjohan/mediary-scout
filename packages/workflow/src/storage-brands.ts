@@ -27,7 +27,10 @@ import {
   DEAD_LINKS_BLACK_BOX_TIANYI,
 } from "./acquisition-v2/skill-manuals.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
-import { createProtectedPan115CookieStorageExecutorFromEnv } from "./pan115-storage-factory.js";
+import {
+  createBootstrapPan115CookieStorageExecutor,
+  createProtectedPan115CookieStorageExecutorFromEnv,
+} from "./pan115-storage-factory.js";
 import { isPan123AuthError, parsePan123Uid } from "./pan123-client.js";
 import type { Pan123Credential } from "./pan123-client.js";
 import { Pan123Client } from "./pan123-client.js";
@@ -143,6 +146,27 @@ export interface StorageBrand {
    *  ANOTHER brand's manual. The text itself stays in skill.ts (it is agent-facing
    *  documentation); only the "which manual is mine" pointer lives here. */
   deadLinksSkill: string;
+  /** Build an executor for PROVISIONING a drive's media tree — a fresh drive has
+   *  no write scope yet, and that scope is meant to come FROM these dirs (the
+   *  catch-22 that left 115 drives stuck "目录待建"). So this is deliberately NOT
+   *  `create`: `create` builds the steady-state executor bound to the provisioned
+   *  CIDs, which do not exist yet here. Bounded + idempotent (find-or-create, no
+   *  deletes).
+   *
+   *  REQUIRED. The dispatch used to end in `provider === "quark" ? registry :
+   *  createBootstrapPan115CookieStorageExecutor(...)`, so a sixth COOKIE brand
+   *  would have been silently handed 115's client to build its directories —
+   *  exactly the G1 silent-failure class. Each brand must now say how it
+   *  provisions itself. */
+  createBootstrap: (input: StorageBootstrapInput) => StorageExecutor;
+}
+
+/** Input to a brand's `createBootstrap`. Cookie brands read `cookie`, token brands
+ *  read `credential`; `env` carries the brand's own tuning knobs. */
+export interface StorageBootstrapInput {
+  cookie: string;
+  credential?: unknown;
+  env?: Record<string, string | undefined>;
 }
 
 export const STORAGE_BRANDS: StorageBrand[] = [
@@ -158,6 +182,8 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "parents",
     minApiIntervalMs: 0, // 115 client 自带 1.2s 漏桶
     deadLinksSkill: DEAD_LINKS_BLACK_BOX,
+    createBootstrap: ({ cookie, env }) =>
+          createBootstrapPan115CookieStorageExecutor({ cookie, ...(env === undefined ? {} : { env }) }),
     create: (input) => {
       const cookie = input.cookie ?? "";
       const env = {
@@ -180,6 +206,8 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "parents",
     minApiIntervalMs: 0, // 夸克 client 自带 3/s 令牌桶
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_QUARK,
+    createBootstrap: ({ cookie }) =>
+          new QuarkStorageExecutor({ client: new QuarkCookieClient({ cookie }), writeScopeDirectoryIds: [] }),
     create: (input) => {
       return new QuarkStorageExecutor({
         // P13：夸克 client 过令牌桶限速（3/s burst 5，治理文档参数）——此前完全
@@ -206,6 +234,17 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "listed",
     minApiIntervalMs: 0,
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_GUANGYA,
+    createBootstrap: ({ credential }) => {
+          const c = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
+          const clientOptions: GuangYaClientOptions = {
+            accessToken: c.accessToken ?? "",
+            refreshToken: c.refreshToken ?? "",
+          };
+          if (c.deviceId !== undefined) {
+            clientOptions.deviceId = c.deviceId;
+          }
+          return new GuangYaStorageExecutor({ client: new GuangYaClient(clientOptions), writeScopeDirectoryIds: [] });
+        },
     create: (input) => {
       const c = (input.credential ?? {}) as {
         accessToken?: string;
@@ -244,6 +283,18 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "listed",
     minApiIntervalMs: 0,
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_TIANYI,
+    createBootstrap: ({ credential }) => {
+          const c = (credential ?? {}) as Partial<TianyiCredential>;
+          const clientOptions: TianyiClientOptions = {
+            sessionKey: c.sessionKey ?? "",
+            accessToken: c.accessToken ?? "",
+            refreshToken: c.refreshToken ?? "",
+          };
+          if (c.familySessionKey !== undefined) {
+            clientOptions.familySessionKey = c.familySessionKey;
+          }
+          return new TianyiStorageExecutor({ client: new TianyiClient(clientOptions), writeScopeDirectoryIds: [] });
+        },
     create: (input) => {
       const c = (input.credential ?? {}) as Partial<TianyiCredential>;
       // Same exactOptionalPropertyTypes discipline as guangya: never set optional
@@ -280,6 +331,10 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "listed",
     minApiIntervalMs: 1500, // 123 用 code=100011 请勿频繁操作 回应突发
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_PAN123,
+    createBootstrap: ({ credential }) => {
+          const c = (credential ?? {}) as Partial<Pan123Credential>;
+          return new Pan123StorageExecutor({ client: new Pan123Client({ token: c.token ?? "" }), writeScopeDirectoryIds: [] });
+        },
     create: (input) => {
       const c = (input.credential ?? {}) as Partial<Pan123Credential>;
       // 纯 token 模型:v1 无凭证刷新(web 面无 refresh 端点,401 → Pan123AuthError
@@ -338,6 +393,20 @@ export function getStorageBrand(provider: string): StorageBrand {
  * strip it. Throwing beats the old silent-failure class (G1), where an unwired
  * brand looked like "nothing happened".
  */
+/** Same runtime guard for `createBootstrap` — a registered brand missing it must
+ *  fail loudly. Silently falling back to another brand's bootstrap executor (which
+ *  is what the old ternary did for any non-quark cookie brand) builds directories
+ *  through the wrong client. */
+export function buildBootstrapExecutorForBrand(
+  brand: StorageBrand,
+  input: StorageBootstrapInput,
+): StorageExecutor {
+  if (typeof brand.createBootstrap !== "function") {
+    throw new Error(`storage brand registered without a bootstrap executor: ${brand.provider}`);
+  }
+  return brand.createBootstrap(input);
+}
+
 export function buildExecutorForBrand(brand: StorageBrand, input: StorageDriverCreateInput): StorageExecutor {
   if (typeof brand.create !== "function") {
     throw new Error(`storage brand registered without an executor: ${brand.provider}`);

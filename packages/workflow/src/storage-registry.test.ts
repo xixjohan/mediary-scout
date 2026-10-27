@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildBootstrapExecutorForBrand,
   buildExecutorForBrand,
   createExecutorForBrand,
   getStorageSkill,
@@ -87,5 +88,44 @@ describe("STORAGE_BRANDS 的死链手册也在注册表里", () => {
 
   it("未登记的 provider → 抛错，不静默落到别家手册上", () => {
     expect(() => getStorageSkill("nope")).toThrowError(/unknown storage brand/i);
+  });
+});
+
+/**
+ * 建目录树用的 bootstrap executor 也必须在注册表里。
+ *
+ * provisionDriveCategoryDirs 的尾部原是 `provider === "quark" ? 注册表 : 115 bootstrap`。
+ * 加第六家 cookie 盘时，这个三元会把它**静默送进 115 的 executor**——用别家盘的
+ * client 去建目录。正是 G1 那类静默失败。
+ *
+ * `create` 建的是「已绑定了 provisioned CIDs 的稳态 executor」；一块新盘还没有
+ * scope（scope 本该从这些目录里来），所以 bootstrap 必须另给一个不受限的变体。
+ * 这个区别是品牌自己的知识，故必填。
+ */
+describe("STORAGE_BRANDS 的 bootstrap executor 也在注册表里", () => {
+  it("每个已登记品牌都带 createBootstrap", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(typeof brand.createBootstrap, `${brand.provider} 登记了却没接 bootstrap`).toBe("function");
+    }
+  });
+
+  it("每个品牌的 createBootstrap 都能产出可用 executor", () => {
+    for (const brand of STORAGE_BRANDS) {
+      const executor = brand.createBootstrap({
+        cookie: "UID=1_A1_2;CID=2;SEID=3;__uid=1",
+        credential: ANY_CREDENTIAL,
+        env: {},
+      });
+      expect(typeof executor.createDirectory, `${brand.provider} 的 bootstrap 产出的不是 executor`).toBe(
+        "function",
+      );
+    }
+  });
+
+  it("已登记但 createBootstrap 缺失 → 抛错，不静默落到别家 executor 上", () => {
+    const broken = { provider: "pan115", label: "115 网盘" } as unknown as StorageBrand;
+    expect(() => buildBootstrapExecutorForBrand(broken, { cookie: "", env: {} })).toThrowError(
+      /without a bootstrap/i,
+    );
   });
 });
