@@ -14,6 +14,7 @@ export { parseReleaseTag, type ReleaseTag } from "./release-tag.js";
 
 export {
   API_KEY_SETTING_KEY,
+  generateApiKey,
   maskApiKey,
   resolveApiKey,
   type ApiKeyOrigin,

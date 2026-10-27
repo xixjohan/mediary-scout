@@ -155,12 +155,16 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 
 | 任务 | 状态 | 说明 |
 |---|---|---|
-| S5.1 移除横幅 | ⬜ | |
-| S5.2 API Key 策略+端口 | ✅ | `packages/shared/src/api-key-source.ts`（resolveApiKey DB>env>none 四象限 + maskApiKey）+ `packages/contracts` 的 IApiKeyStore 端口 + `api_key` 入 SECRET_SETTING_KEYS（AES-256-GCM 透明加密，实测落盘是 enc:v1: 密文、读回明文）。12/12 单测 |
-| S5.3 JWT 颁发/验证 | ⬜ | |
-| S5.4 全接口认证 | ⬜ | |
-| S5.5 设置页管理 | ⬜ | |
+| S5.1 移除横幅 | ✅ | 删 `components/connect-notice-banner.tsx` + `app/page.tsx` 装配 + `connect-notice.ts` 的 dismissed key 逻辑与样式；相关测试改为断言"不再展示" |
+| S5.2 API Key 策略+端口 | ✅ | `packages/shared/src/api-key-source.ts`（resolveApiKey DB>env>none 四象限 + maskApiKey）+ `packages/contracts` 的 IApiKeyStore 端口 + `api_key` 入 SECRET_SETTING_KEYS（AES-256-GCM 透明加密，实测落盘是 enc:v1: 密文、读回明文）。四象限 + 掩码 + SQLite 端口落盘单测全绿 |
+| S5.3 JWT 颁发/验证 | ✅ | `packages/shared/src/auth/jwt.ts`（jose HS256，`algorithms` 显式拒降级）+ `POST /api/auth/token`：恒定时间比 key、复用登录限流、401 统一文案「api key 无效」（不区分未配/错 key，防枚举）；secret 走 env > `app_settings:jwt_secret`（加密，缺失自动生成 32 字节 hex）。round-trip/过期/篡改/错算法/限流单测全绿 |
+| S5.4 全接口认证 | ✅ | `apps/web/lib/auth-chain.ts` 责任链（session cookie → Bearer JWT → 单用户局域网默认账号，远程 fail-closed）；22+1 个非白名单路由一行守卫；白名单机制原位不动（health / auth/* / run-next+run-type3 的 worker secret / hold+busy 的 updater token / status 的 owner session / agent/* 独立 token）。**两层兜底**：vitest 路由清单测试（40 路由逐一归类，新增路由必须显式表态）+ ESLint L2 新规则 `local/api-auth-required`（漏挂即 lint 红，白名单同源）。6 路由 × 3 凭据状态行为测试。修掉一个被 mock 掩盖的真 bug：workflow-runtime 只 import 未 re-export `DEFAULT_ACCOUNT_ID`，真实构建下 auth-chain 会炸 |
+| S5.5 设置页管理 | ✅ | `GET/POST/DELETE /api/settings/api-key`（全过 S5.4 登录链；demo 403）+ `components/settings/api-key-section.tsx`（owner 门禁，落在「远程访问」tab）+ `components/api-key-panel.tsx`（掩码 + 来源徽标 db/env/none + 轮换返回**一次性完整值** + env 态禁清除并说明；后端 409 兜底）。三态读取/轮换/清除状态机 + 路由 14 用例 |
 | S5.6 更新源改当前仓库 | ✅ | `updateRepoSlug()` env 可配 + 畸形值抛错；Dockerfile/workflow/compose/updater 全链透传；21/21 单测 + **干净实例实测 env 生效**（fork 无 tag → feed 为空，不再显示上游发布）；顺手清掉两个残留 next-server 进程 |
+
+### 附：E2E 幂等性修复（S5.4 收尾时发现）
+
+`e2e-run/mediary-e2e.db` 跨运行存活，「获取回路」spec 断言搜索「翘楚」后出现「获取」按钮——上一轮跑完该片名已进 `tracked_seasons`，按钮变「已追踪」，下一轮无改动也必红（实测复现）。修法：`e2e/reset-db.mjs` 由 `playwright.config.ts` 的 `webServer.command` 在 `next start` 前调用。**不能放 globalSetup**——Playwright 的任务顺序是「plugin setup（webServer 启动）→ globalSetup」，那时服务已打开并按 demo seed 写完库，再删会让运行中的服务对着被删的 inode 工作（实测两轮全红）。修后连续两轮 4/4 全绿。
 
 ## 9. 需要用户确认的三个点
 

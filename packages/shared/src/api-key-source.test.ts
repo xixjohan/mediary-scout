@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { createRequire } from "node:module";
-import { resolveApiKey, maskApiKey, API_KEY_SETTING_KEY } from "./api-key-source.js";
+import { resolveApiKey, maskApiKey, generateApiKey, API_KEY_SETTING_KEY } from "./api-key-source.js";
 
 /**
  * S5.2 TDD：API Key 解析策略（env + DB，**DB 优先**）。
@@ -104,5 +104,26 @@ describe("SQLite 实现（真文件，S5.2 集成）", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("generateApiKey（S5.5 设置页创建/轮换）", () => {
+  it("生成 64 位十六进制（32 字节熵），只含 [0-9a-f]", () => {
+    for (let i = 0; i < 20; i += 1) {
+      const key = generateApiKey();
+      expect(key).toMatch(/^[0-9a-f]{64}$/);
+    }
+  });
+
+  it("连续生成不重复（随机源正常工作）", () => {
+    const keys = new Set(Array.from({ length: 200 }, () => generateApiKey()));
+    expect(keys.size).toBe(200);
+  });
+
+  it("maskApiKey 对生成的 key 只露末 4 位", () => {
+    const key = generateApiKey();
+    const masked = maskApiKey(key);
+    expect(masked).toBe(`••••${key.slice(-4)}`);
+    expect(masked).not.toContain(key.slice(0, -4));
   });
 });

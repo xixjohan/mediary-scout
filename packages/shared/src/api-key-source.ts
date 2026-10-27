@@ -10,6 +10,8 @@
  * （IApiKeyStore，packages/contracts），不绑定 SQLite。
  */
 
+import { randomBytes } from "node:crypto";
+
 /** app_settings 里的键名。落盘前由 SQLite 侧的 SECRET_SETTING_KEYS 透明加密。 */
 export const API_KEY_SETTING_KEY = "api_key";
 
@@ -33,6 +35,18 @@ function nonEmpty(value: string | null | undefined): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * 生成一枚新的 API key：32 字节密码学随机 → 64 位十六进制。
+ *
+ * 设置页「创建/轮换」用；完整值只在创建响应里出现一次（之后只剩掩码）。
+ * 随机源用 node:crypto.randomBytes——本包既有 credential-crypto 同样从这里取
+ * 熵（shared 只在服务端被 import，不进浏览器 bundle；客户端组件要显示状态就
+ * 收 props，别 import 本模块）。
+ */
+export function generateApiKey(): string {
+  return randomBytes(32).toString("hex");
 }
 
 /** 只露末 4 位；短于 4 位全打点（不泄露长度）。 */
