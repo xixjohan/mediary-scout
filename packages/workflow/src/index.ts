@@ -26,6 +26,8 @@ export * from "./agent-step-redaction.js";
 export * from "./resource-candidate-view.js";
 // 用户态资源搜索（POST /api/titles/resources）的 30 分钟 TTL 缓存。
 export * from "./title-resource-cache.js";
+// 用户态资源搜索的 60s 冷却限流。
+export * from "./cooldown-limiter.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
