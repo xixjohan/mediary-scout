@@ -203,9 +203,21 @@ export interface SnapshotPrefilter {
   nsfwDropped?: Array<{ id: string; title: string; score: number }>;
 }
 
+/**
+ * Who made this decision. Batch 3 adds a human path (手动入库) next to the agent's,
+ * and the plan requires both to emit STRUCTURALLY IDENTICAL AgentDecisions — the only
+ * difference allowed is this field. Without it the two paths' decisions are
+ * indistinguishable in the DB, so 「手动与自动两条路径产出的 AgentDecision 结构一致」
+ * would be unverifiable by inspection.
+ */
+export type AgentDecisionSource = "agent" | "human";
+
 export interface AgentDecision {
   node: string;
   snapshotId: string;
+  /** Who picked these candidates. Defaults to "agent" so existing persisted rows and
+   *  every current producer keep compiling unchanged. */
+  source?: AgentDecisionSource;
   selectedCandidateIds: string[];
   episodeMapping: Record<string, string[]>;
   providerAheadEpisodeMapping: Record<string, string[]>;

@@ -761,6 +761,9 @@ export function buildAgentDecisions(input: {
   return [...selectedBySnapshot.entries()].map(([snapshotId, selectedCandidateIds]) => ({
     node: "acquisition_v2_sandbox_agent",
     snapshotId,
+    // Explicit, not defaulted: with a human path now emitting decisions too, an
+    // omitted source would be indistinguishable from "we forgot to set it".
+    source: "agent",
     selectedCandidateIds,
     episodeMapping: {},
     providerAheadEpisodeMapping: {},
