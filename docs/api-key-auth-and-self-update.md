@@ -234,3 +234,25 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | L8 | 文档口径：`update/status` 被归到「四个白名单路由」名下的 updater-token 族（实为 owner 门禁）；typecheck 名录写成「根/shared/workflow/contracts/web」（根 tsconfig 一棵树就管住后三者，独立工程是 web/desktop/host-worker/tmdb-proxy）；顶层 route.ts 写成「曾是盲区」（该文件从未存在，是预防性收口） | §7 按机制/路由两个口径分别写清；typecheck 按实际工程列；措辞改为预防性 |
 
 第三轮修复后门禁同样全绿：382 文件 / 5195 用例、gate、五处 tsc、三构建、e2e 1 文件 4 用例。
+### 附三：第四轮复核——「修复本身」与「用例是否真的在测」双双再审
+
+前三轮修完都判 green/partial，第四轮换了问法：不只看代码对不对，还看**用例是否真的在测它假装在测的东西**。结论 partial，抓到 1 high + 5 medium + 若干 low，其中最高优先的是**三个 H4 用例是假绿**：
+
+| 编号 | 问题 | 修法 |
+|---|---|---|
+| H4' | H4 的三个用例**假绿**：`boot()` 造完 cookie 之后又调了一次 `vi.resetModules()`，模块级 repository 单例连同它的 `:memory:` 库一起重建，session 行消失，cookie 解析回 null——三个用例与「无 session」场景完全重合。探针实证：把 H4 修复整段删掉，三个用例照样全绿 | 单模块实例内完成「造 cookie → 取 `getCurrentAccountId`」：先注册 `next/headers` mock（可变闭包），再 import，之后**不再** reset；用模块自己的 `createLoginSession` 落行签名（session secret 由 `getSessionSecret()` 决定，手搓签名必然对不上）；加自证断言 `resolveSessionAccountId(cookie) === 目标账号`。修完做变异验证：回退修复 → 红 |
+| H4b | 多用户分支同一不变量无用例守，且实现是「无 cookie 才看 Bearer」：一枚过期/解析不出的 cookie 把整条 JWT 通道吞掉（同一枚 JWT，把 cookie 的 `expires_at` 改到过去，结果从 200 翻成 404） | 改为 **session 解析成功才优先、失败落 Bearer**——与 auth-chain 责任链同序（两处不一致会让同一个请求在闸机和数据层落到不同账号）。补两条单实例用例（无效 cookie + 有效 JWT → JWT 账号；有效 session + 有效 JWT → session 账号），均变异验证 |
+| M1 | Bearer 正则六处各写一份（proxy 粗筛、真实实现、五个测试 mock 复刻版）：对真实实现做变异（去掉 `token.trim()`）时 6 个文件 98 个用例全绿，而注释还写着「与真实实现同一语义」 | 抽 `apps/web/lib/bearer-scheme.ts` 作唯一真源，proxy/实现/mock 共用一份代码，漂移在结构上不可能发生；补 6 个规则用例（含 tab/多空格/大小写/空 token），变异验证（去 trim → 红） |
+| M2 | 同一份正则里 proxy 放行 `Bearer<tab>token`、路由层要求字面空格 → 真实服务 401（两层语义分裂，L4 只修了 proxy 一侧） | 共享规则改 `\s+`，两侧同判 |
+| M3 | compose 的 web/worker 镜像默认值仍是上游：默认部署「跑的镜像」在上游、updater 拉 fork、feed 检查上游——而 fork 0 tag/0 release → `IMAGE_NOT_PUBLISHED` 回滚；且上游镜像的 `release-feed-server.ts` 写死 `const REPO = "fancydirty/mediary-scout"` 不读 env，改前两侧同为上游、可用 | 两处镜像默认值改由 `MEDIA_TRACK_UPDATE_REPO` 推导（与 updater/deploy/feed 同一个 knob），注释写清「不发布自己镜像的 fork 需显式设 `MEDIA_TRACK_UPDATE_REPO` 或 `MEDIARY_IMAGE`」 |
+| M4 | compose 透传与 `deploy.sh` 推导**零测试覆盖**：删掉这两处改动，5195 用例照样全绿 | 新增 `tools/update-source-parity.test.mjs`（实跑定义段而非行截取：覆盖 deploy/updater 默认值、env 覆盖、`MEDIA_IMAGE_BASE` 覆盖、纯空白 env 视作未设、两处默认值逐字相同共 8 条）；`runtime-config.test.ts` 补 compose 两处镜像 + web/updater 透传一致性 |
+| M5 | 空白 trim 不对称：应用侧 `"   "` 视作未设回落 fork，两个 shell 脚本不 trim → `ghcr.io/   ` | 两个脚本补 `tr -d '[:space:]'`，补用例钉住；变异验证（去掉 trim → 红） |
+| M6 | AST 守卫只看「有没有一次 `requireApiAccount(...)` 调用」：新文件里写一个本地同名函数再调用它，照样过检——而兜底的路由数断言（40）只在路由数量变化时才红 | `callsFunction` 之外加 `importsName`（AST 判定 import 子句），判定改为「import 了**且**调用了」；补 3 个判定用例（本地同名 → false、import 未调用 → false、真 import + 调用 → true） |
+| L1 | H2 的 catch 是 catch-all 400：sqlite 故障也变客户端错误，且 `error.message` 把 `database is locked (code=5)` 回显给调用方 | 只把输入校验错误（文案由 `TOO_SHORT_MESSAGE` 常量定义）翻成 400，其余穿透成 500；补用例断言 rejects + 不回显内部细节 |
+| L2 | H2 空串口子：`{apiKey: ""}` 被当「未提供」，静默发一枚随机 key——调用方以为设了自己的值 | 空串/纯空白 → 400，不猜 |
+| L3 | `--sequence.shuffle` 两个假绿：`clearAllMocks` 只清调用记录、不清 `mockReturnValue`/`mockResolvedValue`，前一个用例的值泄漏到后续文件（固定顺序下永远看不见） | 两处改 `resetAllMocks` + 显式还原默认值；全量 shuffle 复跑绿 |
+| L4 | 文档残留一串：jose v5（实际 v6）、deploy.md 默认上游、README `docker run` 指上游 vs deploy.md 指 fork、compose 注释自相矛盾、.env.example 烘焙值说明不成立、§3 指向不存在的 §4 表格、`api-key-source/` 路径写错、S5.6「21/21」过期、§4 typecheck 名录漏工程 | 逐条按代码事实改正；写死 `fancydirty` 的地方保留「产品立场」类（桌面安装包渠道、CI badge、clone 地址），改掉「部署行为」类 |
+| L5 | `update-section.tsx:180` 「全部发布说明」写死上游 release-notes（:68 已随仓库走） | 两个外链都由 `updateRepoSlug()` 推导；补源码断言用例 |
+| L6 | `account-bootstrap.ts` 本地抄一份 `"acct_default"` 字面量，与 `@media-track/workflow` 的 `DEFAULT_ACCOUNT_ID` 重复 | 改 import |
+
+第四轮修复后门禁全绿：384 文件 / 5218 用例（`--sequence.shuffle` 同绿）、`npm run gate` exit 0、七处 tsc 全 0、`build:shared`/`build:workflow`/`build:web` 全 0、`npm run e2e` 4 passed。提交 `537b69b`。
