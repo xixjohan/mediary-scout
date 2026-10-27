@@ -28,7 +28,7 @@ export interface ResourceCandidateView {
   /** Bytes, when the provider reports it (Prowlarr does; PanSou does not). */
   sizeBytes?: number;
   /** ISO-8601 publish time, when the provider reports it (PanSou does). */
-  publishedAt?: string;
+  postedAt?: string;
   /** Swarm health, Prowlarr only. */
   seeders?: number;
 }
@@ -59,8 +59,8 @@ export function toCandidateView(candidate: ResourceCandidate): ResourceCandidate
   if (sizeBytes !== undefined) view.sizeBytes = sizeBytes;
   const seeders = finiteNumber(payload.seeders);
   if (seeders !== undefined) view.seeders = seeders;
-  const publishedAt = nonEmptyString(payload.datetime);
-  if (publishedAt !== undefined) view.publishedAt = publishedAt;
+  const postedAt = nonEmptyString(payload.datetime);
+  if (postedAt !== undefined) view.postedAt = postedAt;
   return view;
 }
 
