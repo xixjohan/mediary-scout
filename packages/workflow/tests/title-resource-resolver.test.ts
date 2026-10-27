@@ -195,3 +195,17 @@ describe("resolveTitleResources — payload 边界", () => {
     expect(result.candidates).toEqual(toCandidateViews(snapshotOf(["c1"]).candidates));
   });
 });
+
+describe("resolveTitleResources — 跨关键词去重", () => {
+  it("同一资源经不同关键词搜到只出现一次", async () => {
+    const d = deps({
+      keywords: ["孤独摇滚", "Bocchi the Rock!"],
+      search: async ({ keyword }) =>
+        snapshotOf(keyword === "孤独摇滚" ? ["shared", "onlyA"] : ["shared", "onlyB"]),
+    });
+    const result = await resolveTitleResources(d);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") return;
+    expect(result.candidates.map((c) => c.candidateId).sort()).toEqual(["onlyA", "onlyB", "shared"]);
+  });
+});

@@ -65,11 +65,18 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
   }
 
   try {
-    const views: ResourceCandidateView[] = [];
+    // Deduped by candidateId across the ladder. Content-hashing providers (PanSou)
+    // hand the SAME id to identical results, so a resource found via both the bare
+    // title and the original title would otherwise appear twice — the panel would
+    // show the user the same link three times, which reads as three distinct options.
+    const byId = new Map<string, ResourceCandidateView>();
     for (const keyword of deps.keywords) {
       const snapshot = await deps.search({ keyword });
-      views.push(...toCandidateViews(snapshot.candidates));
+      for (const view of toCandidateViews(snapshot.candidates)) {
+        if (!byId.has(view.candidateId)) byId.set(view.candidateId, view);
+      }
     }
+    const views = [...byId.values()];
     deps.cache.put(scopeKey, views);
     return { kind: "ok", candidates: views, cached: false };
   } catch (error) {
