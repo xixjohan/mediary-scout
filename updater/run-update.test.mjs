@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1149,5 +1149,54 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     for (const line of calls) {
       expect(line).toMatch(/ -Y off /);
     }
+  });
+});
+
+/**
+ * H1（第三轮复核揪出的 high）：更新链被拆成两半——网页 feed 的默认源改成了
+ * 当前仓库，可 updater 仍默认上游 fancydirty，于是「检查指向自己、一键更新拉
+ * 别家镜像」，镜像 revision 永远对不上。而且 compose 的 updater 服务压根没透传
+ * MEDIA_TRACK_UPDATE_REPO，按文档设 env 的 fork 也覆盖不到这里。
+ */
+describe("run-update.sh — 更新源与镜像基址同源（H1）", () => {
+  /** 只跑脚本最前面的变量推导段（在一切副作用之前 exit），读它打印的默认值。 */
+  function probeDefaults(env = {}) {
+    const dir = mkdtempSync(join(tmpdir(), "updater-defaults-"));
+    // 截取 UPDATE_REPO/IMAGE_BASE 两行定义，然后打印并退出：不碰 docker/git。
+    const head = readFileSync(SCRIPT, "utf8").split("\n");
+    const start = head.findIndex((l) => l.startsWith('UPDATE_REPO="'));
+    const end = head.findIndex((l, i) => i > start && l.startsWith("IMAGE_BASE="));
+    const snippet = [
+      "#!/bin/sh",
+      ...head.slice(start, end + 1),
+      'printf "%s\\n" "$UPDATE_REPO"',
+      'printf "%s\\n" "$IMAGE_BASE"',
+    ].join("\n");
+    const probe = join(dir, "probe.sh");
+    writeFileSync(probe, snippet);
+    chmodSync(probe, 0o755);
+    const out = spawnSync(probe, [], { env: { PATH: process.env.PATH, ...env }, encoding: "utf8" });
+    const lines = out.stdout.trim().split("\n");
+    return { updateRepo: lines[0], imageBase: lines[1], status: out.status };
+  }
+
+  it("默认更新源 = 当前仓库（与网页 feed 的 DEFAULT_UPDATE_REPO 同源，不再是上游）", () => {
+    expect(probeDefaults().updateRepo).toBe("xixjohan/mediary-scout");
+  });
+
+  it("镜像基址默认由更新源推导（ghcr.io/<owner>/<name>）", () => {
+    expect(probeDefaults().imageBase).toBe("ghcr.io/xixjohan/mediary-scout");
+  });
+
+  it("设了 MEDIA_TRACK_UPDATE_REPO → 两侧一起改（不再一个指自己一个指上游）", () => {
+    const r = probeDefaults({ MEDIA_TRACK_UPDATE_REPO: "me/my-scout" });
+    expect(r.updateRepo).toBe("me/my-scout");
+    expect(r.imageBase).toBe("ghcr.io/me/my-scout");
+  });
+
+  it("MEDIA_IMAGE_BASE 仍可整体覆盖镜像基址（换 registry/命名空间的人不受影响）", () => {
+    const r = probeDefaults({ MEDIA_IMAGE_BASE: "ghcr.io/someone/else" });
+    expect(r.updateRepo).toBe("xixjohan/mediary-scout");
+    expect(r.imageBase).toBe("ghcr.io/someone/else");
   });
 });

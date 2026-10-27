@@ -119,6 +119,38 @@ describe("/api/settings/api-key", () => {
     });
   });
 
+  // L6：401（未登录）必须先于 404（非 owner）判定。顺序若反了，未登录的匿名
+  // 探子也能从 404 推出「这个端点存在」——那正是 404 想藏住的信息。
+  it("无凭据 + 非 owner → 401（不是 404：未登录判定必须在前）", async () => {
+    state.owner = false;
+    for (const method of ["GET", "POST", "DELETE"] as const) {
+      const res = await (method === "GET" ? GET : method === "POST" ? POST : DELETE)(req(method));
+      expect(res.status, method).toBe(401);
+    }
+    expect(state.store.calls).toEqual([]);
+  });
+
+  describe("POST 显式值的错误契约（H2：短 key 不得 500）", () => {
+    it("过短显式值 → 400 带原因，且不写库", async () => {
+      const res = await POST(req("POST", sessionHeaders(), { apiKey: "abc" }));
+      expect(res.status).toBe(400);
+      expect(((await res.json()) as { error: string }).error).toMatch(/太短/);
+      expect(state.store.calls).toEqual([]);
+    });
+
+    it("非字符串 apiKey → 400（形状错误），而不是静默改发一枚随机 key", async () => {
+      const res = await POST(req("POST", sessionHeaders(), { apiKey: 123 }));
+      expect(res.status).toBe(400);
+      expect(state.store.calls).toEqual([]);
+    });
+
+    it("合法显式值（≥16）→ 200", async () => {
+      const res = await POST(req("POST", sessionHeaders(), { apiKey: "0123456789abcdef" }));
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as { apiKey: string }).apiKey).toBe("0123456789abcdef");
+    });
+  });
+
   describe("owner 门禁（多用户越权写，M1 自审修复）", () => {
     it("已登录但非 owner → 三个方法全部 404（与 /api/update/status 同款，不泄露存在性）", async () => {
       state.owner = false;

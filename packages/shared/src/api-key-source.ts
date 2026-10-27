@@ -7,7 +7,7 @@
  *
  * 模式：策略。两个 ApiKeySource（env / db）由本函数按优先级选路，
  * 与 createBrandPacer、StorageExecutor 工厂同一套路；store 是端口
- * （IApiKeyStore，packages/contracts），不绑定 SQLite。
+ * （IApiKeyStore 定义就在本文件），不绑定 SQLite。
  */
 
 import { randomBytes } from "node:crypto";

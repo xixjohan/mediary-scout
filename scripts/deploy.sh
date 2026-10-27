@@ -60,7 +60,12 @@ export GIT_SHA
 
 # 把镜像引用钉进 .env：compose 的 ${MEDIARY_IMAGE} 读它，后续 up/pull 都停在这个版本，
 # 而不是被 :latest 悄悄覆盖。以文件属主身份写，避免 root 拥有的 .env 让用户改不动。
-IMAGE="${MEDIARY_IMAGE_BASE:-ghcr.io/fancydirty/mediary-scout}:${TAG}"
+# 镜像基址默认由更新源推导，与 updater/run-update.sh、网页 feed 三者同源：
+# 都指向当前仓库（fork 拉自己的 ghcr 镜像）。曾硬编码上游，设置页引导用户跑的
+# 就是这段，会把别家镜像钉进 .env（第三轮复核的 medium）。MEDIA_IMAGE_BASE /
+# MEDIA_TRACK_UPDATE_REPO 仍可分别覆盖。
+UPDATE_REPO="${MEDIA_TRACK_UPDATE_REPO:-xixjohan/mediary-scout}"
+IMAGE="${MEDIA_IMAGE_BASE:-ghcr.io/${UPDATE_REPO}}:${TAG}"
 if [ -f .env ] && grep -q '^MEDIARY_IMAGE=' .env; then
   sed -i "s|^MEDIARY_IMAGE=.*|MEDIARY_IMAGE=${IMAGE}|" .env
 elif [ -f .env ]; then

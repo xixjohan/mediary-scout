@@ -383,3 +383,84 @@ describe("resolveBearerAccountId：畸形形态对真实实现（L1）", () => {
     expect(await resolveReal(`BeArEr ${token}`)).toBe("acct_l1");
   });
 });
+
+/**
+ * H4（第三轮复核）：单用户远程分支原先只在 `sessionAccountId === null` 时才看
+ * Bearer——一枚能解析出别账号的残留 cookie 会让整个 Bearer 通道被跳过，
+ * 持合法 acct_default JWT 的站主得到哨兵（200 空数据，而非干净 401）。
+ */
+describe("单用户远程：残留别账号 cookie 不得吞掉 Bearer 通道（H4）", () => {
+  const SECRET = "h4-secret-32-bytes-xxxxxxxxxxxxxxxxxx";
+  const prevSessionSecret = process.env.MEDIA_TRACK_SESSION_SECRET;
+
+  afterEach(() => {
+    delete process.env.MEDIA_TRACK_JWT_SECRET;
+    delete process.env.MEDIA_TRACK_SESSION_SECRET;
+    delete process.env.MEDIA_TRACK_MULTI_USER;
+    delete process.env.MEDIA_TRACK_SQLITE_PATH;
+    if (prevSessionSecret !== undefined) process.env.MEDIA_TRACK_SESSION_SECRET = prevSessionSecret;
+    vi.resetModules();
+    vi.doUnmock("next/headers");
+  });
+
+  /**
+   * 单用户 + 远程。用真实的 createLoginSession 造一枚能解析出
+   * `leftoverAccountId` 的合法 cookie（不 mock 模块内部调用——自引用 mock 拦不住
+   * 函数体内的本地引用，只会让测试假装通过）。
+   */
+  async function boot(opts: { leftoverAccountId: string | null; authorization?: string }) {
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    delete process.env.MEDIA_TRACK_MULTI_USER; // 单用户
+    process.env.MEDIA_TRACK_JWT_SECRET = SECRET;
+    process.env.MEDIA_TRACK_SESSION_SECRET = SECRET;
+    vi.resetModules();
+
+    const rt = await import("./workflow-runtime");
+    let cookie: string | undefined;
+    if (opts.leftoverAccountId !== null) {
+      // 用真实注册出口造一枚能解析出该账号的合法 cookie（registerAccount 内部
+      // createLoginSession 落库 + 签名）。默认账号则用 loginAccount 的 adopt 分支。
+      if (opts.leftoverAccountId === "acct_default") {
+        // 单用户登录只认 acct_default 且必须已设密码
+        expect((await rt.setSingleUserPassword("pw-1234567890")).ok).toBe(true);
+        const outcome = await rt.loginAccount("owner", "pw-1234567890");
+        cookie = outcome.ok ? outcome.signedCookie : undefined;
+      } else {
+        const outcome = await rt.registerAccount("leftover-user", "pw-1234567890");
+        cookie = outcome.ok ? outcome.signedCookie : undefined;
+      }
+      expect(cookie, "必须造出合法 session cookie").toBeTruthy();
+    }
+    const hdrs = new Headers({ "cf-ray": "h4-probe" });
+    if (cookie) hdrs.set("cookie", `${rt.SESSION_COOKIE_NAME}=${cookie}`);
+    if (opts.authorization !== undefined) hdrs.set("authorization", opts.authorization);
+    vi.doMock("next/headers", () => ({
+      cookies: async () => ({
+        get: (k: string) => (k === rt.SESSION_COOKIE_NAME && cookie ? { value: cookie } : undefined),
+      }),
+      headers: async () => hdrs,
+    }));
+    // createLoginSession 已在上面用真实仓库落过库；这里只为隔离重取模块。
+    vi.resetModules();
+    return import("./workflow-runtime");
+  }
+
+  it("残留别账号 session + 有效 acct_default JWT → 默认账号（Bearer 不被跳过）", async () => {
+    const { issueToken } = await import("@media-track/shared");
+    const token = `Bearer ${await issueToken({ sub: "acct_default" }, SECRET, 600)}`;
+    const rt = await boot({ leftoverAccountId: "acct_somebody_else", authorization: token });
+    expect(await rt.getCurrentAccountId()).toBe("acct_default");
+  });
+
+  it("残留别账号 session + 无 Bearer → 哨兵（既不开放也不认别账号）", async () => {
+    const rt = await boot({ leftoverAccountId: "acct_somebody_else" });
+    expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
+  });
+
+  it("默认账号 session + 有效 JWT → 默认账号（两条路同一答案）", async () => {
+    const { issueToken } = await import("@media-track/shared");
+    const token = `Bearer ${await issueToken({ sub: "acct_default" }, SECRET, 600)}`;
+    const rt = await boot({ leftoverAccountId: "acct_default", authorization: token });
+    expect(await rt.getCurrentAccountId()).toBe("acct_default");
+  });
+});

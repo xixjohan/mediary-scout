@@ -61,7 +61,10 @@ export function proxy(request: NextRequest): NextResponse {
   // 换来的 JWT 通道（外网程序化访问的全部意义）。只放 /api/ 路径：浏览器
   // 导航不带 Authorization，页面侧的重定向语义不变。
   const authorization = request.headers.get("authorization") ?? "";
-  if (request.nextUrl.pathname.startsWith("/api/") && /^bearer /i.test(authorization)) {
+  // `\s` 而非单个空格：路由层的 resolveBearerAccountId 用 /^bearer (.+)$/i，
+  // `.+` 吃得下 tab/多个空格，粗筛收紧一个字符就会把「proxy 放行、路由认」的
+  // 组合翻转为「proxy 拦死、路由根本看不到」（L4 复核实测：Bearer<tab>token）。
+  if (request.nextUrl.pathname.startsWith("/api/") && /^bearer\s/i.test(authorization)) {
     return NextResponse.next();
   }
   const url = request.nextUrl.clone();

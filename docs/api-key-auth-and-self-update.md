@@ -148,13 +148,18 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 
 > 数字随交付更新，不留在写作时的估计值上（逐维核查纠过的口径）：
 > 路由总数 **40**（12 白名单 + 5 agent 自守卫 + 23 登录链）；全量测试
-> **382 文件 / 5172 用例**；E2E 是 **1 个 spec 文件、4 个用例**（不是 4 个 spec）；
-> jose 是 **v6**（`jwtVerify`/`SignJWT`，不是文档早期写的 jsonwebtoken）。
+> **382 文件 / 5195 用例**；E2E 是 **1 个 spec 文件、4 个用例**（不是 4 个 spec）；
+> jose 是 **v6**（`jwtVerify`/`SignJWT`，不是文档早期写的 jsonwebtoken）；
+> 白名单「四类」按**机制**数（health / auth / worker-secret / updater-token），
+> 路由数则是 12 个——`worker-secret` 管 run-next|run-type3、`updater-token` 管
+> hold|busy|status（`status` 不换 token，但同属 updater 豁免族，见 §3）。
 
-1. 每任务 TDD 红→绿；全量测试保持绿（当前基线 382 文件 / 5172 用例）。
+1. 每任务 TDD 红→绿；全量测试保持绿（当前基线 382 文件 / 5195 用例）。
 2. 门禁全绿：`npm run gate`（layout + deps + `eslint . --max-warnings 0`）、
-   **五个** typecheck（根 / shared / workflow / contracts / web）、
+   **五处** typecheck（根 `npm run typecheck` 一棵树管住 shared/workflow/contracts，
+   加 web / desktop / host-worker / tmdb-proxy 四处独立工程）、
    `build:shared` / `build:workflow` / `build:web`、`npm run e2e`。
+   「gate」本身不含 typecheck，别把它当全量门禁。
 3. F2 验收：40 路由逐一确认"无凭据 401 / 有 session 200 / 有 JWT 200"；白名单四类
    （health / auth / worker-secret 的 run-next|run-type3 / updater-token 的 hold|busy|status）
    确认免登录且原有机制仍工作（curl 实证：health POST→405 非 401、run-next→200、
@@ -200,13 +205,31 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | M5 | S5.6 默认更新源仍是**上游** `fancydirty/mediary-scout`——源码直跑与本地 dev 都在检查别家的发布，与 F5「指向自己的仓库」不符（S5.6 提交信息自己写明了这个取舍） | `DEFAULT_UPDATE_REPO` 改为 `xixjohan/mediary-scout`；env 仍可覆盖（含指回上游）；`.env.example`/文档同步 |
 | M6 | 单用户模式下闸机会放过别账号的残留 session，而 `resolveSingleUserAccount` 明写单用户远程只认 `acct_default`——闸机放行、数据层 fail-closed，等于「认证通过的陌生人」 | 通道 1 与 `resolveSingleUserAccount` 完全同源：单用户 LAN 忽略 session（落到默认账号，开放语义不回归）、远程只认默认账号；两个既有用例的 mock 模式改成语义正确的多用户（断言一字未改） |
 | L1 | 一批规格写了却无用例钉住的行为：demo 403、agent 404 映射、恒定时间比较不泄露长度、畸形 Bearer 只对 mock 复刻版断言、显式 key 无长度下限 | 全部补真实用例；另发现并统一 **Bearer scheme 大小写**（proxy 粗筛本就走 `/^bearer /i`，路由层却只认大写）；显式 key 加 16 位下限（拒绝把 1 字符设成长期凭据） |
-| L2 | 死代码与门禁盲区：contracts 的 `IApiKeyStore` 与 shared 同形重复且零消费者、S5.1 声称删净的 dismissed key 仍在、两处 `void x;` 哑语句、顶层 `/api/route.ts` 不在两层门禁管辖内 | contracts 端口改为 re-export shared 唯一定义；删死常量与哑语句（`rotateApiKey` 去掉没用到的 `env` 形参）；ESLint glob + 规则正则 + 单测都覆盖顶层路由 |
+| L2 | 死代码与门禁盲区：contracts 的 `IApiKeyStore` 与 shared 同形重复且零消费者、S5.1 声称删净的 dismissed key 仍在、两处 `void x;` 哑语句、顶层 `/api/route.ts` 不在两层门禁管辖内（该文件当前不存在，是**预防性**收口：glob 与规则正则都只匹配「至少一层目录」，真建一个就会两处同时漏） | 删掉 contracts 侧的重复定义（shared 保持唯一定义，contracts 恢复零依赖）；删死常量与哑语句（`rotateApiKey` 去掉没用到的 `env` 形参）；ESLint glob + 规则正则 + 单测都覆盖顶层路由 |
 | L3 | 文档口径过期：路由数 36、e2e「4/4」易读成 4 个 spec、jose 版本、gate 只写「三处 typecheck」、F5 默认值 | §7 全部按交付事实改写，历史快照加标注 |
 
-修复后门禁：vitest 382 文件 / 5172 用例、`npm run gate`、五个 tsc、三构建、e2e 1 文件 4 用例，全绿。
+修复后门禁：vitest 382 文件 / 5195 用例、`npm run gate`、五个 tsc、三构建、e2e 1 文件 4 用例，全绿。
 
 ## 9. 需要用户确认的三个点
 
 1. **白名单范围**：health/worker/updater 三类路由建议保持免登录（用各自现有机制）。若坚持"除登录外全拦"，healthcheck 与 worker 会坏——需要另行设计探针通道。
 2. **API key 可否回显**：推荐"落库加密 + 只回显末 4 位 + 创建时展示一次"。若接受"不可回显"，可升级为单向哈希（更安全）。
 3. **JWT 存活期**：默认 12h（env 可调）。自托管单实例也可选"长期"——但那就失去轮换意义。
+
+### 附二：第三轮复核（修完再审）——修复本身引入的新问题
+
+第二轮修完立刻再审一轮（修复也是新改动，不审等于没修）。又揪出 4 个，其中 1 个 high：
+
+| # | 问题 | 修法 |
+|---|---|---|
+| H1 | **M5 把更新链拆成了两半**：网页 feed 默认源改成本仓库，可 `updater/run-update.sh` 仍默认上游、compose 的 updater 服务压根没透传 `MEDIA_TRACK_UPDATE_REPO`；更糟的是 compose 的 `MEDIA_TRACK_UPDATE_REPO: ${VAR:-}` 会恒设一个空串、把 Release Docker 烘焙进镜像的 `github.repository` 覆盖掉——默认部署去检查一个运营者从未选择的仓库。`scripts/deploy.sh` 又把上游镜像钉进 `.env` | 三处同源：updater 脚本、compose（改成裸变量形式，宿主没设时不注入、让烘焙值活下来；updater 服务补透传）、deploy.sh（镜像基址改由更新源推导）。补 4 个 updater 默认值用例钉住 |
+| H2 | L1 的 16 位下限在路由层没兜底：短 key 直接 500 空体，「至少 16 位」这条原因永远到不了调用方；顺带发现非字符串 `apiKey` 被静默丢弃、转而发一枚随机 key（调用方以为设了自己的值） | 路由层 try/catch 翻成 400；形状错误也 400。补 3 个用例 |
+| H3 | M6 只对齐了 session 通道：单用户模式下 Bearer 通道仍放行**任意 sub** 的 JWT，与数据层「只认 acct_default」相反——当前 token 路由只签默认账号所以尚不可利用，但 per-account key 已写在它的规划里，而且上一轮的测试还把这条分歧断言成了「正确」 | 通道 2 与通道 1 同一裁决；补 4 个用例，改 2 个把分歧写成正确的旧用例 |
+| H4 | 数据层单用户远程分支把 Bearer 判定包在 `sessionAccountId === null` 里：一枚能解析出别账号的残留 cookie 会让整个 Bearer 通道被跳过，持合法默认账号 JWT 的站主只拿到哨兵——200 空数据，而不是干净 401（真实 runtime 探针复现） | Bearer 改为无条件判定；用真实 `registerAccount`/`setSingleUserPassword` 造合法 cookie 做端到端用例（自引用 mock 拦不住模块内部调用，只会假装通过） |
+| L4 | proxy 粗筛 `/^bearer /i` 比路由层的 `/^bearer (.+)$/i` 紧一个字符：`Bearer<tab>token` 会 proxy 307 拦死、路由根本看不到（大小写两处一致，但仓库里没有用例钉住）。桌面自更新的仓库写死上游，与网页 feed 的差异是静默的 | proxy 正则改 `\s`，补 4 个形态用例；桌面侧改 env 可覆盖（默认仍留上游安装包渠道——fork 不发 .dmg/.exe，改默认会让现有桌面安装收不到更新，那是另一种静默分歧），补 3 个用例 |
+| L5 | `/api/auth/token` 只在失败时累计限流，成功不清桶：5 次误操作之后用正确 key 重试仍被锁到窗口过期 | 验签通过后 `recordLoginSuccess`；补 1 个用例验证「错 4 次 → 成功 → 再错 4 次不锁、第 5 次落锁」 |
+| L6 | 白名单「各自机制仍在位」是文本 `toContain`——留一句注释就能让它绿；M1 的「401 先于 404」也无用例钉死（顺序反了信息泄露，但现有用例组合分不出来） | 机制判定改用同一个 `callsFunction`（AST）；补「无凭据 + 非 owner → 401」用例 |
+| L7 | 上一轮给 contracts→shared 加了一条跨包依赖来消重复——那是弯折「契约层零依赖」换来的，而且这条新边对 L1 的 dependency-cruiser 门禁是不可见的（正则只匹配 packages/ 与 apps/） | 撤回依赖，改为**删掉** contracts 侧的重复定义：shared 保持唯一定义，contracts 恢复零依赖 |
+| L8 | 文档口径：`update/status` 被归到「四个白名单路由」名下的 updater-token 族（实为 owner 门禁）；typecheck 名录写成「根/shared/workflow/contracts/web」（根 tsconfig 一棵树就管住后三者，独立工程是 web/desktop/host-worker/tmdb-proxy）；顶层 route.ts 写成「曾是盲区」（该文件从未存在，是预防性收口） | §7 按机制/路由两个口径分别写清；typecheck 按实际工程列；措辞改为预防性 |
+
+第三轮修复后门禁同样全绿：382 文件 / 5195 用例、gate、五处 tsc、三构建、e2e 1 文件 4 用例。

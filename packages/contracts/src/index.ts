@@ -13,5 +13,3 @@ export type { FileMetadata, IStorageDriver, StorageBrand } from "./infrastructur
 export type { IJobQueue, Job, JobStatus, EnqueueJobInput } from "./infrastructure-ports/IJobQueue.js";
 export type { ISearchProvider, ResourceCandidate, SearchQuery } from "./infrastructure-ports/ISearchProvider.js";
 export type { IMediaMetadataProvider, MediaMetadata, MediaType } from "./infrastructure-ports/IMediaMetadataProvider.js";
-
-export type { IApiKeyStore } from "./infrastructure-ports/IApiKeyStore.js";

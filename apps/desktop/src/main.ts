@@ -32,8 +32,8 @@ import {
 import { APP_ID } from "./app-identity.js";
 import { linkTarget } from "./external-links.js";
 import {
-  RELEASES_LATEST_URL,
   decideUpdateNotice,
+  getReleasesLatestUrl,
   parseLatestRelease,
   shouldCheckForUpdate,
   type LatestRelease,
@@ -281,7 +281,7 @@ function startUpdateChecks(): void {
 async function checkForUpdate(): Promise<void> {
   try {
     // Electron's network stack: follows the system proxy settings, unlike Node's fetch.
-    const response = await net.fetch(RELEASES_LATEST_URL, {
+    const response = await net.fetch(getReleasesLatestUrl(), {
       headers: { accept: "application/vnd.github+json", "user-agent": `mediary-scout-desktop/${app.getVersion()}` },
       signal: AbortSignal.timeout(10_000),
     });
