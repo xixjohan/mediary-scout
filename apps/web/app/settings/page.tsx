@@ -78,7 +78,7 @@ import {
   resolveGlobalWorkspace,
   resolveIsDesktop,
 } from "../../lib/workflow-runtime";
-import { brandSupportsProwlarr, brandsSupportingProwlarr, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
+import { brandSupportsProwlarr, brandsSupportingProwlarr, brandsSupportingSubtitleDirectLink, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
 
 function SettingsPageInner({
@@ -535,10 +535,6 @@ async function ResourceProviderSection() {
   const showProwlarr = drives.length === 0 || drives.some((drive) => brandSupportsProwlarr(drive.provider));
   const isDesktop = resolveIsDesktop();
   const magnetBrands = brandsSupportingProwlarr().join(" / ");
-  // W5: 字幕落盘的哪些盘能用，从注册表声明推出来（和磁力那行同源）。
-  // 之前这里硬编码「115 / 光鸭 / 123 支持」：加第六家网盘时，executor 实现了、
-  // orchestrator 认了，但这句话不会有人想起改——用户看着一句过期的话判断自己的盘。
-  const subtitleBrands = brandsSupportingSubtitleDirectLink().join(" / ");
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -628,6 +624,11 @@ async function SubtitleSourceSection() {
   await connection();
   const repository = getAccountScopedSettings(await getCurrentAccountId());
   const tokenSet = Boolean((await repository.getSetting(ASSRT_TOKEN_SETTING_KEY))?.trim());
+  // W5: 字幕落盘的哪些盘能用，从注册表声明推出来。和 ResourceProviderSection 里的
+  // magnetBrands 同一个模式——各自在自己的区块里取，因为这是另一个 async 区块。
+  // 之前这里硬编码「115 / 光鸭 / 123 支持」：加第六家网盘时，executor 实现了、
+  // orchestrator 认了，但这句话不会有人想起改——用户看着一句过期的话判断自己的盘。
+  const subtitleBrands = brandsSupportingSubtitleDirectLink().join(" / ");
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
