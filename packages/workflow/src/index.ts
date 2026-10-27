@@ -66,6 +66,9 @@ export * from "./subscription-policy.js";
 // 批次 5：成本模型护栏。plan 点名「监控季数上限做成配置项并默认保守，超限明确告知
 // 而非默默拖垮巡检」——默默拖垮是本系统最坏的失败模式，因为什么都不报。
 export * from "./monitor-budget.js";
+// 批次 5：策略表的持久化形状。**损坏的策略行抛错而不是降解成「没有策略」**——空
+// mustNotContain 的意思是「不排除任何东西」，那正好把用户排除掉的资源落地。
+export * from "./subscription-policy-store.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
