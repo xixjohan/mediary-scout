@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildExecutorForBrand,
   createExecutorForBrand,
+  getStorageSkill,
   STORAGE_BRANDS,
   type StorageBrand,
   type StorageDriverCreateInput,
@@ -48,5 +49,43 @@ describe("STORAGE_BRANDS 是自洽的单一注册表", () => {
     expect(() => buildExecutorForBrand(broken, { provider: "pan115", scopeCids: [] })).toThrowError(
       /without an executor/i,
     );
+  });
+});
+
+/**
+ * 品牌的死链/转存手册也必须在注册表里。
+ *
+ * getStorageSkill() 原是五个 `if (provider === ...)` 分支加末尾 throw——加一家
+ * 网盘漏掉它，agent 就会读到别家盘的转存说明（115 秒传 vs 夸克转存分享链是不同
+ * 模型，用错等于让 agent 按错误的步骤操作网盘）。
+ */
+describe("STORAGE_BRANDS 的死链手册也在注册表里", () => {
+  it("每个已登记品牌都带一段非空手册", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(typeof brand.deadLinksSkill, `${brand.provider} 登记了却没带手册`).toBe("string");
+      expect(brand.deadLinksSkill.length, `${brand.provider} 的手册是空的`).toBeGreaterThan(0);
+    }
+  });
+
+  it("getStorageSkill(provider) 返回该品牌自己的手册", () => {
+    for (const brand of STORAGE_BRANDS) {
+      // 两条一起才不是假绿：光有 `=== brand.deadLinksSkill` 会在两边都是 undefined
+      // 时通过（循环依赖就会造成那种状态）。
+      expect(getStorageSkill(brand.provider), `${brand.provider} 取不到手册`).toBe(brand.deadLinksSkill);
+      expect(getStorageSkill(brand.provider).length, `${brand.provider} 手册为空`).toBeGreaterThan(0);
+    }
+  });
+
+  it("各家手册互不相同（复制粘贴错一本 = 让 agent 按别家盘的步骤操作）", () => {
+    const seen = new Map<string, string>();
+    for (const brand of STORAGE_BRANDS) {
+      const prior = seen.get(brand.deadLinksSkill);
+      expect(prior, `${brand.provider} 与 ${prior} 用了同一本手册`).toBeUndefined();
+      seen.set(brand.deadLinksSkill, brand.provider);
+    }
+  });
+
+  it("未登记的 provider → 抛错，不静默落到别家手册上", () => {
+    expect(() => getStorageSkill("nope")).toThrowError(/unknown storage brand/i);
   });
 });

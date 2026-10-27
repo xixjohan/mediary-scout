@@ -19,6 +19,13 @@ import { GuangYaClient } from "./guangya-client.js";
 import type { GuangYaClientOptions } from "./guangya-client.js";
 import { GuangYaStorageExecutor } from "./guangya-storage-executor.js";
 import { isGuangYaAuthError, parseGuangYaUid } from "./guangya-client.js";
+import {
+  DEAD_LINKS_BLACK_BOX,
+  DEAD_LINKS_BLACK_BOX_GUANGYA,
+  DEAD_LINKS_BLACK_BOX_PAN123,
+  DEAD_LINKS_BLACK_BOX_QUARK,
+  DEAD_LINKS_BLACK_BOX_TIANYI,
+} from "./acquisition-v2/skill-manuals.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import { createProtectedPan115CookieStorageExecutorFromEnv } from "./pan115-storage-factory.js";
 import { isPan123AuthError, parsePan123Uid } from "./pan123-client.js";
@@ -126,6 +133,16 @@ export interface StorageBrand {
    *  account-ban entry point (plan §2.3). Making the field mandatory forces
    *  whoever adds a brand to answer "does this drive need spacing?". */
   minApiIntervalMs: number;
+  /** The brand's transfer / dead-links / black-box manual, handed to the agent for
+   *  a run on this drive. The transfer model differs by brand (115 秒传/magnet vs
+   *  夸克 转存分享链/无磁力), so a wrong manual has the agent operate the drive
+   *  with the wrong steps.
+   *
+   *  REQUIRED: it used to be five `if (provider === ...)` branches in
+   *  acquisition-v2/skill.ts, where forgetting one silently handed the agent
+   *  ANOTHER brand's manual. The text itself stays in skill.ts (it is agent-facing
+   *  documentation); only the "which manual is mine" pointer lives here. */
+  deadLinksSkill: string;
 }
 
 export const STORAGE_BRANDS: StorageBrand[] = [
@@ -140,6 +157,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "0", // 115 account root
     writeScope: "parents",
     minApiIntervalMs: 0, // 115 client 自带 1.2s 漏桶
+    deadLinksSkill: DEAD_LINKS_BLACK_BOX,
     create: (input) => {
       const cookie = input.cookie ?? "";
       const env = {
@@ -161,6 +179,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "0", // 夸克 account root
     writeScope: "parents",
     minApiIntervalMs: 0, // 夸克 client 自带 3/s 令牌桶
+    deadLinksSkill: DEAD_LINKS_BLACK_BOX_QUARK,
     create: (input) => {
       return new QuarkStorageExecutor({
         // P13：夸克 client 过令牌桶限速（3/s burst 5，治理文档参数）——此前完全
@@ -186,6 +205,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     requiredCredentialKeys: ["accessToken", "refreshToken"],
     writeScope: "listed",
     minApiIntervalMs: 0,
+    deadLinksSkill: DEAD_LINKS_BLACK_BOX_GUANGYA,
     create: (input) => {
       const c = (input.credential ?? {}) as {
         accessToken?: string;
@@ -223,6 +243,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     requiredCredentialKeys: ["sessionKey", "accessToken", "refreshToken"],
     writeScope: "listed",
     minApiIntervalMs: 0,
+    deadLinksSkill: DEAD_LINKS_BLACK_BOX_TIANYI,
     create: (input) => {
       const c = (input.credential ?? {}) as Partial<TianyiCredential>;
       // Same exactOptionalPropertyTypes discipline as guangya: never set optional
@@ -258,6 +279,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     requiredCredentialKeys: ["token"],
     writeScope: "listed",
     minApiIntervalMs: 1500, // 123 用 code=100011 请勿频繁操作 回应突发
+    deadLinksSkill: DEAD_LINKS_BLACK_BOX_PAN123,
     create: (input) => {
       const c = (input.credential ?? {}) as Partial<Pan123Credential>;
       // 纯 token 模型:v1 无凭证刷新(web 面无 refresh 端点,401 → Pan123AuthError
