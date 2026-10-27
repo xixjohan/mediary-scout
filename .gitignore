@@ -77,3 +77,7 @@ docs/images/devto-cover.*
 
 # The updater/deploy shared lock file (scripts/deploy.sh + updater/run-update.sh).
 /.update.lock
+
+# scripts/run-local-real.sh 的本地真实实例运行时产物（DB 由上面的 *.db 覆盖）
+run/server.log
+run/server.pid
