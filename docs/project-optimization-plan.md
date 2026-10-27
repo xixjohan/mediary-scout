@@ -397,6 +397,22 @@ L3 agent    用户在整理面板显式选「用 AI 整理」才起 run（默认
 - 泛化网盘管理合同（W5）：`storage_manage(storage, action, params)` 统一返回，前端数据驱动。
 - （可选）`link()` 带 `expiresAt` → STRM/302；`putUrl()` 泛化；只读 `ShareSource`。
 
+**执行状态（2026-10-28）：四项主件齐备，两项改动说明如下。**
+
+| 项 | 状态 | 说明 |
+|---|---|---|
+| `subscription_policies` + 策略匹配 + 规则预览 | 完成 | qBittorrent 字段集（mustContain/mustNotContain/episodeFilter/useRegex/cooldownDays）。预览接进订阅面板，保存前就能看到命中/排除数。 |
+| 黑名单补全（G7） | 已核实完成 | plan 缺口表的「只有雏形」是更早的状态描述；`rejectedLookupOption` 已接进 `runReplaceRequestV2AndPersist`，且按 linkKey 与 label+size 双指纹过滤。 |
+| 冷却期 | 完成 | `cooldownDays` + 水位线 `lastTakenAt`（由 run 的结果写回，不是由「跑完了」写）；改规则时按当前值重算，不被旧水位线卡住。 |
+| **Reprocess** | **不建** | 查过「未处理历史结果」在本架构里没有对象：`resourceSnapshots` 只写不读（唯一读处是 `listLandingSources` 解析已转存文件的直链），没有「搜到了但没处理」的积压；`rejected_resources` 只由用户主动换源写入，改规则就自动解除是撤销用户意图。这不是疏漏，是 §4.1 成本模型的直接结果（周期全量重搜）。有意义的那一半——「改规则后下一轮生效」——已由冷却期按当前值重算覆盖。 |
+| 泛化网盘管理合同（W5） | **收窄后做了一半** | 不建 `storage_manage` 动作联合：本项目没有网盘管理页，文件管理类动作五家全支持（都是 `StorageExecutor` 必填方法），那样的能力矩阵是均匀装饰。做的是它有消费方的那一半：把「哪些盘能落字幕」从两处硬编码文案搬进注册表声明 `supportsSubtitleDirectLink`（REQUIRED，漏声明即编译错误），orchestrator 的字幕门与设置页同源。双向断言（声明与 executor 实现必须一致）防的是两种漂移：声明了没实现、实现了没声明。 |
+| （可选）STRM/302 等 | 未建 | plan 标记可选，且 G9 判定为低优先级。 |
+
+**本批次顺带修掉的三个真 bug**（均非本批次引入，详见各提交）：
+① 冷却过滤按 `title` 单键，会让一家的冷却静默停掉另一家的订阅（标题跨账号共享）；
+② 旧库缺 `last_taken_at` 列，造成写水位线时抛 `no such column`（真实生产卷 `data/mediary.db` 就处于这个状态）；
+③ `npm run build:web` 自批次 4 收尾起就是红的（Turbopack 拒绝 `node:module` 进客户端 chunk），而 gate 一直绿——即用户无法部署。
+
 ---
 
 ## 8. 非目标（不可违反）
