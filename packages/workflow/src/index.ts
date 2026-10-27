@@ -48,6 +48,9 @@ export * from "./resource-search-run.js";
 export * from "./merged-search-snapshot.js";
 // 批次 3：手动入库排队命令（reserveWorkflowRun + 新 WorkflowKind）。
 export * from "./manual-import-command.js";
+// 批次 3：手动入库的 worker 半边（认领 + 转存）。没有它，queued 的 manual_import
+// run 会一直算 active，把它 reserved 时带的 blockIfTitleHasActiveRun 变成永久堵死。
+export * from "./manual-import-worker.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,

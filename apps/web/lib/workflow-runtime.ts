@@ -47,6 +47,7 @@ import {
   queueTrackingInitialization,
   reserveMovie,
   enqueueUrgentReplaceRequests,
+  runQueuedManualImport,
   runQueuedMovieAcquisition,
   runQueuedReplaceRequest,
   runQueuedStagingRecovery,
@@ -1250,6 +1251,20 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   if (replace.status !== "idle") {
     await pushNotificationsSince(repository, startedAt, { workflowRunId: replace.workflowRunId });
     return replace;
+  }
+  // Manual import. Placed before the patrol and the staging recovery: the user is
+  // waiting on it, and it holds a title lock, so leaving it queued blocks that
+  // title's other work. A movie goes under the movie parent; a season under TV.
+  const manualImport = await runQueuedManualImport({
+    repository,
+    storage,
+    categoryParentDirectoryId: parents.movies || parents.tv,
+    resolveAccountContext,
+    onAuthErrorFreeze,
+    ...claimOption,
+  });
+  if (manualImport.status !== "idle") {
+    return manualImport;
   }
   // Leftover staging heals itself. No notification and no push — llmConfig is
   // still passed so a free-preset 429/5xx transient error triggers auto-requeue
