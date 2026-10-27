@@ -19,10 +19,17 @@ export interface TitleResourceCacheOptions {
   /** Injectable clock (ms since epoch). Tests drive it; prod passes Date.now. */
   now: () => number;
   ttlMs: number;
+  /**
+   * How to read an entry's id. Generic over the stored value so the same cache
+   * serves both halves of the criterion: `get` returns what the response body
+   * needs (the candidate views), while `hasFreshCandidate` answers whether a
+   * held candidateId is still valid — one source, not two.
+   */
+  idOf: (value: unknown) => string;
 }
 
-export class TitleResourceCache {
-  private readonly entries = new Map<string, { candidateIds: readonly string[]; storedAtMs: number }>();
+export class TitleResourceCache<T = unknown> {
+  private readonly entries = new Map<string, { values: readonly T[]; storedAtMs: number }>();
 
   constructor(private readonly options: TitleResourceCacheOptions) {
     if (!Number.isFinite(options.ttlMs) || options.ttlMs <= 0) {
@@ -38,19 +45,19 @@ export class TitleResourceCache {
     return `${scopeId}::${titleId}`;
   }
 
-  /** Fresh candidate ids, or null when absent/expired. Expired entries are evicted. */
-  get(key: string): readonly string[] | null {
+  /** Fresh values, or null when absent/expired. Expired entries are evicted. */
+  get(key: string): readonly T[] | null {
     const entry = this.entries.get(key);
     if (entry === undefined) return null;
     if (this.isExpired(entry)) {
       this.entries.delete(key);
       return null;
     }
-    return entry.candidateIds;
+    return entry.values;
   }
 
-  put(key: string, candidateIds: readonly string[]): void {
-    this.entries.set(key, { candidateIds: [...candidateIds], storedAtMs: this.options.now() });
+  put(key: string, values: readonly T[]): void {
+    this.entries.set(key, { values: [...values], storedAtMs: this.options.now() });
   }
 
   /**
@@ -59,7 +66,7 @@ export class TitleResourceCache {
    */
   hasFreshCandidate(key: string, candidateId: string): boolean {
     const fresh = this.get(key);
-    return fresh !== null && fresh.includes(candidateId);
+    return fresh !== null && fresh.some((value) => this.options.idOf(value) === candidateId);
   }
 
   /**

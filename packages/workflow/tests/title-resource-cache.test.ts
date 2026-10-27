@@ -25,7 +25,7 @@ function fakeClock(startAt = 1_700_000_000_000) {
 describe("TitleResourceCache — TTL 内命中", () => {
   it("30 分钟内返回同一批 candidateId", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     const key = TitleResourceCache.key("acct_a", "title_1");
 
     cache.put(key, ["c1", "c2"]);
@@ -35,7 +35,7 @@ describe("TitleResourceCache — TTL 内命中", () => {
 
   it("缓存的是副本：调用方改数组不会污染缓存", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     const key = TitleResourceCache.key("a", "t");
     const ids = ["c1"];
     cache.put(key, ids);
@@ -47,7 +47,7 @@ describe("TitleResourceCache — TTL 内命中", () => {
 describe("TitleResourceCache — 超时后 candidateId 失效", () => {
   it("刚到 30 分钟即过期（>= 边界，不是 >）", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     const key = TitleResourceCache.key("a", "t");
     cache.put(key, ["c1"]);
     clock.advance(TTL);
@@ -56,7 +56,7 @@ describe("TitleResourceCache — 超时后 candidateId 失效", () => {
 
   it("过期后旧 candidateId 一律失效（含它曾持有过的）", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     const key = TitleResourceCache.key("a", "t");
     cache.put(key, ["c1", "c2"]);
 
@@ -68,7 +68,7 @@ describe("TitleResourceCache — 超时后 candidateId 失效", () => {
 
   it("过期条目被驱逐：再次 put 前一直 miss", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     const key = TitleResourceCache.key("a", "t");
     cache.put(key, ["c1"]);
     clock.advance(TTL * 2);
@@ -78,7 +78,7 @@ describe("TitleResourceCache — 超时后 candidateId 失效", () => {
 
   it("从没缓存的 candidateId 一律 false", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     expect(cache.hasFreshCandidate(TitleResourceCache.key("a", "t"), "nope")).toBe(false);
   });
 });
@@ -86,7 +86,7 @@ describe("TitleResourceCache — 超时后 candidateId 失效", () => {
 describe("TitleResourceCache — scope 隔离与覆盖", () => {
   it("不同 scope 的同一 titleId 互不串味", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     cache.put(TitleResourceCache.key("acct_a", "t"), ["a1"]);
     cache.put(TitleResourceCache.key("acct_b", "t"), ["b1"]);
     expect(cache.get(TitleResourceCache.key("acct_a", "t"))).toEqual(["a1"]);
@@ -95,7 +95,7 @@ describe("TitleResourceCache — scope 隔离与覆盖", () => {
 
   it("重复 put 覆盖旧值", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     const key = TitleResourceCache.key("a", "t");
     cache.put(key, ["old"]);
     cache.put(key, ["new"]);
@@ -103,15 +103,15 @@ describe("TitleResourceCache — scope 隔离与覆盖", () => {
   });
 
   it("ttlMs 非正数直接抛错（静默接受 0 会让缓存永远失效）", () => {
-    expect(() => new TitleResourceCache({ now: () => 0, ttlMs: 0 })).toThrow(/ttlMs/);
-    expect(() => new TitleResourceCache({ now: () => 0, ttlMs: -1 })).toThrow(/ttlMs/);
+    expect(() => new TitleResourceCache<string>({ now: () => 0, ttlMs: 0, idOf: (v) => v })).toThrow(/ttlMs/);
+    expect(() => new TitleResourceCache<string>({ now: () => 0, ttlMs: -1, idOf: (v) => v })).toThrow(/ttlMs/);
   });
 });
 
 describe("TitleResourceCache — 过期条目被真正驱逐", () => {
   it("过期后条目从表里消失（不只是不返回），否则长驻服务内存只增不减", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     const key = TitleResourceCache.key("a", "t");
     cache.put(key, ["c1"]);
     expect(cache.size).toBe(1);
@@ -123,7 +123,7 @@ describe("TitleResourceCache — 过期条目被真正驱逐", () => {
 
   it("未过期的条目不被动到", () => {
     const clock = fakeClock();
-    const cache = new TitleResourceCache({ now: clock.now, ttlMs: TTL });
+    const cache = new TitleResourceCache<string>({ now: clock.now, ttlMs: TTL, idOf: (v) => v });
     cache.put(TitleResourceCache.key("a", "t"), ["c1"]);
     clock.advance(TTL / 2);
     expect(cache.get(TitleResourceCache.key("a", "t"))).toEqual(["c1"]);

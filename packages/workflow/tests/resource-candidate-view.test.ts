@@ -35,10 +35,10 @@ describe("toCandidateView — 用户要的三个事实", () => {
       title: "复仇者联盟4：终局之战",
       type: "share",
       source: "pansou-115",
-      publishedAt: "2024-05-01T10:00:00Z",
+      postedAt: "2024-05-01T10:00:00Z",
     });
     // 键集合是封闭的：url/password/rawType 一个都没进来
-    expect(Object.keys(view).sort()).toEqual(["candidateId", "publishedAt", "source", "title", "type"]);
+    expect(Object.keys(view).sort()).toEqual(["candidateId", "postedAt", "source", "title", "type"]);
   });
 
   it("Prowlarr：体积与做种数，且不带 magnet/downloadUrl/infoHash", () => {
@@ -91,14 +91,14 @@ describe("toCandidateView — 畸形与缺失", () => {
     const view = toCandidateView(candidate({}));
     expect(Object.keys(view).sort()).toEqual(["candidateId", "source", "title", "type"]);
     expect(view.sizeBytes).toBeUndefined();
-    expect(view.publishedAt).toBeUndefined();
+    expect(view.postedAt).toBeUndefined();
   });
 
   it("非数字体积不当成数字（字符串 '123' 不转）", () => {
     const view = toCandidateView(candidate({ sizeBytes: "123", seeders: null, datetime: "" }));
     expect(view.sizeBytes).toBeUndefined();
     expect(view.seeders).toBeUndefined();
-    expect(view.publishedAt).toBeUndefined();
+    expect(view.postedAt).toBeUndefined();
   });
 
   it("批量投影保持顺序与条数", () => {
@@ -107,6 +107,6 @@ describe("toCandidateView — 畸形与缺失", () => {
       { ...candidate({ datetime: "t2" }), id: "c2" },
     ]);
     expect(views.map((v) => v.candidateId)).toEqual(["c1", "c2"]);
-    expect(views[0]!.publishedAt).toBe("t1");
+    expect(views[0]!.postedAt).toBe("t1");
   });
 });

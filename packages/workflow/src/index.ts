@@ -28,6 +28,8 @@ export * from "./resource-candidate-view.js";
 export * from "./title-resource-cache.js";
 // 用户态资源搜索的 60s 冷却限流。
 export * from "./cooldown-limiter.js";
+// POST /api/titles/resources 的决策核心（不含 HTTP，门控可单测）。
+export * from "./title-resource-resolver.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
