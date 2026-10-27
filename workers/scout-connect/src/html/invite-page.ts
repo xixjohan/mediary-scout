@@ -71,7 +71,7 @@ button:disabled{opacity:.55;cursor:default}
 <main class="card">
 <div class="brand">${LOGO}<div class="name">Mediary Scout <span>Connect</span></div></div>
 ${body}
-<div class="footer">内容全程留在你自己的设备上 · <a href="https://github.com/fancydirty/mediary-scout" target="_blank" rel="noopener">开源自部署</a></div>
+<div class="footer">内容全程留在你自己的设备上 · <a href="https://github.com/xixjohan/mediary-scout" target="_blank" rel="noopener">开源自部署</a></div>
 </main>
 </body>
 </html>`;
