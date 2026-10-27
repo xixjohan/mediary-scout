@@ -28,6 +28,16 @@ import { isUserVisibleWorkflowKind } from "./domain.js";
  */
 export const RESOURCE_SEARCH_KIND: WorkflowKind = "resource_search";
 
+/**
+ * The run id a search snapshot is persisted under. Exported so the import route derives
+ * it the SAME way the search route wrote it — a private constant on either side would
+ * let them drift, and the failure mode is silent: the import would simply find nothing
+ * and tell the user 「请重新查询」 for a search that succeeded seconds ago.
+ */
+export function resourceSearchRunId(snapshotId: string): string {
+  return `search_${snapshotId}`;
+}
+
 export interface BuildResourceSearchRunInput {
   snapshot: ResourceSnapshot;
   title: MediaTitle;
@@ -51,7 +61,7 @@ export function buildResourceSearchRun(input: BuildResourceSearchRunInput): Pers
     title: input.title,
     season: input.season,
     workflowRun: {
-      id: `search_${input.snapshot.id}`,
+      id: resourceSearchRunId(input.snapshot.id),
       kind: RESOURCE_SEARCH_KIND,
       // `succeeded`, not `queued`: a queued row would count as active and block the
       // season forever (reserveWorkflowRun would answer already_active).

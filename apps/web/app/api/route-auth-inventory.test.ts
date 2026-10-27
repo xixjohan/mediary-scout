@@ -115,7 +115,7 @@ const routes = routeFiles().map((full) => ({
 
 describe("S5.4 /api 路由鉴权清单", () => {
   it("枚举到的路由数量与分类稳定（新增路由必须显式归类）", () => {
-    expect(routes.length).toBe(41);
+    expect(routes.length).toBe(42);
     const open = routes.filter((r) => OPEN_ROUTES.has(r.path));
     const selfGuarded = routes.filter((r) => SELF_GUARDED_ROUTES.has(r.path));
     const guarded = routes.filter(
@@ -123,7 +123,7 @@ describe("S5.4 /api 路由鉴权清单", () => {
     );
     expect(open.length).toBe(OPEN_ROUTES.size);
     expect(selfGuarded.length).toBe(SELF_GUARDED_ROUTES.size);
-    expect(guarded.length).toBe(24);
+    expect(guarded.length).toBe(25);
   });
 
   it("23 个非白名单路由全部引用 requireApiAccount 登录链", () => {
