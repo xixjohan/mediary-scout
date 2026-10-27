@@ -63,6 +63,9 @@ export * from "./organize-run.js";
 // subscription.status 状态机——plan §4.1 对此有明确警告。规则预览与巡检共用同一个
 // matchPolicy，所以预览是承诺而非估算。
 export * from "./subscription-policy.js";
+// 批次 5：成本模型护栏。plan 点名「监控季数上限做成配置项并默认保守，超限明确告知
+// 而非默默拖垮巡检」——默默拖垮是本系统最坏的失败模式，因为什么都不报。
+export * from "./monitor-budget.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
