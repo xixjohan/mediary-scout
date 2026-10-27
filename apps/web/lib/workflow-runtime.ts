@@ -63,6 +63,7 @@ import {
   parsePan115Uid,
   createExecutorForBrand,
   getStorageBrand,
+  buildBootstrapExecutorForBrand,
   isRegisteredStorageProvider,
   allowedResourceTypesForKinds,
   parseQuarkUid,
@@ -2536,13 +2537,14 @@ async function provisionDriveCategoryDirs(
   const brand = getStorageBrand(provider);
   const baseParentId = brand.provisionRootId;
   // Dispatch on authKind (registry) so ANY token brand takes the credential path —
-  // a future token brand won't silently fall through to the 115/夸克 cookie path.
+  // a future token brand won't silently fall through to the cookie path.
+  // The cookie path is `createBootstrap` (registry), NOT a 115/夸克 ternary: that
+  // used to send any non-quark cookie brand to 115's client to build its
+  // directories. Each brand now says how it provisions itself.
   const executor =
     brand.authKind === "token"
       ? createExecutorForBrand({ provider, credential: credential ?? {}, scopeCids: [] })
-      : provider === "quark"
-        ? createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] })
-        : createBootstrapPan115CookieStorageExecutor({ cookie });
+      : buildBootstrapExecutorForBrand(brand, { cookie, credential, env: process.env });
   return provisionCategoryDirs({
     baseParentId,
     ...customDirNamesFromEnv(process.env),
