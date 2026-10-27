@@ -40,6 +40,8 @@ export * from "./manual-import-resolver.js";
 export * from "./manual-import-job.js";
 // 手动入库端点的决策核心（纯函数：快照归属/TTL/装载，与「快照从哪来」解耦）。
 export * from "./manual-import-endpoint.js";
+// 批次 3：CandidateSelector 端口 + agent/human 两实现（两条路径产出结构一致的决策）。
+export * from "./candidate-selector.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
