@@ -19,7 +19,7 @@ export function RememberQuery({ query, basePath = "/" }: { query: string; basePa
 }
 
 /**
- * 搜索 nav entry that restores the last query (per drive): leaving for 媒体库/通知
+ * 搜索 nav entry that restores the last query (per drive): leaving for 订阅/通知
  * and coming back must not reset the result list.
  */
 export function SearchNavLink({

@@ -62,7 +62,7 @@ export function AppSidebar({
               href={`${basePath}?tab=library`}
             >
               <Library size={16} aria-hidden />
-              媒体库
+              订阅
             </Link>
           </li>
           <li>

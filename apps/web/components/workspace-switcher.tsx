@@ -35,7 +35,7 @@ function BrandMark({ provider, frozen }: { provider?: string | undefined; frozen
 
 /**
  * 侧栏顶部网盘切换器(树模型,≥2 盘才显示)。当前盘从 pathname(/w/<id>)或全局页的
- * `?w` 解析,二者皆无 → primary(tabs[0])。切盘**保持当前 section**(搜索/媒体库/
+ * `?w` 解析,二者皆无 → primary(tabs[0])。切盘**保持当前 section**(搜索/订阅/
  * 通知/活动/设置),由 switcherTabHref 算去处;搜索页额外注入目标盘的记忆 query。
  * 用原生 <details> 下拉,SSR 友好。
  */

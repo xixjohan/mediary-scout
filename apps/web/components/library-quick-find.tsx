@@ -101,7 +101,7 @@ export function LibraryQuickFind({
       <div className="section-heading library-heading library-find-heading">
         <div>
           {mode === "home" ? (
-            <h1>我的媒体库</h1>
+            <h1>我的订阅</h1>
           ) : (
             <h1>
               <Link href={`${workspaceBasePath(storageId)}?tab=library`} style={{ marginRight: 12, opacity: 0.6 }}>
@@ -119,8 +119,8 @@ export function LibraryQuickFind({
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             onKeyDown={onKeyDown}
-            aria-label="在库中查找"
-            placeholder="在库中查找…"
+            aria-label="在订阅中查找"
+            placeholder="在订阅中查找…"
           />
           {query.trim() !== "" ? (
             <button

@@ -2,6 +2,7 @@ import { connection, NextResponse, type NextRequest } from "next/server";
 import { agentApiGuard } from "../../../../lib/agent-api/guard";
 import { getOwnerAccountId } from "../../../../lib/agent-api/owner";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
+import { missingAiredEpisodeCodes } from "../../../../lib/subscription-missing";
 
 export async function GET(request: NextRequest) {
   await connection();
@@ -18,9 +19,6 @@ export async function GET(request: NextRequest) {
   );
 
   const items = states.map((state) => {
-    const airedMissing = state.episodes.filter(
-      (episode) => episode.airStatus === "aired" && !episode.obtained,
-    );
     return {
       title: state.title.title,
       tmdbId: state.title.tmdbId,
@@ -30,7 +28,7 @@ export async function GET(request: NextRequest) {
       status: state.season.status,
       totalEpisodes: state.season.totalEpisodes,
       obtainedCount: state.episodes.filter((episode) => episode.obtained).length,
-      missingAired: airedMissing.map((episode) => episode.episodeCode),
+      missingAired: missingAiredEpisodeCodes(state.episodes),
       connectedStorageId: state.connectedStorageId ?? null,
     };
   });

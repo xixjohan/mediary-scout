@@ -52,6 +52,7 @@ const entry = (over: Partial<LibraryWallEntry> & { tmdbId: number; title: string
   seasonCount: 1,
   obtainedEpisodes: 1,
   totalAiredEpisodes: 1,
+  missingAiredCount: 0,
   totalEpisodes: 1,
   releaseDate: null,
   state: "complete",
@@ -173,12 +174,12 @@ describe("LibraryQuickFind — home 模式", () => {
 
   it("query 空 → 原布局：获取中行 + 分类行（空行隐藏），无计数/清空按钮", () => {
     const markup = html(props());
-    expect(markup).toContain("我的媒体库");
+    expect(markup).toContain("我的订阅");
     expect(markup).toContain("获取中 2");
     expect(markup).toContain("电影 2");
     expect(markup).toContain("电视剧 2");
     expect(markup).not.toContain("动漫");
-    expect(markup).toContain('placeholder="在库中查找…"');
+    expect(markup).toContain('placeholder="在订阅中查找…"');
     expect(markup).not.toContain("匹配 ");
     expect(markup).not.toContain("没找到");
     expect(markup).not.toContain('aria-label="清空查找"');

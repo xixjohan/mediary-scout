@@ -21,6 +21,7 @@ import {
 } from "./title-aggregate";
 import { createTtlMemo } from "./series-target-memo";
 import { getDurableJsonCache } from "./durable-cache";
+import { missingAiredEpisodeCodes } from "./subscription-missing";
 import type { DurableJsonCache } from "@media-track/workflow";
 import {
   ensureDemoSeeded,
@@ -432,6 +433,11 @@ export interface LibraryWallEntry {
   seasonCount: number;
   obtainedEpisodes: number;
   totalAiredEpisodes: number;
+  /** 「还缺几集」：已播出但未获取的集数，跨该标题全部追踪季汇总。
+   *  订阅页缺失待办区按它排序/过滤。与 `totalAiredEpisodes` 不同源——
+   *  后者是 latestAiredEpisode 汇总值减不出来的（provider_ahead、manual
+   *  补集、storage_only 会让两者不一致）。 */
+  missingAiredCount: number;
   /** Full season episode count (sum across seasons) — the "9" in 已获取/已播/共 6/6/9. */
   totalEpisodes: number;
   /** Set for an unreleased (reserved) movie; drives the 预定 badge + air date. */
@@ -479,11 +485,17 @@ export async function getLibraryWall(storageId?: string): Promise<LibraryWallEnt
     let obtained = 0;
     let aired = 0;
     let total = 0;
+    let missingAired = 0;
     let anyActive = false;
     for (const state of titleStates) {
       aired += Math.min(state.season.latestAiredEpisode, state.season.totalEpisodes);
       total += state.season.totalEpisodes;
       obtained += state.episodes.filter((episode) => episode.obtained).length;
+      // 缺失集走共享判定（与 /api/agent/library、详情页季行同一个口径）——
+      // 上面那个 `aired` 用的是 latestAiredEpisode 汇总值，与逐集状态在
+      // provider_ahead / manual 补集 / storage_only 时可以不一致，所以「缺多少」
+      // 不能由它减出来。
+      missingAired += missingAiredEpisodeCodes(state.episodes).length;
       if (state.season.status === "active") {
         anyActive = true;
       }
@@ -500,6 +512,10 @@ export async function getLibraryWall(storageId?: string): Promise<LibraryWallEnt
       seasonCount: titleStates.length,
       obtainedEpisodes: obtained,
       totalAiredEpisodes: aired,
+      /** 「还缺几集」——订阅页待办区的数据源。与 /api/agent/library 的
+       *  missingAired、详情页季行的 missingAiredCount 同一个口径
+       *  （见 ./subscription-missing）。 */
+      missingAiredCount: missingAired,
       totalEpisodes: total,
       releaseDate: title.releaseDate ?? null,
       state: libraryWallState({ obtained, aired, anyActive, unreleased }),

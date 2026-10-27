@@ -9,6 +9,7 @@ import { RequestTrackButton } from "../components/request-track-button";
 import { AcquireProgressBadge } from "../components/acquire-progress-badge";
 import { DemoSessionLibrary } from "../components/demo-session-library";
 import { LibraryQuickFind } from "../components/library-quick-find";
+import { SubscriptionTodo } from "../components/subscription-todo";
 import { RememberQuery } from "../components/search-memory";
 import { SearchForm } from "../components/search-form";
 import { SeasonRequestMenu } from "../components/season-request-menu";
@@ -438,8 +439,8 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
       <section className="library-surface">
         <div className="quiet-state">
           <Library size={24} aria-hidden />
-          <strong>媒体库还是空的</strong>
-          <span>去搜索页发起第一次获取吧。</span>
+          <strong>订阅还是空的</strong>
+          <span>去搜索页发起第一次订阅吧。</span>
         </div>
       </section>
     );
@@ -451,6 +452,12 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
   return (
     <section className="library-surface">
       {inProgress.length > 0 ? <AcquiringPoller /> : null}
+      {/* 缺失待办区：正名为「订阅」后，用户要的第一答案是「还缺什么」。
+          数据来自 LibraryWallEntry.missingAiredCount（与 /api/agent/library、
+          详情页季行同一口径，见 lib/subscription-missing），这里不重算。
+          category 视图下不显示——那一屏已被 type/filter 收窄，再叠一块全局
+          待办会让人以为数字对应当前筛选。 */}
+      {category === null ? <SubscriptionTodo wallEntries={wall} storageId={storageId} /> : null}
       <LibraryQuickFind
         wallEntries={wall}
         inProgressTitles={inProgress}

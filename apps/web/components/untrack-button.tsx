@@ -8,7 +8,7 @@ import { runAction } from "../lib/run-action";
 import { isDemoModeClient } from "../lib/demo-mode";
 
 /**
- * 取消追踪按钮。整剧(无 seasonNumber)成功后跳回媒体库;单季成功后 refresh 留在原页
+ * 取消追踪按钮。整剧(无 seasonNumber)成功后跳回订阅;单季成功后 refresh 留在原页
  * (该季变回未追踪、本组件随之卸载)。两步确认(危险操作);demo 只读模式不渲染。
  * storageId 必填透传当前工作区——取消必须作用在用户正在看的那块盘。mediaKind 区分
  * movie/tv 命名空间(同一数字 id 可同时是电影和剧集),避免误删同 id 的另一类。
@@ -78,7 +78,7 @@ export function UntrackButton({
     <span className="untrack-confirm">
       {confirming ? (
         <>
-          <span className="untrack-note">取消后从媒体库移除，网盘文件保留（重新获取可秒传恢复）。</span>
+          <span className="untrack-note">取消后从订阅移除，网盘文件保留（重新获取可秒传恢复）。</span>
           <button type="button" className="ghost-button danger" disabled={isPending} onClick={run}>
             {isPending ? <LoaderCircle size={13} className="spin" aria-hidden /> : null}
             确认取消追踪
