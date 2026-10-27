@@ -9,6 +9,7 @@ import { CandidateRegistry } from "./candidate-registry.js";
 import type { DeadLinkStore } from "./dead-links.js";
 import type { PolicyResource } from "../subscription-policy.js";
 import { linkHistoryByKey } from "./link-history.js";
+import { brandSupportsSubtitleDirectLink } from "../storage-brands.js";
 import { resourceLinkKey } from "./resource-link.js";
 import { resourceFingerprintMatches, type LinkHistoryRow } from "../user-requests.js";
 import type { UserRequestPromptInput } from "./user-request-block.js";
@@ -578,7 +579,12 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     request.assrtToken.trim() !== "" &&
     origins.length > 0 &&
     origins.every((c) => c !== "CN") &&
-    typeof request.executor.transferSubtitleUrl === "function";
+    // W5: 读注册表的能力声明，不再鸭子类型 executor。
+    //
+    // 两者在今天的五家盘上结论相同（由 storage-registry.test.ts 的双向断言固定），但声明
+    // 是唯一能在没有 executor 时被问到的形式——设置页只拥有 provider 字符串，它要
+    // 告诉用户“你的盘能不能落字幕”。之前那句话是硬编码的。
+    brandSupportsSubtitleDirectLink(request.storageProvider);
   let subtitleCandidateCount: number | undefined;
   if (subtitleActive) {
     const subtitleProvider: AssrtProviderPort =

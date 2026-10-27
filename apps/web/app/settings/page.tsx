@@ -535,6 +535,10 @@ async function ResourceProviderSection() {
   const showProwlarr = drives.length === 0 || drives.some((drive) => brandSupportsProwlarr(drive.provider));
   const isDesktop = resolveIsDesktop();
   const magnetBrands = brandsSupportingProwlarr().join(" / ");
+  // W5: 字幕落盘的哪些盘能用，从注册表声明推出来（和磁力那行同源）。
+  // 之前这里硬编码「115 / 光鸭 / 123 支持」：加第六家网盘时，executor 实现了、
+  // orchestrator 认了，但这句话不会有人想起改——用户看着一句过期的话判断自己的盘。
+  const subtitleBrands = brandsSupportingSubtitleDirectLink().join(" / ");
 
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
@@ -639,11 +643,11 @@ async function SubtitleSourceSection() {
       <ServiceBlock
         name="assrt.net 字幕"
         pills={assrtPills({ tokenSet })}
-        summary="非国产内容自动补外挂中文字幕；需网盘支持外链离线（115 / 光鸭 / 123）。"
+        summary={`非国产内容自动补外挂中文字幕；需网盘支持外链离线（${subtitleBrands}）。`}
         details={
           <>
             <p>
-              外挂中文字幕来源：assrt.net（伪射手）有免费官方 API，agent 获取非国产剧集/电影时会自动搜字幕候选并挑合适的落盘到视频旁。需网盘支持外链离线落盘（115 / 光鸭 / 123 支持，123 会占用该账号的离线下载额度；夸克、天翼没有离线接口，不触发）。免费申请 Token，留空则该功能完全不启用。国产内容原生中文对白，不需要此功能。
+              外挂中文字幕来源：assrt.net（伪射手）有免费官方 API，agent 获取非国产剧集/电影时会自动搜字幕候选并挑合适的落盘到视频旁。需网盘支持外链离线落盘（{subtitleBrands} 支持，123 会占用该账号的离线下载额度；没有离线接口的盘不触发）。免费申请 Token，留空则该功能完全不启用。国产内容原生中文对白，不需要此功能。
             </p>
             <p>
               了解 assrt.net{" "}
