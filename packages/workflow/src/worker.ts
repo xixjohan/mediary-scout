@@ -928,6 +928,22 @@ async function patrolTrackedState(args: {
         }
         result = await runOnce();
       }
+      // 批次 5 冷却期水位线：只在这一次真的采纳了资源时才往前走。
+      //
+      // 为什么不能按“跑完了”记：一次搜了但没命中的巡检（no_coverage）如果也移动水位线，就会不停重置冷却，
+      // 那部作品会每次巡检都被重搜——而冷却存在的意义就是避免这份成本。
+      // 也不能按“成功—开始跑”记：则早在预约阶段就记上了，而那时还没搜过。
+      if (result.newlyObtainedCodes.length > 0) {
+        const takenAt = await input.repository.recordPolicyMatch({
+          accountId: state.accountId,
+          titleKey: state.title.id,
+          now: now(),
+        });
+        // null = 这部作品没配策略，正常（策略层是 opt-in 的）。
+        if (takenAt !== null) {
+          console.log(`[patrol] cooldown watermark for ${state.title.title} moved to ${takenAt}`);
+        }
+      }
       return {
         trackedSeasonId: state.season.id,
         status: "ran",

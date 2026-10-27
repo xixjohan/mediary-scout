@@ -73,6 +73,16 @@ export interface BridgedV2Result {
   auditEvents: AuditEvent[];
   /** Present only on a replace_request run (attached by runTvAcquisitionV2). */
   replacement?: RunAcquisitionV2WorkflowResult["replacement"];
+  /**
+   * Episode codes obtained by THIS run (were missing before, are not now).
+   *
+   * Exposed because the patrol's cooldown watermark is written from it: `cooldownDays`
+   * means "ignore subsequent matches for N days", so the watermark may only move when a
+   * match was actually accepted. A run that searched and found nothing must NOT move it —
+   * otherwise a no-coverage sweep would keep resetting the cooldown and the work would be
+   * searched every single patrol, which is exactly the cost the cooldown exists to avoid.
+   */
+  newlyObtainedCodes: string[];
 }
 
 export function bridgeV2WorkflowToResult(input: {
@@ -138,6 +148,7 @@ export function bridgeV2WorkflowToResult(input: {
     // A leftover recovery is invisible: the run still reconciles, it does not tell anyone.
     notifications: input.mode === "staging_recovery" ? [] : [notification],
     auditEvents: v2.auditEvents,
+    newlyObtainedCodes,
   };
 }
 
