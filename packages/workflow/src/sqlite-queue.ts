@@ -11,10 +11,18 @@ import type { EnqueueJobInput, IJobQueue, Job, JobStatus } from "@media-track/co
  * - 原子认领：`UPDATE ... WHERE id = (SELECT ... LIMIT 1) RETURNING *` 包在
  *   `BEGIN IMMEDIATE` 里——先拿写锁再选任务，跨连接/跨 Worker 也不会重复消费。
  * - 失败退避：10s × (retry_count + 1) 指数退避；达到 max_retries 进死信。
+ * - 停滞回收（G10）：status='running' 且 locked_at 超过阈值的任务视为 worker 已死，
+ *   重新入队参与认领；重试用尽的进死信并写明原因。没有这条就是静默故障——
+ *   worker 中途崩溃会让任务永远停在 running，无人认领且无任何提示。
  *
  * 规约：本类只实现契约端口 IJobQueue，调用方（Features）经 Contracts 依赖，
  * 不直接 import 本文件（依赖方向铁律见治理文档 §3.3）。
  */
+
+/** 判定「worker 已死」的锁超时。一次认领可能跑很久（网盘转存要过 1.2s 漏桶，
+ *  数十次调用是常态），所以默认 10 分钟——远长于任何正常任务，又短到崩溃后不会
+ *  让用户等太久。调用方可按队列覆盖。 */
+export const DEFAULT_STALE_LOCK_MS = 10 * 60 * 1000;
 
 const QUEUE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS sys_queue_jobs (
@@ -107,7 +115,36 @@ export class SqliteJobQueue implements IJobQueue {
     return mapRow(row);
   }
 
-  claimNextJob(queueName: string, workerId: string): Job | null {
+  claimNextJob(queueName: string, workerId: string, options?: { staleAfterMs?: number }): Job | null {
+    const staleAfterMs = options?.staleAfterMs ?? DEFAULT_STALE_LOCK_MS;
+    const staleSeconds = Math.max(1, Math.round(staleAfterMs / 1000));
+
+    // 先在同一个 BEGIN IMMEDIATE 里回收停滞任务。为什么不在 SELECT 里顺手捞过来：
+    // 一个反复崩溃的 worker 会让任务无限重新认领（原来的 bug 只是慢一点），所以
+    // 回收必须推进 retry_count；而重试用尽的停滞任务不该再被认领，得进死信——
+    // 死信是终态且可见，留在 running 才是「无提示」的静默故障。
+    //
+    // 回收不照搬 reportFailure 的 10s×(n+1) 退避：那是「任务自己失败」的礼遇，
+    // 而这里是 worker 死了、任务本身可能没问题，延迟重试没有依据；且毒任务应该
+    // 尽快走到死信（终态可见）而不是拖延。重试次数已经兜住总量上限。
+    const reap = this.db.prepare(
+      `UPDATE sys_queue_jobs
+       SET status = CASE WHEN retry_count + 1 >= max_retries THEN 'dead_letter' ELSE 'queued' END,
+           retry_count = retry_count + 1,
+           next_run_at = datetime('now'),
+           error_message = CASE
+             WHEN retry_count + 1 >= max_retries THEN 'stale lock reaped: retries exhausted'
+             ELSE 'stale lock reaped: worker presumed dead, requeued'
+           END,
+           locked_by = NULL,
+           locked_at = NULL,
+           updated_at = datetime('now')
+       WHERE queue_name = ?
+         AND status = 'running'
+         AND locked_at IS NOT NULL
+         AND locked_at <= datetime('now', '-' || ? || ' seconds');`,
+    );
+
     const claim = this.db.prepare(
       `UPDATE sys_queue_jobs
        SET status = 'running',
@@ -128,6 +165,7 @@ export class SqliteJobQueue implements IJobQueue {
     // BEGIN IMMEDIATE：先取写锁再选任务，杜绝两个 Worker 选中同一条
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      reap.run(queueName, staleSeconds);
       const row = claim.get(workerId, queueName) as JobRow | undefined;
       this.db.exec("COMMIT");
       return row ? mapRow(row) : null;
