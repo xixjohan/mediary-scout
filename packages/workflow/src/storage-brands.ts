@@ -114,6 +114,18 @@ export interface StorageBrand {
    *  to transfer. `buildExecutorForBrand` still throws at runtime for callers
    *  that bypass the type (JS callers, `as` casts). */
   create: (input: StorageDriverCreateInput) => StorageExecutor;
+  /** Minimum start-to-start gap between this drive's API calls, in ms.
+   *  REGISTRY DATA, not logic — this used to be a `provider === "pan123"` check
+   *  buried in drive-pacer.ts. 123 answers a burst with code=100011 请勿频繁操作,
+   *  so its calls are spaced; the others pace themselves INSIDE their own client
+   *  (115's 1.2s leaky bucket, 夸克's 3/s token bucket) and must not be spaced a
+   *  second time out here.
+   *
+   *  REQUIRED, defaulting to nothing: `withBrandPacing` wraps an unregistered
+   *  brand with zero pacing, so a new drive ships unlimited — that is the
+   *  account-ban entry point (plan §2.3). Making the field mandatory forces
+   *  whoever adds a brand to answer "does this drive need spacing?". */
+  minApiIntervalMs: number;
 }
 
 export const STORAGE_BRANDS: StorageBrand[] = [
@@ -127,6 +139,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     authKind: "cookie",
     provisionRootId: "0", // 115 account root
     writeScope: "parents",
+    minApiIntervalMs: 0, // 115 client 自带 1.2s 漏桶
     create: (input) => {
       const cookie = input.cookie ?? "";
       const env = {
@@ -147,6 +160,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     authKind: "cookie",
     provisionRootId: "0", // 夸克 account root
     writeScope: "parents",
+    minApiIntervalMs: 0, // 夸克 client 自带 3/s 令牌桶
     create: (input) => {
       return new QuarkStorageExecutor({
         // P13：夸克 client 过令牌桶限速（3/s burst 5，治理文档参数）——此前完全
@@ -171,6 +185,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "", // 光鸭 account root
     requiredCredentialKeys: ["accessToken", "refreshToken"],
     writeScope: "listed",
+    minApiIntervalMs: 0,
     create: (input) => {
       const c = (input.credential ?? {}) as {
         accessToken?: string;
@@ -207,6 +222,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "-11", // 天翼个人云 root folder id
     requiredCredentialKeys: ["sessionKey", "accessToken", "refreshToken"],
     writeScope: "listed",
+    minApiIntervalMs: 0,
     create: (input) => {
       const c = (input.credential ?? {}) as Partial<TianyiCredential>;
       // Same exactOptionalPropertyTypes discipline as guangya: never set optional
@@ -241,6 +257,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "0", // 123 个人云根
     requiredCredentialKeys: ["token"],
     writeScope: "listed",
+    minApiIntervalMs: 1500, // 123 用 code=100011 请勿频繁操作 回应突发
     create: (input) => {
       const c = (input.credential ?? {}) as Partial<Pan123Credential>;
       // 纯 token 模型:v1 无凭证刷新(web 面无 refresh 端点,401 → Pan123AuthError
