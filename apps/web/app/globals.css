@@ -5714,3 +5714,87 @@ select.setting-control {
   flex: 1 1 160px;
   font-size: 0.8125rem;
 }
+
+/* 批次 4：整理面板。L1 只说做了什么；L2 列出每个文件与建议目标让用户点头。
+   409（盘没确认计划）显示为「已停止，未做任何改动」——不是一个会最终声称成功的进度条。 */
+.title-organize {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.title-organize-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.title-organize-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.title-organize-run {
+  background: var(--surface, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.title-organize-run:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.title-organize-copy,
+.title-organize-stopped {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.title-organize-stopped {
+  color: var(--danger, #b42318);
+}
+
+.title-organize-subhead {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.title-organize-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.title-organize-item {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  justify-content: space-between;
+}
+
+.title-organize-item-blocked {
+  border-left: 2px solid var(--danger, #b42318);
+  padding-left: 8px;
+}
+
+.title-organize-item-title {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.title-organize-item-meta,
+.title-organize-item-suggest {
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
