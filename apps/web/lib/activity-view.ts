@@ -1,11 +1,14 @@
 import {
   isUserVisibleWorkflowKind,
   landedSize,
+  tailAgentStepViews,
+  type AgentStepView,
   type MediaType,
   type NotificationReportStatus,
   type WorkflowKind,
   type WorkflowRepository,
   type WorkflowRunProgress,
+  type ScopeArg,
 } from "@media-track/workflow";
 import { activeRunLabel, distinctSeasons, seasonLabelText } from "./activity-season-label";
 
@@ -46,6 +49,10 @@ export interface ActivityActiveRun {
   missingCount: number;
   /** Live agent progress (running only). */
   progress: WorkflowRunProgress | null;
+  /** Redacted agent tool-call timeline (W4 L1). Bounded to the tail; `args` has
+   *  credentials/URLs stripped at the read boundary (see agent-step-view.ts).
+   *  Empty for a queued run — it has not started, so there is no trace yet. */
+  steps: AgentStepView[];
 }
 
 /** A recently-finished run. The client session-scopes 已完成 by matching these
@@ -74,10 +81,29 @@ export interface ActivityView {
  * completed runs (the client decides which to show in 已完成 by matching against
  * runs it watched go active → done; history lives in 通知).
  */
+/**
+ * Redacted agent tool-call timeline for one run (W4 L1).
+ *
+ * `listAgentSteps(workflowRunId, scope)` is itself scope-gated (fail-closed), so
+ * passing the view's scope means a run the account doesn't own yields [] rather
+ * than someone else's trace. Only called for RUNNING runs: a queued run has no
+ * trace yet, and calling it would spend a DB read per queued item on every
+ * 8-second poll for a list that is always empty.
+ */
+async function stepsFor(
+  repository: Pick<WorkflowRepository, "listAgentSteps">,
+  workflowRunId: string,
+  scope: ScopeArg | undefined,
+  status: "queued" | "running",
+): Promise<AgentStepView[]> {
+  if (status !== "running") return [];
+  return tailAgentStepViews(await repository.listAgentSteps(workflowRunId, scope));
+}
+
 export async function getActivityView(input: {
   repository: Pick<
     WorkflowRepository,
-    "listActiveWorkflowRuns" | "listNotifications" | "listTrackedSeasonStates"
+    "listActiveWorkflowRuns" | "listNotifications" | "listTrackedSeasonStates" | "listAgentSteps"
   >;
   /** Scope the queue/notifications to one account (§7). Omitted → default. */
   accountId?: string;
@@ -112,7 +138,22 @@ export async function getActivityView(input: {
     .sort((a, b) => a.workflowRun.startedAt.localeCompare(b.workflowRun.startedAt))
     .map((snapshot) => snapshot.workflowRun.id);
 
-  const active: ActivityActiveRun[] = activeRuns.map((snapshot) => {
+  // L1: the running runs' agent timelines. Fetched CONCURRENTLY, not awaited
+  // inside the map below — a sequential await there would serialise one DB read
+  // per run on every 8-second poll.
+  const timelines = await Promise.all(
+    activeRuns.map((snapshot) =>
+      // status here is the run's raw status; only "running" has a trace to read.
+      stepsFor(
+        input.repository,
+        snapshot.workflowRun.id,
+        scope,
+        snapshot.workflowRun.status === "running" ? "running" : "queued",
+      ),
+    ),
+  );
+
+  const active: ActivityActiveRun[] = activeRuns.map((snapshot, index) => {
     const status = snapshot.workflowRun.status === "running" ? "running" : "queued";
     // A replace run covers the whole title; its snapshot is only the lock season's
     // (an S02E01 request would read 「第 1 季」 with S01's missing count).
@@ -135,6 +176,7 @@ export async function getActivityView(input: {
       queuePosition: status === "queued" && queueIndex >= 0 ? queueIndex + 1 : null,
       missingCount,
       progress: snapshot.workflowRun.progress ?? null,
+      steps: timelines[index]!,
     };
   });
 

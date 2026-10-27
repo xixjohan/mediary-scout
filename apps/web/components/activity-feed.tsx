@@ -10,6 +10,7 @@ import type {
   ActivityView,
   RetryRefusalReason,
 } from "../lib/activity-view";
+import { AgentTimeline } from "./agent-timeline";
 // The run kind via the view type, NOT the workflow root barrel: the barrel `export *`s
 // is server-heavy, and a type-only barrel import can drag server-only code into this client bundle
 // (see request-track-button.tsx).
@@ -126,7 +127,11 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
       ? `已确认 ${run.progress.obtained ?? 0} / ${run.progress.needed} 集`
       : null;
   return (
-    <Link className="act-row act-row-active" href={showHref(run.tmdbId, "library", storageId, run.type)}>
+      // Not a bare <Link>: the timeline is a <details> INSIDE the row, and nesting
+      // interactive content inside an anchor is invalid (and unkeyboardable). The
+      // poster/title stay the link; the timeline sits beside it, not inside it.
+      <div className="act-row-wrap">
+        <Link className="act-row act-row-active" href={showHref(run.tmdbId, "library", storageId, run.type)}>
       {poster(run.posterPath, run.title, "info")}
       <div className="act-row-body">
         <div className="act-row-head">
@@ -142,7 +147,9 @@ function RunningRow({ run, storageId }: { run: ActivityActiveRun; storageId?: st
           <Ticker text={run.progress?.activity ?? "正在准备…"} />
         </div>
       </div>
-    </Link>
+      </Link>
+      <AgentTimeline steps={run.steps ?? []} />
+    </div>
   );
 }
 
