@@ -35,7 +35,11 @@ export type WorkflowKind =
    *  (see isUserVisibleWorkflowKind). */
   | "resource_search"
   /** Batch 3: a manual import the user triggered from the detail page's 资源 panel. */
-  | "manual_import";
+  | "manual_import"
+  /** Batch 4: an 自动整理 of a title's directory. User-visible on purpose — its most
+   *  interesting outcome is `manual_review`, and a review the user cannot see is a
+   *  review that never happens. */
+  | "title_organize";
 
 /** Runs of this kind stay off every user-facing list (activity, library, show page). */
 export function isUserVisibleWorkflowKind(kind: WorkflowKind): boolean {

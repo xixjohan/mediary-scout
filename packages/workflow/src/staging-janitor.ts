@@ -23,6 +23,8 @@ const TITLE_BLOCK_KINDS: Record<WorkflowKind, true> = {
   // must wait for it like any other run. resource_search touches no staging at
   // all, but blocking on it is harmless and keeps the table total.
   resource_search: true,
+  // An organize rewrites the library directories it lists, so the janitor waits.
+  title_organize: true,
   manual_import: true,
 };
 
