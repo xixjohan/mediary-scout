@@ -156,6 +156,7 @@ async function seedTrackedSeason(input: {
     files,
   });
   await input.repository.saveWorkflowRunSnapshot({
+    ...(input.accountId === undefined ? {} : { accountId: input.accountId }),
     title: input.title,
     season: input.season,
     workflowRun: {
@@ -558,6 +559,49 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
         expect(calls).toHaveLength(1);
         // recordPolicyMatch 对没配过策略的作品返回 null，不是抛错
         expect(await inner.recordPolicyMatch({ accountId: "acct_default", titleKey: title.id, now: fixedNow() })).toBeNull();
+      });
+
+      /**
+       * 跨账号同名作品：一家在冷却，不能把另一家的巡检一起挡下。
+       *
+       * 这是真的瓲过的 bug：worker 里的冷却过滤用 `new Set(skipped.map(e => e.titleKey))` 做键，
+       * 而标题是跨账号共享的（同一部剧，两个用户都订阅）。A 在冷却、B 没配策略，
+       * B 依然要照常巡检——否则 A 的冷却期静默默停掉了 B 的订阅。
+       */
+      it("**跨账号同名作品：一家在冷却，不影响另一家照常巡检**", async () => {
+        const inner = new InMemoryWorkflowRepository();
+        const { repository } = watermarkRecordingRepository(inner);
+        // 两个账号都追踪同一部剧；只有 acct_a 配了策略且刚匹配过
+        const states: Array<{ accountId: string; title: MediaTitle; season: TrackedSeason }> = [];
+        for (const accountId of ["acct_a", "acct_b"]) {
+          const { title, season } = trackedFixture(`show_${accountId}`);
+          // titleKey 必须相同（同一部剧），只是账号不同
+          const sharedTitle: MediaTitle = { ...title, id: "title_shared", title: "同一部剧" };
+          const sharedSeason: TrackedSeason = { ...season, id: `season_${accountId}_1`, mediaTitleId: sharedTitle.id };
+          await seedTrackedSeason({ repository: inner, title: sharedTitle, season: sharedSeason, obtainedCodes: [], accountId });
+          states.push({ accountId, title: sharedTitle, season: sharedSeason });
+        }
+        await inner.upsertSubscriptionPolicy({
+          accountId: "acct_a",
+          titleKey: "title_shared",
+          policy,
+          now: "2026-06-10T00:00:00.000Z",
+        });
+        await inner.recordPolicyMatch({ accountId: "acct_a", titleKey: "title_shared", now: "2026-06-10T00:00:00.000Z" });
+
+        const outcomes = await runScheduledType3Monitoring({
+          repository,
+          resourceProvider: emptyProvider(),
+          storage: new FakeStorageExecutor(),
+          model: noCoverageModel(),
+          storageParentDirectoryId: "library_root",
+          now: fixedNow,
+          createWorkflowRunId: () => "run_xacct",
+        });
+
+        // acct_a 冷却中（跳过）；acct_b 没配策略，必须照常巡检
+        expect(outcomes).toHaveLength(1);
+        expect(outcomes[0]).toMatchObject({ status: "ran", trackedSeasonId: "season_acct_b_1" });
       });
 
       it("**水位线接上之后，冷却期内同一部不再被重搜**", async () => {

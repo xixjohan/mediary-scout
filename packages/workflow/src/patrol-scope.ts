@@ -49,11 +49,20 @@ export interface PatrolCandidate {
 export type PatrolSkipReason = "cooldown" | "no_policy";
 
 export interface PatrolSkip {
+  /** Which account's cooldown this was. A title is shared across accounts, so the
+   *  key is (account, title) — never the title alone. */
+  accountId: string;
   titleKey: string;
   titleName: string;
   reason: PatrolSkipReason;
   /** Human-readable, for the sweep's log line. */
   detail: string;
+}
+
+/** The (account, title) key a cooldown is scoped to. Exported so the sweep's filter
+ *  and the decision cannot disagree about what "the same work" means. */
+export function patrolSkipKey(entry: { accountId: string; titleKey: string }): string {
+  return `${entry.accountId}\u0000${entry.titleKey}`;
 }
 
 export interface PatrolScopeDecision {
@@ -104,6 +113,7 @@ export async function planPatrolScope(input: {
     if (withinCooldown({ policy, lastTakenAt: policy.lastTakenAt, now: input.now })) {
       const days = policy.cooldownDays;
       skipped.push({
+        accountId: candidate.accountId,
         titleKey: candidate.titleKey,
         titleName: candidate.titleName,
         reason: "cooldown",
