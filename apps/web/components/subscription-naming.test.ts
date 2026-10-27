@@ -60,6 +60,10 @@ const DATA_OWNERSHIP_FILES = [
   "app/settings/page.tsx",
   "lib/settings-attention.ts",
   "components/settings/remote-access-section.tsx",
+  // demo 数据的 overview 文案：「产品化后 Type 1 也会留下媒体库记录」讲的是数据/
+  // 记录归属，同属 B 类。原先不在这两张表里，等于没有守卫——本次补上，验收标准
+  // 「grep 媒体库 只剩 B 类」才是被完整强制执行的。
+  "lib/demo-candidates.ts",
 ];
 
 describe("订阅页正名 — A/C 类（追踪列表语义）已改为「订阅」", () => {
