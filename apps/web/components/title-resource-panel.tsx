@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import type { ResourceCandidateView } from "@media-track/workflow";
+import { useRouter } from "../lib/use-router";
 
 /**
  * 详情页「资源」面板（批次 2 的 UI 部分）。
@@ -18,6 +19,16 @@ import type { ResourceCandidateView } from "@media-track/workflow";
  *  3. 冷却期禁用按钮并显示剩余秒数。后端 60s 冷却会还给我们 retryAfterMs，
  *     禁用是为了不制造注定失败的请求，不是因为要教用户规矩。
  *
+ * 批次 3 在此基础上加了「手动入库」。它没有放宽上面任何一条：查询仍然只手动触发，
+ * 响应里仍然没有 URL。多出来的只是每行候选一个按钮，点了之后：
+ *
+ *   · 前端把 **不透明句柄**（snapshotId + candidateId）POST 给 /api/titles/import。
+ *     分享链和提取码自始至终没有出现在前端——它们随 run 落在服务端，由 worker 读回。
+ *   · 202 之后前端只做一件事：router.refresh()。进度不是前端自己计的——服务端的
+ *     `view.acquiring` 已经包含 manual_import（用户可见 + queued 算 active），刷新后
+ *     页面挂上 AcquiringPoller，由它持续轮询到 run 结束。徽章因此是服务端真相的投影，
+ *     关掉浏览器再回来也还在（AcquiringPoller 的设计前提）。
+ *
  * 数据源不可用时降级为空态 + 错误说明，不抛到页面外（规格 failure mode）。
  */
 
@@ -28,7 +39,13 @@ interface ResourcePanelProps {
 export type PanelState =
   | { kind: "idle" }
   | { kind: "loading" }
-  | { kind: "ready"; candidates: ResourceCandidateView[]; cached: boolean }
+  | {
+      kind: "ready";
+      candidates: ResourceCandidateView[];
+      cached: boolean;
+      /** 这次查询落库的快照句柄。null = 缓存命中（DB 才是权威，不重推导）。 */
+      snapshotId: string | null;
+    }
   | { kind: "throttled"; retryAfterMs: number }
   | { kind: "error"; message: string };
 
@@ -51,9 +68,49 @@ export function mapResourceResponse(status: number, body: unknown): PanelState {
     const parsed = body as { error?: string };
     return { kind: "error", message: parsed.error ?? `查询失败（${status}）` };
   }
-  const parsed = body as { candidates: ResourceCandidateView[]; cached: boolean };
-  return { kind: "ready", candidates: parsed.candidates, cached: parsed.cached };
+  const parsed = body as {
+    candidates: ResourceCandidateView[];
+    cached: boolean;
+    snapshotId?: string;
+  };
+  return {
+    kind: "ready",
+    candidates: parsed.candidates,
+    cached: parsed.cached,
+    // 缓存命中时后端不回 snapshotId：那一份快照的归属要以 DB 为准，前端不重推导。
+    snapshotId: typeof parsed.snapshotId === "string" ? parsed.snapshotId : null,
+  };
 }
+
+/**
+ * 入库 HTTP 响应 ⇒ 导入状态。
+ *
+ * 410 而不是 400：候选曾经有效、只是窗口关了（或它不属于这次搜索）。用户的下一步
+ * 一样——重新查询——而 410 告诉客户端别再原样重试。
+ * 200 already_running 不当成错误：什么都没新入队，报错会让用户以为失败了。
+ */
+export function mapImportResponse(status: number, body: unknown): ImportState {
+  if (status === 202) {
+    return { kind: "queued" };
+  }
+  if (status === 200) {
+    return { kind: "already_running" };
+  }
+  const parsed = body as { error?: string; reason?: string };
+  const message = parsed.error ?? `入库失败（${status}）`;
+  // exactOptionalPropertyTypes：拿不准有没有 reason 时不能传 undefined，要整个键不传。
+  return parsed.reason === undefined
+    ? { kind: "rejected", message }
+    : { kind: "rejected", message, reason: parsed.reason };
+}
+
+/** 导入子状态。与查询状态分开：查询可以被冷却挡住，导入有它自己的一套终局。 */
+export type ImportState =
+  | { kind: "idle" }
+  | { kind: "submitting"; candidateId: string }
+  | { kind: "queued" }
+  | { kind: "already_running" }
+  | { kind: "rejected"; message: string; reason?: string };
 
 /** 字节数的人类可读形式。provider 不上报体积时整块不渲染。 */
 function formatSize(bytes: number): string {
@@ -75,6 +132,8 @@ function formatPostedAt(iso: string): string {
 
 export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
   const [state, setState] = useState<PanelState>({ kind: "idle" });
+  const [importState, setImportState] = useState<ImportState>({ kind: "idle" });
+  const router = useRouter();
 
   const search = useCallback(async () => {
     setState({ kind: "loading" });
@@ -92,8 +151,43 @@ export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
     }
   }, [tmdbId]);
 
+  /**
+   * 手动入库。只递不透明句柄；分享链从头到尾没到过前端。
+   *
+   * 202 之后不自己计时——setState({kind:"queued"}) 只是把按钮换成「已入队」，
+   * 真正的进度来自 router.refresh()：服务端的 view.acquiring 已经包含 manual_import，
+   * 刷新后页面挂上 AcquiringPoller，由它轮询到 run 结束。徽章因此始终是服务端真相。
+   */
+  const importCandidate = useCallback(
+    async (candidateId: string) => {
+      if (state.kind !== "ready" || state.snapshotId === null) return;
+      setImportState({ kind: "submitting", candidateId });
+      try {
+        const response = await fetch("/api/titles/import", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ tmdbId, snapshotId: state.snapshotId, candidateId }),
+        });
+        const body = await response.json().catch(() => ({}));
+        const next = mapImportResponse(response.status, body);
+        setImportState(next);
+        // 入队成功 ⇒ 让服务端重渲染，它才知道这部片有活儿在飞
+        if (next.kind === "queued" || next.kind === "already_running") {
+          router.refresh();
+        }
+      } catch (error) {
+        setImportState({
+          kind: "rejected",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    },
+    [state, tmdbId, router],
+  );
+
   const busy = state.kind === "loading";
   const throttled = state.kind === "throttled";
+  const submitting = importState.kind === "submitting";
 
   return (
     <section className="title-resources" aria-label="资源">
@@ -121,18 +215,43 @@ export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
         <>
           {state.cached && <p className="title-resources-cached">30 分钟内的缓存结果。</p>}
           <ul className="title-resources-list">
-            {state.candidates.map((candidate) => (
-              <li key={candidate.candidateId} className="title-resources-item">
-                <span className="title-resources-item-title">{candidate.title}</span>
-                <span className="title-resources-item-meta">
-                  {candidate.source}
-                  {candidate.sizeBytes !== undefined && ` · ${formatSize(candidate.sizeBytes)}`}
-                  {candidate.postedAt !== undefined && ` · ${formatPostedAt(candidate.postedAt)}`}
-                  {candidate.seeders !== undefined && ` · ${candidate.seeders} 做种`}
-                </span>
-              </li>
-            ))}
+            {state.candidates.map((candidate) => {
+              // 缓存命中时没有 snapshotId：那一份快照的归属要以 DB 为准，前端不重推导，
+              // 所以按钮禁用并说清原因，而不是拿一个猜的句柄去请求。
+              const importable = state.snapshotId !== null;
+              const rowBusy = submitting && importState.kind === "submitting" && importState.candidateId === candidate.candidateId;
+              return (
+                <li key={candidate.candidateId} className="title-resources-item">
+                  <span className="title-resources-item-title">{candidate.title}</span>
+                  <span className="title-resources-item-meta">
+                    {candidate.source}
+                    {candidate.sizeBytes !== undefined && ` · ${formatSize(candidate.sizeBytes)}`}
+                    {candidate.postedAt !== undefined && ` · ${formatPostedAt(candidate.postedAt)}`}
+                    {candidate.seeders !== undefined && ` · ${candidate.seeders} 做种`}
+                  </span>
+                  <button
+                    type="button"
+                    className="title-resources-import"
+                    onClick={() => void importCandidate(candidate.candidateId)}
+                    disabled={!importable || rowBusy || busy || throttled}
+                    title={importable ? undefined : "这是 30 分钟内的缓存结果，请重新查询后再入库"}
+                  >
+                    {rowBusy ? "入库中…" : "手动入库"}
+                  </button>
+                </li>
+              );
+            })}
           </ul>
+
+          {importState.kind === "queued" && (
+            <p className="title-resources-import-queued">已加入队列，正在转存到网盘。可以离开这个页面。</p>
+          )}
+          {importState.kind === "already_running" && (
+            <p className="title-resources-import-queued">这部片已有导入在进行中。</p>
+          )}
+          {importState.kind === "rejected" && (
+            <p className="title-resources-error">入库失败：{importState.message}</p>
+          )}
         </>
       )}
 
