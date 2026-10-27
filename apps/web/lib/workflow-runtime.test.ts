@@ -1444,6 +1444,58 @@ describe("queueing on a drive whose login died names that drive's brand", () => 
   });
 });
 
+describe("malformed candidate id 与「不是这个种类」给不同文案", () => {
+  // 规格失败模式 #2：id 本身坏了（数据污染/客户端乱传）与「这是电影不是剧集」是两件事。
+  // 混成一句功能边界提示，会让人去查根本不存在的限制，从而放过真正的污染点。
+  // 解析发生在 auth 之前，所以单用户 + :memory: 就能触达，不需要伪造会话。
+  const prevSqlitePath = process.env.MEDIA_TRACK_SQLITE_PATH;
+  const prevMultiUser = process.env.MEDIA_TRACK_MULTI_USER;
+  let rt: typeof import("./workflow-runtime");
+
+  beforeEach(async () => {
+    delete process.env.MEDIA_TRACK_MULTI_USER;
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    vi.resetModules();
+    rt = await import("./workflow-runtime");
+  });
+
+  afterEach(() => {
+    delete process.env.MEDIA_TRACK_SQLITE_PATH;
+    if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
+    if (prevMultiUser !== undefined) process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
+    vi.resetModules();
+  });
+
+  it("剧集入口：畸形 id → 「无法识别」，而不是「只支持剧集」", async () => {
+    await expect(rt.queueCandidateSeries("tmdb_tv_not_a_number")).resolves.toEqual({
+      status: "unsupported",
+      message: "资源标识无法识别，请刷新页面后重试。",
+    });
+    await expect(rt.queueCandidateSeries("")).resolves.toEqual({
+      status: "unsupported",
+      message: "资源标识无法识别，请刷新页面后重试。",
+    });
+  });
+
+  it("剧集入口：合法但是电影 id → 「只支持剧集」（功能边界，不是数据坏）", async () => {
+    await expect(rt.queueCandidateSeries("tmdb_movie_1")).resolves.toEqual({
+      status: "unsupported",
+      message: "暂时只支持剧集的全剧获取。",
+    });
+  });
+
+  it("预定入口：畸形 id → 「无法识别」；电影以外的合法 id → 「只有电影可以预定」", async () => {
+    await expect(rt.reserveCandidate("tmdb_tv_1_s1_s2")).resolves.toEqual({
+      status: "unsupported",
+      message: "资源标识无法识别，请刷新页面后重试。",
+    });
+    await expect(rt.reserveCandidate("tmdb_tv_1_s1")).resolves.toEqual({
+      status: "unsupported",
+      message: "只有电影可以预定。",
+    });
+  });
+});
+
 describe("runNextQueuedWorkflow — queued runs going side by side", () => {
   // The worker's drain calls this once per claim, with its drive filter; several runs
   // can be going at once. Harness as for runScheduledType3: in-memory SQLite, the
