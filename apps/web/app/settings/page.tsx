@@ -34,6 +34,7 @@ import { SettingsTabs } from "../../components/settings-tabs";
 import { PasswordChangeForm } from "../../components/password-change-form";
 import { AccountAdminPanel } from "../../components/account-admin-panel";
 import { RemoteAccessSection } from "../../components/settings/remote-access-section";
+import { ApiKeySection } from "../../components/settings/api-key-section";
 import { UpdateSection } from "../../components/settings/update-section";
 import { GitHubNameplate } from "../../components/github-nameplate";
 import { SettingsActionInbox } from "../../components/settings-action-inbox";
@@ -182,6 +183,7 @@ export default function SettingsPage({
                 resolveIsDesktop() ? null : (
                   <Suspense fallback={null}>
                     <RemoteAccessSection searchParams={searchParams} />
+                    <ApiKeySection />
                   </Suspense>
                 )
               }
