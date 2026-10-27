@@ -116,6 +116,28 @@ describe("planPatrolScope — 冷却期", () => {
     expect(decision.included).toHaveLength(1);
   });
 
+  it("**改短 cooldownDays 立刻放行**（用户收紧/放宽规则不该被旧水位线卡住）", async () => {
+    // 7 天前匹配过。原本冷却 30 天，用户改成 2 天 —— 现在应该放行。
+    // 这是「改规则后重放」在本架构里唯一有意义的形态：没有未处理历史结果可重放
+    // （快照只写不读，每轮重搜），所以规则改动的生效点就是下一轮巡检，而冷却必须
+    // 按**当前**的 cooldownDays 算，不是按匹配时的那个值。
+    const decision = await planPatrolScope({
+      candidates: [candidate("k1")],
+      lookupPolicy: lookupOf({ k1: stored({ cooldownDays: 2, lastTakenAt: "2026-09-18T00:00:00.000Z" }) }),
+      now: NOW,
+    });
+    expect(decision.included).toHaveLength(1);
+  });
+
+  it("**改长 cooldownDays 立刻挡住**（对称：放宽上限也按当前值算）", async () => {
+    const decision = await planPatrolScope({
+      candidates: [candidate("k1")],
+      lookupPolicy: lookupOf({ k1: stored({ cooldownDays: 30, lastTakenAt: "2026-09-18T00:00:00.000Z" }) }),
+      now: NOW,
+    });
+    expect(decision.skipped).toHaveLength(1);
+  });
+
   it("**一部的冷却不连带跳过别的**", async () => {
     const decision = await planPatrolScope({
       candidates: [candidate("k1", "A"), candidate("k2", "B"), candidate("k3", "C")],
