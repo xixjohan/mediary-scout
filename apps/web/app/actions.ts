@@ -67,6 +67,19 @@ export async function unbindStorageAction(storageId: string): Promise<UnbindStor
     return { ok: false, message: "未找到该网盘。" };
   }
 
+  // 刻意保留 `provider === "pan115"` 字面量，没有收成注册表能力旗。
+  //
+  // 这不是「按品牌分发到某段通用逻辑」（那类硬判才会在加新盘时静默走错分支），
+  // 而是「这个品牌有没有一面需要收尾的全局镜像」。115 的实现本身深度耦合它自己
+  // 的状态：PAN115_COOKIE_KEY / PAN115_META_KEY 两个设置键、parsePan115Uid、
+  // 模块级 pan115CookieHydrated 水合标志、process.env.PAN115_COOKIE。
+  //
+  // 收成注册表能力只有两条路，都比现状差：加一个 hasGlobalMirror 布尔旗——看起来
+  // 通用，但清理代码仍然只对 115 生效，新品牌翻了旗也不会被清理（假通用比显式
+  // 特判更危险）；或者把 115 的 cookie 水合状态整个搬进共享注册表。
+  //
+  // 所以：显式特判 + 注释。将来真有第二家需要收尾，再把 onUnbind 能力连实现一起
+  // 搬进注册表（那时才是真分发，不是旗子）。
   if (result.storage.provider === "pan115") {
     // Best-effort: unbind already committed; mirror cleanup must not fail the action.
     try {
