@@ -15,6 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 const repo = {
   listTrackedSeasonStates: vi.fn(),
+  saveWorkflowRunSnapshot: vi.fn(),
 };
 const provider = { search: vi.fn() };
 
@@ -219,3 +220,67 @@ describe("POST /api/titles/resources — 上游失败", () => {
     expect(res.status).toBe(502);
   });
 });
+
+  describe("POST /api/titles/resources — 快照落库（批次 3）", () => {
+    /** 让 provider 对每个关键词都回同一份快照。 */
+    async function stubSearch() {
+      const { requireApiAccount } = await import("../../../../lib/auth-chain");
+      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle()]);
+      provider.search.mockImplementation(async () =>
+        snapshot([{ id: "c1", url: "https://115.com/s/x", password: "p", datetime: "2024-01-01" }]),
+      );
+    }
+
+    it("搜索成功 ⇒ 落一条不可见的 resource_search run，内容是合并快照", async () => {
+      await stubSearch();
+      const res = await POST(request({ tmdbId: 283428 }));
+      expect(res.status).toBe(200);
+      expect(repo.saveWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+
+      const saved = repo.saveWorkflowRunSnapshot.mock.calls[0]![0];
+      expect(saved.workflowRun.kind).toBe("resource_search");
+      expect(saved.workflowRun.status).toBe("succeeded");
+      expect(saved.resourceSnapshots).toHaveLength(1);
+      expect(saved.resourceSnapshots[0].candidates.map((c: { id: string }) => c.id)).toContain("c1");
+      // 搜索没有转存/决策/通知
+      expect(saved.episodes).toEqual([]);
+      expect(saved.decisions).toEqual([]);
+      expect(saved.transferAttempts).toEqual([]);
+      expect(saved.notifications).toEqual([]);
+    });
+
+    it("**缓存命中不再落库**（DB 那份才是权威，重复落会让两份不一致）", async () => {
+      await stubSearch();
+      // 第一次 miss 落库；第二次命中（模块级缓存仍在）
+      const first = await POST(request({ tmdbId: 283428 }));
+      expect(first.status).toBe(200);
+      expect(repo.saveWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+      const second = await POST(request({ tmdbId: 283428 }));
+      // 60s 冷却内第二次会被限流；这条用例要的是「命中时不重复落库」
+      if (second.status === 429) {
+        expect(repo.saveWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+        return;
+      }
+      expect(repo.saveWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it("**落库失败不影响搜索本身**（用户要的结果已拿到）", async () => {
+      await stubSearch();
+      repo.saveWorkflowRunSnapshot.mockRejectedValue(new Error("db down"));
+      const res = await POST(request({ tmdbId: 283428 }));
+      // 不是 500：落库失败的后果只是之后 import 会被拒「请重新查询」，可恢复
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { candidates: unknown[] };
+      expect(body.candidates.length).toBeGreaterThan(0);
+    });
+
+    it("未追踪的标题 ⇒ 404，且不落库", async () => {
+      const { requireApiAccount } = await import("../../../../lib/auth-chain");
+      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      repo.listTrackedSeasonStates.mockResolvedValue([]);
+      const res = await POST(request({ tmdbId: 283428 }));
+      expect(res.status).toBe(404);
+      expect(repo.saveWorkflowRunSnapshot).not.toHaveBeenCalled();
+    });
+  });

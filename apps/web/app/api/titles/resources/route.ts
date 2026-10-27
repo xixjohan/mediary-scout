@@ -4,6 +4,7 @@ import {
   TitleResourceCache,
   resolveTitleResources,
   buildTitleSearchKeywords,
+  buildResourceSearchRun,
   type ResourceCandidateView,
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
@@ -70,11 +71,12 @@ export async function POST(request: NextRequest) {
   // ScopeArg 的 string 形态即 { accountId, connectedStorageId: null }——按账号取，
   // 跨所有 drive。这里要的是「这个账号追踪了这部片吗」，drive 归属不影响判定。
   const states = await getWorkflowRepository().listTrackedSeasonStates(accountId);
-  const title = states.map((state) => state.title).find((candidate) => candidate.tmdbId === tmdbId);
-  if (!title) {
+  const tracked = states.find((state) => state.title.tmdbId === tmdbId);
+  if (!tracked) {
     // Fail closed: an untracked title is invisible, not searchable.
     return NextResponse.json({ error: "title not tracked" }, { status: 404, headers: NO_STORE });
   }
+  const title = tracked.title;
 
   const keywords = buildTitleSearchKeywords(title).map((entry) => entry.keyword);
 
@@ -101,6 +103,31 @@ export async function POST(request: NextRequest) {
       // 502, not 500: the failure is upstream (indexer), not this request's fault.
       return NextResponse.json({ error: "search failed", detail: result.message }, { status: 502, headers: NO_STORE });
     case "ok":
+      // Persist the merged snapshot as an invisible `resource_search` run (batch 3).
+      // This is the only reason the later import can recover a candidate's payload
+      // from the DB instead of the process-local CandidateRegistry. On a cache hit
+      // `result.snapshot` is null — that miss already persisted it.
+      //
+      // A persistence failure must NOT fail the search: the user asked for resources
+      // and got them. The only consequence is that a later import of one of these
+      // candidates is refused with 「请重新查询」, which is recoverable; failing the
+      // search here would hide results the user is entitled to see.
+      if (result.snapshot !== null) {
+        try {
+          await getWorkflowRepository().saveWorkflowRunSnapshot(
+            buildResourceSearchRun({
+              snapshot: result.snapshot,
+              title,
+              season: tracked.season,
+              accountId,
+              connectedStorageId: tracked.connectedStorageId,
+              now: result.snapshot.createdAt,
+            }),
+          );
+        } catch (error) {
+          console.error("[titles/resources] snapshot persist failed", error);
+        }
+      }
       return NextResponse.json(
         { tmdbId, cached: result.cached, count: result.candidates.length, candidates: result.candidates },
         { headers: NO_STORE },
