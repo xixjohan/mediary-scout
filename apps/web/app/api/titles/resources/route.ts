@@ -129,7 +129,17 @@ export async function POST(request: NextRequest) {
         }
       }
       return NextResponse.json(
-        { tmdbId, cached: result.cached, count: result.candidates.length, candidates: result.candidates },
+        {
+          tmdbId,
+          cached: result.cached,
+          count: result.candidates.length,
+          candidates: result.candidates,
+          // The opaque handle the import endpoint needs. Not sensitive: it encodes the
+          // accountId and tmdbId the caller already has. Without it the client could
+          // only send a candidateId, and the server would have to guess which of the
+          // user's searches it came from.
+          ...(result.snapshot === null ? {} : { snapshotId: result.snapshot.id }),
+        },
         { headers: NO_STORE },
       );
   }
