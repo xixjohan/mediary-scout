@@ -1,14 +1,12 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
 import {
-  CooldownLimiter,
-  TitleResourceCache,
   resolveTitleResources,
   buildTitleSearchKeywords,
   buildResourceSearchRun,
-  type ResourceCandidateView,
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import { getWorkflowRepository, getWorkerResourceProvider } from "../../../../lib/workflow-runtime";
+import { resourceCache, resourceLimiter } from "./cache";
 
 /**
  * POST /api/titles/resources — the user-triggered resource search (W2, batch 2).
@@ -31,23 +29,6 @@ import { getWorkflowRepository, getWorkerResourceProvider } from "../../../../li
  */
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
-
-/** 30 minutes — how long a returned candidateId stays usable (plan §3.2). */
-const RESOURCE_TTL_MS = 30 * 60 * 1000;
-/** 60s — how soon the same title may be searched again (plan §3.2). */
-const RESOURCE_COOLDOWN_MS = 60 * 1000;
-
-/**
- * Module-level singletons: the whole point of the TTL and the cooldown is that they
- * span requests. Next.js may instantiate the module more than once across bundles,
- * but within a server process these are the shared instances.
- */
-const resourceCache = new TitleResourceCache<ResourceCandidateView>({
-  now: () => Date.now(),
-  ttlMs: RESOURCE_TTL_MS,
-  idOf: (view) => view.candidateId,
-});
-const resourceLimiter = new CooldownLimiter({ now: () => Date.now(), cooldownMs: RESOURCE_COOLDOWN_MS });
 
 export async function POST(request: NextRequest) {
   await connection();
