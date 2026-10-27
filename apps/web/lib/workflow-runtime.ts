@@ -807,7 +807,12 @@ export async function getCurrentAccountId(): Promise<string> {
       try {
         sessionAccountId = await resolveSessionAccountId(sessionCookie);
       } catch {
-        return UNAUTHENTICATED_ACCOUNT_ID;
+        // session 读失败 ≠ 认证失败：与 auth-chain 通道 1 的 catch 同一契约
+        // （「读不到 ≠ 认证失败，继续问别的通道」）。这里若直接返回哨兵，
+        // 会跳过下面的 Bearer 判定——持合法 JWT 的站主在 DB 抖动时只拿到
+        // 哨兵，闸机却已放行，症状是 200 空数据而不是干净 401（第五轮复核
+        // 的探针实证：THROW+Bearer → gate=acct_default / data=哨兵）。
+        sessionAccountId = null;
       }
     }
     // Bearer JWT（S5.3 签发的 API token）：单用户模式只认 acct_default 自己的
@@ -841,7 +846,15 @@ export async function getCurrentAccountId(): Promise<string> {
     // 把 cookie 的 expires_at 改到过去，结果从 200 翻成 404）。session 解析
     // **成功**时优先（与 auth-chain 通道 1 同序）；解析不出才落到 Bearer。
     if (raw) {
-      const sessionAccountId = await resolveSessionAccountId(raw);
+      // 解析抛错（DB 抖动）按「读不到」处理、落 Bearer 兜底：直接让异常溅到
+      // 外层 catch 会返回哨兵，把 JWT 通道一起吞掉（第五轮复核的探针实证，
+      // 与单用户分支同一修法）。
+      let sessionAccountId: string | null = null;
+      try {
+        sessionAccountId = await resolveSessionAccountId(raw);
+      } catch {
+        sessionAccountId = null;
+      }
       if (sessionAccountId) return sessionAccountId;
     }
     return (await bearerAccountFromRequestScope()) ?? UNAUTHENTICATED_ACCOUNT_ID;

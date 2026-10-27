@@ -471,8 +471,8 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 > git fetch --tags
 > TAG=$(git tag --list 'v*' --sort=-creatordate | head -n 1)
 > git -c advice.detachedHead=false checkout "refs/tags/$TAG"
-> # 镜像基址由更新源推导（与 scripts/deploy.sh 同一默认值）：默认当前仓库，
-> # fork 指回上游就把 fancydirty 换成自己的 owner/name。
+> # 镜像基址由更新源推导（与 scripts/deploy.sh 同一默认值）：默认当前仓库
+> # xixjohan/mediary-scout。要指回上游或别的 fork，把 owner/name 换掉即可。
 > sed -i "s|^MEDIARY_IMAGE=.*|MEDIARY_IMAGE=ghcr.io/xixjohan/mediary-scout:$TAG|" .env
 > docker compose pull web worker
 > docker compose up -d
@@ -506,15 +506,39 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 ## 在线更新源（指向哪个仓库）
 
 「设置 → 更新」检查的发布标签、更新说明、桌面安装包，全部来自一个仓库。默认
-**当前仓库** `xixjohan/mediary-scout`（`origin` 指向谁就是谁——本仓库是上游的 fork，
-所以默认值从上游改成了 fork 自己）；要指回上游或任意 fork，用
+**当前仓库** `xixjohan/mediary-scout`（写死在 `apps/web/lib/release-feed-server.ts`
+的 `DEFAULT_UPDATE_REPO`，是源码常量、**不读 git origin**——从本仓库 fork 出去的
+用户源码直跑时检查的仍是 xixjohan 的发布）；要指回上游或任意 fork，用
 `MEDIA_TRACK_UPDATE_REPO=<owner>/<name>`：
 
-- **发布镜像已自带**：`Release Docker` 构建时把 `github.repository` 烤进镜像，
-  所以 fork 拉自己的镜像部署，开箱即检查自己的发布，无需任何配置。
+- **发布镜像已自带**：`Release Docker` 构建时把 `github.repository` 烤进镜像。
+  但 **compose 路径下它不生效**：`docker-compose.yml` 的 map 写法没有「未设就不
+  注入」，`MEDIA_TRACK_UPDATE_REPO: ${VAR:-}` 会恒注入一个空串、把烘焙值盖掉，
+  应用于是回落上面的源码常量。只有 `docker run`（无注入）才真的「开箱检查自己
+  的发布」。compose 用户要让实例检查自己的发布，就在 `.env` 显式写
+  `MEDIA_TRACK_UPDATE_REPO=<你的owner>/<name>`。
 - 临时改指向：`.env` 里设 `MEDIA_TRACK_UPDATE_REPO`（compose 会透传进容器）。
 - 一键更新的镜像基址同样由它推导（`ghcr.io/<owner>/<name>`），
   也可用 `MEDIA_IMAGE_BASE` 整体覆盖。
+
+### fork 从不打 tag / 发 release 时会发生什么
+
+本仓库（以及任何没发过发布的 fork）走默认值时会遇到三件事，都不难诊断但会一起出现：
+
+| 现象 | 原因 |
+|---|---|
+| `./scripts/deploy.sh` 直接退出，提示「没有找到任何 v\* 发布标签」 | 脚本靠 `git tag` 找要部署的版本 |
+| 设置 → 更新页空白、显示「暂时查不到更新日志」 | feed 查的是 0 release 的仓库 |
+| `docker compose pull web worker` 拉取失败 | `ghcr.io/<fork>/mediary-scout` 从未推送过镜像 |
+
+解法：把 `MEDIA_TRACK_UPDATE_REPO`（或 `MEDIARY_IMAGE` / `MEDIA_IMAGE_BASE`）
+指向一个**真有发布**的仓库，例如上游 `fancydirty/mediary-scout`。
+
+另有一处隐含耦合：一键更新执行 `git fetch --tags origin` 取的是**部署目录自己的
+origin**，与 `MEDIA_TRACK_UPDATE_REPO` 无关。若 feed 显示的是 fancydirty 的发布、
+而部署目录的 origin 是 0 tag 的 fork，点「立即更新」会 `FETCH_FAILED` 退出
+（不碰正在运行的版本，属安全失败）。让两者对上的办法是给部署目录的 origin 配上
+同一个仓库的 tag。
 
 ## 使用发布镜像（GHCR）
 

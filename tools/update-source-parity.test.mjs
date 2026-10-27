@@ -89,8 +89,21 @@ describe("H1：更新链四处同源（默认都指当前仓库 xixjohan/mediary
     expect(probe(RUN_UPDATE, '_UPDATE_REPO_RAW="', "IMAGE_BASE=", "UPDATE_REPO", blank)).toBe(
       "xixjohan/mediary-scout",
     );
-    // 两个脚本都必须真的做了 trim（否则上面两条是「碰巧」过的）
-    expect(DEPLOY).toContain("tr -d '[:space:]'");
-    expect(RUN_UPDATE).toContain("tr -d '[:space:]'");
+    // 两个脚本都必须真的做了首尾 trim（否则上面两条是「碰巧」过的），且与应用侧
+    // 同一口径：sed 去首尾，而不是 tr -d 把所有空白连内部的一起删掉。
+    for (const script of [DEPLOY, RUN_UPDATE]) {
+      expect(script).toContain("s/^[[:space:]]*//");
+      expect(script).toContain("s/[[:space:]]*$//");
+      expect(script).not.toContain("tr -d '[:space:]'");
+    }
+    // 内部空白是畸形值：脚本原样透传，交给应用侧正则抛错（fail-loud），
+    // 而不是被静默修成合法 slug——第五轮复核见过内部空白「四处四种行为」。
+    const inner = { MEDIA_TRACK_UPDATE_REPO: " xixjohan / mediary-scout " };
+    expect(probe(DEPLOY, '_UPDATE_REPO_RAW="', "IMAGE=", "IMAGE", inner)).toBe(
+      "ghcr.io/xixjohan / mediary-scout:v2026.10.02",
+    );
+    expect(probe(RUN_UPDATE, '_UPDATE_REPO_RAW="', "IMAGE_BASE=", "UPDATE_REPO", inner)).toBe(
+      "xixjohan / mediary-scout",
+    );
   });
 });

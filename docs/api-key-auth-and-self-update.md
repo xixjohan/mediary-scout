@@ -154,11 +154,12 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 > 路由数则是 12 个——`worker-secret` 管 run-next|run-type3、`updater-token` 管
 > hold|busy|status（`status` 不换 token，但同属 updater 豁免族，见表下第 3 条验收）。
 
-1. 每任务 TDD 红→绿；全量测试保持绿（当前基线 384 文件 / 5214 用例，第四轮复核后）。
+1. 每任务 TDD 红→绿；全量测试保持绿（当前基线 384 文件 / 5218 用例，第四轮复核后）。
 2. 门禁全绿：`npm run gate`（layout + deps + `eslint . --max-warnings 0`）、
-   **五处** typecheck（根 `npm run typecheck` 一棵树管住 shared/workflow/contracts，
-   加 web / desktop / host-worker / tmdb-proxy 四处独立工程；tmdb-proxy 与
-   scout-connect 各自另有 tsc，按需跑）、
+   **六处** typecheck（根 `npm run typecheck` 一棵树管住 packages/**（shared/
+   workflow/contracts），加 web / desktop / tmdb-proxy / scout-connect /
+   host-worker 五个独立工程；`apps/host-worker` 的 tsc 是第五轮复核才补进 CI 的
+   ——此前它虽是真实代码（S2.1/S2.2 的 drain 宿主）却没有任何类型门禁）、
    `build:shared` / `build:workflow` / `build:web`、`npm run e2e`。
    「gate」本身不含 typecheck，别把它当全量门禁。
 3. F2 验收：40 路由逐一确认"无凭据 401 / 有 session 200 / 有 JWT 200"；白名单四类
@@ -177,7 +178,7 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | S5.1 移除横幅 | ✅ | 删 `components/connect-notice-banner.tsx` + `app/page.tsx` 装配 + `connect-notice.ts` 的 dismissed key 逻辑与样式；相关测试改为断言"不再展示" |
 | S5.2 API Key 策略+端口 | ✅ | `packages/shared/src/api-key-source.ts`（resolveApiKey DB>env>none 四象限 + maskApiKey）+ `packages/contracts` 的 IApiKeyStore 端口 + `api_key` 入 SECRET_SETTING_KEYS（AES-256-GCM 透明加密，实测落盘是 enc:v1: 密文、读回明文）。四象限 + 掩码 + SQLite 端口落盘单测全绿 |
 | S5.3 JWT 颁发/验证 | ✅ | `packages/shared/src/auth/jwt.ts`（jose HS256，`algorithms` 显式拒降级）+ `POST /api/auth/token`：恒定时间比 key、复用登录限流、401 统一文案「api key 无效」（不区分未配/错 key，防枚举）；secret 走 env > `app_settings:jwt_secret`（加密，缺失自动生成 32 字节 hex）。round-trip/过期/篡改/错算法/限流单测全绿 |
-| S5.4 全接口认证 | ✅ | `apps/web/lib/auth-chain.ts` 责任链（session cookie → Bearer JWT → 单用户局域网默认账号，远程 fail-closed）；22+1 个非白名单路由一行守卫；白名单机制原位不动（health / auth/* / run-next+run-type3 的 worker secret / hold+busy 的 updater token / status 的 owner session / agent/* 独立 token）。**两层兜底**：vitest 路由清单测试（40 路由逐一归类，新增路由必须显式表态）+ ESLint L2 新规则 `local/api-auth-required`（漏挂即 lint 红，白名单同源）。6 路由 × 3 凭据状态行为测试。修掉一个被 mock 掩盖的真 bug：workflow-runtime 只 import 未 re-export `DEFAULT_ACCOUNT_ID`，真实构建下 auth-chain 会炸 |
+| S5.4 全接口认证 | ✅ | `apps/web/lib/auth-chain.ts` 责任链（session cookie → Bearer JWT → 单用户局域网默认账号，远程 fail-closed）；23 个非白名单路由一行守卫；白名单机制原位不动（health / auth/* / run-next+run-type3 的 worker secret / hold+busy 的 updater token / status 的 owner session / agent/* 独立 token）。**两层兜底**：vitest 路由清单测试（40 路由逐一归类，新增路由必须显式表态）+ ESLint L2 新规则 `local/api-auth-required`（漏挂即 lint 红，白名单同源）。6 路由 × 3 凭据状态行为测试。修掉一个被 mock 掩盖的真 bug：workflow-runtime 只 import 未 re-export `DEFAULT_ACCOUNT_ID`，真实构建下 auth-chain 会炸 |
 | S5.5 设置页管理 | ✅ | `GET/POST/DELETE /api/settings/api-key`（全过 S5.4 登录链；demo 403）+ `components/settings/api-key-section.tsx`（owner 门禁，落在「远程访问」tab）+ `components/api-key-panel.tsx`（掩码 + 来源徽标 db/env/none + 轮换返回**一次性完整值** + env 态禁清除并说明；后端 409 兜底）。三态读取/轮换/清除状态机 + 路由 14 用例 |
 | S5.6 更新源改当前仓库 | ✅ | `updateRepoSlug()` env 可配 + 畸形值抛错；Dockerfile/workflow/compose/updater 全链透传；24/24 单测 + **干净实例实测 env 生效**（fork 无 tag → feed 为空，不再显示上游发布）；顺手清掉两个残留 next-server 进程 |
 
@@ -255,4 +256,4 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | L5 | `update-section.tsx:180` 「全部发布说明」写死上游 release-notes（:68 已随仓库走） | 两个外链都由 `updateRepoSlug()` 推导；补源码断言用例 |
 | L6 | `account-bootstrap.ts` 本地抄一份 `"acct_default"` 字面量，与 `@media-track/workflow` 的 `DEFAULT_ACCOUNT_ID` 重复 | 改 import |
 
-第四轮修复后门禁全绿：384 文件 / 5218 用例（`--sequence.shuffle` 同绿）、`npm run gate` exit 0、七处 tsc 全 0、`build:shared`/`build:workflow`/`build:web` 全 0、`npm run e2e` 4 passed。提交 `537b69b`。
+第四轮修复后门禁全绿：384 文件 / 5218 用例（`--sequence.shuffle` 同绿）、`npm run gate` exit 0、六处 tsc 全 0、`build:shared`/`build:workflow`/`build:web` 全 0、`npm run e2e` 4 passed。提交 `537b69b`。

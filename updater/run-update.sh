@@ -154,7 +154,10 @@ compose() { docker compose -p "$PROJECT" --project-directory "$REPO" "$@"; }
 # 与应用侧（release-feed-server.ts 的 updateRepoSlug）同一口径：env 去掉首尾空白，
 # 纯空白视为「没设」而回落默认；否则 "   " 会拼出 ghcr.io/   这种地址。
 _UPDATE_REPO_RAW="${MEDIA_TRACK_UPDATE_REPO:-}"
-_UPDATE_REPO=$(printf '%s' "$_UPDATE_REPO_RAW" | tr -d '[:space:]')
+# 只去首尾空白（与应用侧 .trim() 同一口径）：纯空白 → 空 → 回落默认；
+# 内部含空白的畸形值**原样透传**，让应用侧的正则校验去抛错（fail-loud），
+# 而不是被 tr -d 静默修成一个合法 slug（第五轮复核：内部空白曾四处四种行为）。
+_UPDATE_REPO=$(printf '%s' "$_UPDATE_REPO_RAW" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
 UPDATE_REPO="${_UPDATE_REPO:-xixjohan/mediary-scout}"
 IMAGE_BASE="${MEDIA_IMAGE_BASE:-ghcr.io/${UPDATE_REPO}}"
 

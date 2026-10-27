@@ -100,6 +100,11 @@ describe("startUpdateAction and the auto-update failure count", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     settings.clear();
+    // 与 settings.clear() 同一理由：failingWrites 是 vi.hoisted 的模块级 Set，
+    // 别的 describe 往里 add 过 key 就会漏到这里（--sequence.shuffle 下稳定
+    // 复现：上一个用例的 auto_update_fail_streak 让本用例的 setSetting 抛错，
+    // streak 原样残留）。固定顺序下污染者后面总跟着清桶者所以看不见。
+    failingWrites.clear();
     vi.mocked(isDemoMode).mockReturnValue(false);
     vi.mocked(resolveCurrentIsOwner).mockResolvedValue(true);
     vi.mocked(loadUpdateView).mockResolvedValue({ available: { tag: "v2026.10.02" } } as never);
