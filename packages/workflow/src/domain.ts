@@ -28,11 +28,22 @@ export type WorkflowKind =
   | "type3_monitor"
   | "movie_init"
   | "replace_request"
-  | "staging_recovery";
+  | "staging_recovery"
+  /** Batch 3: a user-triggered resource search, persisted only so the import path can
+   *  recover a candidate's payload from `resource_snapshots` by candidateId. It runs
+   *  no agent and transfers nothing — it is a RECORD, not work. Never user-visible
+   *  (see isUserVisibleWorkflowKind). */
+  | "resource_search"
+  /** Batch 3: a manual import the user triggered from the detail page's 资源 panel. */
+  | "manual_import";
 
 /** Runs of this kind stay off every user-facing list (activity, library, show page). */
 export function isUserVisibleWorkflowKind(kind: WorkflowKind): boolean {
-  return kind !== "staging_recovery";
+  // resource_search is a record, not work: showing it would put a row in 活动 for
+  // every search the user ever ran, which reads as "the system is doing something".
+  // manual_import IS user-visible — it is the user's own import, and its progress is
+  // what the detail page's button reports.
+  return kind !== "staging_recovery" && kind !== "resource_search";
 }
 
 /** Notice kinds a user must never see. Applied inside the notification queries,

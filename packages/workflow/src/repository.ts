@@ -1965,6 +1965,10 @@ const KIND_HAS_QUEUE_CLAIMER: Record<WorkflowKind, boolean> = {
   type3_monitor: false,
   replace_request: true,
   staging_recovery: true,
+  // resource_search is a persisted RECORD, never queued — no worker claims it.
+  // manual_import IS queued: the import endpoint enqueues it into sys_queue_jobs.
+  resource_search: false,
+  manual_import: true,
 };
 
 /** Whether cancelling a queued run of this kind tears down its season's tracking.
@@ -1978,6 +1982,10 @@ const KIND_OWNS_TRACKING: Record<WorkflowKind, boolean> = {
   type3_monitor: false,
   replace_request: false,
   staging_recovery: false,
+  // Neither batch-3 kind owns a season: cancelling a search or an import must never
+  // tear down the user's tracking.
+  resource_search: false,
+  manual_import: false,
 };
 
 export function tearsDownTrackingOnCancel(kind: WorkflowKind): boolean {

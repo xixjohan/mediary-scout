@@ -42,6 +42,8 @@ export * from "./manual-import-job.js";
 export * from "./manual-import-endpoint.js";
 // 批次 3：CandidateSelector 端口 + agent/human 两实现（两条路径产出结构一致的决策）。
 export * from "./candidate-selector.js";
+// 批次 3：把用户态搜索的快照落成一个不可见的 run（resource_search）。
+export * from "./resource-search-run.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,

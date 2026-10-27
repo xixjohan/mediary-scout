@@ -19,6 +19,11 @@ const TITLE_BLOCK_KINDS: Record<WorkflowKind, true> = {
   movie_init: true,
   replace_request: true,
   staging_recovery: true,
+  // A manual_import holds a staging directory while it transfers, so the janitor
+  // must wait for it like any other run. resource_search touches no staging at
+  // all, but blocking on it is harmless and keeps the table total.
+  resource_search: true,
+  manual_import: true,
 };
 
 /** A failed run is requeued on the same id within 15 minutes. Don't touch its staging until that window is long gone. */
