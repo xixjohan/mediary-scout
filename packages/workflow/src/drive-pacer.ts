@@ -5,7 +5,12 @@
  * refused call waits 30s, then 60s, then 120s and is retried; the fourth refusal, or
  * any other error, propagates. Other brands are not spaced (115 paces itself) and
  * never answer with 123's refusal.
+ *
+ * The interval is REGISTRY DATA (`StorageBrand.minApiIntervalMs`), not a
+ * `provider === "pan123"` check — a brand that needs spacing must say so in its
+ * entry, and the field is required so a new drive cannot silently ship unlimited.
  */
+import { getStorageBrand, isRegisteredStorageProvider } from "./storage-brands.js";
 
 export interface DriveClock {
   now(): number;
@@ -15,7 +20,6 @@ export interface DriveClock {
 /** Run one drive call through the spacing and the rate-limit retry. */
 export type DrivePace = <T>(run: () => Promise<T>) => Promise<T>;
 
-const PAN123_MIN_INTERVAL_MS = 1500;
 /** One paced call can paginate. 123 answers the burst with code=100011.
  *  Three waits, then give up. */
 const RATE_LIMIT_BACKOFF_MS = [30_000, 60_000, 120_000];
@@ -31,7 +35,14 @@ export const realtimeDriveClock: DriveClock = {
 };
 
 function minIntervalMs(provider: string | undefined): number {
-  return provider === "pan123" ? PAN123_MIN_INTERVAL_MS : 0;
+  // Unknown/absent provider → no spacing, exactly as before. A registered brand
+  // that somehow lacks the field also degrades to 0 rather than throwing here:
+  // this runs on every drive call, and a registry typo should not turn into a
+  // crash loop. The registry test pins the field's presence instead.
+  if (provider === undefined || !isRegisteredStorageProvider(provider)) {
+    return 0;
+  }
+  return getStorageBrand(provider).minApiIntervalMs ?? 0;
 }
 
 /** Start-to-start gap. The first call does not wait. gap 0 never sleeps. */
