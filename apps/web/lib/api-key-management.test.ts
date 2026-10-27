@@ -59,7 +59,7 @@ describe("readApiKeyState 三态", () => {
 describe("rotateApiKey 轮换", () => {
   it("无显式值时生成 64 位十六进制并写入 DB", async () => {
     const store = memoryStore(null);
-    const result = await rotateApiKey(ENV, store);
+    const result = await rotateApiKey(store);
     expect(result.apiKey).toMatch(/^[0-9a-f]{64}$/);
     expect(result.masked).toBe(`••••${result.apiKey.slice(-4)}`);
     expect(result.origin).toBe("db");
@@ -70,7 +70,7 @@ describe("rotateApiKey 轮换", () => {
 
   it("接受显式值（trim 后写入），供「粘贴自己的 key」", async () => {
     const store = memoryStore(null);
-    const result = await rotateApiKey(ENV, store, "  sk-my-own-key-7777  ");
+    const result = await rotateApiKey(store, "  sk-my-own-key-7777  ");
     expect(result.apiKey).toBe("sk-my-own-key-7777");
     expect(result.masked).toBe("••••7777");
     expect(store.calls).toEqual(["set:sk-my-own-key-7777"]);
@@ -78,14 +78,14 @@ describe("rotateApiKey 轮换", () => {
 
   it("轮换覆盖既有 DB 值（旧 key 立即失效）", async () => {
     const store = memoryStore("sk-old-0000");
-    const result = await rotateApiKey(ENV, store);
+    const result = await rotateApiKey(store);
     expect(result.apiKey).not.toBe("sk-old-0000");
     expect(await store.get()).toBe(result.apiKey);
   });
 
   it("显式空串/空白 → 仍然生成（不把空值写进库）", async () => {
     const store = memoryStore(null);
-    const result = await rotateApiKey(ENV, store, "   ");
+    const result = await rotateApiKey(store, "   ");
     expect(result.apiKey).toMatch(/^[0-9a-f]{64}$/);
   });
 });
@@ -115,5 +115,53 @@ describe("clearApiKey 清除", () => {
     const store = memoryStore(null);
     const result = await clearApiKey(ENV_EMPTY, store);
     expect(result).toEqual({ cleared: true, origin: "none", masked: null });
+  });
+});
+
+/**
+ * L1（逐维核查补缺）：显式值没有长度下限——`POST {apiKey:"a"}` 会把一个
+ * 1 字符的长期凭据写进库，而 generateApiKey() 生成的是 64 位十六进制。
+ * 路由层同样没有校验，端到端能把弱 key 设成实例凭据。
+ */
+describe("rotateApiKey — 显式值强度下限（L1）", () => {
+  /** 单值存储（端口语义：get/set/clear 都不带 key 参数），外加可观测的 values。 */
+  const store = () => {
+    let value: string | null = null;
+    const seen: string[] = [];
+    return {
+      seen,
+      get value() {
+        return value;
+      },
+      get: async () => value,
+      set: async (next: string) => {
+        seen.push(`set:${next}`);
+        value = next;
+      },
+      clear: async () => {
+        seen.push("clear");
+        value = null;
+      },
+    };
+  };
+
+  it("过短的显式值（<16）被拒，不写库", async () => {
+    const s = store();
+    await expect(rotateApiKey(s, "abc")).rejects.toThrow(/太短|长度/);
+    expect(s.seen).toEqual([]);
+    expect(s.value).toBeNull();
+  });
+
+  it("16 位及以上显式值被接受", async () => {
+    const s = store();
+    const result = await rotateApiKey(s, "0123456789abcdef");
+    expect(result.apiKey).toBe("0123456789abcdef");
+    expect(result.origin).toBe("db");
+  });
+
+  it("不显式给值时照旧生成 64 位（不受下限影响）", async () => {
+    const s = store();
+    const result = await rotateApiKey(s);
+    expect(result.apiKey).toHaveLength(64);
   });
 });

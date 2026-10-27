@@ -51,11 +51,49 @@ describe("local/api-auth-required", () => {
         // 合规：非白名单路由挂了登录链
         { filename: "apps/web/app/api/activity/route.ts", code: GUARDED },
         { filename: "apps/web/app/api/115/qrcode/status/route.ts", code: GUARDED },
+        // 顶层 /api/route.ts 也在管辖内（曾是两层门禁的共同盲区）
+        {
+          filename: "apps/web/app/api/route.ts",
+          code: `import { requireApiAccount } from "../../lib/auth-chain";\nexport async function GET(request) { const gate = await requireApiAccount(request); if (gate instanceof Response) return gate; return new Response("ok"); }`,
+        },
         // 非 api 目录的文件不受约束
         { filename: "apps/web/lib/auth-chain.ts", code: "export async function f() { return 1; }" },
         { filename: "apps/web/app/api/activity/route.test.ts", code: "export async function f() { return 1; }" },
       ],
       invalid: [
+        // 顶层 /api/route.ts 漏挂 → 判红（盲区已补）
+        {
+          filename: "apps/web/app/api/route.ts",
+          code: "export async function GET() { return new Response('ok'); }",
+          errors: [{ messageId: "missingChain" }],
+        },
+        // M3：只在注释里提到 requireApiAccount → 判红（AST 判定）
+        {
+          filename: "apps/web/app/api/activity/route.ts",
+          code: `export async function GET(request) {
+  // TODO: 挂上 requireApiAccount(request) 登录链
+  return new Response("ok");
+}`,
+          errors: [{ messageId: "missingChain" }],
+        },
+        // M3：只在字符串字面量里出现 requireApiAccount → 判红
+        {
+          filename: "apps/web/app/api/activity/route.ts",
+          code: `export async function GET(request) {
+  const name = "requireApiAccount";
+  return new Response(name);
+}`,
+          errors: [{ messageId: "missingChain" }],
+        },
+        // M3：agent 路由只在注释里提 agentApiGuard → 判红
+        {
+          filename: "apps/web/app/api/agent/acquire/route.ts",
+          code: `export async function POST(request) {
+  // 这里本该调用 agentApiGuard(request)
+  return new Response("ok");
+}`,
+          errors: [{ messageId: "missingAgentGuard" }],
+        },
         {
           filename: "apps/web/app/api/activity/route.ts",
           code: "export async function GET(request) { return new Response('ok'); }",

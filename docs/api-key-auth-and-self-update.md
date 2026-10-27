@@ -11,7 +11,7 @@
 | # | 需求 | 现状（已代码踏勘） | 结论 |
 |---|---|---|---|
 | F1 | 去除「🎉 付费远程访问现已上线」横幅 | `apps/web/components/connect-notice-banner.tsx`，被 `app/page.tsx:109` 渲染；关闭态存 `app_settings`（`CONNECT_NOTICE_DISMISSED_KEY`） | **直接删组件+调用点+样式+server 条件**，零风险 |
-| F2 | API key 登录换 JWT，所有接口加认证（登录除外） | 已有 HMAC 会话 cookie（`packages/workflow/src/auth/session.ts`，`timingSafeEqual` + `createHmac`）；`requireAuthenticatedAccountId()` 已存在于 workflow-runtime；**36 个 api 路由中约 1/3 无鉴权**（`agent/acquire`、`settings/attention`、`agent/*` 等） | 可行，但**必须先做一张"路由 × 鉴权"清单**，见 §3 |
+| F2 | API key 登录换 JWT，所有接口加认证（登录除外） | 已有 HMAC 会话 cookie（`packages/workflow/src/auth/session.ts`，`timingSafeEqual` + `createHmac`）；`requireAuthenticatedAccountId()` 已存在于 workflow-runtime；**36 个 api 路由中约 1/3 无鉴权**（写作时快照；交付时为 40 个：12 白名单 + 5 agent 自守卫 + 23 登录链）（`agent/acquire`、`settings/attention`、`agent/*` 等） | 可行，但**必须先做一张"路由 × 鉴权"清单**，见 §3 |
 | F3 | API key 读环境变量 + 数据库，**数据库优先** | `app_settings` 表 + `setSetting/getSetting`；`SECRET_SETTING_KEYS` 注册表已对 `llm_api_key`/`tmdb_api_key` 等做 AES-256-GCM 透明加密 | 可行，**api key 入加密注册表**，一次读两源、DB 覆盖 env |
 | F4 | 设置页 API key 查看/修改 | 设置页已是分节组件（`Pan115Section`/`LlmConfigSection`/`TmdbApiKeySection`…）；`TmdbApiKeySection` 就是现成范式 | 可行，**照 `TmdbApiKeySection` 加一节** |
 | F5 | 在线更新地址改为当前仓库 | 硬编码在 `apps/web/lib/release-feed-server.ts:4`（`const REPO = "fancydirty/mediary-scout"`）与 `updater/run-update.sh` 的 `IMAGE_BASE` | 可行，**改为 env 可配 + 默认当前仓库** |
@@ -58,7 +58,7 @@
 4. 都没有 → 功能关闭（所有接口按现状：session 认证照常，不因没配 API key 而坏）。
 
 ### 2.3 性能
-- **HMAC 校验 O(1)、无 DB 查询**：session 设计与 JWT 验证都不查库（撤销靠短过期 + secret 轮换）。36 个路由每请求多一次 `createHmac`/`jwtVerify`，Web Crypto 的 HS256 验证约 **50–100µs**，相对现有 SQLite 查询（ms 级）可忽略。
+- **HMAC 校验 O(1)、无 DB 查询**：session 设计与 JWT 验证都不查库（撤销靠短过期 + secret 轮换）。40 个路由每请求多一次 `createHmac`/`jwtVerify`，Web Crypto 的 HS256 验证约 **50–100µs**，相对现有 SQLite 查询（ms 级）可忽略。
 - **jose 是 async API**（Web Crypto）：在 Next route handler 里 `await jwtVerify()` 无阻塞问题；但**不要放进 middleware 的热路径做多余工作**——middleware 只解析Bearer头、验签，业务账户解析留给路由内一次完成。
 - **API key 解析每请求一次 DB 读**：`getSetting` 是 SQLite 点查（µs 级），但可加 30s 进程内缓存；key 变更后**最多 30s 生效**——这与"数据库优先"语义兼容（写后立即生效是更强的诉求，若用户要求，则去掉缓存，点查也足够快）。
 
@@ -128,6 +128,7 @@
 ### S5.6 更新源改当前仓库（F5）
 - `release-feed-server.ts`：`REPO` 改为 `process.env.MEDIA_TRACK_UPDATE_REPO ?? "<当前仓库>"`。
 - 当前仓库取值：运行时从 `process.env.GIT_SHA` 不可行；**默认值用仓库自身 owner/name 常量**（随 fork 发布时由 Release Docker 的 `github.repository` 写入 build arg，见下）。
+- **默认值即当前仓库**（`xixjohan/mediary-scout`，`DEFAULT_UPDATE_REPO`）。早先一版默认指向上游 `fancydirty/mediary-scout`，只有 Release Docker 烘焙过 `MEDIA_TRACK_UPDATE_REPO` 的镜像才指得对——源码直跑与本地 dev 全在检查别家的发布，与 F5「更新检查指向自己的仓库」不符（逐维核查实证的偏差，已修）。需要指回上游/别的 fork 时设 env。
 - Dockerfile 增 `ARG UPDATE_REPO` / `ENV MEDIA_TRACK_UPDATE_REPO=$UPDATE_REPO`；`release-docker.yml` 传 `UPDATE_REPO=${{ github.repository }}`；compose 透传 `${MEDIA_TRACK_UPDATE_REPO:-}`。
 - `updater/run-update.sh` 的 `IMAGE_BASE` 同步支持 `${MEDIA_IMAGE_BASE:-}` 推导（默认 `ghcr.io/${MEDIA_TRACK_UPDATE_REPO}`）。
 - 测试：env 覆盖生效、默认值、部署文档同步。
@@ -145,11 +146,23 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 
 ## 7. 验收总标准
 
-1. 每任务 TDD 红→绿；全量测试保持绿（当前基线 372 文件 / 5044 用例）。
-2. `npm run gate` 三处 typecheck + 构建 + E2E 全过。
-3. F2 验收：36 路由逐一确认"无凭据 401 / 有 session 200 / 有 JWT 200"；四个白名单路由确认免登录且仍工作（用内置浏览器 + curl 实证）。
-4. F3 验收：四种优先级象限 + 落盘是密文 + 掩码不回显全值。
-5. F5 验收：本地起服务，更新检查指向自己的仓库（curl release feed 实证）。
+> 数字随交付更新，不留在写作时的估计值上（逐维核查纠过的口径）：
+> 路由总数 **40**（12 白名单 + 5 agent 自守卫 + 23 登录链）；全量测试
+> **382 文件 / 5172 用例**；E2E 是 **1 个 spec 文件、4 个用例**（不是 4 个 spec）；
+> jose 是 **v6**（`jwtVerify`/`SignJWT`，不是文档早期写的 jsonwebtoken）。
+
+1. 每任务 TDD 红→绿；全量测试保持绿（当前基线 382 文件 / 5172 用例）。
+2. 门禁全绿：`npm run gate`（layout + deps + `eslint . --max-warnings 0`）、
+   **五个** typecheck（根 / shared / workflow / contracts / web）、
+   `build:shared` / `build:workflow` / `build:web`、`npm run e2e`。
+3. F2 验收：40 路由逐一确认"无凭据 401 / 有 session 200 / 有 JWT 200"；白名单四类
+   （health / auth / worker-secret 的 run-next|run-type3 / updater-token 的 hold|busy|status）
+   确认免登录且原有机制仍工作（curl 实证：health POST→405 非 401、run-next→200、
+   update/status POST→405 非 401；另用内置浏览器打开设置页看到 API Key section）。
+4. F3 验收：四种优先级象限 + 落盘是密文 + 掩码不回显全值（curl 打真实服务，
+   直读 SQLite 确认 `enc:v1:` 前缀且明文不在值里）。
+5. F5 验收：本地起服务，更新检查指向**当前仓库**（`DEFAULT_UPDATE_REPO` 默认值
+   即 `xixjohan/mediary-scout`，不再默认指向上游）。
 
 ## 8. 执行状态
 
@@ -172,6 +185,25 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 2. **proxy 把 JWT 客户端弹去 /login**：起真实服务实测，单用户远程（cf-ray）+ 有效 JWT 打 `/api/activity` → **307 跳 /login**，S5.3 换来的 JWT 通道在外网（它的全部意义）整个失效。proxy 的豁免名单写于 S5.4 之前，只认 session cookie。修法：与 updater/worker 豁免同一理由——presence 粗筛放行带 `Authorization: Bearer` 的 `/api/` 请求，签名与过期交由路由的 `requireApiAccount()` 判；页面路径不放行（浏览器导航不带该头）。修后实测：远程+JWT 200、远程+无凭据仍 307、远程+篡改 JWT 401 JSON、局域网无凭据仍 200。
 
 实证记录（真实服务 + 独立库，非 mock）：错 key → 401「api key 无效」（统一文案生效）；正确 key → 换得 JWT；`/api/settings/api-key` 落盘值实测为 `enc:v1:` 前缀密文、明文不在值里；设置页「远程访问」tab 的 API Key section：env 态徽标 + 仅「轮换」→ 点轮换后出现 64 位一次性完整值 + 徽标切「来自数据库」+ 「清除」按钮出现。
+
+### 附：逐维核查（每维一个对抗性检查器）揪出的第二轮问题，均已修
+
+六个维度并行核查（范围/非目标、认证正确性、密钥策略、失败模式、文档证据、全量门禁+真实服务实证），
+判词 partial，揪出 5 个 medium + 一批 low。逐个红→绿修掉：
+
+| # | 问题 | 修法 |
+|---|---|---|
+| M1 | `/api/settings/api-key` 只校验已登录、不校验 owner——多用户下任何普通账号能轮换/清除**实例级** key | 三个方法补 `resolveCurrentIsOwner()`；非 owner 一律 404（不泄露存在性）且不写库；demo 仍是 403，两者语义分开 |
+| M2 | auth-chain 契约写「永不抛」，session 通道却裸调 `resolveSessionAccountId`——DB 抖动时路由 500，单用户 LAN 带 cookie 的请求被异常打死 | 通道 1 包 try/catch：读失败视同「这个通道没说话」，继续问 Bearer/局域网 |
+| M3 | 两层兜底都是 `source.includes("requireApiAccount")`——留一行含该标识符的注释即可同时骗过 ESLint 规则与清单测试（RuleTester 探针实证） | 两层都改 **AST 判定**（真的有一次 CallExpression）；规则与清单测试各补「注释/字符串提及不算调用」用例 |
+| M4 | 限流用例不自洽：固定发 5 次，单独跑（`-t` 过滤）时桶里没有前序用例烧的 4 次失败，第 5 次还没到阈值 → 断言 undefined；全量绿但单跑红 | 烧到真被锁为止 + 验证锁定持续；文件内加 `_resetLoginThrottleForTest()`，整文件顺序无关 |
+| M5 | S5.6 默认更新源仍是**上游** `fancydirty/mediary-scout`——源码直跑与本地 dev 都在检查别家的发布，与 F5「指向自己的仓库」不符（S5.6 提交信息自己写明了这个取舍） | `DEFAULT_UPDATE_REPO` 改为 `xixjohan/mediary-scout`；env 仍可覆盖（含指回上游）；`.env.example`/文档同步 |
+| M6 | 单用户模式下闸机会放过别账号的残留 session，而 `resolveSingleUserAccount` 明写单用户远程只认 `acct_default`——闸机放行、数据层 fail-closed，等于「认证通过的陌生人」 | 通道 1 与 `resolveSingleUserAccount` 完全同源：单用户 LAN 忽略 session（落到默认账号，开放语义不回归）、远程只认默认账号；两个既有用例的 mock 模式改成语义正确的多用户（断言一字未改） |
+| L1 | 一批规格写了却无用例钉住的行为：demo 403、agent 404 映射、恒定时间比较不泄露长度、畸形 Bearer 只对 mock 复刻版断言、显式 key 无长度下限 | 全部补真实用例；另发现并统一 **Bearer scheme 大小写**（proxy 粗筛本就走 `/^bearer /i`，路由层却只认大写）；显式 key 加 16 位下限（拒绝把 1 字符设成长期凭据） |
+| L2 | 死代码与门禁盲区：contracts 的 `IApiKeyStore` 与 shared 同形重复且零消费者、S5.1 声称删净的 dismissed key 仍在、两处 `void x;` 哑语句、顶层 `/api/route.ts` 不在两层门禁管辖内 | contracts 端口改为 re-export shared 唯一定义；删死常量与哑语句（`rotateApiKey` 去掉没用到的 `env` 形参）；ESLint glob + 规则正则 + 单测都覆盖顶层路由 |
+| L3 | 文档口径过期：路由数 36、e2e「4/4」易读成 4 个 spec、jose 版本、gate 只写「三处 typecheck」、F5 默认值 | §7 全部按交付事实改写，历史快照加标注 |
+
+修复后门禁：vitest 382 文件 / 5172 用例、`npm run gate`、五个 tsc、三构建、e2e 1 文件 4 用例，全绿。
 
 ## 9. 需要用户确认的三个点
 

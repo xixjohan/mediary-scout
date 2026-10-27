@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -19,6 +20,27 @@ import { describe, expect, it } from "vitest";
  */
 
 const API_ROOT = fileURLToPath(new URL(".", import.meta.url)).replace(/\/$/, "");
+
+/**
+ * 「有没有真的调用这个函数」——AST 判定，不是源码文本包含。
+ * 两层兜底（本文件 + ESLint 规则）都曾用 `source.includes(...)`，等于没兜底：
+ * 留一行含 requireApiAccount 的注释就能双双放行（逐维核查的探针实证过）。
+ * 只认 CallExpression 的标识符 callee；注释和字符串字面量都不是 CallExpression。
+ */
+function callsFunction(source: string, name: string): boolean {
+  const file = ts.createSourceFile("route.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
 
 const OPEN_ROUTES = new Set([
   "health",
@@ -72,7 +94,7 @@ describe("S5.4 /api 路由鉴权清单", () => {
   it("23 个非白名单路由全部引用 requireApiAccount 登录链", () => {
     const missing = routes
       .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path))
-      .filter((r) => !r.source.includes("requireApiAccount"))
+      .filter((r) => !callsFunction(r.source, "requireApiAccount"))
       .map((r) => r.path);
     expect(missing).toEqual([]);
   });
@@ -80,7 +102,7 @@ describe("S5.4 /api 路由鉴权清单", () => {
   it("12 个白名单路由不挂登录链（保持免登录）", () => {
     const leaked = routes
       .filter((r) => OPEN_ROUTES.has(r.path))
-      .filter((r) => r.source.includes("requireApiAccount"))
+      .filter((r) => callsFunction(r.source, "requireApiAccount"))
       .map((r) => r.path);
     expect(leaked).toEqual([]);
   });
@@ -101,5 +123,43 @@ describe("S5.4 /api 路由鉴权清单", () => {
     for (const path of SELF_GUARDED_ROUTES) {
       expect(routes.find((r) => r.path === path)?.source ?? "", path).toContain("agentApiGuard");
     }
+  });
+});
+
+describe("callsFunction 判定（M3：注释与字符串不算调用）", () => {
+  it("真的 import + 调用 → true", () => {
+    const src = `import { requireApiAccount } from "../../lib/auth-chain";
+export async function GET(request: NextRequest) {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
+  return Response.json({});
+}`;
+    expect(callsFunction(src, "requireApiAccount")).toBe(true);
+  });
+
+  it("只在注释里提到 → false", () => {
+    const src = `export async function GET(request: NextRequest) {
+  // 这里必须调用 requireApiAccount(request)
+  return Response.json({});
+}`;
+    expect(callsFunction(src, "requireApiAccount")).toBe(false);
+  });
+
+  it("只在字符串字面量里出现 → false", () => {
+    const src = `export async function GET(request: NextRequest) {
+  const name = "requireApiAccount";
+  return Response.json({ name });
+}`;
+    expect(callsFunction(src, "requireApiAccount")).toBe(false);
+  });
+
+  it("同名本地函数（不是导入的那个）→ 也算调用（保守：宁可放行也不误伤，lint 层同语义）", () => {
+    const src = `function requireApiAccount() { return 1; }
+export async function GET() { return Response.json({ n: requireApiAccount() }); }`;
+    expect(callsFunction(src, "requireApiAccount")).toBe(true);
+  });
+
+  it("不同名的调用 → false", () => {
+    expect(callsFunction(`export async function GET() { return agentApiGuard(); }`, "requireApiAccount")).toBe(false);
   });
 });

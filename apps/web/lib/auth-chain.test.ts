@@ -27,8 +27,10 @@ vi.mock("./workflow-runtime", () => ({
   // 验签失败 → null（视同无凭据）。
   resolveBearerAccountId: async (headers?: Headers) => {
     const header = headers?.get("authorization");
-    if (!header?.startsWith("Bearer ")) return null;
-    const token = header.slice("Bearer ".length).trim();
+    // 与真实实现同一语义：scheme 大小写无关（proxy 粗筛也是 /^bearer /i）
+    const match = /^bearer (.+)$/i.exec(header ?? "");
+    if (!match) return null;
+    const token = match[1]!.trim();
     if (token.length === 0) return null;
     try {
       const claims = await verifyToken(token, JWT_SECRET);
@@ -69,7 +71,8 @@ describe("resolveApiAccount", () => {
     (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
   });
 
-  it("有效 session cookie → 该账号", async () => {
+  it("有效 session cookie → 该账号（多用户）", async () => {
+    (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(true);
     (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue("acct_cookie");
     expect(await resolveApiAccount(request({ cookie: "sess_x.hmac" }))).toBe("acct_cookie");
   });
@@ -79,7 +82,8 @@ describe("resolveApiAccount", () => {
     expect(await resolveApiAccount(req)).toBe("acct_jwt");
   });
 
-  it("session 优先于 JWT：两者都有效时取 session", async () => {
+  it("session 优先于 JWT：两者都有效时取 session（多用户）", async () => {
+    (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(true);
     (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue("acct_cookie");
     const req = request({ cookie: "sess_x.hmac", authorization: await bearer({ sub: "acct_jwt" }) });
     expect(await resolveApiAccount(req)).toBe("acct_cookie");
@@ -144,5 +148,83 @@ describe("requireApiAccount", () => {
     expect((gate as Response).status).toBe(401);
     expect((gate as Response).headers.get("content-type")).toContain("application/json");
     expect(await (gate as Response).json()).toEqual({ error: "未登录，请先登录后再操作。" });
+  });
+});
+
+
+/**
+ * M2（逐维核查发现）：契约说「永不抛异常——调用方决定 401 形态」，可 session
+ * 通道裸调 resolveSessionAccountId：DB 抖动时它一抛，路由直接 500，既不是 401
+ * 也不是继续走别的通道。单用户 + LAN 带 cookie 的请求会被这个异常打死
+ * （本该落到局域网默认账号）。修法：读失败视同「这个通道没说话」。
+ */
+describe("resolveApiAccount — session 读取失败不得外抛（M2）", () => {
+  it("session 库读抛错 + 单用户局域网 → 落到默认账号（不 500）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(false);
+    vi.mocked(resolveSessionAccountId).mockRejectedValueOnce(new Error("session store down"));
+    await expect(resolveApiAccount(request({ cookie: "sess.hmac" }))).resolves.toBe("acct_default");
+  });
+
+  it("session 库读抛错 + 多用户 → null（401），不 500", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(true);
+    vi.mocked(resolveSessionAccountId).mockRejectedValueOnce(new Error("session store down"));
+    await expect(resolveApiAccount(request({ cookie: "sess.hmac" }))).resolves.toBeNull();
+  });
+
+  it("session 库读抛错 + 远程 + 无其它凭据 → null（fail-closed）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(true);
+    vi.mocked(resolveSessionAccountId).mockRejectedValueOnce(new Error("session store down"));
+    await expect(resolveApiAccount(request({ cookie: "sess.hmac", remote: true }))).resolves.toBeNull();
+  });
+
+  it("session 读抛错但 Bearer JWT 有效 → 仍拿到 JWT 账号（通道互不拖累）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(true);
+    vi.mocked(resolveSessionAccountId).mockRejectedValueOnce(new Error("session store down"));
+    const token = await bearer({ sub: "acct_jwt" });
+    await expect(resolveApiAccount(request({ cookie: "sess.hmac", authorization: token }))).resolves.toBe(
+      "acct_jwt",
+    );
+  });
+});
+
+/**
+ * M6（逐维核查发现）：auth-chain 与 workflow-runtime.getCurrentAccountId 的既有
+ * 不变量冲突——多用户时期残留的别账号 session 在**单用户模式**下会被通道 1 原样
+ * 放行，而那条不变量明写单用户远程只认 acct_default（resolveSingleUserAccount
+ * 会拒掉 acct_somebody_else）。闸机放行、数据作用域随后 fail-closed，等于
+ * 「认证通过的陌生人」。修法：单用户模式下非默认账号的 session 直接判无效。
+ */
+describe("resolveApiAccount — 单用户模式的 session 裁决（M6：与 resolveSingleUserAccount 对齐）", () => {
+  it("单用户 + 远程 + 别账号 session → null（401）：数据层本来就拒，闸机不能放行", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(true);
+    vi.mocked(resolveSessionAccountId).mockResolvedValue("acct_somebody_else");
+    await expect(resolveApiAccount(request({ cookie: "sess.hmac", remote: true }))).resolves.toBeNull();
+  });
+
+  it("单用户 + 远程 + 默认账号 session → 放行（与数据层一致）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(true);
+    vi.mocked(resolveSessionAccountId).mockResolvedValue("acct_default");
+    await expect(resolveApiAccount(request({ cookie: "sess.hmac", remote: true }))).resolves.toBe("acct_default");
+  });
+
+  it("单用户 + 局域网 + 别账号 session → 默认账号（LAN 开放语义不回归）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(false);
+    vi.mocked(resolveSessionAccountId).mockResolvedValue("acct_somebody_else");
+    await expect(resolveApiAccount(request({ cookie: "sess.hmac" }))).resolves.toBe("acct_default");
+  });
+
+  it("单用户 + 远程 + 别账号 session + 有效 JWT → JWT 通道仍然放行（不被 session 拖死）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(true);
+    vi.mocked(resolveSessionAccountId).mockResolvedValue("acct_somebody_else");
+    const token = await bearer({ sub: "acct_jwt_owner" });
+    await expect(resolveApiAccount(request({ cookie: "sess.hmac", authorization: token, remote: true }))).resolves.toBe(
+      "acct_jwt_owner",
+    );
   });
 });
