@@ -54,6 +54,8 @@ export * from "./manual-import-worker.js";
 // 批次 4：自动整理的决策半边 + planned/actual 护栏。整理是破坏性操作且网盘无回收站，
 // 所以「先算目标再执行、执行后比对、出偏差即停」是 plan 钉死的共同护栏。
 export * from "./organize-plan.js";
+// 批次 4：执行半边。落 planned moves → 逐文件搬 → 从盘上读回比对 → 偏差即停报人工。
+export * from "./organize-executor.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
