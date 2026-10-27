@@ -5544,3 +5544,91 @@ select.setting-control {
     transform: none;
   }
 }
+
+/* ===== W4 L1：agent 工具调用时间线 ===== */
+
+/* 活动行不再是裸 <a>：它包着一个链接 + 一条时间线，所以行本身是普通块。 */
+.act-row-wrap {
+  display: block;
+}
+
+/* 默认折叠：一次运行有几十到几百步，全展开会把「活动」变成一面字墙。 */
+.agent-timeline {
+  margin: 0 0 0 76px;
+  border-left: 1px solid var(--border);
+  padding-left: 10px;
+  font-size: 0.78rem;
+}
+
+.agent-timeline > summary {
+  cursor: pointer;
+  color: var(--muted);
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.agent-timeline > summary::-webkit-details-marker {
+  display: none;
+}
+
+.agent-timeline > summary::before {
+  content: "\25b8";
+  font-size: 0.7em;
+  transition: transform 120ms ease;
+}
+
+.agent-timeline[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.agent-timeline-count {
+  background: var(--surface-2, var(--border));
+  border-radius: 999px;
+  padding: 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-timeline-list {
+  list-style: none;
+  margin: 6px 0 4px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.agent-timeline-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 0;
+}
+
+.agent-timeline-ordinal {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  flex: none;
+  min-width: 3ch;
+}
+
+.agent-timeline-tool {
+  color: var(--info);
+  flex: none;
+}
+
+.agent-timeline-activity {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-timeline-calls {
+  color: var(--muted);
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}

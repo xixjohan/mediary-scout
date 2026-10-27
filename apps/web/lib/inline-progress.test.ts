@@ -23,6 +23,9 @@ function run(over: Partial<ActivityActiveRun>): ActivityActiveRun {
     queuePosition: null,
     missingCount: 0,
     progress: null,
+    // W4 L1: the agent timeline. Not exercised by inline-progress tests, but the
+    // field is required on ActivityActiveRun so the fixture must carry it.
+    steps: [],
     ...over,
   };
 }
