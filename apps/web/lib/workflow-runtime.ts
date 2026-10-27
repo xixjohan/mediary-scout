@@ -1,3 +1,4 @@
+import { isLiveSearch } from "./search-provider";
 import { createHash, randomBytes } from "node:crypto";
 import type { LanguageModel } from "ai";
 import { parseBearerToken } from "./bearer-scheme";
@@ -1663,7 +1664,7 @@ function parseMovieCandidateId(candidateId: string): number | null {
 export async function movieTargetFromTmdbId(
   tmdbId: number,
 ): Promise<{ title: MediaTitle; keyword: string } | null> {
-  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
+  if (isLiveSearch()) {
     return prepareMovieTarget({
       tmdbId,
       qualityPreference: defaultQuality(),
@@ -1853,7 +1854,7 @@ export async function queueCandidateSeries(
   if (workspace.frozen) {
     return { status: "unsupported", message: frozenDriveMessage(workspace.provider, "获取") };
   }
-  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
+  if (isLiveSearch()) {
     const target = await prepareSeriesTarget({
       tmdbId: parsed.tmdbId,
       qualityPreference: defaultQuality(),
@@ -2240,7 +2241,7 @@ function syncOption(): { syncSeasonMetadata?: SeasonMetadataSync } {
 }
 
 function tmdbSeasonMetadataSync(): SeasonMetadataSync | undefined {
-  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER !== "tmdb") {
+  if (!isLiveSearch()) {
     return undefined;
   }
   return async ({ tmdbId, seasonNumber }) => {
@@ -2316,7 +2317,7 @@ async function trackingTargetFromCandidateId(candidateId: string): Promise<{
     return null;
   }
 
-  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
+  if (isLiveSearch()) {
     return prepareTrackingTarget({
       tmdbId: parsed.tmdbId,
       mediaType: "tv",

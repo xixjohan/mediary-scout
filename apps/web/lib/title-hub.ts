@@ -1,3 +1,4 @@
+import { isLiveSearch } from "./search-provider";
 import {
   createTmdbMetadataProvider,
   getTrackedSeasonStatusView,
@@ -159,7 +160,7 @@ const seriesTargetMemo = createTtlMemo<PreparedSeriesTarget>({
  * null when the title was never known.
  */
 async function seriesTargetFor(tmdbId: number): Promise<PreparedSeriesTarget | null> {
-  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
+  if (isLiveSearch()) {
     return seriesTargetMemo(tmdbId);
   }
 
