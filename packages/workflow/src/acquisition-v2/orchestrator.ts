@@ -7,6 +7,7 @@ import type { AcquisitionAgentResult } from "./agent-loop.js";
 import type { AgentToolEvent } from "./activity.js";
 import { CandidateRegistry } from "./candidate-registry.js";
 import type { DeadLinkStore } from "./dead-links.js";
+import type { PolicyResource } from "../subscription-policy.js";
 import { linkHistoryByKey } from "./link-history.js";
 import { resourceLinkKey } from "./resource-link.js";
 import { resourceFingerprintMatches, type LinkHistoryRow } from "../user-requests.js";
@@ -118,6 +119,11 @@ export interface RunAcquisitionV2Request {
   /** This work's recent transfers, read once at run start and shown on candidates.
    *  A failing read fails open (logged, no notes). */
   linkHistory?: { list: () => Promise<LinkHistoryRow[]> };
+  /** Batch 5: the work's subscription strategy. Candidates the policy rejects are
+   *  dropped before the agent sees them — the same place as dead links and user
+   *  rejections, so the pre-warm and every agent search share one filter. Absent =
+   *  no policy (everything passes). */
+  policyFilter?: { accept: (candidate: PolicyResource) => boolean };
   /** Leftover staging: no search, no transfer, no memory reflection. Season files stay protected. */
   stagingRecovery?: boolean;
   /** Web-reference tools for the agent: alternate titles, and mapping a fan
@@ -264,6 +270,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     // called only once the agent searches).
     ...(rejectedSource ? { rejectedResources: { list: () => listRejected(), ...(strictRejected ? { strict: true } : {}) } } : {}),
     ...(linkNotes.size > 0 ? { linkHistory: linkNotes } : {}),
+    ...(request.policyFilter ? { policyFilter: request.policyFilter } : {}),
   });
   const storage = new RealStorageV2({
     executor: request.executor,

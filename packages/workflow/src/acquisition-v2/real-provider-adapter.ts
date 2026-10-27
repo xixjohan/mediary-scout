@@ -4,6 +4,7 @@ import { resourceFingerprintMatches } from "../user-requests.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import { deadLinkKey, type DeadLinkStore } from "./dead-links.js";
 import { resourceLinkKey } from "./resource-link.js";
+import type { PolicyResource } from "../subscription-policy.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 
 /**
@@ -39,6 +40,21 @@ export interface RealResourceProviderV2Options {
   };
   /** resourceLinkKey → the note for that link. Absent = no history this run. */
   linkHistory?: ReadonlyMap<string, string>;
+  /** Batch 5: the work's subscription strategy. Candidates the policy rejects are
+   *  dropped exactly like dead links and user rejections — BEFORE the agent sees them,
+   *  so it never has to be told to ignore them. Absent = no policy (everything passes).
+   *
+   *  A policy is NOT a hard guard the way the dead-link store is: it is a preference the
+   *  user configured, and an unparseable episode filter already excludes everything (see
+   *  subscription-policy.ts). A throwing filter therefore fails the search rather than
+   *  silently passing everything through.
+   *
+   *  The shape is `PolicyResource` verbatim — NOT `{ title, episodeCode }`, which looks
+   *  close enough to forward and is not: `matchPolicy` reads `name`, so a `title`-shaped
+   *  argument makes it read `undefined` and throw, and a pre-warm error is swallowed by
+   *  design, so the whole policy filter silently stops filtering. Matching the domain
+   *  type exactly is what lets the compiler catch that. */
+  policyFilter?: { accept: (candidate: PolicyResource) => boolean };
 }
 
 export class RealResourceProviderV2 implements ResourceProviderV2 {
@@ -48,6 +64,7 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
   private readonly deadLinkStore: DeadLinkStore | undefined;
   private readonly rejectedResources: RealResourceProviderV2Options["rejectedResources"];
   private readonly linkHistory: ReadonlyMap<string, string> | undefined;
+  private readonly policyFilter: RealResourceProviderV2Options["policyFilter"];
   private readonly observedSnapshots = new Map<string, ResourceSnapshot>();
   /** real snapshot id → `sN`. Content-addressed providers repeat a snapshot id
    *  across keywords; the same snapshot keeps the same alias. */
@@ -60,6 +77,7 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
     this.deadLinkStore = options.deadLinkStore;
     this.rejectedResources = options.rejectedResources;
     this.linkHistory = options.linkHistory;
+    this.policyFilter = options.policyFilter;
   }
 
   /** The domain snapshots observed this run (deduped by id — content-addressed
@@ -78,6 +96,7 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
     const rejectedKeys = new Set(rejected.map((r) => r.linkKey).filter((k): k is string => k !== null));
     let deadDropped = 0;
     let rejectedDropped = 0;
+    let policyDropped = 0;
     const kept = snapshot.candidates.filter((candidate) => {
       const url = String(candidate.providerPayload?.["url"] ?? "");
       const identity = deadLinkKey(url);
@@ -94,10 +113,25 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
         rejectedDropped++;
         return false;
       }
+      // Batch 5: the subscription strategy. Dropped here, not filtered by the agent —
+      // a policy the agent has to remember to apply is a policy that gets forgotten on
+      // the one search that matters.
+      if (this.policyFilter !== undefined) {
+        // A candidate carries no episodeCode of its own — the episode is in its title,
+        // which `matchPolicy` parses (see subscription-policy.resourceEpisodes). Passing
+        // null rather than a parsed value keeps the parsing in ONE place.
+        if (!this.policyFilter.accept({ name: candidate.title, episodeCode: null })) {
+          policyDropped++;
+          return false;
+        }
+      }
       return true;
     });
     if (deadDropped > 0) {
       console.log(`[dead-link] filtered ${deadDropped} known-dead candidate(s) from search ${JSON.stringify(keyword)}`);
+    }
+    if (policyDropped > 0) {
+      console.log(`[policy] filtered ${policyDropped} candidate(s) not matching the work's strategy in search ${JSON.stringify(keyword)}`);
     }
     if (rejectedDropped > 0) {
       console.log(`[user-message] filtered ${rejectedDropped} user-rejected candidate(s) from search ${JSON.stringify(keyword)}`);
