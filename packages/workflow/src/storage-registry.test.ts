@@ -8,6 +8,7 @@ import {
   STORAGE_BRANDS,
   type StorageBrand,
   type StorageDriverCreateInput,
+  type StorageProvider,
 } from "../src/index.js";
 
 /**
@@ -174,5 +175,28 @@ describe("STORAGE_BRANDS 的转存模型提示词也在注册表里", () => {
       expect(prior, `${brand.provider} 与 ${prior} 用了同一段提示词`).toBeUndefined();
       seen.set(brand.transferModelNote, brand.provider);
     }
+  });
+});
+
+/**
+ * 编译期：STORAGE_BRANDS 的 provider 集合必须**恰好**等于 StorageProvider 联合。
+ *
+ * 其余断言都是「遍历 STORAGE_BRANDS，检查每家都有 X」——那种写法查不出「联合里
+ * 加了品牌但忘了加条目」：数组里没有它，循环自然不会访问它。两个方向的 extends
+ * 断言把这类遗漏变成编译错误：
+ *   - StorageProvider extends 条目provider联合 → 联合里没有孤儿
+ *   - 条目provider联合 extends StorageProvider → 数组里没有越界值
+ */
+describe("STORAGE_BRANDS 与 StorageProvider 联合严格对应", () => {
+  it("联合里没有没进注册表的品牌，注册表里没有联合外的品牌", () => {
+    type BrandProviders = (typeof STORAGE_BRANDS)[number]["provider"];
+    const unionCovered: StorageProvider extends BrandProviders ? true : never = true;
+    const noExtras: BrandProviders extends StorageProvider ? true : never = true;
+    expect([unionCovered, noExtras]).toEqual([true, true]);
+  });
+
+  it("没有重复 provider（重复条目会让 getStorageBrand 随机命中一个）", () => {
+    const providers = STORAGE_BRANDS.map((b) => b.provider);
+    expect(new Set(providers).size, `重复 provider：${providers.join(", ")}`).toBe(providers.length);
   });
 });

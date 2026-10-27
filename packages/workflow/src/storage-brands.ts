@@ -185,7 +185,12 @@ export interface StorageBootstrapInput {
   env?: Record<string, string | undefined>;
 }
 
-export const STORAGE_BRANDS: StorageBrand[] = [
+// `satisfies` 而不是 `: StorageBrand[]`——注解会把每条的 provider 宽化成整个
+// StorageProvider 联合，(typeof STORAGE_BRANDS)[number]["provider"] 就退化成了
+// StorageProvider 本身，「注册表与联合严格对应」的断言会恒真（假绿，实际踩到过）。
+// satisfies 既逐条校验形状，又保留字面量，让那个断言真的有牙。
+// 见 storage-registry.test.ts 的「STORAGE_BRANDS 与 StorageProvider 联合严格对应」。
+export const STORAGE_BRANDS = [
   {
     provider: "pan115",
     label: "115 网盘",
@@ -366,7 +371,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
       });
     },
   },
-];
+] satisfies readonly StorageBrand[];
 
 /**
  * Map a brand's resource-provider kinds to the PanSou link types its acquisitions
@@ -477,7 +482,7 @@ export function brandSupportsProwlarr(provider: string): boolean {
  *  hand-written note — the old 「仅对 115 盘生效」 went stale the day 光鸭/123 gained
  *  magnet. Same source of truth as brandSupportsProwlarr. */
 export function brandsSupportingProwlarr(): string[] {
-  return STORAGE_BRANDS.filter((brand) => brand.resourceProviderKinds.includes("prowlarr")).map(
+  return STORAGE_BRANDS.filter((brand: StorageBrand) => brand.resourceProviderKinds.includes("prowlarr")).map(
     (brand) => brand.label,
   );
 }
