@@ -166,6 +166,13 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 
 `e2e-run/mediary-e2e.db` 跨运行存活，「获取回路」spec 断言搜索「翘楚」后出现「获取」按钮——上一轮跑完该片名已进 `tracked_seasons`，按钮变「已追踪」，下一轮无改动也必红（实测复现）。修法：`e2e/reset-db.mjs` 由 `playwright.config.ts` 的 `webServer.command` 在 `next start` 前调用。**不能放 globalSetup**——Playwright 的任务顺序是「plugin setup（webServer 启动）→ globalSetup」，那时服务已打开并按 demo seed 写完库，再删会让运行中的服务对着被删的 inode 工作（实测两轮全红）。修后连续两轮 4/4 全绿。
 
+### 附：交付前对抗性自审揪出的两个真缺口（S5.4/S5.5，均已修 + 实证）
+
+1. **JWT 解出的账号被丢弃**：`auth-chain` 认 Bearer JWT，可 23 个路由守卫之后仍调 `getCurrentAccountId()` 取账号作用域——多用户模式无 session cookie 时它返回哨兵 `acct_unauthenticated`，「JWT 认证成功」与「拿不到账号」同时成立（账号数据全空、写路径抛错）。route-auth.test.ts 的 JWT 用例之所以绿，是它 mock 掉了 `getCurrentAccountId`（与 `DEFAULT_ACCOUNT_ID` 同一类掩盖）。修法：`resolveBearerAccountId()` 收归 `workflow-runtime` 一份实现，`auth-chain` 与 `getCurrentAccountId()` 共用；5 个真实模块级接线用例（有效/篡改/过期/错 secret/无凭据）。
+2. **proxy 把 JWT 客户端弹去 /login**：起真实服务实测，单用户远程（cf-ray）+ 有效 JWT 打 `/api/activity` → **307 跳 /login**，S5.3 换来的 JWT 通道在外网（它的全部意义）整个失效。proxy 的豁免名单写于 S5.4 之前，只认 session cookie。修法：与 updater/worker 豁免同一理由——presence 粗筛放行带 `Authorization: Bearer` 的 `/api/` 请求，签名与过期交由路由的 `requireApiAccount()` 判；页面路径不放行（浏览器导航不带该头）。修后实测：远程+JWT 200、远程+无凭据仍 307、远程+篡改 JWT 401 JSON、局域网无凭据仍 200。
+
+实证记录（真实服务 + 独立库，非 mock）：错 key → 401「api key 无效」（统一文案生效）；正确 key → 换得 JWT；`/api/settings/api-key` 落盘值实测为 `enc:v1:` 前缀密文、明文不在值里；设置页「远程访问」tab 的 API Key section：env 态徽标 + 仅「轮换」→ 点轮换后出现 64 位一次性完整值 + 徽标切「来自数据库」+ 「清除」按钮出现。
+
 ## 9. 需要用户确认的三个点
 
 1. **白名单范围**：health/worker/updater 三类路由建议保持免登录（用各自现有机制）。若坚持"除登录外全拦"，healthcheck 与 worker 会坏——需要另行设计探针通道。

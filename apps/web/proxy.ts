@@ -55,6 +55,15 @@ export function proxy(request: NextRequest): NextResponse {
   if (hasSession) {
     return NextResponse.next();
   }
+  // S5.4：带 Bearer JWT 的 API 客户端同样免跳转。proxy 只做 presence 粗筛，
+  // 权威判定（签名 + 过期）在路由的 requireApiAccount()——与上方 updater token /
+  // worker secret 的豁免同一理由：把 JSON 端点变成 HTML 跳转，等于废掉 S5.3
+  // 换来的 JWT 通道（外网程序化访问的全部意义）。只放 /api/ 路径：浏览器
+  // 导航不带 Authorization，页面侧的重定向语义不变。
+  const authorization = request.headers.get("authorization") ?? "";
+  if (request.nextUrl.pathname.startsWith("/api/") && /^bearer /i.test(authorization)) {
+    return NextResponse.next();
+  }
   const url = request.nextUrl.clone();
   url.pathname = "/login";
   url.search = "";

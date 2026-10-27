@@ -34,9 +34,11 @@ const makeRequest = (opts: {
   cf?: boolean;
   staleAuthCookie?: boolean;
   session?: boolean;
+  authorization?: string;
 }): NextRequest => {
   const headers = new Headers();
   if (opts.cf) headers.set("cf-ray", "8f3abc-LAX");
+  if (opts.authorization) headers.set("authorization", opts.authorization);
   const cookies = new Map<string, { name: string; value: string }>();
   // `mt_auth_required` is no longer written by anything and no longer read by
   // proxy — the gate is (multi-user || remote) + session, full stop. It is kept
@@ -129,5 +131,58 @@ describe("proxy gate — multi-user mode", () => {
     } finally {
       delete process.env.MEDIA_TRACK_MULTI_USER;
     }
+  });
+});
+
+/**
+ * S5.4 对抗性自审补的用例（真缺口，非假设）。
+ *
+ * 起真实服务实测：单用户远程（cf-ray）+ `Authorization: Bearer <有效 JWT>` 打
+ * /api/activity → **307 跳 /login**，JWT 通道整个失效。根因：proxy 的豁免名单
+ * 只认 session cookie（写于 S5.4 之前），而「权威判定在服务端」正是本文件自己
+ * 的注释——S5.4 之后 /api/* 的守卫 requireApiAccount() 同时认 cookie 与 JWT，
+ * proxy 却只放行前者。外网程序化访问（API key → JWT 的全部意义）被一道 UX 层
+ * 重定向挡死。
+ *
+ * 修法同 updater/worker 的豁免：presence 粗筛放行，签名与过期交由路由判。
+ */
+describe("proxy gate — Bearer JWT（S5.4 自审）", () => {
+  const JWT = "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhY2N0X2p3dCJ9.sig";
+
+  it("单用户远程 + /api 路径：有 Bearer 放行、无凭据仍重定向（同一边界两句话）", () => {
+    expect(redirectsToLogin(makeRequest({ cf: true, path: "/api/activity", authorization: JWT }))).toBe(
+      false,
+    );
+    expect(redirectsToLogin(makeRequest({ cf: true, path: "/api/activity" }))).toBe(true);
+  });
+
+  it("单用户远程 + Bearer JWT + API 路径 → 不得重定向（JSON 端点不能被变成 HTML 跳转）", () => {
+    for (const path of ["/api/activity", "/api/settings/api-key", "/api/115/qrcode/status"]) {
+      expect(redirectsToLogin(makeRequest({ cf: true, path, authorization: JWT }))).toBe(false);
+    }
+  });
+
+  it("单用户远程 + 无 Authorization → 仍重定向（不放宽）", () => {
+    expect(redirectsToLogin(makeRequest({ cf: true }))).toBe(true);
+  });
+
+  it("多用户 + Bearer JWT（无 session）+ /api 路径 → 不得重定向", () => {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    try {
+      expect(redirectsToLogin(makeRequest({ path: "/api/activity", authorization: JWT }))).toBe(false);
+      expect(
+        redirectsToLogin(makeRequest({ cf: true, path: "/api/activity", authorization: JWT })),
+      ).toBe(false);
+      // 对照：同一场景去掉 Authorization，照样重定向（没有悄悄放宽）
+      expect(redirectsToLogin(makeRequest({ path: "/api/activity" }))).toBe(true);
+    } finally {
+      delete process.env.MEDIA_TRACK_MULTI_USER;
+    }
+  });
+
+  it("页面路径（非 /api/）+ Bearer JWT → 仍重定向（浏览器导航不该被凭据头放行）", () => {
+    expect(
+      redirectsToLogin(makeRequest({ cf: true, path: "/settings", authorization: JWT })),
+    ).toBe(true);
   });
 });

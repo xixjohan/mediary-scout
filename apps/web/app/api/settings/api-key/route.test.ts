@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { issueToken } from "@media-track/shared";
+import { issueToken, verifyToken } from "@media-track/shared";
 
 /**
  * S5.5 TDD：/api/settings/api-key 路由层。
@@ -34,6 +34,18 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   isRemoteRequest: (headers: Headers) => Boolean(headers.get("cf-ray")),
   resolveSessionAccountId: async () => state.sessionAccount,
   getJwtSecret: async () => JWT_SECRET,
+    resolveBearerAccountId: async (headers?: Headers) => {
+      const header = headers?.get("authorization");
+      if (!header?.startsWith("Bearer ")) return null;
+      const token = header.slice("Bearer ".length).trim();
+      if (token.length === 0) return null;
+      try {
+        const claims = await verifyToken(token, JWT_SECRET);
+        return claims.sub;
+      } catch {
+        return null;
+      }
+    },
   getJwtTtlSeconds: async () => 600,
   // 端口适配：SQLite app_settings（SECRET_SETTING_KEYS 透明加密）——测试里是内存。
   getWorkflowRepository: () => ({

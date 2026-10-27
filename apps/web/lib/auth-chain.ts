@@ -1,11 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { verifyToken } from "@media-track/shared";
 import {
   DEFAULT_ACCOUNT_ID,
   SESSION_COOKIE_NAME,
-  getJwtSecret,
   isMultiUserEnabled,
   isRemoteRequest,
+  resolveBearerAccountId,
   resolveSessionAccountId,
 } from "./workflow-runtime";
 
@@ -31,17 +30,14 @@ import {
  * 防枚举（与 /api/auth/token 的统一文案同一理由）。
  */
 
-const BEARER_PREFIX = "Bearer ";
-
-function bearerToken(request: NextRequest): string | null {
-  const header = request.headers.get("authorization");
-  if (!header || !header.startsWith(BEARER_PREFIX)) return null;
-  const token = header.slice(BEARER_PREFIX.length).trim();
-  return token.length > 0 ? token : null;
-}
-
 /**
  * 解析请求的账号；无法认证返回 null。永不抛异常——调用方决定 401 形态。
+ *
+ * 通道 2 的 JWT 解码头是 `resolveBearerAccountId`（workflow-runtime）——
+ * **刻意与 `getCurrentAccountId()` 共用一份实现**：守卫放行之后，路由仍要
+ * 问「这是哪个账号」，两条路各写一份必然漂移（漂移的后果见那个函数的注释：
+ * JWT 认证成功但账号作用域是哨兵）。这里的失败同样咽掉：过期/篡改与「没带
+ * token」对下游不可区分。
  */
 export async function resolveApiAccount(request: NextRequest): Promise<string | null> {
   // 通道 1：session cookie。
@@ -53,15 +49,8 @@ export async function resolveApiAccount(request: NextRequest): Promise<string | 
 
   // 通道 2：Bearer JWT。验签失败（过期/篡改/错算法/错 secret）视同无凭据，
   // 继续走局域网判定——与「没带 token」不可区分。
-  const token = bearerToken(request);
-  if (token) {
-    try {
-      const claims = await verifyToken(token, await getJwtSecret());
-      return claims.sub;
-    } catch {
-      // 故意咽掉：理由见文件头「不区分为什么失败」。
-    }
-  }
+  const bearerAccountId = await resolveBearerAccountId(request.headers);
+  if (bearerAccountId) return bearerAccountId;
 
   // 通道 3：单用户实例的局域网直通（既有语义）。
   if (!isMultiUserEnabled() && !isRemoteRequest(request.headers)) {
