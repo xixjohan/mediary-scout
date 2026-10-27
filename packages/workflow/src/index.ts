@@ -16,7 +16,11 @@ export * from "./auth/session.js";
 export * from "./repository.js";
 export * from "./resource-source-health.js";
 export { SqliteWorkflowRepository, createSqliteWorkflowRepository, isSecretSettingKey } from "./sqlite.js";
-export { SqliteJobQueue } from "./sqlite-queue.js";
+export { SqliteJobQueue, DEFAULT_STALE_LOCK_MS } from "./sqlite-queue.js";
+// 日志页（W4 L1）的前置件。必须用在读取/展示边界，不能放进 trace sink 的写入侧——
+// 写入侧脱敏会毁掉 args 的法证价值（agent-trace-integration.test.ts 特意断言
+// search.args.keyword 保持可复盘）。写入侧已有的是体积上限 cappedArgs，与脱敏无关。
+export * from "./agent-step-redaction.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
