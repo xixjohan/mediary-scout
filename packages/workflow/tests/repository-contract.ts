@@ -18,6 +18,15 @@ import { handleWorkflowRunFailure } from "../src/worker.js";
 export interface RepoHarness {
   make: () => Promise<WorkflowRepository> | WorkflowRepository;
   teardown?: (repo: WorkflowRepository) => Promise<void> | void;
+  /** 批次 5：把一个策略列的存盘值改坏，用来证明「损坏的行抛错而不是降解成没有策略」。
+   *  可选的： harness 若不提供（例如纯内存实现无处可改），那条用例自行跳过。 */
+  corruptSubscriptionPolicy?: (
+    repo: WorkflowRepository,
+    accountId: string,
+    titleKey: string,
+    column: string,
+    raw: string,
+  ) => Promise<void> | void;
 }
 
 export function runRepositoryContract(name: string, harness: RepoHarness): void {
@@ -280,6 +289,96 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(list).toHaveLength(1);
         expect(list[0]).toMatchObject({ episode: "MOVIE", linkKey: "115:abc", sizeBytes: 100, reason: "假片" });
         expect(await repo.listRejectedResources({ accountId: "acct_b", titleKey: "tmdb_movie_9" })).toEqual([]);
+      });
+
+      // ---- 批次 5：subscription_policies（plan 四件套 ③）------------------------
+      // 主线：**没配过 ⇒ null，配过但损坏 ⇒ 抛错**。降解成「没有策略」会让空
+      // mustNotContain 的意思变成「不排除任何东西」，正好把用户排除掉的资源落地。
+      describe("subscription policies", () => {
+        const t0 = "2026-01-01T00:00:00.000Z";
+        const policy = {
+          mustContain: ["2160p", "BluRay"],
+          mustNotContain: ["CAM", "枪版"],
+          episodeFilter: "S01-S03;E01-E10",
+          useRegex: false,
+          cooldownDays: 14,
+        };
+
+        it("an unconfigured work reads as null, not as an empty policy", async () => {
+          const repo = await fresh();
+          expect(await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" })).toBeNull();
+        });
+
+        it("**writes and reads back all five fields unchanged**", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          expect(await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" })).toMatchObject({
+            accountId: "acct_a", titleKey: "tmdb_tv_42", ...policy, createdAt: t0, updatedAt: t0,
+          });
+        });
+
+        it("**scoped by account + work**（同一 title_key 两个账号互不干扰）", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_b", titleKey: "tmdb_tv_42", policy: { ...policy, cooldownDays: 1 }, now: t0 });
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_43", policy: { ...policy, cooldownDays: 2 }, now: t0 });
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" }))?.cooldownDays).toBe(14);
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_b", titleKey: "tmdb_tv_42" }))?.cooldownDays).toBe(1);
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_43" }))?.cooldownDays).toBe(2);
+        });
+
+        it("**re-saving keeps created_at and moves updated_at**", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          const later = "2026-02-02T00:00:00.000Z";
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy: { ...policy, cooldownDays: 3 }, now: later });
+          const saved = await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" });
+          expect(saved?.createdAt).toBe(t0);
+          expect(saved?.updatedAt).toBe(later);
+          expect(saved?.cooldownDays).toBe(3);
+        });
+
+        it("**useRegex survives the 0/1 column**", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy: { ...policy, useRegex: true }, now: t0 });
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" }))?.useRegex).toBe(true);
+        });
+
+        it("**empty term lists round-trip as []**（不是 null，不是「没有策略」）", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({
+            accountId: "acct_a", titleKey: "tmdb_tv_42", now: t0,
+            policy: { mustContain: [], mustNotContain: [], episodeFilter: "", useRegex: false, cooldownDays: 0 },
+          });
+          const saved = await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" });
+          expect(saved?.mustContain).toEqual([]);
+          expect(saved?.mustNotContain).toEqual([]);
+        });
+
+        it("**saved arrays are not aliased to the caller's**（改调用方的数组不会改库里）", async () => {
+          const repo = await fresh();
+          const terms = ["2160p"];
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy: { ...policy, mustContain: terms }, now: t0 });
+          terms.push("CAM");
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" }))?.mustContain).toEqual(["2160p"]);
+        });
+
+        it("**a use_regex column holding something other than 1 reads as false**", async () => {
+          // SQLite 无布尔量。use_regex 存 2 时若按 truthy 读，策略语义会被静默改掉。
+          const repo = await fresh();
+          if (harness.corruptSubscriptionPolicy === undefined) return;
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy: { ...policy, useRegex: true }, now: t0 });
+          await harness.corruptSubscriptionPolicy(repo, "acct_a", "tmdb_tv_42", "use_regex", 2);
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" }))?.useRegex).toBe(false);
+        });
+
+        it("**a corrupt row throws rather than degrading to no policy**", async () => {
+          const repo = await fresh();
+          if (harness.corruptSubscriptionPolicy === undefined) return;
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          await harness.corruptSubscriptionPolicy(repo, "acct_a", "tmdb_tv_42", "must_not_contain", "not json");
+          await expect(repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" })).rejects.toThrow(/must_not_contain/);
+        });
       });
 
       it("rejected resources round-trip null link/size and sizes beyond 32 bits", async () => {

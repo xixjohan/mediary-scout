@@ -8,6 +8,13 @@ import {
   initCredentialCryptoForDatabase,
   isCredentialCryptoInitialized,
 } from "@media-track/shared";
+import {
+  subscriptionPolicyFromRow,
+  subscriptionPolicyToColumns,
+  type SubscriptionPolicyRow,
+  type SubscriptionPolicyWrite,
+  type StoredSubscriptionPolicy,
+} from "./subscription-policy-store.js";
 import type { MediaryDatabase } from "./db-schema.js";
 import {
   CredentialStore,
@@ -253,6 +260,21 @@ export const SQLITE_SCHEMA = `
     created_at text NOT NULL
   );
   CREATE INDEX IF NOT EXISTS rejected_resources_work ON rejected_resources (account_id, title_key);
+  -- 批次 5：订阅策略层（plan §4.1 四件套 ③「独立策略表」）。**刻意不加 status 列**——
+  -- 一个策略是偏好，不是状态机。词表存 JSON（一行一条策略）；use_regex 存 0/1
+  -- （SQLite 无布尔量）。
+  CREATE TABLE IF NOT EXISTS subscription_policies (
+    account_id text NOT NULL,
+    title_key text NOT NULL,
+    must_contain text NOT NULL DEFAULT '[]',
+    must_not_contain text NOT NULL DEFAULT '[]',
+    episode_filter text NOT NULL DEFAULT '',
+    use_regex integer NOT NULL DEFAULT 0,
+    cooldown_days integer NOT NULL DEFAULT 0,
+    created_at text NOT NULL,
+    updated_at text NOT NULL,
+    PRIMARY KEY (account_id, title_key)
+  );
   CREATE TABLE IF NOT EXISTS episode_sources (
     account_id text NOT NULL,
     drive text NOT NULL DEFAULT '',
@@ -2038,6 +2060,57 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       .prepare("SELECT * FROM rejected_resources WHERE account_id = ? AND title_key = ? ORDER BY created_at, id")
       .all(input.accountId, input.titleKey) as RejectedResourceRow[];
     return rows.map(rejectedResourceFromRow);
+  }
+
+  /** Raw escape hatch. For migrations and for tests that must write a value the typed
+   *  API would refuse (e.g. a corrupt policy row, to prove the read path throws rather
+   *  than degrading). NOT a general query surface — callers that need a query should
+   *  get a typed method instead. */
+  exec(sql: string, ...params: Array<string | number | null>): void {
+    this.db.prepare(sql).run(...params);
+  }
+
+  async getSubscriptionPolicy(input: { accountId: string; titleKey: string }): Promise<StoredSubscriptionPolicy | null> {
+    const row = this.db
+      .prepare("SELECT * FROM subscription_policies WHERE account_id = ? AND title_key = ?")
+      .get(input.accountId, input.titleKey) as SubscriptionPolicyRow | undefined;
+    // 没配过 ⇒ null（调用方按「无策略」处理）。配过但读坏了 ⇒ 抛错：空 mustNotContain
+    // 的意思是「不排除任何东西」，降解成空正好把用户排除掉的资源落地。
+    return row === undefined ? null : subscriptionPolicyFromRow(row);
+  }
+
+  async upsertSubscriptionPolicy(input: {
+    accountId: string;
+    titleKey: string;
+    policy: SubscriptionPolicyWrite;
+    now: string;
+  }): Promise<StoredSubscriptionPolicy> {
+    const columns = subscriptionPolicyToColumns(input.policy);
+    // created_at 用 ON CONFLICT 时**不**覆盖：一次保存只该动 updated_at。
+    this.db
+      .prepare(
+        "INSERT INTO subscription_policies (account_id, title_key, must_contain, must_not_contain, episode_filter, use_regex, cooldown_days, created_at, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+          "ON CONFLICT (account_id, title_key) DO UPDATE SET " +
+          "must_contain = excluded.must_contain, must_not_contain = excluded.must_not_contain, " +
+          "episode_filter = excluded.episode_filter, use_regex = excluded.use_regex, " +
+          "cooldown_days = excluded.cooldown_days, updated_at = excluded.updated_at",
+      )
+      .run(
+        input.accountId,
+        input.titleKey,
+        columns.must_contain,
+        columns.must_not_contain,
+        columns.episode_filter,
+        columns.use_regex,
+        columns.cooldown_days,
+        input.now,
+        input.now,
+      );
+    const stored = await this.getSubscriptionPolicy({ accountId: input.accountId, titleKey: input.titleKey });
+    // 写完读不回来是仓库的 bug，不是「策略没了」——宁可炸也别返回一个假策略。
+    if (stored === null) throw new Error(`subscription_policies: write of ${input.titleKey} did not persist`);
+    return stored;
   }
 
   async upsertEpisodeSource(input: EpisodeSource): Promise<void> {

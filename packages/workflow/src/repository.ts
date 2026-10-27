@@ -47,6 +47,7 @@ import type {
   UpsertConnectedStorageInput,
 } from "./account-credentials.js";
 import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
+import type { StoredSubscriptionPolicy, SubscriptionPolicyWrite } from "./subscription-policy-store.js";
 
 /**
  * Tree model: the value stored in `connected_storage_id` for the degenerate
@@ -460,6 +461,13 @@ export class DuplicateUsernameError extends Error {
   }
 }
 
+/** 批次 5：策略行的内存键，与 sqlite 的 (account_id, title_key) 主键对应。
+ *  用 NUL 分隔而非 ":" —— title_key 将来可能带来源前缀（如 "douban+1295644"），
+ *  任何可打印分隔符都可能撞。 */
+function subscriptionPolicyRowKey(accountId: string, titleKey: string): string {
+  return `${accountId}\u0000${titleKey}`;
+}
+
 export class InMemoryWorkflowRepository implements WorkflowRepository {
   private readonly workflowRuns = new Map<string, PersistWorkflowRunSnapshotInput>();
   private readonly episodesBySeason = new Map<string, EpisodeState[]>();
@@ -474,6 +482,9 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   private readonly userMessages = new Map<string, UserMessage>();
   private readonly pendingReplacements = new Map<string, PendingReplacement>();
   private readonly rejectedResources: RejectedResource[] = [];
+  /** 批次 5：订阅策略。键与 sqlite 的 (account_id, title_key) 主键对应，见
+   *  subscriptionPolicyRowKey。 */
+  private readonly subscriptionPolicies = new Map<string, StoredSubscriptionPolicy>();
   private readonly episodeSources = new Map<string, EpisodeSource>();
 
   async getSetting(key: string): Promise<string | null> {
@@ -1018,6 +1029,32 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       .filter((r) => r.accountId === input.accountId && r.titleKey === input.titleKey)
       .sort(compareUserMessagesCreated)
       .map((r) => ({ ...r }));
+  }
+
+  async getSubscriptionPolicy(input: { accountId: string; titleKey: string }): Promise<StoredSubscriptionPolicy | null> {
+    return this.subscriptionPolicies.get(subscriptionPolicyRowKey(input.accountId, input.titleKey)) ?? null;
+  }
+
+  async upsertSubscriptionPolicy(input: {
+    accountId: string;
+    titleKey: string;
+    policy: SubscriptionPolicyWrite;
+    now: string;
+  }): Promise<StoredSubscriptionPolicy> {
+    const key = subscriptionPolicyRowKey(input.accountId, input.titleKey);
+    const existing = this.subscriptionPolicies.get(key);
+    const stored: StoredSubscriptionPolicy = {
+      ...input.policy,
+      mustContain: [...input.policy.mustContain],
+      mustNotContain: [...input.policy.mustNotContain],
+      accountId: input.accountId,
+      titleKey: input.titleKey,
+      // created_at 只在首次写入时定；之后的保存只动 updated_at。
+      createdAt: existing?.createdAt ?? input.now,
+      updatedAt: input.now,
+    };
+    this.subscriptionPolicies.set(key, stored);
+    return { ...stored };
   }
 
   async upsertEpisodeSource(input: EpisodeSource): Promise<void> {

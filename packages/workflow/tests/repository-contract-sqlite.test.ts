@@ -15,6 +15,14 @@ runRepositoryContract("SQLite", {
   teardown: (repo) => {
     (repo as SqliteWorkflowRepository).close();
   },
+  // 批次 5：把一个策略列的存盘值改坏，证明「损坏的行抛错而不是降解成没有策略」。
+  // 这是真库上的证据：内存实现无处可改，所以这条只在 SQLite harness 下真正生效。
+  corruptSubscriptionPolicy: (repo, accountId, titleKey, column, raw) => {
+    (repo as SqliteWorkflowRepository).exec(
+      `UPDATE subscription_policies SET ${column} = ? WHERE account_id = ? AND title_key = ?`,
+      raw, accountId, titleKey,
+    );
+  },
 });
 
 // SQLite-specific: the shared contract can't assert nextAttemptAt gating because the

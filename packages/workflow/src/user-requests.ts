@@ -9,6 +9,8 @@
  * Design: docs/superpowers/specs/2026-09-26-user-message-replace-design.md.
  */
 
+import type { StoredSubscriptionPolicy, SubscriptionPolicyWrite } from "./subscription-policy-store.js";
+
 export type UserMessageStatus = "pending" | "processing" | "done" | "withdrawn";
 
 export interface UserMessageScope {
@@ -189,6 +191,18 @@ export interface UserRequestStore {
 
   addRejectedResources(input: { accountId: string; titleKey: string; items: Array<Omit<RejectedResource, "id" | "accountId" | "titleKey" | "createdAt">>; now: string }): Promise<void>;
   listRejectedResources(input: { accountId: string; titleKey: string }): Promise<RejectedResource[]>;
+
+  /** 批次 5：订阅策略（plan §4.1 四件套 ③）。一行一个 (account, work)。**不设 status**——
+   *  策略是偏好不是状态机。读一个没配过的 work 返回 null（调用方按「无策略」处理），
+   *  而读一个损坏的行**抛错**：空 mustNotContain 的意思是「不排除任何东西」，降解成
+   *  空正好把用户排除掉的资源落地。 */
+  getSubscriptionPolicy(input: { accountId: string; titleKey: string }): Promise<StoredSubscriptionPolicy | null>;
+  upsertSubscriptionPolicy(input: {
+    accountId: string;
+    titleKey: string;
+    policy: SubscriptionPolicyWrite;
+    now: string;
+  }): Promise<StoredSubscriptionPolicy>;
 
   upsertEpisodeSource(input: EpisodeSource): Promise<void>;
   listEpisodeSources(scope: UserMessageScope): Promise<EpisodeSource[]>;
