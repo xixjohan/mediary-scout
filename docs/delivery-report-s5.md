@@ -4,7 +4,7 @@
 > **诚实的边界**：`doublecheck_report(verify: true)` 的按维校验器**没有真正运行**（工具返回 `Verification: Not run`、`Adversary review: No adversary review ran`）。本报告的对抗性证据来自我另外用 `workflow` 工具跑的**五轮逐维核查**（每轮一个检查器 agent），不是来自 doublecheck 的内建校验器。
 
 - 仓库：`/root/mediary-scout`（fork：`origin = xixjohan/mediary-scout`，`upstream = fancydirty/mediary-scout`）
-- HEAD：`4c7298e`（另有 `537b69b` 第四轮修复、`6dc2bab` 第五轮修复、`ebd7eb7`/`4c7298e` 两份复核记录）
+- HEAD：`ad56477`（`537b69b` 第四轮修复、`6dc2bab` 第五轮修复、`ebd7eb7`/`4c7298e`/`ad56477` 三份记录）
 - 方案文档：`docs/api-key-auth-and-self-update.md`（§7 验收总标准 + §8 执行状态 + §附一~§附四 四轮复核记录）
 
 ## 1. 规格（已固化）
@@ -19,11 +19,14 @@
 
 六个任务单全部落地：S5.1 移除付费横幅、S5.2 API Key 策略（env+DB，DB 优先，端口+加密落盘）、S5.3 API key 换 JWT（jose/HS256 + 限流）、S5.4 全部 /api 路由登录认证（40 路由：12 白名单 + 5 agent 自守卫 + 23 登录链；ESLint 门禁兜底）、S5.5 设置页 API Key 管理、S5.6 在线更新源改当前仓库。
 
-## 2. 测试证据（最终门禁，HEAD `4c7298e`）
+## 2. 测试证据（最终门禁，HEAD `ad56477`，2026-10-27 18:05 CST 复跑）
+
+> 这一节在**最后一个提交之后**重跑过：第五轮代码修复（`6dc2bab`）后的首轮门禁跑在文档提交
+> （`4c7298e` / `ad56477`）之前，而仓库里有读取文档的测试，所以在最终 HEAD 上整套重跑了一遍。
 
 | 门禁 | 结果 |
 |---|---|
-| `npx vitest run` | **385 文件 / 5231 用例全绿** |
+| `npx vitest run` | **385 文件 / 5231 用例全绿**（99.1s） |
 | `npx vitest run --sequence.shuffle --sequence.seed=20` | 全绿（该 seed 在第五轮修复前**稳定红**） |
 | `npm run gate`（layout + deps + eslint --max-warnings 0） | exit **0** |
 | tsc × 9（根 / web / desktop / host-worker / tmdb-proxy / scout-connect / shared / workflow / contracts） | 全 **0** |
