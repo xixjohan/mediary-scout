@@ -2,11 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { buildThrottleKey, checkLoginAllowed, recordLoginFailure } from "../../../../lib/login-throttle";
 import {
-  DEFAULT_ACCOUNT_ID,
   isMultiUserEnabled,
   getJwtSecret,
   getJwtTtlSeconds,
 } from "../../../../lib/workflow-runtime";
+import { DEFAULT_ACCOUNT_ID } from "@media-track/workflow";
 import { issueToken, resolveApiKey, API_KEY_SETTING_KEY, maskApiKey } from "@media-track/shared";
 
 /** API key 无效的**唯一**对外文案。「未配置」与「key 错」同文案——否则攻击者
@@ -28,8 +28,8 @@ const JWT_DEFAULT_TTL_SECONDS = 12 * 60 * 60;
 export async function POST(request: NextRequest) {
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
 
-  const body = (await request.json().catch(() => ({}))) as { apiKey?: unknown };
-  const presented = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  const body = (await request.json().catch(() => null)) as { apiKey?: unknown } | null;
+  const presented = typeof body?.apiKey === "string" ? body.apiKey.trim() : "";
 
   // 限流身份：多用户按 key 前缀分桶没有意义（key 不是用户名），按 IP + 固定身份，
   // 与登录同一套 throttle（容量/锁定语义复用，不新开一套限流状态）。
@@ -44,15 +44,11 @@ export async function POST(request: NextRequest) {
 
   const { getWorkflowRepository } = await import("../../../../lib/workflow-runtime");
   const repository = getWorkflowRepository();
-  const store = {
-    get: () => repository.getSetting(API_KEY_SETTING_KEY),
-    set: (value: string) => repository.setSetting(API_KEY_SETTING_KEY, value),
-    clear: () => repository.setSetting(API_KEY_SETTING_KEY, ""),
-  };
+  // 端口适配：SQLite 读写在 app_settings（值由 SECRET_SETTING_KEYS 透明加密）。
   const resolved = await resolveApiKey(process.env, {
-    get: async () => (await store.get()) ?? null,
-    set: async (v: string) => store.set(v),
-    clear: async () => store.clear(),
+    get: () => repository.getSetting(API_KEY_SETTING_KEY),
+    set: (value) => repository.setSetting(API_KEY_SETTING_KEY, value),
+    clear: () => repository.setSetting(API_KEY_SETTING_KEY, ""),
   });
 
   // 恒定时间比较：key 是长期凭据，时序侧信道能让攻击者逐字符猜出来。
@@ -67,10 +63,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: INVALID_KEY_MESSAGE }, { status: 401 });
   }
 
-  // 单用户模式：API key 即实例 owner 的凭据 → 默认账号。
-  // 多用户模式：key 不绑定具体用户（它是实例级凭据），同样落到默认账号；
-  // 将来若要 per-account key，在设置页创建时记录 owner 即可（端口已就绪）。
-  const accountId = isMultiUserEnabled() ? DEFAULT_ACCOUNT_ID : DEFAULT_ACCOUNT_ID;
+  // API key 是**实例级**凭据（不是 per-account）：单用户与多用户模式都落到
+  // 默认账号。将来若要 per-account key，在设置页创建时记录 owner 即可——
+  // resolveApiKey 的 IApiKeyStore 端口已为此留好位置。
+  void isMultiUserEnabled;
+  const accountId = DEFAULT_ACCOUNT_ID;
   const secret = await getJwtSecret();
   const ttl = getJwtTtlSeconds() ?? JWT_DEFAULT_TTL_SECONDS;
   const token = await issueToken({ sub: accountId }, secret, ttl);

@@ -13,6 +13,17 @@
 export { parseReleaseTag, type ReleaseTag } from "./release-tag.js";
 
 export {
+  API_KEY_SETTING_KEY,
+  maskApiKey,
+  resolveApiKey,
+  type ApiKeyOrigin,
+  type IApiKeyStore,
+  type ResolvedApiKey,
+} from "./api-key-source.js";
+
+export { issueToken, verifyToken, JWT_ALG, type TokenClaims } from "./auth/jwt.js";
+
+export {
   backupSqliteDatabase,
   compareSqliteBackup,
   restoreSqliteBackup,

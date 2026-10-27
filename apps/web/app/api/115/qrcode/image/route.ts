@@ -1,7 +1,10 @@
 import { type NextRequest } from "next/server";
+import { requireApiAccount } from "../../../../../lib/auth-chain";
 
 // Proxy the official QR PNG so the page needs no QR-rendering dependency.
 export async function GET(request: NextRequest): Promise<Response> {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
   const uid = request.nextUrl.searchParams.get("uid") ?? "";
   if (!uid) {
     return new Response("missing uid", { status: 400 });

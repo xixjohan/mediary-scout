@@ -6,9 +6,18 @@ vi.mock("../../../../lib/demo-mode", () => ({ isDemoMode: vi.fn(() => false) }))
 const retryFailedWorkflowRun = vi.fn();
 const getWorkflowRunSnapshot = vi.fn();
 
+// S5.4：路由经 lib/auth-chain 登录链取账号，mock 需补上链路所需导出。
+// 默认单用户 + 局域网（isMultiUserEnabled=false 且非远程请求）→ 落到默认账号，
+// 与生产「LAN 开放」语义一致，既有断言全部保持原值。
 vi.mock("../../../../lib/workflow-runtime", () => ({
   getCurrentAccountId: vi.fn(async () => "acct_default"),
   getWorkflowRepository: vi.fn(() => ({ retryFailedWorkflowRun, getWorkflowRunSnapshot })),
+  SESSION_COOKIE_NAME: "mt_session",
+  DEFAULT_ACCOUNT_ID: "acct_default",
+  isMultiUserEnabled: () => false,
+  isRemoteRequest: () => false,
+  resolveSessionAccountId: async () => null,
+  getJwtSecret: async () => "retry-test-secret",
 }));
 
 import { isDemoMode } from "../../../../lib/demo-mode";

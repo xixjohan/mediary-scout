@@ -1,6 +1,7 @@
 // @ts-check
 import tseslint from "typescript-eslint";
 import nextPlugin from "@next/eslint-plugin-next";
+import localRules from "./tools/eslint-local-rules.mjs";
 
 /**
  * 架构门禁（任务单 S4.1，治理文档 §6）：
@@ -132,6 +133,19 @@ export default tseslint.config(
           ],
         },
       ],
+    },
+  },
+
+  // ---- S5.4：/api 路由登录认证门禁（白名单见 tools/eslint-local-rules.mjs）----
+  {
+    // apps/web/app/api 下除 health / auth 登录面 / worker-secret / updater-token /
+    // owner-session 白名单与 agent 独立 token 之外的每个 route.ts，都必须调用
+    // requireApiAccount 登录链；漏挂即 lint 红。与 vitest 的
+    // route-auth-inventory.test.ts 同源白名单，两层兜底。
+    files: ["apps/web/app/api/**/route.ts"],
+    plugins: { local: localRules },
+    rules: {
+      "local/api-auth-required": "error",
     },
   },
 

@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import QRCode from "qrcode";
+import { requireApiAccount } from "../../../../../lib/auth-chain";
 
 // Render the 123网盘 QR PNG server-side (no third-party; the ephemeral login
 // content never leaves this host). LIVE-VERIFIED against the real generate API:
@@ -30,6 +31,8 @@ function isValidQrContent(content: string): boolean {
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
   const content = request.nextUrl.searchParams.get("content") ?? "";
   if (!isValidQrContent(content)) {
     return new Response("missing/invalid content", { status: 400 });

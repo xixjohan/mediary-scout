@@ -1,6 +1,7 @@
 import { isDemoMode } from "../../../../../lib/demo-mode";
 import { NextResponse, type NextRequest } from "next/server";
 import { completePan123QrLogin, StorageOwnedByOtherAccountError } from "../../../../../lib/workflow-runtime";
+import { requireApiAccount } from "../../../../../lib/auth-chain";
 
 // The ~90-day 123 login token is a JWT (eyJ… header.payload.signature) — the
 // poll hands it to the browser verbatim, and it IS the final credential (no
@@ -17,6 +18,8 @@ function isValidPan123Token(token: string): boolean {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ ok: false, error: "演示站只读" }, { status: 403 });
   // Parse the body OUTSIDE the business try/catch: invalid/missing JSON is a
   // client error (400), not an infra failure (502) — mirrors tianyi's confirm.

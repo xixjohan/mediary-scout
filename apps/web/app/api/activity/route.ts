@@ -1,6 +1,7 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
 import { getActivityView } from "../../../lib/activity-view";
 import { ensureDemoSeeded, getWorkflowRepository, resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
+import { requireApiAccount } from "../../../lib/auth-chain";
 
 /**
  * Live activity feed for the /activity page: the queue+running set + recent
@@ -8,6 +9,8 @@ import { ensureDemoSeeded, getWorkflowRepository, resolveGlobalWorkspace } from 
  * 已完成 by matching against the runIds it observed active.
  */
 export async function GET(request: NextRequest) {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
   // Request-time only: keep this out of build-time prerender (it reads the DB).
   await connection();
   const repository = getWorkflowRepository();

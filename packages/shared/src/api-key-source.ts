@@ -24,9 +24,9 @@ export interface ResolvedApiKey {
 
 /** 读取 API key 的最小端口：实现方可以是 SQLite、内存（测试）或未来的远端配置。 */
 export interface IApiKeyStore {
-  get(): string | null;
-  set(value: string): void;
-  clear(): void;
+  get(): Promise<string | null>;
+  set(value: string): Promise<void>;
+  clear(): Promise<void>;
 }
 
 function nonEmpty(value: string | null | undefined): string | null {
@@ -47,11 +47,11 @@ export function maskApiKey(value: string | null): string {
  * DB 优先的语义细节：DB 里存了空串视为「用户清空了」，回落到 env ——
  * 否则页面一次清空就会把实例锁死（env 还在却不再生效）。
  */
-export function resolveApiKey(
+export async function resolveApiKey(
   env: Record<string, string | undefined>,
   store: IApiKeyStore,
-): ResolvedApiKey {
-  const fromDb = nonEmpty(store.get());
+): Promise<ResolvedApiKey> {
+  const fromDb = nonEmpty(await store.get());
   if (fromDb !== null) return { value: fromDb, origin: "db" };
   const fromEnv = nonEmpty(env.MEDIA_TRACK_API_KEY);
   if (fromEnv !== null) return { value: fromEnv, origin: "env" };
