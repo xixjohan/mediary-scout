@@ -1,4 +1,6 @@
 import Link from "next/link";
+
+import { PageLoginGuard } from "../lib/page-auth-guard";
 import { Suspense } from "react";
 import { Library, TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../components/acquiring-poller";
@@ -36,7 +38,14 @@ export default function Page({
 }: {
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  return <HomeView searchParams={searchParams} />;
+  return (
+    <>
+      <Suspense fallback={null}>
+        <PageLoginGuard />
+      </Suspense>
+      <HomeView searchParams={searchParams} />
+    </>
+  );
 }
 
 /**

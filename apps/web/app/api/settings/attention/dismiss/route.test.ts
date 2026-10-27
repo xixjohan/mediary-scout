@@ -14,7 +14,10 @@ vi.mock("../../../../../lib/settings-attention-server", () => ({
 // 默认单用户 + 局域网 → 默认账号（既有 LAN 开放语义）；401 用例把
 // multiUser 拨真即可让无凭据请求 fail-closed。
 const authState = { multiUser: false };
-vi.mock("../../../../../lib/workflow-runtime", () => ({
+vi.mock("../../../../../lib/workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
+  // 局域网也要登录），漏了它会在 LAN 无凭据用例上炸。
+  hasLoginPassword: vi.fn(async () => false),
+
   SESSION_COOKIE_NAME: "mt_session",
   DEFAULT_ACCOUNT_ID: "acct_default",
   isMultiUserEnabled: () => authState.multiUser,

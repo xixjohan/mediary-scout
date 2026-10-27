@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 
 const runScheduledType3 = vi.fn();
-vi.mock("../lib/workflow-runtime", () => ({
+vi.mock("../lib/workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
+  // 局域网也要登录），漏了它会在 LAN 无凭据用例上炸。
+  hasLoginPassword: vi.fn(async () => false),
+
   runScheduledType3: (...args: unknown[]) => runScheduledType3(...args),
 }));
 

@@ -123,14 +123,14 @@ describe("single-user gate wiring (failure paths)", () => {
       const rt = await boot();
       // 纯函数层面就应该钉死：只有 acct_default 才算数
       expect(
-        rt.resolveSingleUserAccount({
+        rt.resolveSingleUserAccountId({
           hasPassword: true,
           isRemote: true,
           sessionAccountId: "acct_someone_else",
         }),
       ).toBe("acct_unauthenticated");
       expect(
-        rt.resolveSingleUserAccount({
+        rt.resolveSingleUserAccountId({
           hasPassword: true,
           isRemote: true,
           sessionAccountId: "acct_default",
@@ -195,7 +195,7 @@ describe("未设密码 + 远程 = 必须 fail-closed（移除 Access 后的公�
     async () => {
       const rt = await boot();
       expect(
-        rt.resolveSingleUserAccount({ hasPassword: false, isRemote: true, sessionAccountId: null }),
+        rt.resolveSingleUserAccountId({ hasPassword: false, isRemote: true, sessionAccountId: null }),
       ).toBe("acct_unauthenticated");
     },
     CRYPTO_TIMEOUT_MS,
@@ -206,35 +206,36 @@ describe("未设密码 + 远程 = 必须 fail-closed（移除 Access 后的公�
     async () => {
       const rt = await boot();
       expect(
-        rt.resolveSingleUserAccount({ hasPassword: false, isRemote: false, sessionAccountId: null }),
+        rt.resolveSingleUserAccountId({ hasPassword: false, isRemote: false, sessionAccountId: null }),
       ).toBe("acct_default");
     },
     CRYPTO_TIMEOUT_MS,
   );
 
   it(
-    "纯函数：状态未知/已设密码的既有组合不受影响",
+    "纯函数：状态未知时本地宽容；远程只认 acct_default 自己的 session",
     async () => {
       const rt = await boot();
-      // LAN 一律开放
+      // S5.7 后 LAN 不再一律开放：设了密码就要登录（无 session → 哨兵）。
       expect(
-        rt.resolveSingleUserAccount({ hasPassword: true, isRemote: false, sessionAccountId: null }),
-      ).toBe("acct_default");
+        rt.resolveSingleUserAccountId({ hasPassword: true, isRemote: false, sessionAccountId: null }),
+      ).toBe("acct_unauthenticated");
+      // 读不出密码状态（DB 抖动）时本地宽容：不把故障放大成拒绝服务。
       expect(
-        rt.resolveSingleUserAccount({ hasPassword: "unknown", isRemote: false, sessionAccountId: null }),
+        rt.resolveSingleUserAccountId({ hasPassword: "unknown", isRemote: false, sessionAccountId: null }),
       ).toBe("acct_default");
       // 远程：只认 acct_default 自己的 session
       expect(
-        rt.resolveSingleUserAccount({ hasPassword: true, isRemote: true, sessionAccountId: null }),
+        rt.resolveSingleUserAccountId({ hasPassword: true, isRemote: true, sessionAccountId: null }),
       ).toBe("acct_unauthenticated");
       expect(
-        rt.resolveSingleUserAccount({ hasPassword: "unknown", isRemote: true, sessionAccountId: null }),
+        rt.resolveSingleUserAccountId({ hasPassword: "unknown", isRemote: true, sessionAccountId: null }),
       ).toBe("acct_unauthenticated");
       expect(
-        rt.resolveSingleUserAccount({ hasPassword: false, isRemote: true, sessionAccountId: "acct_default" }),
+        rt.resolveSingleUserAccountId({ hasPassword: false, isRemote: true, sessionAccountId: "acct_default" }),
       ).toBe("acct_default");
       expect(
-        rt.resolveSingleUserAccount({ hasPassword: true, isRemote: true, sessionAccountId: "acct_default" }),
+        rt.resolveSingleUserAccountId({ hasPassword: true, isRemote: true, sessionAccountId: "acct_default" }),
       ).toBe("acct_default");
     },
     CRYPTO_TIMEOUT_MS,
@@ -510,4 +511,89 @@ describe("单用户远程：残留别账号 cookie 不得吞掉 Bearer 通道（
     const rt = await boot({ leftoverAccountId: "acct_default", authorization: await bearer("acct_default") });
     expect(await rt.getCurrentAccountId()).toBe("acct_default");
   });
+});
+
+/**
+ * S5.7：设了密码 → **局域网也要登录**。收紧落在两处，必须分别钉死：
+ *   1. auth-chain 的通道 1/2/3（闸机，/api 的权威判定）——见 auth-chain.test.ts；
+ *   2. getCurrentAccountId() 的 LAN 分支（数据层，页面与 lib 模块走这条）。
+ * 两层若分歧，页面与 /api 会对同一请求给出不同身份（前几轮复核的不变式）。
+ *
+ * 注意 mockRemoteRequest() 造的是**远程**请求；局域网要把 cf-ray 头去掉。
+ */
+describe("single-user gate wiring — S5.7 设了密码后局域网也要登录", () => {
+  const mockLanRequest = (cookieValue?: string) => {
+    vi.doMock("next/headers", () => ({
+      headers: async () => new Headers(),
+      cookies: async () => ({
+        get: (name: string) =>
+          name === "mt_session" && cookieValue ? { name, value: cookieValue } : undefined,
+      }),
+    }));
+  };
+
+  it(
+    "LAN + 设了密码 + 无 session → 哨兵（数据层与闸机同判：要登录）",
+    async () => {
+      mockLanRequest();
+      const rt = await boot();
+      await rt.setSingleUserPassword("secret-123");
+      expect(await rt.hasLoginPassword()).toBe(true);
+      expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
+    },
+    CRYPTO_TIMEOUT_MS,
+  );
+
+  it(
+    "LAN + 设了密码 + acct_default 自己的有效 session → 默认账号",
+    async () => {
+      // 先把请求作用域装上（cookie 后补）：mock 必须在使用前注册，
+      // vi.resetModules() 之后装的 mock 不会作用于已 import 的模块。
+      mockLanRequest();
+      const rt = await boot();
+      await rt.setSingleUserPassword("secret-123");
+      // 用模块自己的 createLoginSession 落一行真 session（手搓签名对不上：
+      // secret 由 getSessionSecret() 决定，见第四轮 H4 的教训）。
+      const cookie = await rt.createLoginSession("acct_default");
+      mockLanRequest(cookie); // 重新装上带 cookie 的请求作用域
+      expect(await rt.resolveSessionAccountId(cookie)).toBe("acct_default"); // 自证
+      expect(await rt.getCurrentAccountId()).toBe("acct_default");
+    },
+    CRYPTO_TIMEOUT_MS,
+  );
+
+  it(
+    "LAN + 设了密码 + 别账号的 session → 哨兵（不是「认证通过的陌生人」）",
+    async () => {
+      mockLanRequest();
+      const rt = await boot();
+      await rt.setSingleUserPassword("secret-123");
+      const cookie = await rt.createLoginSession("acct_somebody_else");
+      expect(await rt.resolveSessionAccountId(cookie)).toBe("acct_somebody_else"); // 自证
+      expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
+    },
+    CRYPTO_TIMEOUT_MS,
+  );
+
+  it(
+    "LAN + 未设密码 + 无 session → 默认账号（既有开放语义不回归）",
+    async () => {
+      mockLanRequest();
+      const rt = await boot();
+      expect(await rt.hasLoginPassword()).toBe(false);
+      expect(await rt.getCurrentAccountId()).toBe("acct_default");
+    },
+    CRYPTO_TIMEOUT_MS,
+  );
+
+  it(
+    "无请求作用域（in-process worker）+ 设了密码 → 仍直通默认账号（采集任务不认 cookie）",
+    async () => {
+      // 不装 next/headers mock：cookies() 抛异常 = 无请求上下文。
+      const rt = await boot();
+      await rt.setSingleUserPassword("secret-123");
+      expect(await rt.getCurrentAccountId()).toBe("acct_default");
+    },
+    CRYPTO_TIMEOUT_MS,
+  );
 });

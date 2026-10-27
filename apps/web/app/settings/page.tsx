@@ -1,7 +1,8 @@
+import { Suspense } from "react";
+import { PageLoginGuard } from "../../lib/page-auth-guard";
 import { driveConnectionBadge } from "../../lib/settings-badge";
 import { maskProviderUid } from "../../lib/mask-provider-uid";
 import { connection } from "next/server";
-import { Suspense } from "react";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, ExternalLink, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/app-sidebar";
 import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
@@ -80,7 +81,7 @@ import {
 import { brandSupportsProwlarr, brandsSupportingProwlarr, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
 
-export default function SettingsPage({
+function SettingsPageInner({
   searchParams,
 }: {
   searchParams: Promise<{ w?: string }>;
@@ -850,5 +851,25 @@ async function PushNotificationSection() {
 
       <PushNotificationForm configured={configured} />
     </section>
+  );
+}
+
+/**
+ * S5.7 页面登录守卫（见 lib/page-auth-guard.ts）。
+ *
+ * 为什么每页都要包一层：cacheComponents（PPR）下，请求期读取必须发生在
+ * <Suspense> 边界内，否则构建期预渲染直接失败；而 layout 顶层读又被同一规则
+ * 挡下（S5.7 两条路都实测过）。页面级是唯一同时满足「构建能过」与「redirect
+ * 能生效」的位置——redirect 在 streaming 下插 meta 标签让客户端跳转，且 React
+ * 会在该边界抛出时中止渲染，原页面的数据不会进入 HTML（已实测确认）。
+ */
+export default function SettingsPage(props: Parameters<typeof SettingsPageInner>[0]) {
+  return (
+    <>
+      <Suspense fallback={null}>
+        <PageLoginGuard />
+      </Suspense>
+      <SettingsPageInner {...props} />
+    </>
   );
 }

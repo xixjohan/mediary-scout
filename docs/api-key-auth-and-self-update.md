@@ -178,9 +178,41 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | S5.1 移除横幅 | ✅ | 删 `components/connect-notice-banner.tsx` + `app/page.tsx` 装配 + `connect-notice.ts` 的 dismissed key 逻辑与样式；相关测试改为断言"不再展示" |
 | S5.2 API Key 策略+端口 | ✅ | `packages/shared/src/api-key-source.ts`（resolveApiKey DB>env>none 四象限 + maskApiKey）+ `packages/contracts` 的 IApiKeyStore 端口 + `api_key` 入 SECRET_SETTING_KEYS（AES-256-GCM 透明加密，实测落盘是 enc:v1: 密文、读回明文）。四象限 + 掩码 + SQLite 端口落盘单测全绿 |
 | S5.3 JWT 颁发/验证 | ✅ | `packages/shared/src/auth/jwt.ts`（jose HS256，`algorithms` 显式拒降级）+ `POST /api/auth/token`：恒定时间比 key、复用登录限流、401 统一文案「api key 无效」（不区分未配/错 key，防枚举）；secret 走 env > `app_settings:jwt_secret`（加密，缺失自动生成 32 字节 hex）。round-trip/过期/篡改/错算法/限流单测全绿 |
-| S5.4 全接口认证 | ✅ | `apps/web/lib/auth-chain.ts` 责任链（session cookie → Bearer JWT → 单用户局域网默认账号，远程 fail-closed）；23 个非白名单路由一行守卫；白名单机制原位不动（health / auth/* / run-next+run-type3 的 worker secret / hold+busy 的 updater token / status 的 owner session / agent/* 独立 token）。**两层兜底**：vitest 路由清单测试（40 路由逐一归类，新增路由必须显式表态）+ ESLint L2 新规则 `local/api-auth-required`（漏挂即 lint 红，白名单同源）。6 路由 × 3 凭据状态行为测试。修掉一个被 mock 掩盖的真 bug：workflow-runtime 只 import 未 re-export `DEFAULT_ACCOUNT_ID`，真实构建下 auth-chain 会炸 |
+| S5.4 全接口认证 | ✅ | `apps/web/lib/auth-chain.ts` 责任链（session cookie → Bearer JWT → 单用户局域网默认账号**（未设访问密码时，S5.7 起收紧）**，远程 fail-closed）；23 个非白名单路由一行守卫；白名单机制原位不动（health / auth/* / run-next+run-type3 的 worker secret / hold+busy 的 updater token / status 的 owner session / agent/* 独立 token）。**两层兜底**：vitest 路由清单测试（40 路由逐一归类，新增路由必须显式表态）+ ESLint L2 新规则 `local/api-auth-required`（漏挂即 lint 红，白名单同源）。6 路由 × 3 凭据状态行为测试。修掉一个被 mock 掩盖的真 bug：workflow-runtime 只 import 未 re-export `DEFAULT_ACCOUNT_ID`，真实构建下 auth-chain 会炸 |
 | S5.5 设置页管理 | ✅ | `GET/POST/DELETE /api/settings/api-key`（全过 S5.4 登录链；demo 403）+ `components/settings/api-key-section.tsx`（owner 门禁，落在「远程访问」tab）+ `components/api-key-panel.tsx`（掩码 + 来源徽标 db/env/none + 轮换返回**一次性完整值** + env 态禁清除并说明；后端 409 兜底）。三态读取/轮换/清除状态机 + 路由 14 用例 |
+| S5.7 设了密码就要登录（含局域网） | ✅ | 见下方专节 |
 | S5.6 更新源改当前仓库 | ✅ | `updateRepoSlug()` env 可配 + 畸形值抛错；Dockerfile/workflow/compose/updater 全链透传；24/24 单测 + **干净实例实测 env 生效**（fork 无 tag → feed 为空，不再显示上游发布）；顺手清掉两个残留 next-server 进程 |
+
+### S5.7 设了访问密码 → 局域网也要登录（需求变更，产品默认行为）
+
+**需求**：「改为都需要登录」。经 grill 确认两点：**触发条件 = 设了密码就要登录**（不设密码时局域网保持零摩擦，桌面端/本地脚本/E2E 依赖这条既有语义）；**范围 = 改产品默认行为**，不是只加一个 env 开关。
+
+此前只有经隧道的远程请求被门禁（`proxy.ts` 的 `multiUser || isRemoteRequest`），局域网一律直通——于是站主在自己家网络上打开 `/`、`/settings` 也看不到登录页。密码本来就是「这个实例要认证」的开关，没道理只拦外人。
+
+**改动落在四处**（每处都有「回退实现会红」的变异验证）：
+
+1. `auth-chain.ts` 通道 3：先 `await hasLoginPassword()`，`!== true` 才落默认账号。`false` → 开放；`"unknown"`（DB 抖动）→ 本地宽容开放；`true` → LAN 也锁。
+2. `auth-chain.ts` 通道 1/2：单用户分支**去掉 `isRemoteRequest` 条件**。原逻辑是「LAN 忽略 session/JWT，反正通道 3 会发默认账号」；通道 3 被密码挡住后，session 与 JWT 必须自己承住，否则设了密码的实例在局域网里登录了也进不来。
+3. `workflow-runtime.ts` `getCurrentAccountId()` 的 LAN 分支同判，并新增导出的 `resolveSingleUserAccountId()`（取代旧 `resolveSingleUserAccount()`——后者对 LAN 恒开放，留着会让下一个人误以为它还是权威，故删除，测试全组合改写）。**两层必须同账号**：否则页面（走数据层）与 /api（走闸机）会对同一请求给出不同身份。
+4. 页面守卫 `lib/page-auth-guard.ts` + 7 个页面入口各包一层 `<Suspense><PageLoginGuard/></Suspense>`。
+
+**为什么守卫不能放在 layout**（S5.7 实测三条路都堵死，记录备查）：
+- layout 顶层 await + redirect → redirect 能生效，但 `cookies()`/`headers()`/`connection()` 都撞上 `cacheComponents`（PPR）的硬规则「请求期读取必须在 Suspense 边界内」，构建期 `/activity`、`/_not-found` 直接失败。
+- 放进 `<Suspense>` → 构建能过，但 `redirect()` 抛出的 NEXT_REDIRECT 被边界吞掉，页面照常 200 渲染（判定条件全满足仍 200，实测）。
+- `export const dynamic = "force-dynamic"` → Next 16 明确拒绝：「Route segment config "dynamic" is not compatible with `nextConfig.cacheComponents`」。
+
+**最终方案**：proxy 给每个页面请求写 `mt_page_guarded=1` cookie（Edge 可写、不读 DB）；守卫在 page 级 `<Suspense>` 内读该 cookie + session + 密码状态，需要登录时 `redirect("/login")`（streaming 下插 meta refresh，且 React 会在该边界中止渲染——**已实测原页面数据不进 HTML**，未登录拿到的是 50KB 空壳，登录后是 36KB/112KB 完整页）。`/login` 不在 proxy 的 matcher 里 → 拿不到该 cookie → `guarded === false` → 守卫直接放行，**不可能写成 /login → /login 的无限环**，也不需要读密码状态（省一次 DB）。
+
+**实测记录**（真实服务 + 独立库，3003=设了密码 / 3004=未设密码）：
+
+| 场景 | 3003（设了密码） | 3004（未设密码） |
+|---|---|---|
+| 7 个页面入口（LAN） | 全部 meta refresh → /login，无数据泄露 | 全部 200 直通（零摩擦不回归） |
+| `/login` 自身 | 200 无跳转（无环） | 200 无跳转 |
+| `/api/activity`（LAN） | 401 | 200 |
+| 远程（cf-ray）页面 | 307 → /login | 307 → /login（既有语义） |
+| 登录后访问页面 | refresh=0，完整渲染 | — |
+| 远程 + Bearer JWT | 200（S5.3 通道不回归） | — |
 
 ### 附：E2E 幂等性修复（S5.4 收尾时发现）
 
@@ -205,7 +237,7 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | M3 | 两层兜底都是 `source.includes("requireApiAccount")`——留一行含该标识符的注释即可同时骗过 ESLint 规则与清单测试（RuleTester 探针实证） | 两层都改 **AST 判定**（真的有一次 CallExpression）；规则与清单测试各补「注释/字符串提及不算调用」用例 |
 | M4 | 限流用例不自洽：固定发 5 次，单独跑（`-t` 过滤）时桶里没有前序用例烧的 4 次失败，第 5 次还没到阈值 → 断言 undefined；全量绿但单跑红 | 烧到真被锁为止 + 验证锁定持续；文件内加 `_resetLoginThrottleForTest()`，整文件顺序无关 |
 | M5 | S5.6 默认更新源仍是**上游** `fancydirty/mediary-scout`——源码直跑与本地 dev 都在检查别家的发布，与 F5「指向自己的仓库」不符（S5.6 提交信息自己写明了这个取舍） | `DEFAULT_UPDATE_REPO` 改为 `xixjohan/mediary-scout`；env 仍可覆盖（含指回上游）；`.env.example`/文档同步 |
-| M6 | 单用户模式下闸机会放过别账号的残留 session，而 `resolveSingleUserAccount` 明写单用户远程只认 `acct_default`——闸机放行、数据层 fail-closed，等于「认证通过的陌生人」 | 通道 1 与 `resolveSingleUserAccount` 完全同源：单用户 LAN 忽略 session（落到默认账号，开放语义不回归）、远程只认默认账号；两个既有用例的 mock 模式改成语义正确的多用户（断言一字未改） |
+| M6 | 单用户模式下闸机会放过别账号的残留 session，而数据层裁决明写单用户远程只认 `acct_default`——闸机放行、数据层 fail-closed，等于「认证通过的陌生人」 | 通道 1 与数据层裁决完全同源：单用户远程只认默认账号自己的 session（LAN 的开放语义已在 S5.7 收紧，见该节）；两个既有用例的 mock 模式改成语义正确的多用户（断言一字未改） |
 | L1 | 一批规格写了却无用例钉住的行为：demo 403、agent 404 映射、恒定时间比较不泄露长度、畸形 Bearer 只对 mock 复刻版断言、显式 key 无长度下限 | 全部补真实用例；另发现并统一 **Bearer scheme 大小写**（proxy 粗筛本就走 `/^bearer /i`，路由层却只认大写）；显式 key 加 16 位下限（拒绝把 1 字符设成长期凭据） |
 | L2 | 死代码与门禁盲区：contracts 的 `IApiKeyStore` 与 shared 同形重复且零消费者、S5.1 声称删净的 dismissed key 仍在、两处 `void x;` 哑语句、顶层 `/api/route.ts` 不在两层门禁管辖内（该文件当前不存在，是**预防性**收口：glob 与规则正则都只匹配「至少一层目录」，真建一个就会两处同时漏） | 删掉 contracts 侧的重复定义（shared 保持唯一定义，contracts 恢复零依赖）；删死常量与哑语句（`rotateApiKey` 去掉没用到的 `env` 形参）；ESLint glob + 规则正则 + 单测都覆盖顶层路由 |
 | L3 | 文档口径过期：路由数 36、e2e「4/4」易读成 4 个 spec、jose 版本、gate 只写「三处 typecheck」、F5 默认值 | §7 全部按交付事实改写，历史快照加标注 |

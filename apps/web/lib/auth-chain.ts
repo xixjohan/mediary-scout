@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   DEFAULT_ACCOUNT_ID,
   SESSION_COOKIE_NAME,
+  hasLoginPassword,
   isMultiUserEnabled,
   isRemoteRequest,
   resolveBearerAccountId,
@@ -50,13 +51,13 @@ export async function resolveApiAccount(request: NextRequest): Promise<string | 
       if (accountId) {
         if (isMultiUserEnabled()) return accountId;
         // 单用户：与 resolveSingleUserAccount 完全同一裁决（数据层权威），
-        // 否则闸机认的账号与数据层作用域会对不上：
-        //   · LAN → 开放，忽略 session（落到通道 3 拿默认账号）；
-        //   · 远程 → 只认 acct_default 自己的 session，别账号的残留 cookie
-        //     在此放行 = 「认证通过的陌生人」（数据层随后会 fail-closed）。
-        if (isRemoteRequest(request.headers)) {
-          if (accountId === DEFAULT_ACCOUNT_ID) return accountId;
-        }
+        // 否则闸机认的账号与数据层作用域会对不上——只认 acct_default 自己的
+        // session，别账号的残留 cookie 在此放行 = 「认证通过的陌生人」
+        // （数据层随后会 fail-closed）。
+        // S5.7：这里**不再要求 isRemote**。此前 LAN 忽略 session 是因为通道 3
+        // 反正会发默认账号；现在通道 3 被「设了密码」挡住，session 必须自己
+        // 承住，否则设了密码的实例在局域网里登录了也进不来。
+        if (accountId === DEFAULT_ACCOUNT_ID) return accountId;
       }
     } catch {
       // 与通道 2 同一理由：读不到 ≠ 认证失败，继续问别的通道。
@@ -67,17 +68,26 @@ export async function resolveApiAccount(request: NextRequest): Promise<string | 
   // 继续走局域网判定——与「没带 token」不可区分。
   const bearerAccountId = await resolveBearerAccountId(request.headers);
   if (bearerAccountId) {
-    // 单用户模式与 resolveSingleUserAccount 同一裁决：远程只认默认账号自己的
-    // 凭据（M6/H3）。当前 /api/auth/token 只签 acct_default，但 per-account key
-    // 已在该路由的规划里，分歧必须先钉死，别等能利用了再补。
-    // LAN 下不走这条（见通道 3：局域网开放，与带不带 JWT 无关）。
+    // 单用户模式与 resolveSingleUserAccount 同一裁决：只认默认账号自己的凭据
+    // （M6/H3）。当前 /api/auth/token 只签 acct_default，但 per-account key 已在
+    // 该路由的规划里，分歧必须先钉死，别等能利用了再补。
+    // S5.7：这里**不再要求 isRemote**。此前 LAN 直接落到通道 3 拿默认账号，
+    // Bearer 在局域网看不看得见都无所谓；现在通道 3 被「设了密码」挡住了，
+    // JWT 必须自己承住——否则设了密码的实例，本地脚本拿 JWT 也进不来。
     if (isMultiUserEnabled()) return bearerAccountId;
-    if (isRemoteRequest(request.headers) && bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
+    if (bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
   }
 
-  // 通道 3：单用户实例的局域网直通（既有语义）。
+  // 通道 3：单用户实例的局域网直通（既有语义）——设了访问密码后收起。
+  // S5.7：「要登录」与请求来自哪里无关。此前只有经隧道的远程请求被门禁，
+  // 站主在自己家网络上打开也看不到登录页；密码本来就是「这个实例要认证」的
+  // 开关，没道理只拦外人。
+  // 读不出密码状态（"unknown"）时放行：一次 DB 抖动不该把局域网用户锁在门外，
+  // 远程的收紧由 proxy（不看 DB）负责，两侧各自 fail 在正确方向。
+  // 数据层 resolveSingleUserAccount 对 LAN 恒返 DEFAULT_ACCOUNT_ID，所以这里
+  // 只是闸机单侧收紧，两层仍同账号（不变式）。
   if (!isMultiUserEnabled() && !isRemoteRequest(request.headers)) {
-    return DEFAULT_ACCOUNT_ID;
+    if ((await hasLoginPassword()) !== true) return DEFAULT_ACCOUNT_ID;
   }
   return null;
 }

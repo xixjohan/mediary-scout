@@ -1,6 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 
-vi.mock("../workflow-runtime", () => ({
+vi.mock("../workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
+  // 局域网也要登录），漏了它会在 LAN 无凭据用例上炸。
+  hasLoginPassword: vi.fn(async () => false),
+
   getWorkflowRepository: vi.fn(() => ({
     getSetting: vi.fn(async () => null),
   })),
