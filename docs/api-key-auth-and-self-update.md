@@ -194,7 +194,8 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 1. `auth-chain.ts` 通道 3：先 `await hasLoginPassword()`，`!== true` 才落默认账号。`false` → 开放；`"unknown"`（DB 抖动）→ 本地宽容开放；`true` → LAN 也锁。
 2. `auth-chain.ts` 通道 1/2：单用户分支**去掉 `isRemoteRequest` 条件**。原逻辑是「LAN 忽略 session/JWT，反正通道 3 会发默认账号」；通道 3 被密码挡住后，session 与 JWT 必须自己承住，否则设了密码的实例在局域网里登录了也进不来。
 3. `workflow-runtime.ts` `getCurrentAccountId()` 的 LAN 分支同判，并新增导出的 `resolveSingleUserAccountId()`（取代旧 `resolveSingleUserAccount()`——后者对 LAN 恒开放，留着会让下一个人误以为它还是权威，故删除，测试全组合改写）。**两层必须同账号**：否则页面（走数据层）与 /api（走闸机）会对同一请求给出不同身份。
-4. 页面守卫 `lib/page-auth-guard.ts` + 7 个页面入口各包一层 `<Suspense><PageLoginGuard/></Suspense>`。
+4. 页面守卫 `lib/page-auth-guard.ts` + 7 个页面入口各包一层 `<Suspense><PageLoginGuard/></Suspense>`，外加自建的 `app/not-found.tsx`（未匹配路由同样过守卫——此前用 Next 默认 404，所有拼错的 URL 都静默绕过「设了密码就要登录」；默认页不带用户数据所以不是泄露，但违背需求的字面要求）。
+5. 静态清单门禁 `app/api/page-auth-inventory.test.ts`：AST 扫描所有 `page.tsx`，断言每个非 login 入口都真的 import 并在 `<Suspense>` 内渲染 `PageLoginGuard`（AST 判定而非源码文本包含——注释里写一行 `<PageLoginGuard />` 就能让 `includes()` 放行，/api 侧两层兜底都踩过这个坑），并钉住 `not-found.tsx` 的存在与接线。新增页面忘了包守卫 → 这条测试红，而不是静默少一道闸。
 
 **为什么守卫不能放在 layout**（S5.7 实测三条路都堵死，记录备查）：
 - layout 顶层 await + redirect → redirect 能生效，但 `cookies()`/`headers()`/`connection()` 都撞上 `cacheComponents`（PPR）的硬规则「请求期读取必须在 Suspense 边界内」，构建期 `/activity`、`/_not-found` 直接失败。
@@ -203,12 +204,15 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 
 **最终方案**：proxy 给每个页面请求写 `mt_page_guarded=1` cookie（Edge 可写、不读 DB）；守卫在 page 级 `<Suspense>` 内读该 cookie + session + 密码状态，需要登录时 `redirect("/login")`（streaming 下插 meta refresh，且 React 会在该边界中止渲染——**已实测原页面数据不进 HTML**，未登录拿到的是 50KB 空壳，登录后是 36KB/112KB 完整页）。`/login` 不在 proxy 的 matcher 里 → 拿不到该 cookie → `guarded === false` → 守卫直接放行，**不可能写成 /login → /login 的无限环**，也不需要读密码状态（省一次 DB）。
 
+**首请求即受保护**（这条专门验证过，因为它是这个方案的安全前提）：Next 16 会把 proxy 设置的 cookie 注入同一次请求的下游渲染作用域，所以全新浏览器第一次打开 `/settings`（客户端还没存过 cookie）时，守卫读到的 `guarded` 已是 `true`。曾据一次陈旧服务的观测误判「PPR 会剥掉这个 cookie」——若成立，首请求就会原样带数据渲染，是个真漏洞；插桩实测（打印 cookie 名列表）确认不成立。
+
 **实测记录**（真实服务 + 独立库，3003=设了密码 / 3004=未设密码）：
 
 | 场景 | 3003（设了密码） | 3004（未设密码） |
 |---|---|---|
 | 7 个页面入口（LAN） | 全部 meta refresh → /login，无数据泄露 | 全部 200 直通（零摩擦不回归） |
 | `/login` 自身 | 200 无跳转（无环） | 200 无跳转 |
+| 未匹配路由 `/nonexistent` | 404 + 跳 /login | 404 正常展示（UX 不回归） |
 | `/api/activity`（LAN） | 401 | 200 |
 | 远程（cf-ray）页面 | 307 → /login | 307 → /login（既有语义） |
 | 登录后访问页面 | refresh=0，完整渲染 | — |
