@@ -4,19 +4,35 @@
  * `MEDIA_TRACK_STORAGE_ADAPTER==="115"` switch: dispatch is now per-drive, so one
  * account can hold a 115 drive and a quark drive side by side (tree model).
  *
- * NOTE: `createExecutor` deliberately does NOT live here — building a protected
- * executor needs env (write-scope CIDs) + the apps/web protected wrapper, which
- * the pure workflow package must not import. apps/web owns the factory
- * (`createExecutorForBrand`); this registry holds only the pure, brand-identity
- * capabilities (uid parsing, auth-error classification, applicable resource kinds).
+ * The registry is SELF-CONTAINED: each brand carries its own `create`, so adding
+ * a drive is adding one entry. Before the merge, executor construction lived in
+ * a separate `storage-executor-factory.ts` as five `if` branches, and nothing at
+ * compile time forced the two to stay in sync — registering a brand and forgetting
+ * its factory branch only blew up at runtime. `create` is a required field, so
+ * that class of drift is now a compile error (see storage-registry.test.ts for
+ * the runtime guard that also covers callers who bypass the type).
  */
 import { parsePan115Uid } from "./account-credentials.js";
+import { withBrandPacing } from "./brand-pacing.js";
 import type { ResourceType } from "./domain.js";
+import { GuangYaClient } from "./guangya-client.js";
+import type { GuangYaClientOptions } from "./guangya-client.js";
+import { GuangYaStorageExecutor } from "./guangya-storage-executor.js";
 import { isGuangYaAuthError, parseGuangYaUid } from "./guangya-client.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
+import { createProtectedPan115CookieStorageExecutorFromEnv } from "./pan115-storage-factory.js";
 import { isPan123AuthError, parsePan123Uid } from "./pan123-client.js";
+import type { Pan123Credential } from "./pan123-client.js";
+import { Pan123Client } from "./pan123-client.js";
+import { Pan123StorageExecutor } from "./pan123-storage-executor.js";
 import { isQuarkAuthError, parseQuarkUid } from "./quark-cookie-client.js";
+import { QuarkCookieClient } from "./quark-cookie-client.js";
+import { QuarkStorageExecutor } from "./quark-storage-executor.js";
+import type { StorageExecutor } from "./ports.js";
 import { isTianyiAuthError, parseTianyiUid } from "./tianyi-client.js";
+import type { TianyiClientOptions, TianyiCredential } from "./tianyi-client.js";
+import { TianyiClient } from "./tianyi-client.js";
+import { TianyiStorageExecutor } from "./tianyi-storage-executor.js";
 
 export type StorageProvider = "pan115" | "quark" | "guangya" | "tianyi" | "pan123";
 export type ResourceProviderKind =
@@ -27,6 +43,25 @@ export type ResourceProviderKind =
   | "pansou-123"
   | "pansou-guangya"
   | "prowlarr";
+
+/** Input to a brand's `create`. Mirrors what the old factory took, so callers
+ *  (workflow-runtime's per-drive dispatch) are unchanged by the merge. */
+export interface StorageDriverCreateInput {
+  provider: string;
+  /** Cookie credential for cookie-auth brands (115/夸克). Optional now that 光鸭
+   *  authenticates with a token blob instead — pass `credential` for those. */
+  cookie?: string;
+  /** Opaque credential blob for token-auth brands (光鸭: {accessToken,refreshToken,deviceId};
+   *  天翼: {sessionKey,accessToken,refreshToken,familySessionKey?}; 123: {token}). */
+  credential?: unknown;
+  /** The drive's write-scope directory ids (rootCid + Movies/TV/Anime). */
+  scopeCids: string[];
+  /** Base env for the 115 executor (guard pacing etc); defaults to process.env. */
+  env?: Record<string, string | undefined>;
+  /** Persist hook for refreshed token-auth credentials (光鸭 refresh rotates tokens;
+   *  天翼 session 自愈轮换 sessionKey/accessToken). */
+  onCredentialRefresh?: (creds: unknown) => void | Promise<void>;
+}
 
 export interface StorageBrand {
   provider: StorageProvider;
@@ -73,6 +108,12 @@ export interface StorageBrand {
    *  a dir it listed under an in-scope parent in this run (光鸭 / 天翼 / 123) — a dir id
    *  handed over from another run must be reached again from a scope root first. */
   writeScope: "parents" | "listed";
+  /** Build this brand's executor. REQUIRED — this is what makes the registry
+   *  self-contained: a brand registered without its executor wired is a compile
+   *  error, not a runtime surprise discovered the first time that drive tries
+   *  to transfer. `buildExecutorForBrand` still throws at runtime for callers
+   *  that bypass the type (JS callers, `as` casts). */
+  create: (input: StorageDriverCreateInput) => StorageExecutor;
 }
 
 export const STORAGE_BRANDS: StorageBrand[] = [
@@ -86,6 +127,15 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     authKind: "cookie",
     provisionRootId: "0", // 115 account root
     writeScope: "parents",
+    create: (input) => {
+      const cookie = input.cookie ?? "";
+      const env = {
+        ...(input.env ?? process.env),
+        PAN115_COOKIE: cookie,
+        ...(input.scopeCids.length > 0 ? { MEDIA_TRACK_115_WRITE_SCOPE_CIDS: input.scopeCids.join(",") } : {}),
+      };
+      return createProtectedPan115CookieStorageExecutorFromEnv({ env });
+    },
   },
   {
     provider: "quark",
@@ -97,6 +147,17 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     authKind: "cookie",
     provisionRootId: "0", // 夸克 account root
     writeScope: "parents",
+    create: (input) => {
+      return new QuarkStorageExecutor({
+        // P13：夸克 client 过令牌桶限速（3/s burst 5，治理文档参数）——此前完全
+        // 无 pacing，是封号风险的真实缺口（115 早有 1.2s 漏桶）。
+        client: withBrandPacing(new QuarkCookieClient({ cookie: input.cookie ?? "" }), "quark", {
+          clock: () => Date.now(),
+          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        }),
+        writeScopeDirectoryIds: input.scopeCids,
+      });
+    },
   },
   {
     provider: "guangya",
@@ -110,6 +171,30 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "", // 光鸭 account root
     requiredCredentialKeys: ["accessToken", "refreshToken"],
     writeScope: "listed",
+    create: (input) => {
+      const c = (input.credential ?? {}) as {
+        accessToken?: string;
+        refreshToken?: string;
+        deviceId?: string;
+      };
+      // Build options without ever setting optional keys to `undefined`
+      // (exactOptionalPropertyTypes forbids it).
+      const clientOptions: GuangYaClientOptions = {
+        accessToken: c.accessToken ?? "",
+        refreshToken: c.refreshToken ?? "",
+      };
+      if (c.deviceId !== undefined) {
+        clientOptions.deviceId = c.deviceId;
+      }
+      const onRefresh = input.onCredentialRefresh;
+      if (onRefresh) {
+        clientOptions.onTokensRefreshed = (t) => onRefresh(t);
+      }
+      return new GuangYaStorageExecutor({
+        client: new GuangYaClient(clientOptions),
+        writeScopeDirectoryIds: input.scopeCids,
+      });
+    },
   },
   {
     provider: "tianyi",
@@ -122,6 +207,27 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "-11", // 天翼个人云 root folder id
     requiredCredentialKeys: ["sessionKey", "accessToken", "refreshToken"],
     writeScope: "listed",
+    create: (input) => {
+      const c = (input.credential ?? {}) as Partial<TianyiCredential>;
+      // Same exactOptionalPropertyTypes discipline as guangya: never set optional
+      // keys to `undefined`.
+      const clientOptions: TianyiClientOptions = {
+        sessionKey: c.sessionKey ?? "",
+        accessToken: c.accessToken ?? "",
+        refreshToken: c.refreshToken ?? "",
+      };
+      if (c.familySessionKey !== undefined) {
+        clientOptions.familySessionKey = c.familySessionKey;
+      }
+      const onRefresh = input.onCredentialRefresh;
+      if (onRefresh) {
+        clientOptions.onCredentialRefresh = (creds) => onRefresh(creds);
+      }
+      return new TianyiStorageExecutor({
+        client: new TianyiClient(clientOptions),
+        writeScopeDirectoryIds: input.scopeCids,
+      });
+    },
   },
   {
     provider: "pan123",
@@ -135,6 +241,15 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     provisionRootId: "0", // 123 个人云根
     requiredCredentialKeys: ["token"],
     writeScope: "listed",
+    create: (input) => {
+      const c = (input.credential ?? {}) as Partial<Pan123Credential>;
+      // 纯 token 模型:v1 无凭证刷新(web 面无 refresh 端点,401 → Pan123AuthError
+      // → registry isAuthError 冻结重扫),故不接 onCredentialRefresh。
+      return new Pan123StorageExecutor({
+        client: new Pan123Client({ token: c.token ?? "" }),
+        writeScopeDirectoryIds: input.scopeCids,
+      });
+    },
   },
 ];
 
@@ -175,6 +290,31 @@ export function getStorageBrand(provider: string): StorageBrand {
     throw new Error(`unknown storage brand: ${provider}`);
   }
   return brand;
+}
+
+/**
+ * Runtime guard for the registry's own invariant: a brand whose `create` is
+ * somehow absent must fail loudly. `StorageBrand.create` is a required field, so
+ * a typed caller cannot get here — this covers JS callers and `as` casts that
+ * strip it. Throwing beats the old silent-failure class (G1), where an unwired
+ * brand looked like "nothing happened".
+ */
+export function buildExecutorForBrand(brand: StorageBrand, input: StorageDriverCreateInput): StorageExecutor {
+  if (typeof brand.create !== "function") {
+    throw new Error(`storage brand registered without an executor: ${brand.provider}`);
+  }
+  return brand.create(input);
+}
+
+/** Build the protected executor for a drive's brand. Dispatch is by
+ *  `connected_storages.provider`, so one account can hold a 115 drive and a quark
+ *  drive side by side, each with its own write scope (the drive's category CIDs). */
+export function createExecutorForBrand(input: StorageDriverCreateInput): StorageExecutor {
+  const brand = STORAGE_BRANDS.find((b) => b.provider === input.provider);
+  if (!brand) {
+    throw new Error(`unknown storage brand: ${input.provider}`);
+  }
+  return buildExecutorForBrand(brand, input);
 }
 
 /** Whether a provider string names a registered brand (used to widen the old

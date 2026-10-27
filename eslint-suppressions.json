@@ -322,11 +322,6 @@
       "count": 1
     }
   },
-  "packages/workflow/src/storage-executor-factory.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "packages/workflow/src/subtitle-provider.ts": {
     "complexity": {
       "count": 1
