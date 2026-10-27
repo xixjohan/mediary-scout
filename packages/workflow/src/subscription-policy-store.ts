@@ -38,6 +38,15 @@ export interface StoredSubscriptionPolicy extends SubscriptionPolicy {
   titleKey: string;
   createdAt: string;
   updatedAt: string;
+  /**
+   * When a resource was last accepted under this policy — the `cooldownDays` source
+   * (qBittorrent's "Ignore subsequent matches for"). null = never took anything.
+   *
+   * Deliberately NOT `updatedAt`: that is when the user last edited the rule, which has
+   * nothing to do with when it last matched. Using it would make every rule edit look
+   * like a fresh match and reset the cooldown the user just set.
+   */
+  lastTakenAt: string | null;
 }
 
 /** The DB row, as SQLite returns it. Term lists are JSON; booleans are 0/1. */
@@ -51,6 +60,7 @@ export interface SubscriptionPolicyRow {
   cooldown_days: number;
   created_at: string;
   updated_at: string;
+  last_taken_at: string | null;
 }
 
 /**
@@ -98,6 +108,7 @@ export function subscriptionPolicyFromRow(row: SubscriptionPolicyRow): StoredSub
     cooldownDays: row.cooldown_days,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    lastTakenAt: row.last_taken_at,
   };
 }
 
@@ -135,6 +146,7 @@ export function emptyStoredPolicy(input: { accountId: string; titleKey: string; 
     titleKey: input.titleKey,
     createdAt: input.now,
     updatedAt: input.now,
+    lastTakenAt: null,
   };
 }
 

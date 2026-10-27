@@ -23,6 +23,7 @@ import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js
 import type { JevJudge } from "./jev-judge.js";
 import { stagingFailureAuditEvents } from "./acquisition-v2/directory-lifecycle.js";
 import { hasTransferAttemptedOnThrow } from "./acquisition-v2/orchestrator.js";
+import { cooldownLogLine, overBudgetLogLine, planPatrolScope } from "./patrol-scope.js";
 import {
   describeAgentRunError,
   isLlmAuthError,
@@ -622,6 +623,10 @@ export async function runScheduledType3Monitoring(input: {
   /** Checked before each show's run is reserved; a false stops the rest of the sweep
    *  from starting (those shows are reported skipped_active). */
   mayStartRun?: MayStartRun;
+  /** 批次 5：监控季数上限（plan §4.1 成本模型）。未配/非法值回落到保守默认。 */
+  configuredMaxMonitoredSeasons?: number | string | null;
+  /** 批次 5：每日巡检次数，用于超限提示里的成本估算。不给就不编估算。 */
+  patrolsPerDay?: number;
 }): Promise<ScheduledType3Outcome[]> {
   const now = input.now ?? (() => new Date().toISOString());
   // Cross-account: patrol EVERY user's tracked shows, each under its owner's creds.
@@ -689,7 +694,8 @@ export async function runScheduledType3Monitoring(input: {
       busyKeys.add(workKey({ accountId, drive: userMessageDrive(run.connectedStorageId), titleKey: run.title.id }));
     }
   }
-  const patrolStates: typeof trackedStates = [];
+  // 成本门会按冷却期筛掉一部分，所以是 let 而非 const。
+  let patrolStates: typeof trackedStates = [];
   for (const s of trackedStates) {
     const key = workKey({ accountId: s.accountId, drive: userMessageDrive(s.connectedStorageId), titleKey: s.title.id });
     if (requestKeys.has(key) || busyKeys.has(key)) continue;
@@ -699,6 +705,35 @@ export async function runScheduledType3Monitoring(input: {
   for (const [drive, count] of skippedOnFrozen) {
     console.log(`[patrol] drive ${drive} is frozen (login expired): skipped ${count} item(s) until it is re-bound`);
   }
+
+  // 批次 5 成本门（plan §4.1）：监控季数上限 + 每部作品的冷却期。此前两个护栏都是
+  // 只有测试没有调用方的纯函数——写好了没人接等于没有。这里接上，并保持三条性质：
+  //   ① 没配策略的作品照常巡检（策略层是 opt-in 过滤器，不是闸门）；
+  //   ② 超限仍巡检上限内的部分，只是明确告知（全部跳过会让每个人的订阅一起停）；
+  //   ③ 跳过必留日志——默默跳过等于订阅凭空停摆。
+  const scopeDecision = await planPatrolScope({
+    candidates: patrolStates.map((state) => ({
+      accountId: state.accountId,
+      titleKey: state.title.id,
+      titleName: state.title.title,
+    })),
+    lookupPolicy: async (candidate) =>
+      input.repository.getSubscriptionPolicy({
+        accountId: candidate.accountId,
+        titleKey: candidate.titleKey,
+      }),
+    ...(input.configuredMaxMonitoredSeasons === undefined
+      ? {}
+      : { configuredMaxSeasons: input.configuredMaxMonitoredSeasons }),
+    ...(input.patrolsPerDay === undefined ? {} : { searchesPerDay: input.patrolsPerDay }),
+    now: now(),
+  });
+  const budgetLine = overBudgetLogLine(scopeDecision);
+  if (budgetLine !== null) console.log(budgetLine);
+  const coolingLine = cooldownLogLine(scopeDecision.skipped);
+  if (coolingLine !== null) console.log(coolingLine);
+  const cooledOff = new Set(scopeDecision.skipped.map((entry) => entry.titleKey));
+  patrolStates = patrolStates.filter((state) => !cooledOff.has(state.title.id));
 
   // One drive at a time, several drives side by side (see runKeyedPool). The key
   // is the drive the run will actually land on: a state with no bound drive runs

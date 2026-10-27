@@ -273,6 +273,9 @@ export const SQLITE_SCHEMA = `
     cooldown_days integer NOT NULL DEFAULT 0,
     created_at text NOT NULL,
     updated_at text NOT NULL,
+    -- cooldownDays 的水位线：这条策略最后一次被采纳的时间。刻意与 updated_at 分开——
+    -- 后者是用户改规则的时间，拿它当水位线会让每次编辑都看起来像刚匹配过。
+    last_taken_at text,
     PRIMARY KEY (account_id, title_key)
   );
   CREATE TABLE IF NOT EXISTS episode_sources (
@@ -2111,6 +2114,25 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // 写完读不回来是仓库的 bug，不是「策略没了」——宁可炸也别返回一个假策略。
     if (stored === null) throw new Error(`subscription_policies: write of ${input.titleKey} did not persist`);
     return stored;
+  }
+
+  /**
+   * Record that a resource was accepted under this policy — the `cooldownDays` watermark.
+   *
+   * Only moves the watermark FORWARD: a late-finishing run must not drag a title's
+   * cooldown back to a moment that has already passed. Returns the new watermark, or
+   * null when there is no policy row for this work (nothing to cool down).
+   */
+  async recordPolicyMatch(input: { accountId: string; titleKey: string; now: string }): Promise<string | null> {
+    const existing = await this.getSubscriptionPolicy({ accountId: input.accountId, titleKey: input.titleKey });
+    if (existing === null) return null;
+    if (existing.lastTakenAt !== null && Date.parse(existing.lastTakenAt) >= Date.parse(input.now)) {
+      return existing.lastTakenAt;
+    }
+    this.db
+      .prepare("UPDATE subscription_policies SET last_taken_at = ? WHERE account_id = ? AND title_key = ?")
+      .run(input.now, input.accountId, input.titleKey);
+    return input.now;
   }
 
   async upsertEpisodeSource(input: EpisodeSource): Promise<void> {

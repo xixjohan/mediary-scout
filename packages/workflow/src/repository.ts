@@ -1052,9 +1052,26 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       // created_at 只在首次写入时定；之后的保存只动 updated_at。
       createdAt: existing?.createdAt ?? input.now,
       updatedAt: input.now,
+      // 水位线不随保存动：改规则不等于匹配过（否则每次编辑都重置用户刚设的冷却）。
+      lastTakenAt: existing?.lastTakenAt ?? null,
     };
     this.subscriptionPolicies.set(key, stored);
     return { ...stored };
+  }
+
+  async recordPolicyMatch(input: {
+    accountId: string;
+    titleKey: string;
+    now: string;
+  }): Promise<string | null> {
+    const key = subscriptionPolicyRowKey(input.accountId, input.titleKey);
+    const existing = this.subscriptionPolicies.get(key);
+    if (existing === undefined) return null;
+    if (existing.lastTakenAt !== null && Date.parse(existing.lastTakenAt) >= Date.parse(input.now)) {
+      return existing.lastTakenAt;
+    }
+    this.subscriptionPolicies.set(key, { ...existing, lastTakenAt: input.now });
+    return input.now;
   }
 
   async upsertEpisodeSource(input: EpisodeSource): Promise<void> {
