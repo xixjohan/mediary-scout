@@ -59,6 +59,10 @@ export * from "./organize-executor.js";
 // 批次 4：organize 的 run 形态。它是用户可见的——最有趣的结果是 manual_review，
 // 而用户看不见的复核等于没有复核。
 export * from "./organize-run.js";
+// 批次 5：订阅策略层。字段集抄 qBittorrent（用户不必重新学词汇），且刻意不建
+// subscription.status 状态机——plan §4.1 对此有明确警告。规则预览与巡检共用同一个
+// matchPolicy，所以预览是承诺而非估算。
+export * from "./subscription-policy.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
