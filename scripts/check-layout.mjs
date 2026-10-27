@@ -30,6 +30,7 @@ const ROOT_DIR_ALLOWLIST = new Set([
   "e2e", // Playwright E2E（S4.3）
   "e2e-run", "test-results", "playwright-report", // E2E 运行时产物（gitignored）
   "tools", // 构建/门禁工具脚本（S5.4 的 eslint 本地规则与其单测）
+  "run", // scripts/run-local-real.sh 的本地真实实例运行时产物（DB/日志/pid，gitignored）
 ]);
 
 const problems = [];
