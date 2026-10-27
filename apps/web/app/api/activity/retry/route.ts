@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentAccountId, getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import { isQueueClaimableKind } from "@media-track/workflow";
 import type { RetryRefusalReason } from "../../../../lib/activity-view";
+import { requireApiAccount } from "../../../../lib/auth-chain";
 
 /**
  * Manually retry a terminally FAILED acquisition (user action from the activity
@@ -15,6 +16,8 @@ import type { RetryRefusalReason } from "../../../../lib/activity-view";
  *  - "not_failed": the run isn't in a failed state (already queued/running/done).
  */
 export async function POST(request: NextRequest) {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
   if (isDemoMode()) return Response.json({ error: "演示站只读" }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as { runId?: unknown };
   const runId = typeof body.runId === "string" ? body.runId : null;

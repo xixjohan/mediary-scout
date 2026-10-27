@@ -10,9 +10,9 @@
  */
 export interface IApiKeyStore {
   /** 读当前存储的值；未设置返回 null */
-  get(): string | null;
+  get(): Promise<string | null>;
   /** 写入（覆盖）；空串视为清除，由实现方决定归一化 */
-  set(value: string): void;
+  set(value: string): Promise<void>;
   /** 清除存储的值 */
-  clear(): void;
+  clear(): Promise<void>;
 }

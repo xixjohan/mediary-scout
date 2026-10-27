@@ -313,6 +313,8 @@ const requireNative = createRequire(import.meta.url);
  * `push_*` 整族都是推送通道凭据（Server酱 sendkey / Bark / Webhook …）。
  */
 const SECRET_SETTING_KEYS = new Set([
+  "api_key", // S5.2：API Key（换 JWT 的长期凭据）
+  "jwt_secret", // S5.3：JWT 签名 secret
   "pan115.cookie",
   "session_secret",
   "agent_api_token",

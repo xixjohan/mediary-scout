@@ -23,7 +23,10 @@ export default defineConfig({
     screenshot: "off",
   },
   webServer: {
-    command: "npm run e2e:server",
+    // 先清上一轮的 SQLite 再起服务：globalSetup 跑得太晚（在 webServer 之后），
+    // 见 e2e/reset-db.mjs 注释里的实测记录。注意 webServer 命令的 cwd 是配置
+    // 所在目录（e2e/），所以用 ./ 而不是仓库相对路径。
+    command: "node ./reset-db.mjs && npm run e2e:server",
     url: process.env.E2E_BASE_URL ?? "http://127.0.0.1:3100",
     reuseExistingServer: !process.env.CI,
     timeout: 180_000,

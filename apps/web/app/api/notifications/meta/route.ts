@@ -5,6 +5,7 @@ import {
   notificationWindowSince,
   resolveGlobalWorkspace,
 } from "../../../../lib/workflow-runtime";
+import { requireApiAccount } from "../../../../lib/auth-chain";
 
 /**
  * Lightweight feed metadata for the 通知 nav unread badge: the recent notification
@@ -13,6 +14,8 @@ import {
  * read state (the "按浏览器消费" model). Scoped to the active drive via `?w`.
  */
 export async function GET(request: NextRequest) {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
   // Request-time only: keep this out of build-time prerender (it reads the DB).
   await connection();
   const repository = getWorkflowRepository();

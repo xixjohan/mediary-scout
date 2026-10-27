@@ -28,8 +28,6 @@ process.env.MEDIA_TRACK_API_KEY = "sk-test-key-abcdef-1234";
 process.env.MEDIA_TRACK_JWT_SECRET = "jwt-test-secret-32-bytes-xxxxxxxxx";
 
 const { POST } = await import("./route.js");
-const { invalidateReleaseFeedCache: _noop } = await import("../../../lib/release-feed-server.js");
-void _noop;
 
 function post(body: unknown, headers: Record<string, string> = {}) {
   const request = new Request("http://localhost/api/auth/token", {

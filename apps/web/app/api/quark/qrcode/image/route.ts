@@ -1,9 +1,12 @@
 import { type NextRequest } from "next/server";
 import QRCode from "qrcode";
+import { requireApiAccount } from "../../../../../lib/auth-chain";
 
 // Render the su.quark.cn login URL to a PNG server-side (no third-party; the
 // ephemeral login token never leaves this host).
 export async function GET(request: NextRequest): Promise<Response> {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
   const content = request.nextUrl.searchParams.get("content") ?? "";
   if (!content || !content.startsWith("https://su.quark.cn/")) {
     return new Response("missing/invalid content", { status: 400 });

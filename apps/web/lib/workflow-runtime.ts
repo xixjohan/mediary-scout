@@ -1346,6 +1346,12 @@ export const PANSOU_HEALTH_SETTING_KEY = "pansou_last_probe";
  *  两份字面量一旦漂移,fallback 就会把官方源包成自己的备源、每次失败白跑两遍。 */
 export { DEFAULT_PANSOU_BASE_URL } from "./pansou-chain";
 
+/** S5.4 登录链（lib/auth-chain.ts）要从本模块取默认账号 id——本文件上方只是
+ *  `import` 了它而没有 re-export，直接 `import { DEFAULT_ACCOUNT_ID } from
+ *  "./workflow-runtime"` 在真实构建下会炸（被 mock 的测试看不见）。在此补一个
+ *  与 DEFAULT_PANSOU_BASE_URL 同款的再导出，保持 auth 面 import 面稳定。 */
+export { DEFAULT_ACCOUNT_ID } from "@media-track/workflow";
+
 /** The PanSou search aggregator base URL: DB setting > env PANSOU_BASE_URL >
  *  public default. No runtime container auto-detection — compose wires the
  *  service name and this lets a self-hoster override it by hand.
