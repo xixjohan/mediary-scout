@@ -34,6 +34,10 @@ export * from "./cooldown-limiter.js";
 export * from "./title-resource-resolver.js";
 // 用户态资源搜索的服务端关键词阶梯（不让用户手打关键词）。
 export * from "./title-search-keywords.js";
+// 手动入库：从已落库快照按 candidateId 取回 payload（不用进程内 CandidateRegistry）。
+export * from "./manual-import-resolver.js";
+// 手动入库任务载体（进 sys_queue_jobs.payload_json，worker 读回时校验）。
+export * from "./manual-import-job.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
