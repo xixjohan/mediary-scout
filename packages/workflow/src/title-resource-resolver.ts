@@ -2,6 +2,7 @@ import { CooldownLimiter } from "./cooldown-limiter.js";
 import type { ResourceCandidate, ResourceSnapshot } from "./domain.js";
 import { toCandidateViews, type ResourceCandidateView } from "./resource-candidate-view.js";
 import { TitleResourceCache } from "./title-resource-cache.js";
+import { buildMergedSearchSnapshot } from "./merged-search-snapshot.js";
 
 /**
  * Decision core for `POST /api/titles/resources` (W2).
@@ -42,7 +43,7 @@ export type TitleResourceResult =
   | { kind: "unauthorized" }
   | { kind: "throttled"; retryAfterMs: number }
   | { kind: "error"; message: string }
-  | { kind: "ok"; candidates: ResourceCandidateView[]; cached: boolean };
+  | { kind: "ok"; candidates: ResourceCandidateView[]; cached: boolean; snapshot: ResourceSnapshot | null };
 
 export async function resolveTitleResources(deps: TitleResourceDeps): Promise<TitleResourceResult> {
   // 1) Scope. Null/empty account ⇒ fail closed, before any budget is spent.
@@ -61,7 +62,10 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
   // 3) Cache.
   const cached = deps.cache.get(scopeKey);
   if (cached !== null) {
-    return { kind: "ok", candidates: [...cached], cached: true };
+    // No snapshot on a cache hit: the merged snapshot was persisted on the miss that
+    // filled this cache, and the DB copy is the one import reads. Re-deriving one here
+    // would need the per-keyword snapshots, which this process no longer holds.
+    return { kind: "ok", candidates: [...cached], cached: true, snapshot: null };
   }
 
   try {
@@ -70,15 +74,27 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
     // title and the original title would otherwise appear twice — the panel would
     // show the user the same link three times, which reads as three distinct options.
     const byId = new Map<string, ResourceCandidateView>();
+    const perKeyword: ResourceSnapshot[] = [];
     for (const keyword of deps.keywords) {
       const snapshot = await deps.search({ keyword });
+      perKeyword.push(snapshot);
       for (const view of toCandidateViews(snapshot.candidates)) {
         if (!byId.has(view.candidateId)) byId.set(view.candidateId, view);
       }
     }
     const views = [...byId.values()];
     deps.cache.put(scopeKey, views);
-    return { kind: "ok", candidates: views, cached: false };
+    // The ONE snapshot the user actually saw: the ladder produced several, but the
+    // panel shows the deduped list, and the import path's "does this candidate belong
+    // to this snapshot?" check needs exactly one snapshot to answer against.
+    const snapshot = buildMergedSearchSnapshot({
+      id: `search_${deps.accountId}_${deps.titleId}_${Date.now()}`,
+      provider: "merged",
+      keywords: deps.keywords,
+      snapshots: perKeyword,
+      createdAt: new Date().toISOString(),
+    });
+    return { kind: "ok", candidates: views, cached: false, snapshot };
   } catch (error) {
     // A failed search must not leave the user throttled for the next 60s — they did
     // not get a result, so charging them the cooldown would punish them for our error.

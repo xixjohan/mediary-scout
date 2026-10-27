@@ -209,3 +209,80 @@ describe("resolveTitleResources — 跨关键词去重", () => {
     expect(result.candidates.map((c) => c.candidateId).sort()).toEqual(["onlyA", "onlyB", "shared"]);
   });
 });
+
+describe("resolveTitleResources — 合并快照（批次 3：import 的取回来源）", () => {
+  function deps(overrides: Partial<TitleResourceDeps> = {}): TitleResourceDeps {
+    return {
+      accountId: "acct_default",
+      titleId: "283428",
+      keywords: ["孤独摇滚", "Bocchi the Rock!"],
+      search: async () => snapshotOf(["c1"]),
+      cache: new TitleResourceCache<ResourceCandidateView>({ now: () => 0, ttlMs: 1000, idOf: (v) => v.candidateId }),
+      limiter: new CooldownLimiter({ now: () => 0, cooldownMs: 1000 }),
+      loadCachedCandidates: async () => [],
+      ...overrides,
+    };
+  }
+
+  it("缓存未命中时返回合并快照（import 靠它取回 payload）", async () => {
+    const result = await resolveTitleResources(deps());
+    if (result.kind !== "ok") throw new Error("unexpected");
+    expect(result.snapshot).not.toBeNull();
+    expect(result.snapshot!.candidates.map((c) => c.id)).toEqual(["c1"]);
+    expect(result.snapshot!.provider).toBe("merged");
+    expect(result.snapshot!.keyword).toBe("孤独摇滚 | Bocchi the Rock!");
+  });
+
+  it("合并快照的候选 snapshotId 指向它自己（否则 import 归属校验全拒）", async () => {
+    const result = await resolveTitleResources(
+      deps({
+        search: async ({ keyword }) => snapshotOf(keyword === "孤独摇滚" ? ["a", "b"] : ["c"]),
+      }),
+    );
+    if (result.kind !== "ok") throw new Error("unexpected");
+    for (const candidate of result.snapshot!.candidates) {
+      expect(candidate.snapshotId).toBe(result.snapshot!.id);
+    }
+  });
+
+  it("跨关键词去重后的候选数与视图数一致（用户看到几條，快照就存几条）", async () => {
+    const result = await resolveTitleResources(
+      deps({ search: async ({ keyword }) => snapshotOf(keyword === "孤独摇滚" ? ["shared", "onlyA"] : ["shared", "onlyB"]) }),
+    );
+    if (result.kind !== "ok") throw new Error("unexpected");
+    expect(result.candidates).toHaveLength(3);
+    expect(result.snapshot!.candidates).toHaveLength(3);
+    expect(result.snapshot!.candidates.map((c) => c.id).sort()).toEqual(["onlyA", "onlyB", "shared"]);
+  });
+
+  it("**缓存命中时 snapshot 为 null**（DB 才是权威，不重推导）", async () => {
+    // 同一个 cache 与 limiter 实例跨两次调用，否则第二次也是 miss，这条用例什么也没测。
+    // 时钟推进到越过 1000ms 冷却、但仍短于 TTL：这条用例只测缓存这道门，
+    // cooldown 由别的用例负责。（CooldownLimiter 不接受 0 冷却，所以必须推进时钟。）
+    let t = 0;
+    const shared = deps({
+      cache: new TitleResourceCache<ResourceCandidateView>({ now: () => t, ttlMs: 100_000, idOf: (v) => v.candidateId }),
+      limiter: new CooldownLimiter({ now: () => t, cooldownMs: 1000 }),
+    });
+    const first = await resolveTitleResources(shared);
+    if (first.kind !== "ok") throw new Error("unexpected");
+    expect(first.cached).toBe(false);
+    expect(first.snapshot).not.toBeNull();
+
+    t = 2000; // 越过 cooldown(1000)，仍在 TTL(100000) 内
+    const second = await resolveTitleResources(shared);
+    if (second.kind !== "ok") throw new Error("unexpected");
+    expect(second.cached).toBe(true);
+    // 命中时若也回一份快照，调用方会把它再落一次库，而它可能与 DB 里那份不一致。
+    expect(second.snapshot).toBeNull();
+  });
+
+  it("providerPayload 在合并快照里（import 要取回的正是它）", async () => {
+    const result = await resolveTitleResources(deps());
+    if (result.kind !== "ok") throw new Error("unexpected");
+    expect(result.snapshot!.candidates[0]!.providerPayload).toEqual({
+      url: "https://115.com/s/leak",
+      password: "abcd",
+    });
+  });
+});
