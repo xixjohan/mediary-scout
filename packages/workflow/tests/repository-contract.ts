@@ -381,6 +381,63 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         });
       });
 
+      describe("cooldown watermark (lastTakenAt)", () => {
+        const t0 = "2026-01-01T00:00:00.000Z";
+        const t1 = "2026-01-02T00:00:00.000Z";
+        const policy = {
+          mustContain: ["2160p"],
+          mustNotContain: [],
+          episodeFilter: "",
+          useRegex: false,
+          cooldownDays: 7,
+        };
+
+        it("**没匹配过 => lastTakenAt 为 null**", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" }))?.lastTakenAt).toBeNull();
+        });
+
+        it("**recordPolicyMatch 记下时间并读得回**", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          expect(await repo.recordPolicyMatch({ accountId: "acct_a", titleKey: "tmdb_tv_42", now: t1 })).toBe(t1);
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" }))?.lastTakenAt).toBe(t1);
+        });
+
+        it("**保存策略不动水位线**（改规则不等于匹配过）", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          await repo.recordPolicyMatch({ accountId: "acct_a", titleKey: "tmdb_tv_42", now: t1 });
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy: { ...policy, cooldownDays: 30 }, now: "2026-01-05T00:00:00.000Z" });
+          const stored = await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" });
+          expect(stored?.lastTakenAt).toBe(t1);
+          expect(stored?.cooldownDays).toBe(30);
+        });
+
+        it("**水位线只前进不后退**（迟到的 run 不能把冷却拖回过去）", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          await repo.recordPolicyMatch({ accountId: "acct_a", titleKey: "tmdb_tv_42", now: t1 });
+          expect(await repo.recordPolicyMatch({ accountId: "acct_a", titleKey: "tmdb_tv_42", now: t0 })).toBe(t1);
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" }))?.lastTakenAt).toBe(t1);
+        });
+
+        it("**没配过策略 => null**（没什么可冷却的）", async () => {
+          const repo = await fresh();
+          expect(await repo.recordPolicyMatch({ accountId: "acct_a", titleKey: "nope", now: t1 })).toBeNull();
+        });
+
+        it("**按 (account, work) 作用域**", async () => {
+          const repo = await fresh();
+          await repo.upsertSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42", policy, now: t0 });
+          expect(await repo.recordPolicyMatch({ accountId: "acct_a", titleKey: "tmdb_tv_42", now: t1 })).toBe(t1);
+          // 别的 account 的同名作品没被碰到
+          expect(await repo.recordPolicyMatch({ accountId: "acct_b", titleKey: "tmdb_tv_42", now: t1 })).toBeNull();
+          expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "tmdb_tv_42" }))?.lastTakenAt).toBe(t1);
+        });
+      });
+
       it("rejected resources round-trip null link/size and sizes beyond 32 bits", async () => {
         const repo = await fresh();
         const big = 60 * 1024 ** 3;

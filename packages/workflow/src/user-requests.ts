@@ -203,6 +203,9 @@ export interface UserRequestStore {
     policy: SubscriptionPolicyWrite;
     now: string;
   }): Promise<StoredSubscriptionPolicy>;
+  /** 冷却期水位线：这条策略最后一次被采纳的时间。只前进不后退（迟到的 run 不能把
+   *  冷却拖回已经过去的时刻）。没配过策略的 work 返回 null——没什么可冷却的。 */
+  recordPolicyMatch(input: { accountId: string; titleKey: string; now: string }): Promise<string | null>;
 
   upsertEpisodeSource(input: EpisodeSource): Promise<void>;
   listEpisodeSources(scope: UserMessageScope): Promise<EpisodeSource[]>;

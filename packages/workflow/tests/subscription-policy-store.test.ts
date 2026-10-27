@@ -31,6 +31,7 @@ function row(overrides: Partial<SubscriptionPolicyRow> = {}): SubscriptionPolicy
     cooldown_days: 7,
     created_at: "2026-01-01T00:00:00.000Z",
     updated_at: "2026-01-02T00:00:00.000Z",
+    last_taken_at: null,
     ...overrides,
   };
 }
@@ -168,6 +169,9 @@ describe("emptyStoredPolicy", () => {
       cooldownDays: 0,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
+      // 冷却期水位线：一个从没匹配过的策略是 null，不是空串（空串 Date.parse 成 NaN，
+      // 而 withinCooldown 对读不出的时间戳 fail-open —— 那会把冷却悄悄关掉）。
+      lastTakenAt: null,
     });
   });
 
