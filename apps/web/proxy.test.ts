@@ -180,6 +180,17 @@ describe("proxy gate — Bearer JWT（S5.4 自审）", () => {
     }
   });
 
+  // L4：粗筛与路由层（/^bearer (.+)$/i）的空白容忍度必须一致——tab 或多个
+  // 空格 proxy 放行、路由也认；反过来 proxy 收紧一个字符就会把外网 JWT 拦死。
+  it.each([
+    ["单个空格", "Bearer "],
+    ["tab", "Bearer\t"],
+    ["多个空格", "Bearer   "],
+    ["大小写混写", "BeArEr "],
+  ])("Bearer 头形态「%s」proxy 与路由层判定一致（放行）", (_label, prefix) => {
+    expect(redirectsToLogin(makeRequest({ cf: true, path: "/api/activity", authorization: `${prefix}eyJhbGciOiJIUzI1NiJ9.sig` }))).toBe(false);
+  });
+
   it("页面路径（非 /api/）+ Bearer JWT → 仍重定向（浏览器导航不该被凭据头放行）", () => {
     expect(
       redirectsToLogin(makeRequest({ cf: true, path: "/settings", authorization: JWT })),

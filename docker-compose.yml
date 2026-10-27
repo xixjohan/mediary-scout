@@ -72,7 +72,12 @@ services:
       # "real" is not a valid value — it fails the policy and the worker can never drain the
       # queue (获取 stuck "排队", category dirs never provisioned). Must be vercel-ai.
       MEDIA_TRACK_AGENT_ADAPTER: vercel-ai
-      # S5.6：留空则用镜像构建时烘焙的更新源（Release Docker 写入的 github.repository）。
+      # S5.6：宿主的 .env 可覆盖；留空 = 交给镜像构建时烘焙的更新源（Release
+      # Docker 写入的 github.repository）。**注意**：compose 的 map 形式没有
+      # 「未设就不注入」的写法，所以这里恒设（可能为空串）——空串在应用侧被
+      # 视作未设并回落，见 apps/web/lib/release-feed-server.ts 的
+      # DEFAULT_UPDATE_REPO。真正想保留烘焙值的部署方，改直接用镜像默认 env、
+      # 或在 .env 里显式写同一个值。
       MEDIA_TRACK_UPDATE_REPO: ${MEDIA_TRACK_UPDATE_REPO:-}
       MEDIA_TRACK_DEMO_SEED: "0"
       # 隧道 token 也给 web:设置页「远程访问」用它作实例身份，向 Mediary Connect
@@ -145,6 +150,11 @@ services:
       - updater-state:/state
     environment:
       UPDATER_WEB_BASE: http://web:3000
+      # 与 web 同一个更新源：不透传的话，设了 MEDIA_TRACK_UPDATE_REPO 的 fork
+      # 只有网页 feed 改指向，一键更新仍拉旧镜像（H1 复核的 high 就是这么来的）。
+      # updater 容器里没有镜像 env，故由宿主的 .env 显式提供；空串时 run-update.sh
+      # 用自己的默认值（与 DEFAULT_UPDATE_REPO 同源）。
+      MEDIA_TRACK_UPDATE_REPO: ${MEDIA_TRACK_UPDATE_REPO:-}
       # Only git (the release download) uses these; calls to the web stay direct. The web
       # reads HTTP(S)_PROXY on its own, but the updater is a separate container that does not.
       UPDATER_HTTPS_PROXY: ${HTTPS_PROXY:-}

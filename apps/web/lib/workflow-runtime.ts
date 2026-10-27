@@ -811,12 +811,13 @@ export async function getCurrentAccountId(): Promise<string> {
         return UNAUTHENTICATED_ACCOUNT_ID;
       }
     }
-    if (sessionAccountId === null) {
-      // Bearer JWT（S5.3 签发的 API token）：单用户模式只认 acct_default 自己
-      // 的 token——与 resolveSingleUserAccount 拒绝别账号 session 同一 invariants。
-      const bearerAccountId = await resolveBearerAccountId(hdrs);
-      if (bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
-    }
+    // Bearer JWT（S5.3 签发的 API token）：单用户模式只认 acct_default 自己的
+    // token——与 resolveSingleUserAccount 拒绝别账号 session 同一 invariants。
+    // 必须**无条件**判定，不能包在 `sessionAccountId === null` 里：一枚能解析出
+    // 别账号的残留 cookie 会让整个 Bearer 通道被跳过，持合法默认账号 JWT 的站主
+    // 只拿到哨兵（200 空数据，而不是干净 401）——H4 复核实证过这条静默路径。
+    const bearerAccountId = await resolveBearerAccountId(hdrs);
+    if (bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
     return resolveSingleUserAccount({ hasPassword, isRemote: true, sessionAccountId });
   }
   // 先只取 cookies()：它抛异常 = 没有请求作用域（in-process worker 按 claimed

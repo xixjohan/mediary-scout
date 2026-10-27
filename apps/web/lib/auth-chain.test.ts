@@ -77,7 +77,10 @@ describe("resolveApiAccount", () => {
     expect(await resolveApiAccount(request({ cookie: "sess_x.hmac" }))).toBe("acct_cookie");
   });
 
-  it("无效 session + 有效 Bearer JWT → JWT 的 sub", async () => {
+  // 多用户语义：session 无效时 JWT 的 sub 就是账号。（单用户下见 H3：LAN 忽略
+  // JWT 走默认账号、远程只认 acct_default，与数据层 resolveSingleUserAccount 同裁决。）
+  it("无效 session + 有效 Bearer JWT → JWT 的 sub（多用户）", async () => {
+    (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(true);
     const req = request({ cookie: "sess_bad.hmac", authorization: await bearer({ sub: "acct_jwt" }) });
     expect(await resolveApiAccount(req)).toBe("acct_jwt");
   });
@@ -218,13 +221,48 @@ describe("resolveApiAccount — 单用户模式的 session 裁决（M6：与 res
     await expect(resolveApiAccount(request({ cookie: "sess.hmac" }))).resolves.toBe("acct_default");
   });
 
-  it("单用户 + 远程 + 别账号 session + 有效 JWT → JWT 通道仍然放行（不被 session 拖死）", async () => {
+  it("单用户 + 远程 + 别账号 session + 默认账号 JWT → JWT 仍然放行（不被 session 拖死）", async () => {
     vi.mocked(isMultiUserEnabled).mockReturnValue(false);
     vi.mocked(isRemoteRequest).mockReturnValue(true);
     vi.mocked(resolveSessionAccountId).mockResolvedValue("acct_somebody_else");
-    const token = await bearer({ sub: "acct_jwt_owner" });
+    const token = await bearer({ sub: "acct_default" });
     await expect(resolveApiAccount(request({ cookie: "sess.hmac", authorization: token, remote: true }))).resolves.toBe(
-      "acct_jwt_owner",
+      "acct_default",
     );
+  });
+});
+
+/**
+ * H3（第三轮复核）：M6 只对齐了 session 通道——单用户模式下 Bearer 通道仍放行
+ * 任意 sub 的 JWT，而数据层 resolveSingleUserAccount 明写单用户远程只认
+ * acct_default。当前 /api/auth/token 只签 sub=acct_default 所以尚不可利用，
+ * 但注释里已规划 per-account key，分歧必须先钉死。
+ */
+describe("resolveApiAccount — 单用户模式的 Bearer 也只认默认账号（H3）", () => {
+  it("单用户 + 远程 + 非默认 sub 的 JWT → null（401），不是放行", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(true);
+    const token = await bearer({ sub: "acct_jwt_owner" });
+    await expect(resolveApiAccount(request({ authorization: token, remote: true }))).resolves.toBeNull();
+  });
+
+  it("单用户 + 远程 + acct_default 的 JWT → 放行（与数据层一致）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(true);
+    const token = await bearer({ sub: "acct_default" });
+    await expect(resolveApiAccount(request({ authorization: token, remote: true }))).resolves.toBe("acct_default");
+  });
+
+  it("单用户 + 局域网 + 任意 sub 的 JWT → 默认账号（LAN 开放语义优先）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(isRemoteRequest).mockReturnValue(false);
+    const token = await bearer({ sub: "acct_jwt_owner" });
+    await expect(resolveApiAccount(request({ authorization: token }))).resolves.toBe("acct_default");
+  });
+
+  it("多用户 + 任意 sub 的 JWT → 放行（多用户本就按账号作用域）", async () => {
+    vi.mocked(isMultiUserEnabled).mockReturnValue(true);
+    const token = await bearer({ sub: "acct_jwt_owner" });
+    await expect(resolveApiAccount(request({ authorization: token }))).resolves.toBe("acct_jwt_owner");
   });
 });

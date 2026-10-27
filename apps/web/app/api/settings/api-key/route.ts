@@ -52,15 +52,28 @@ export async function POST(request: NextRequest) {
   if (!(await resolveCurrentIsOwner())) return new Response(null, { status: 404 });
 
   const body = (await request.json().catch(() => null)) as { apiKey?: unknown } | null;
+  // 形状契约：不给 = 生成；给了就必须是字符串。此前非字符串被静默丢弃、转而
+  // 生成一枚随机 key——调用方以为设了自己的值，实际拿到的是别的（H2 复核）。
+  if (body !== null && body.apiKey !== undefined && typeof body.apiKey !== "string") {
+    return NextResponse.json({ error: "apiKey 必须是字符串" }, { status: 400 });
+  }
   const explicit = typeof body?.apiKey === "string" ? body.apiKey : undefined;
 
   const { getWorkflowRepository } = await import("../../../../lib/workflow-runtime");
   const repository = getWorkflowRepository();
-  const rotation = await rotateApiKey({
-    get: () => repository.getSetting(API_KEY_SETTING_KEY),
-    set: (value) => repository.setSetting(API_KEY_SETTING_KEY, value),
-    clear: () => repository.setSetting(API_KEY_SETTING_KEY, ""),
-  }, explicit);
+  let rotation;
+  try {
+    rotation = await rotateApiKey({
+      get: () => repository.getSetting(API_KEY_SETTING_KEY),
+      set: (value) => repository.setSetting(API_KEY_SETTING_KEY, value),
+      clear: () => repository.setSetting(API_KEY_SETTING_KEY, ""),
+    }, explicit);
+  } catch (error) {
+    // rotateApiKey 对过短显式值抛错（lib 层已保证不写库）；这里必须翻成 4xx——
+    // 直接溅出去是 500 空体，调用方看不到「至少 16 位」这条原因（H2 复核）。
+    const message = error instanceof Error ? error.message : "apiKey 不合法";
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
 
   // apiKey 是完整值，只在这一个响应里出现；此后端上只剩掩码。
   return NextResponse.json(rotation);

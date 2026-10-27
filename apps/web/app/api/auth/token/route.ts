@@ -1,6 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../lib/demo-mode";
-import { buildThrottleKey, checkLoginAllowed, recordLoginFailure } from "../../../../lib/login-throttle";
+import {
+  buildThrottleKey,
+  checkLoginAllowed,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from "../../../../lib/login-throttle";
 import {
   isMultiUserEnabled,
   getJwtSecret,
@@ -67,6 +72,10 @@ export async function POST(request: NextRequest) {
   // 默认账号。将来若要 per-account key，在设置页创建时记录 owner 即可——
   // resolveApiKey 的 IApiKeyStore 端口已为此留好位置。
   const accountId = DEFAULT_ACCOUNT_ID;
+  // 成功换到 JWT 就清掉这个身份的失败计数：5 次错 key 之后用**正确** key 重试
+  // 不该还被前几次的失败拖着（L5 复核：成功路径不清桶，等于把一次误操作锁在
+  // 限流里，直到窗口自然过期）。清桶放在验签通过之后——错 key 仍然累计。
+  recordLoginSuccess(throttleKey);
   const secret = await getJwtSecret();
   const ttl = getJwtTtlSeconds() ?? JWT_DEFAULT_TTL_SECONDS;
   const token = await issueToken({ sub: accountId }, secret, ttl);

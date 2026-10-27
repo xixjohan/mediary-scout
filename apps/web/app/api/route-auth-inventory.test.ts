@@ -107,21 +107,28 @@ describe("S5.4 /api 路由鉴权清单", () => {
     expect(leaked).toEqual([]);
   });
 
+  // L6：机制判定与登录链同一把尺子（callsFunction，AST 走查）。此前是文本
+  // toContain——留一句注释说「workerApiGuard 已校验」就能让这条断言绿，
+  // 而守卫其实已经没了。注释与字符串字面量都不算调用。
   it("白名单路由各自的鉴权机制仍在位（不被登录链顶替）", () => {
     const byPath = new Map(routes.map((r) => [r.path, r.source]));
-    for (const path of ["workflows/run-next", "workflows/run-type3"]) {
-      expect(byPath.get(path), path).toContain("workerApiGuard");
+    const mechanisms: Array<[string, string]> = [
+      ["workflows/run-next", "workerApiGuard"],
+      ["workflows/run-type3", "workerApiGuard"],
+      ["update/hold", "isUpdaterToken"],
+      ["update/busy", "isUpdaterToken"],
+      ["update/status", "resolveCurrentIsOwner"],
+      ["auth/token", "resolveApiKey"],
+    ];
+    for (const [path, fn] of mechanisms) {
+      expect(callsFunction(byPath.get(path) ?? "", fn), `${path} 必须真的调用 ${fn}`).toBe(true);
     }
-    for (const path of ["update/hold", "update/busy"]) {
-      expect(byPath.get(path), path).toContain("isUpdaterToken");
-    }
-    expect(byPath.get("update/status")).toContain("resolveCurrentIsOwner");
-    expect(byPath.get("auth/token")).toContain("resolveApiKey");
   });
 
   it("agent/* 路由仍用独立 token 守卫（未配 token 返 404 的契约不变）", () => {
     for (const path of SELF_GUARDED_ROUTES) {
-      expect(routes.find((r) => r.path === path)?.source ?? "", path).toContain("agentApiGuard");
+      const source = routes.find((r) => r.path === path)?.source ?? "";
+      expect(callsFunction(source, "agentApiGuard"), `${path} 必须真的调用 agentApiGuard`).toBe(true);
     }
   });
 });

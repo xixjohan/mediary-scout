@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decideUpdateNotice,
   parseLatestRelease,
@@ -82,5 +82,57 @@ describe("shouldCheckForUpdate", () => {
 
   it("checks again when the clock went backwards", () => {
     expect(shouldCheckForUpdate({ now: start - 1000, lastCheckedAt: start })).toBe(true);
+  });
+});
+
+/**
+ * L4：桌面自更新的仓库默认指上游安装包渠道（.dmg/.exe 只有它发），与服务的
+ * 在线更新源（默认当前仓库）是两条独立通道——差异必须显式可覆盖，不能静默。
+ */
+describe("update-check — 更新源可覆盖（L4）", () => {
+  const prev = process.env.MEDIA_TRACK_UPDATE_REPO;
+
+  afterEach(() => {
+    if (prev === undefined) delete process.env.MEDIA_TRACK_UPDATE_REPO;
+    else process.env.MEDIA_TRACK_UPDATE_REPO = prev;
+  });
+
+  it("默认指上游安装包渠道", async () => {
+    delete process.env.MEDIA_TRACK_UPDATE_REPO;
+    const mod = await import("../src/update-check.js");
+    expect(mod.getReleasesLatestUrl()).toBe("https://api.github.com/repos/fancydirty/mediary-scout/releases/latest");
+    expect(mod.getUpdateRepo()).toBe("fancydirty/mediary-scout");
+  });
+
+  it("MEDIA_TRACK_UPDATE_REPO 覆盖：feed / pageUrl / 安装包前缀全部跟着改", async () => {
+    process.env.MEDIA_TRACK_UPDATE_REPO = "me/my-scout";
+    const mod = await import("../src/update-check.js");
+    expect(mod.getReleasesLatestUrl()).toBe("https://api.github.com/repos/me/my-scout/releases/latest");
+    const release = mod.parseLatestRelease({
+      tag_name: "v2026.10.02",
+      assets: [{ name: "x.dmg", browser_download_url: "https://github.com/me/my-scout/releases/download/v2026.10.02/x.dmg" }],
+    });
+    expect(release).toBeNull(); // 缺 .exe，仍不认
+    const both = mod.parseLatestRelease({
+      tag_name: "v2026.10.02",
+      assets: [
+        { name: "x.dmg", browser_download_url: "https://github.com/me/my-scout/releases/download/v2026.10.02/x.dmg" },
+        { name: "x.exe", browser_download_url: "https://github.com/me/my-scout/releases/download/v2026.10.02/x.exe" },
+      ],
+    });
+    expect(both?.pageUrl).toBe("https://github.com/me/my-scout/releases/tag/v2026.10.02");
+  });
+
+  it("上游安装包的 URL 不被接受（前缀随仓库走，不是写死的）", async () => {
+    process.env.MEDIA_TRACK_UPDATE_REPO = "me/my-scout";
+    const mod = await import("../src/update-check.js");
+    const forged = mod.parseLatestRelease({
+      tag_name: "v2026.10.02",
+      assets: [
+        { name: "x.dmg", browser_download_url: "https://github.com/fancydirty/mediary-scout/releases/download/v2026.10.02/x.dmg" },
+        { name: "x.exe", browser_download_url: "https://github.com/fancydirty/mediary-scout/releases/download/v2026.10.02/x.exe" },
+      ],
+    });
+    expect(forged).toBeNull();
   });
 });

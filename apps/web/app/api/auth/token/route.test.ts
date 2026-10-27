@@ -130,3 +130,28 @@ describe("POST /api/auth/token — 补齐的契约", () => {
     expect(body.origin).toBe("env");
   });
 });
+
+/**
+ * L5：成功换 JWT 必须清掉该身份的失败计数。此前只在失败时累计，一次误操作
+ * （连打 5 次错 key）之后用正确 key 重试仍被限流，直到窗口自然过期。
+ */
+describe("/api/auth/token — 成功清限流桶（L5）", () => {
+  it("错 key 累计到接近锁定后，一次成功即清零；之后再错 5 次仍不立刻锁", async () => {
+    _resetLoginThrottleForTest();
+    // 烧到「再错一次就锁」的位置（不锁，保证还能继续发请求）。
+    for (let i = 0; i < 4; i += 1) {
+      expect((await post({ apiKey: "wrong" })).status).toBe(401);
+    }
+    expect((await post({ apiKey: "sk-test-key-abcdef-1234" })).status).toBe(200);
+    // 桶已清空：再来 4 次失败都不该触发锁定（若未清零，这里第 1 次就 429 了）。
+    for (let i = 0; i < 4; i += 1) {
+      expect((await post({ apiKey: "wrong" })).status).toBe(401);
+    }
+    // 第 5 次失败在本请求内落锁（checkLoginAllowed 在请求入口判定，故这次仍放行
+    // 到验签、返 401），锁在**下一次**请求生效——这正好验证「锁定真实存在」。
+    expect((await post({ apiKey: "wrong" })).status).toBe(401);
+    expect((await post({ apiKey: "wrong" })).status).toBe(429);
+    // 锁定期内连正确 key 也进不来（锁定优先于验签）
+    expect((await post({ apiKey: "sk-test-key-abcdef-1234" })).status).toBe(429);
+  });
+});

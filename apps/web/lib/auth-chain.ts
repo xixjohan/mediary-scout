@@ -66,7 +66,14 @@ export async function resolveApiAccount(request: NextRequest): Promise<string | 
   // 通道 2：Bearer JWT。验签失败（过期/篡改/错算法/错 secret）视同无凭据，
   // 继续走局域网判定——与「没带 token」不可区分。
   const bearerAccountId = await resolveBearerAccountId(request.headers);
-  if (bearerAccountId) return bearerAccountId;
+  if (bearerAccountId) {
+    // 单用户模式与 resolveSingleUserAccount 同一裁决：远程只认默认账号自己的
+    // 凭据（M6/H3）。当前 /api/auth/token 只签 acct_default，但 per-account key
+    // 已在该路由的规划里，分歧必须先钉死，别等能利用了再补。
+    // LAN 下不走这条（见通道 3：局域网开放，与带不带 JWT 无关）。
+    if (isMultiUserEnabled()) return bearerAccountId;
+    if (isRemoteRequest(request.headers) && bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
+  }
 
   // 通道 3：单用户实例的局域网直通（既有语义）。
   if (!isMultiUserEnabled() && !isRemoteRequest(request.headers)) {
