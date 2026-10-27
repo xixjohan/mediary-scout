@@ -440,9 +440,9 @@ L3 agent    用户在整理面板显式选「用 AI 整理」才起 run（默认
 
 **其余约 60 处 `fancydirty` 保持原样**，其中「部署行为」类与「产品立场」类的分界在 [api-key-auth-and-self-update.md:291](../docs/api-key-auth-and-self-update.md#L291) 已有结论。若将来 fork 开始自己发 release，可按同一判据再收一轮。
 
-### 9.2 一处未处理的连带不一致（待确认）
+### 9.2 连带不一致（已处理）
 
-`README.md:27`（`点击前往赏饭：[要饭嘛，不寒碜](docs/support/README.md)`）与 `README.en.md:26`（`Support the author: [buy me a coffee](...)`）仍以打赏口吻链接到已重写为「产品内不做打赏入口」的页面。**本次未改**（超出第 2 项的点名范围）。建议下一轮把链接文字改为「支持项目 / Support the project」之类，与目标页口径一致。
+`README.md:27` 原为 `点击前往赏饭：[要饭嘛，不寒碜](docs/support/README.md)`、`README.en.md:26` 原为 `Support the author: [buy me a coffee](...)`——以打赏口吻链接到已重写为「产品内不做打赏入口」的页面。**已改为**「想帮忙？提 Issue 或改文档，比捐款管用」/「Want to help? An Issue or a docs fix beats a donation」，与目标页正文口径一致（该页列的正是提 Issue、做适配、补文档三项）。
 
 ---
 

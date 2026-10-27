@@ -24,7 +24,7 @@
 
 点击前往下载：[GitHub Releases](https://github.com/fancydirty/mediary-scout/releases/latest)（macOS / Windows 桌面版）
 
-点击前往赏饭：[要饭嘛，不寒碜](docs/support/README.md)
+想帮忙？[提 Issue 或改文档，比捐款管用](docs/support/README.md)
 
 交流：本项目积极参与并认可 [LINUX DO 社区](https://linux.do)，许多用户在那里自部署、交流网盘经验，部署问题也能很快得到回应。 [![认可 LINUX DO](https://img.shields.io/badge/LINUX%20DO-认可-2ecc71?style=flat&labelColor=1f1f1f)](https://linux.do)
 
