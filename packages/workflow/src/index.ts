@@ -56,6 +56,9 @@ export * from "./manual-import-worker.js";
 export * from "./organize-plan.js";
 // 批次 4：执行半边。落 planned moves → 逐文件搬 → 从盘上读回比对 → 偏差即停报人工。
 export * from "./organize-executor.js";
+// 批次 4：organize 的 run 形态。它是用户可见的——最有趣的结果是 manual_review，
+// 而用户看不见的复核等于没有复核。
+export * from "./organize-run.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,

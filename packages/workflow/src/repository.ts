@@ -1969,6 +1969,9 @@ const KIND_HAS_QUEUE_CLAIMER: Record<WorkflowKind, boolean> = {
   // manual_import IS queued: the import endpoint enqueues it into sys_queue_jobs.
   resource_search: false,
   manual_import: true,
+  // An organize rewrites the title's own library directories, so a worker picks it
+  // up — but it is not a "job" in the dead-queue sense (see manual-import-command.ts).
+  title_organize: true,
 };
 
 /** Whether cancelling a queued run of this kind tears down its season's tracking.
@@ -1986,6 +1989,8 @@ const KIND_OWNS_TRACKING: Record<WorkflowKind, boolean> = {
   // tear down the user's tracking.
   resource_search: false,
   manual_import: false,
+  // Organizing never owns a season: cancelling one must not tear down tracking.
+  title_organize: false,
 };
 
 export function tearsDownTrackingOnCancel(kind: WorkflowKind): boolean {
