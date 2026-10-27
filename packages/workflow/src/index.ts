@@ -24,6 +24,8 @@ export * from "./agent-step-redaction.js";
 // 资源面板（W2）的投影层：候选视图只带「有哪些资源、多大、什么时候发的」，
 // providerPayload（分享 url/提取码/magnet/downloadUrl）绝不散播。
 export * from "./resource-candidate-view.js";
+// 用户态资源搜索（POST /api/titles/resources）的 30 分钟 TTL 缓存。
+export * from "./title-resource-cache.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
