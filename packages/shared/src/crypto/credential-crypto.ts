@@ -17,14 +17,20 @@
  *      （否则历史密文全部解不开，而失败是可见的）。
  *   3. ephemeral（:memory: 测试库）—— 进程内随机密钥，不落盘。
  */
-import { createRequire } from "node:module";
+import { createNativeRequire } from "../native-require.js";
 import {
   createCipheriv,
   createDecipheriv,
   randomBytes,
   scryptSync,
 } from "node:crypto";
-import { dirname, join, resolve } from "node:path";
+// node:path 同样不静态 import（与 workflow 包的 sqlite-json-cache 一致）。实测
+// Turbopack 容忌 node:path（构建是绿的），但这三个函数本来就只在调用时到的
+// fs() 旁边用，懒加载不改行为，只是不给打包器留静态边。
+type PathLike = typeof import("node:path");
+function nodePath(): PathLike {
+  return requireNative("node:path") as PathLike;
+}
 
 /**
  * node:fs **调用时**才 require（与 workflow 包对 better-sqlite3 的 requireNative
@@ -32,7 +38,10 @@ import { dirname, join, resolve } from "node:path";
  * 会把 Turbopack 客户端 chunk 炸掉（S4.3 实测：node_modules 里的包不受
  * server-only 标记保护，只有让打包器静态分析不到才安全）。
  */
-const requireNative = createRequire(import.meta.url);
+// createRequire 不静态 import：见 native-require.ts。静态 import 会让 node:module 进入
+// 客户端可达的 chunk，Turbopack 直接拒掉整个生产构建——这正是本文件上方那条 S4.3
+// 注释想防的事，而它自己第 1 行正是漏掉的那处。
+const requireNative = createNativeRequire(import.meta.url);
 type FsLike = typeof import("node:fs");
 function fs(): FsLike {
   return requireNative("node:fs") as FsLike;
@@ -127,9 +136,9 @@ export function initCredentialCryptoForDatabase(dbPath: string): void {
     initCredentialCrypto({ ephemeral: true });
     return;
   }
-  const absolute = resolve(dbPath);
-  fs().mkdirSync(dirname(absolute), { recursive: true });
-  initCredentialCrypto({ keyFilePath: join(dirname(absolute), "credential.key") });
+  const absolute = nodePath().resolve(dbPath);
+  fs().mkdirSync(nodePath().dirname(absolute), { recursive: true });
+  initCredentialCrypto({ keyFilePath: nodePath().join(nodePath().dirname(absolute), "credential.key") });
 }
 
 function requireKey(): Buffer {

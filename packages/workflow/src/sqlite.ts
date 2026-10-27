@@ -1,5 +1,5 @@
-import { createRequire } from "node:module";
 import type Database from "better-sqlite3";
+import { createNativeRequire } from "./native-require.js";
 import { Kysely, SqliteDialect } from "kysely";
 import {
   decryptSecret,
@@ -330,7 +330,12 @@ export const SQLITE_SCHEMA = `
 // evaluation time. This keeps `import "@media-track/workflow"` (container, Vercel
 // serverless demo) free of the native module, so those paths never pay
 // the native load and can't hard-crash on a platform where better-sqlite3 isn't built.
-const requireNative = createRequire(import.meta.url);
+//
+// See native-require.ts: a static `import ... from "node:module"` here would put
+// node:module in every chunk that can reach this file — including client chunks, because
+// the package barrel re-exports this module — and Turbopack refuses the whole production
+// build for that. It is a deploy blocker, not a warning.
+const requireNative = createNativeRequire(import.meta.url);
 
 /**
  * 敏感设置键注册表（任务单 S1.5，P15）。命中的值落盘前经 AES-256-GCM 加密；

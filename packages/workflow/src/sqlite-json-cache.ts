@@ -1,5 +1,7 @@
-import { createRequire } from "node:module";
-import { dirname, resolve } from "node:path";
+// node:module 与 node:path 都不静态 import。理由见下方 node:fs 的注释，而这里正是那个
+// 注释漏掉的一处：S4.3 把 fs/path 改成了调用时 require，却留下了这两行静态 import——
+// 打包器只跟着静态边走，所以那次的修复对 Turbopack 客户端 chunk 无效，
+// `npm run build:web` 一直红到今天。
 
 /**
  * node:fs / node:path **调用时**才 require（复用下方 better-sqlite3 的同一
@@ -16,6 +18,7 @@ function nodePath(): PathLike {
   return requireNative("node:path") as PathLike;
 }
 import type Database from "better-sqlite3";
+import { createNativeRequire } from "./native-require.js";
 import type { DurableJsonCache, MediaSearchCache, MediaSearchCandidate } from "./search-view.js";
 
 /**
@@ -114,7 +117,9 @@ export class SqliteJsonCache implements DurableJsonCache, MediaSearchCache {
 }
 
 // 与 sqlite.ts 同一策略：调用时才 require 原生模块，模块加载期不碰 better-sqlite3。
-const requireNative = createRequire(import.meta.url);
+// createRequire 同样不静态 import —— 见 native-require.ts：静态 import 会让 node:module
+// 进入客户端可达的 chunk，Turbopack 直接拒掉整个生产构建。
+const requireNative = createNativeRequire(import.meta.url);
 
 /**
  * 默认 SQLite 路径（纯字符串，无 node 内置导入——客户端可达的模块链上

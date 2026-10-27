@@ -5,12 +5,19 @@
  * `-wal` 里没合并进主库，裸拷贝会丢最近提交。VACUUM INTO 由 SQLite 引擎
  * 生成一致性快照，等价于 Postgres 的 pg_dump 语义。
  */
-import { createRequire } from "node:module";
-import { copyFileSync, existsSync, statSync } from "node:fs";
+import { createNativeRequire } from "./native-require.js";
+// node:fs 同样不静态 import：本模块经 shared barrel 被客户端可达链 import，静态
+// node:fs 会把 Turbopack 客户端 chunk 炸掉（与 credential-crypto 的 S4.3 同一条）。
+type FsLike = typeof import("node:fs");
+function fs(): FsLike {
+  return requireNative("node:fs") as FsLike;
+}
 
 /** 调用时 require better-sqlite3（与 credential-crypto 同模式）：不让原生模块
  *  进入静态模块图——客户端可达链上一旦静态引入 node: 内置就会炸 Turbopack。 */
-const requireNative = createRequire(import.meta.url);
+// createRequire 不静态 import：见 native-require.ts。静态 import 会让 node:module 进入
+// 客户端可达的 chunk，Turbopack 直接拒掉整个生产构建。
+const requireNative = createNativeRequire(import.meta.url);
 type BetterSqlite3 = typeof import("better-sqlite3");
 function loadDatabase(): BetterSqlite3 {
   return requireNative("better-sqlite3") as BetterSqlite3;
@@ -28,7 +35,7 @@ export interface BackupVerification {
 
 /** 生成一致性备份。目标已存在则报错（VACUUM INTO 语义，防静默跳过）。 */
 export function backupSqliteDatabase(sourcePath: string, targetPath: string): void {
-  if (existsSync(targetPath)) {
+  if (fs().existsSync(targetPath)) {
     throw new Error(`backup target already exists: ${targetPath} (VACUUM INTO refuses to overwrite)`);
   }
   const Database = loadDatabase();
@@ -54,7 +61,7 @@ export function verifySqliteBackup(backupPath: string): BackupVerification {
       integrity: `unopenable: ${error instanceof Error ? error.message : String(error)}`,
       tables: 0,
       rowCounts: {},
-      bytes: existsSync(backupPath) ? statSync(backupPath).size : 0,
+      bytes: fs().existsSync(backupPath) ? fs().statSync(backupPath).size : 0,
     };
   }
   try {
@@ -68,14 +75,14 @@ export function verifySqliteBackup(backupPath: string): BackupVerification {
       .all() as Array<{ name: string }>) {
       rowCounts[row.name] = (db.prepare(`SELECT COUNT(*) AS n FROM "${row.name}"`).get() as { n: number }).n;
     }
-    return { integrity, tables: tables.n, rowCounts, bytes: statSync(backupPath).size };
+    return { integrity, tables: tables.n, rowCounts, bytes: fs().statSync(backupPath).size };
   } catch (error) {
     // 能打开但已损坏（quick_check/行数查询抛错）——报告，不崩溃。
     return {
       integrity: `corrupt: ${error instanceof Error ? error.message : String(error)}`,
       tables: 0,
       rowCounts: {},
-      bytes: statSync(backupPath).size,
+      bytes: fs().statSync(backupPath).size,
     };
   } finally {
     db.close();
@@ -94,5 +101,5 @@ export function compareSqliteBackup(sourcePath: string, backupPath: string): boo
 
 /** 把备份恢复到一个新路径（调用方负责停机/替换原库）。 */
 export function restoreSqliteBackup(backupPath: string, targetPath: string): void {
-  copyFileSync(backupPath, targetPath);
+  fs().copyFileSync(backupPath, targetPath);
 }
