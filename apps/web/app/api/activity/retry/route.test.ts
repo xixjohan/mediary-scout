@@ -18,10 +18,23 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   isRemoteRequest: () => false,
   resolveSessionAccountId: async () => null,
   getJwtSecret: async () => "retry-test-secret",
+    resolveBearerAccountId: async (headers?: Headers) => {
+      const header = headers?.get("authorization");
+      if (!header?.startsWith("Bearer ")) return null;
+      const token = header.slice("Bearer ".length).trim();
+      if (token.length === 0) return null;
+      try {
+        const claims = await verifyToken(token, "retry-test-secret");
+        return claims.sub;
+      } catch {
+        return null;
+      }
+    },
 }));
 
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { POST } from "./route";
+import { verifyToken } from "@media-track/shared";
 
 function post(body: unknown) {
   return POST(

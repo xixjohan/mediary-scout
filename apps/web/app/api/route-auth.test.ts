@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { issueToken } from "@media-track/shared";
+import { issueToken, verifyToken } from "@media-track/shared";
 
 /**
  * S5.4 行为层：抽 6 个形态各异的路由，逐一验证三种凭据状态。
@@ -34,6 +34,20 @@ vi.mock("../../lib/workflow-runtime", () => ({
   isRemoteRequest: (headers: Headers) => Boolean(headers.get("cf-ray")),
   resolveSessionAccountId: async () => state.sessionAccount,
   getJwtSecret: async () => JWT_SECRET,
+  // S5.4 自审后 auth-chain 的 JWT 通道与 getCurrentAccountId 共用这一个函数；
+  // mock 用同一个假 secret 复现真实语义（验签失败 → null = 视同无凭据）。
+  resolveBearerAccountId: async (headers?: Headers) => {
+    const header = headers?.get("authorization");
+    if (!header?.startsWith("Bearer ")) return null;
+    const token = header.slice("Bearer ".length).trim();
+    if (token.length === 0) return null;
+    try {
+      const claims = await verifyToken(token, JWT_SECRET);
+      return claims.sub;
+    } catch {
+      return null;
+    }
+  },
   getJwtTtlSeconds: async () => 600,
   getWorkflowRepository: () => state.repository,
   ensureDemoSeeded: async () => {},

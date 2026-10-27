@@ -282,3 +282,70 @@ describe("未设密码 + 远程 = 必须 fail-closed（移除 Access 后的公�
     CRYPTO_TIMEOUT_MS,
   );
 });
+
+/**
+ * S5.4 对抗性自审发现的真缺口（mock 掩盖类，同 DEFAULT_ACCOUNT_ID）。
+ *
+ * 责任链（auth-chain）第 2 通道认 Bearer JWT，可 23 个路由守卫后仍调
+ * `getCurrentAccountId()` 取账号作用域——**JWT 解出来的账号被丢掉了**：
+ * 多用户模式下无 session cookie 时该函数返回哨兵 `acct_unauthenticated`，
+ * 于是「JWT 认证成功」与「拿不到账号」同时成立：账号作用域数据全空、
+ * 写路径直接抛错。单用户远程同理（既有的远程必须 fail-closed 语义不变，
+ * 但一个验签通过的 JWT 不该被判成匿名）。
+ *
+ * 真实请求路径的测试，不可省：route-auth.test.ts 的 JWT 用例之所以全绿，
+ * 是因为它 mock 掉了 getCurrentAccountId（与掩盖 DEFAULT_ACCOUNT_ID 同一手法）。
+ */
+describe("Bearer JWT 通道：getCurrentAccountId 必须认（S5.4 自审）", () => {
+  const JWT_SECRET = "jwt-bearer-channel-test-secret-32-bytes!";
+
+  /** 多用户 + 指定请求头启动 runtime（JWT secret 走 env，避开 DB）。 */
+  const bootMultiUser = async (headers: Record<string, string>) => {
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    process.env.MEDIA_TRACK_JWT_SECRET = JWT_SECRET;
+    vi.doMock("next/headers", () => ({
+      headers: async () => new Headers(headers),
+      cookies: async () => ({ get: () => undefined }), // 无 session cookie
+    }));
+    vi.resetModules();
+    return import("./workflow-runtime");
+  };
+
+  afterEach(() => {
+    delete process.env.MEDIA_TRACK_JWT_SECRET;
+    delete process.env.MEDIA_TRACK_MULTI_USER;
+    if (prevMultiUser !== undefined) process.env.MEDIA_TRACK_MULTI_USER = prevMultiUser;
+  });
+
+  it("多用户 + 有效 Bearer JWT → 返回 JWT 里的账号（不是哨兵）", async () => {
+    const { issueToken } = await import("@media-track/shared");
+    const token = await issueToken({ sub: "acct_jwt_owner" }, JWT_SECRET, 600);
+    const rt = await bootMultiUser({ authorization: `Bearer ${token}` });
+    expect(await rt.getCurrentAccountId()).toBe("acct_jwt_owner");
+  });
+
+  it("多用户 + 篡改的 JWT → 哨兵（fail-closed，不得放行）", async () => {
+    const rt = await bootMultiUser({ authorization: "Bearer not.a.real.token" });
+    expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
+  });
+
+  it("多用户 + 过期 JWT → 哨兵", async () => {
+    const { issueToken } = await import("@media-track/shared");
+    const token = await issueToken({ sub: "acct_jwt_owner" }, JWT_SECRET, -10);
+    const rt = await bootMultiUser({ authorization: `Bearer ${token}` });
+    expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
+  });
+
+  it("多用户 + 错误 secret 签发的 JWT → 哨兵", async () => {
+    const { issueToken } = await import("@media-track/shared");
+    const token = await issueToken({ sub: "acct_jwt_owner" }, "another-secret-entirely-32-bytes!!", 600);
+    const rt = await bootMultiUser({ authorization: `Bearer ${token}` });
+    expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
+  });
+
+  it("多用户 + 无任何凭据 → 仍是哨兵（不因新通道放宽）", async () => {
+    const rt = await bootMultiUser({ "user-agent": "curl" });
+    expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
+  });
+});

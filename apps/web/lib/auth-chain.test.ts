@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { issueToken } from "@media-track/shared";
+import { issueToken, verifyToken } from "@media-track/shared";
 
 /**
  * S5.4 TDD（需求 #2）：/api 认证责任链。
@@ -22,6 +22,21 @@ vi.mock("./workflow-runtime", () => ({
   isRemoteRequest: vi.fn(() => false),
   resolveSessionAccountId: vi.fn(async () => null),
   getJwtSecret: vi.fn(async () => JWT_SECRET),
+  // S5.4 自审后 auth-chain 的 JWT 通道与 getCurrentAccountId 共用这一个函数
+  // （真实实现见 workflow-runtime）；mock 里用同一个假 secret 复现同样语义：
+  // 验签失败 → null（视同无凭据）。
+  resolveBearerAccountId: async (headers?: Headers) => {
+    const header = headers?.get("authorization");
+    if (!header?.startsWith("Bearer ")) return null;
+    const token = header.slice("Bearer ".length).trim();
+    if (token.length === 0) return null;
+    try {
+      const claims = await verifyToken(token, JWT_SECRET);
+      return claims.sub;
+    } catch {
+      return null;
+    }
+  },
 }));
 
 import {

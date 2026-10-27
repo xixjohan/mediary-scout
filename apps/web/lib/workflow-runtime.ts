@@ -105,6 +105,7 @@ import {
   DEFAULT_PANSOU_BASE_URL as PUBLIC_PANSOU_BASE_URL,
 } from "./pansou-chain";
 import { findDemoCandidateById, findDemoCandidateByTmdbId } from "./demo-candidates";
+import { verifyToken } from "@media-track/shared";
 import { seedDemoWorkflowRepository } from "./demo-workflow";
 import { resolveRegistration, deriveBootstrapState, canManageAccounts } from "./account-bootstrap";
 import { isDemoMode } from "./demo-mode";
@@ -511,6 +512,32 @@ export function getJwtTtlSeconds(): number | null {
   const n = Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
 }
+
+/**
+ * S5.4 对抗性自审补的通道：从 `Authorization: Bearer <jwt>` 解账号。
+ *
+ * **为什么放在这里而不是只放 auth-chain**：auth-chain（S5.4 责任链）认 JWT，
+ * 可 23 个路由守卫之后仍调 `getCurrentAccountId()` 取账号作用域——JWT 解出来
+ * 的账号被丢掉了：多用户模式无 session cookie 时它返回哨兵，于是「JWT 认证
+ * 成功」与「拿不到账号」同时成立，账号数据全空、写路径直接抛错。把通道放进
+ * 账号解析的唯一实现里，所有路由一次性修好（与 DEFAULT_ACCOUNT_ID 同类：
+ * route-auth.test.ts 的 JWT 用例之所以绿，是它 mock 掉了本函数）。
+ *
+ * 验签失败（过期/篡改/错 secret/错算法）一律 null——与「没带 token」不可区分，
+ * 由调用方 fail-closed。auth-chain 也调这个函数，全仓只有一份实现。
+ */
+export async function resolveBearerAccountId(headers: Headers | undefined): Promise<string | null> {
+  const header = headers?.get("authorization");
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length).trim();
+  if (token.length === 0) return null;
+  try {
+    const claims = await verifyToken(token, await getJwtSecret());
+    return claims.sub;
+  } catch {
+    return null;
+  }
+}
 /** Sentinel account that owns no data — returned in multi-user mode when there
  *  is no valid session, so reads fail CLOSED (empty) instead of leaking the
  *  default account's data to an unauthenticated caller. Middleware normally
@@ -739,6 +766,21 @@ export function resolveSingleUserAccount(opts: {
     : UNAUTHENTICATED_ACCOUNT_ID;
 }
 
+/**
+ * 从请求作用域读 Bearer 账号；读不到请求头（无作用域 / 头读取失败）一律 null，
+ * **永不抛**——调用方在多用户分支里要靠它区分「有 JWT」与「没有」，
+ * 异常溅出去会被外层 catch 当成 worker 直通（fail-open）。
+ */
+async function bearerAccountFromRequestScope(): Promise<string | null> {
+  let requestHeaders: Headers | undefined;
+  try {
+    requestHeaders = await (await import("next/headers")).headers();
+  } catch {
+    return null;
+  }
+  return resolveBearerAccountId(requestHeaders);
+}
+
 export async function getCurrentAccountId(): Promise<string> {
   if (!isMultiUserEnabled()) {
     // 注意：这里**不能**因为「没设密码」就提前返回 acct_default。那正是被移除的
@@ -766,20 +808,35 @@ export async function getCurrentAccountId(): Promise<string> {
         return UNAUTHENTICATED_ACCOUNT_ID;
       }
     }
+    if (sessionAccountId === null) {
+      // Bearer JWT（S5.3 签发的 API token）：单用户模式只认 acct_default 自己
+      // 的 token——与 resolveSingleUserAccount 拒绝别账号 session 同一 invariants。
+      const bearerAccountId = await resolveBearerAccountId(hdrs);
+      if (bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
+    }
     return resolveSingleUserAccount({ hasPassword, isRemote: true, sessionAccountId });
   }
+  // 先只取 cookies()：它抛异常 = 没有请求作用域（in-process worker 按 claimed
+  // run 的 accountId 结算，压根不读请求 cookie），此时直通默认账号。
+  let store: Awaited<ReturnType<typeof import("next/headers").cookies>>;
   try {
-    const { cookies } = await import("next/headers");
-    const store = await cookies();
+    store = await (await import("next/headers")).cookies();
+  } catch {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  // 已进入请求作用域：此后任何失败都必须 fail-closed。旧代码用一个兜底 catch
+  // 返回 DEFAULT_ACCOUNT_ID，在多用户模式下那是 **fail-open**——把默认账号的
+  // 数据送给未认证调用方（本文件反复强调的「reads fail CLOSED」的反面）。
+  try {
     const raw = store.get(SESSION_COOKIE_NAME)?.value;
     if (!raw) {
-      return UNAUTHENTICATED_ACCOUNT_ID;
+      // 无 cookie：Bearer JWT 是 API 客户端唯一的凭据（S5.4 自审修的缺口——
+      // 此前这里直接返回哨兵，JWT 认证成功的请求拿不到账号作用域）。
+      return (await bearerAccountFromRequestScope()) ?? UNAUTHENTICATED_ACCOUNT_ID;
     }
     return (await resolveSessionAccountId(raw)) ?? UNAUTHENTICATED_ACCOUNT_ID;
   } catch {
-    // No request scope (the in-process worker) — it resolves credentials per
-    // claimed run.accountId, not via the request cookie.
-    return DEFAULT_ACCOUNT_ID;
+    return UNAUTHENTICATED_ACCOUNT_ID;
   }
 }
 
