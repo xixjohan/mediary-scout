@@ -1,3 +1,4 @@
+import { isLiveSearch } from "./search-provider";
 import {
   createTmdbSearchProvider,
   getSearchPageView,
@@ -32,7 +33,7 @@ export async function getSearchView(query: string, storageId?: string): Promise<
   // Tree model: scope a movie's 已获取/获取 state to the active drive — obtained on
   // one drive must stay acquirable on another's workspace.
   const scope = await getActiveWorkspaceScope(storageId);
-  const liveTmdb = process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb";
+  const liveTmdb = isLiveSearch();
   const settings = liveTmdb ? getAccountScopedSettings(await getCurrentAccountId()) : null;
   const searchModel = settings ? await getAgentModelForSearch(settings) : null;
   return getSearchPageView({
@@ -82,7 +83,7 @@ async function resolveSearchTitlesWithModel(
 function getSearchCache() {
   // Live TMDB searches are cached durably in SQLite (6h TTL) so casual browsing
   // never becomes an API storm; the demo provider stays in-memory.
-  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER === "tmdb") {
+  if (isLiveSearch()) {
     return getDurableJsonCache();
   }
   demoSearchCache ??= new InMemoryMediaSearchCache();
@@ -90,7 +91,7 @@ function getSearchCache() {
 }
 
 async function getMediaSearchProvider(): Promise<MediaSearchProvider> {
-  if (process.env.MEDIA_TRACK_SEARCH_PROVIDER !== "tmdb") {
+  if (!isLiveSearch()) {
     return demoMediaSearchProvider;
   }
   // Built per-call scoped to the current account (its TMDB key → global → proxy),
