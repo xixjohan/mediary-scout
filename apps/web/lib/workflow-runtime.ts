@@ -1,3 +1,10 @@
+import {
+  buildMovieCandidateId,
+  buildTitleId,
+  buildTvCandidateId,
+  parseMovieCandidateId as parseMovieCandidateIdModule,
+  parseTvCandidateId as parseTvCandidateIdModule,
+} from "@media-track/workflow";
 import { isLiveSearch } from "./search-provider";
 import { createHash, randomBytes } from "node:crypto";
 import type { LanguageModel } from "ai";
@@ -1672,9 +1679,18 @@ export async function getDailySweepTimes(
   return [await getDailySweepTime(repository)];
 }
 
+  /**
+   * 委托给 media-identity。保留 `number | null` 的本地签名，是为了不动四个调用点的
+   * 控制流；但**失败原因必须记下来**——裸 null 分不清「id 写错了」和「这片不在库里」，
+   * 而 media-identity 的判别联合本来就能区分。见规格失败模式 #2。
+   */
 function parseMovieCandidateId(candidateId: string): number | null {
-  const match = /^tmdb_movie_(\d+)$/.exec(candidateId);
-  return match ? Number(match[1]) : null;
+  const parsed = parseMovieCandidateIdModule(candidateId);
+  if (!parsed.ok) {
+    console.warn(`[media-identity] movie candidate id 解析失败（${parsed.reason}）: ${candidateId}`);
+    return null;
+  }
+  return parsed.value.id;
 }
 
 export async function movieTargetFromTmdbId(
@@ -1692,7 +1708,7 @@ export async function movieTargetFromTmdbId(
     return null;
   }
   const title: MediaTitle = {
-    id: `tmdb_movie_${candidate.tmdbId}`,
+    id: buildMovieCandidateId({ source: "tmdb", id: candidate.tmdbId }),
     tmdbId: candidate.tmdbId,
     type: "movie",
     title: candidate.title,
@@ -1897,7 +1913,7 @@ export async function queueCandidateSeries(
   }
   const request = await queueSeriesInitialization({
     title: {
-      id: `tmdb_tv_${candidate.tmdbId}`,
+      id: buildTitleId({ source: "tmdb", mediaKind: "tv", id: candidate.tmdbId }),
       tmdbId: candidate.tmdbId,
       type: "tv",
       title: candidate.title,
@@ -1919,7 +1935,7 @@ export async function queueCandidateSeries(
   return {
     status: request.status === "queued" ? "queued" : request.status,
     workflowRunId: request.workflowRunId,
-    trackedSeasonId: `tmdb_tv_${candidate.tmdbId}_s1`,
+    trackedSeasonId: buildTvCandidateId({ source: "tmdb", id: candidate.tmdbId, seasonNumber: 1 }),
   };
 }
 
@@ -2364,7 +2380,7 @@ function targetFromSearchCandidate(
   if (!season) {
     return null;
   }
-  const titleId = `tmdb_tv_${candidate.tmdbId}`;
+  const titleId = buildTitleId({ source: "tmdb", mediaKind: "tv", id: candidate.tmdbId });
   const title: MediaTitle = {
     id: titleId,
     tmdbId: candidate.tmdbId,
@@ -2396,15 +2412,14 @@ function targetFromSearchCandidate(
   };
 }
 
+  /** 同 parseMovieCandidateId：委托 + 记 reason。 */
 function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber: number } | null {
-  const match = /^tmdb_tv_(\d+)_s(\d+)$/.exec(candidateId);
-  if (!match) {
+  const parsed = parseTvCandidateIdModule(candidateId);
+  if (!parsed.ok) {
+    console.warn(`[media-identity] tv candidate id 解析失败（${parsed.reason}）: ${candidateId}`);
     return null;
   }
-  return {
-    tmdbId: Number(match[1]),
-    seasonNumber: Number(match[2]),
-  };
+  return { tmdbId: parsed.value.id, seasonNumber: parsed.value.seasonNumber };
 }
 
 /** 供用户态资源搜索端点复用（W2）。此前是模块私有；端点要拿同一个按品牌装配的

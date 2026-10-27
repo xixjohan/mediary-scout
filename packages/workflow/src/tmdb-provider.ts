@@ -1,3 +1,4 @@
+import { buildTitleId } from "./media-identity.js";
 import type {
   LatestAiredSource,
   MediaTitle,
@@ -445,7 +446,7 @@ export async function prepareTrackingTarget(input: TvTrackingTargetInput): Promi
   } else {
     throw seasonResult.reason;
   }
-  const titleId = `tmdb_tv_${details.id}`;
+  const titleId = buildTitleId({ source: "tmdb", mediaKind: "tv", id: details.id });
   const title = normalizeTitle(details.name);
   const totalEpisodes = totalEpisodesForSeason(details, seasonDetails, input.seasonNumber);
   const latestAiredEpisode = latestAiredEpisodeForSeason(
@@ -539,7 +540,7 @@ export async function prepareMovieTarget(input: {
   metadataProvider: TmdbMetadataProvider;
 }): Promise<PreparedMovieTarget> {
   const details = await input.metadataProvider.getMovieDetails(input.tmdbId);
-  const titleId = `tmdb_movie_${details.id}`;
+  const titleId = buildTitleId({ source: "tmdb", mediaKind: "movie", id: details.id });
   const title = normalizeTitle(details.title);
   return {
     title: {
@@ -587,7 +588,7 @@ export async function prepareSeriesTarget(input: {
   metadataProvider: TmdbMetadataProvider;
 }): Promise<PreparedSeriesTarget> {
   const details = await input.metadataProvider.getTvDetails(input.tmdbId);
-  const titleId = `tmdb_tv_${details.id}`;
+  const titleId = buildTitleId({ source: "tmdb", mediaKind: "tv", id: details.id });
   const title = normalizeTitle(details.name);
   const lastAiredSeason = details.last_episode_to_air?.season_number ?? 0;
   const lastAiredEpisode = details.last_episode_to_air?.episode_number ?? 0;

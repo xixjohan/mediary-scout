@@ -1,3 +1,4 @@
+import { buildTitleId, buildTvCandidateId, buildMovieCandidateId } from "@media-track/workflow";
 import { isLiveSearch } from "./search-provider";
 import {
   createTmdbMetadataProvider,
@@ -169,7 +170,7 @@ async function seriesTargetFor(tmdbId: number): Promise<PreparedSeriesTarget | n
     return null;
   }
   const title: MediaTitle = {
-    id: `tmdb_tv_${candidate.tmdbId}`,
+    id: buildTitleId({ source: "tmdb", mediaKind: "tv", id: candidate.tmdbId }),
     tmdbId: candidate.tmdbId,
     type: "tv",
     title: candidate.title,
@@ -375,7 +376,10 @@ export async function queueSeasonTracking(
   storageId?: string,
 ): Promise<CandidateTrackingRequestResult> {
   const scope = await getActiveWorkspaceScope(storageId);
-  return queueCandidateTracking(`tmdb_tv_${tmdbId}_s${seasonNumber}`, scope.connectedStorageId);
+  return queueCandidateTracking(
+      buildTvCandidateId({ source: "tmdb", id: tmdbId, seasonNumber }),
+      scope.connectedStorageId,
+    );
 }
 
 /**
@@ -407,7 +411,11 @@ export async function queueRemainingSeasons(
     return {
       status: "already_tracked",
       workflowRunId: null,
-      trackedSeasonId: `tmdb_tv_${tmdbId}_s${target.seasons[0]?.seasonNumber ?? 1}`,
+      trackedSeasonId: buildTvCandidateId({
+          source: "tmdb",
+          id: tmdbId,
+          seasonNumber: target.seasons[0]?.seasonNumber ?? 1,
+        }),
     };
   }
   const request = await queueSeriesInitialization({
@@ -421,7 +429,11 @@ export async function queueRemainingSeasons(
   return {
     status: request.status === "queued" ? "queued" : request.status,
     workflowRunId: request.workflowRunId,
-    trackedSeasonId: `tmdb_tv_${tmdbId}_s${remaining[0]?.seasonNumber ?? 1}`,
+    trackedSeasonId: buildTvCandidateId({
+        source: "tmdb",
+        id: tmdbId,
+        seasonNumber: remaining[0]?.seasonNumber ?? 1,
+      }),
   };
 }
 
