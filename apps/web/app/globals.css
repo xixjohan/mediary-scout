@@ -318,6 +318,72 @@ p {
   color: var(--text);
 }
 
+/* 订阅页缺失待办区：正名后的第一屏信息。压暗的卡片列表，避免抢海报墙的视觉。 */
+.subscription-todo {
+  margin-bottom: 24px;
+  padding: 16px 20px;
+  border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+  border-radius: 10px;
+  background: var(--surface, rgba(0, 0, 0, 0.02));
+}
+
+.subscription-todo-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.subscription-todo-head h2 {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.subscription-todo-head .quiet {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.subscription-todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.subscription-todo-list a {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text);
+  transition: background 0.15s ease;
+}
+
+.subscription-todo-list a:hover {
+  background: var(--surface-hover, rgba(0, 0, 0, 0.04));
+}
+
+.subscription-todo-title {
+  font-weight: 600;
+}
+
+.subscription-todo-year {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.subscription-todo-count {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 .poster-row {
   display: flex;
   gap: 16px;

@@ -24,7 +24,7 @@ export default function NotFound() {
           <h1 className="next-error-h1">404</h1>
           <p>这个页面不存在。</p>
           <p>
-            <Link href="/">回到媒体库</Link>
+            <Link href="/">回到订阅</Link>
           </p>
         </main>
       </div>

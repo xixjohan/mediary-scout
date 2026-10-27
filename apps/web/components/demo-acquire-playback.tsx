@@ -70,7 +70,7 @@ export function DemoAcquirePlayback({ entry }: { entry?: DemoAcquisitionEntry | 
         {done ? <Check size={14} aria-hidden /> : <LoaderCircle size={14} className="spin" aria-hidden />}
         <span>{state.label}</span>
       </div>
-      {done ? <p className="demo-playback-note">已加入媒体库 · 仅本次演示</p> : null}
+      {done ? <p className="demo-playback-note">已加入订阅 · 仅本次演示</p> : null}
     </div>
   );
 }

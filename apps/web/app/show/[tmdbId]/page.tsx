@@ -106,7 +106,7 @@ async function ShowContent({
   searchParams: Promise<Record<string, string | string[] | undefined>> | undefined;
 }) {
   await connection();
-  // 搜索是搜索，媒体库是媒体库: the title page belongs to whichever surface the
+  // 搜索是搜索，订阅是订阅: the title page belongs to whichever surface the
   // user came FROM. Entry links carry ?from=search|library; back keeps the
   // previous list state (history.back preserves the search query).
   const params0 = (await searchParams) ?? {};
@@ -130,7 +130,7 @@ async function ShowContent({
     ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
     : null;
 
-  const backLabel = from === "search" ? "搜索" : from === "library" ? "媒体库" : "返回";
+  const backLabel = from === "search" ? "搜索" : from === "library" ? "订阅" : "返回";
   const backHref =
     from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`;
 
