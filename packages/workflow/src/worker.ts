@@ -23,7 +23,7 @@ import { isTransientAcquisitionError } from "./acquisition-v2/transient-error.js
 import type { JevJudge } from "./jev-judge.js";
 import { stagingFailureAuditEvents } from "./acquisition-v2/directory-lifecycle.js";
 import { hasTransferAttemptedOnThrow } from "./acquisition-v2/orchestrator.js";
-import { cooldownLogLine, overBudgetLogLine, planPatrolScope } from "./patrol-scope.js";
+import { cooldownLogLine, overBudgetLogLine, patrolSkipKey, planPatrolScope } from "./patrol-scope.js";
 import {
   describeAgentRunError,
   isLlmAuthError,
@@ -732,8 +732,12 @@ export async function runScheduledType3Monitoring(input: {
   if (budgetLine !== null) console.log(budgetLine);
   const coolingLine = cooldownLogLine(scopeDecision.skipped);
   if (coolingLine !== null) console.log(coolingLine);
-  const cooledOff = new Set(scopeDecision.skipped.map((entry) => entry.titleKey));
-  patrolStates = patrolStates.filter((state) => !cooledOff.has(state.title.id));
+  // 键是 (account, title)，不是 title：标题跨账号共享（同一部剧两个用户都订），
+  // 只按 title 过滤会让一家的冷却静默停掉另一家的订阅。
+  const cooledOff = new Set(scopeDecision.skipped.map((entry) => patrolSkipKey(entry)));
+  patrolStates = patrolStates.filter(
+    (state) => !cooledOff.has(patrolSkipKey({ accountId: state.accountId, titleKey: state.title.id })),
+  );
 
   // One drive at a time, several drives side by side (see runKeyedPool). The key
   // is the drive the run will actually land on: a state with no bound drive runs

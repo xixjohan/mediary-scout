@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   cooldownLogLine,
   overBudgetLogLine,
+  patrolSkipKey,
   planPatrolScope,
   type PatrolCandidate,
   type PolicyLookup,
@@ -123,6 +124,18 @@ describe("planPatrolScope — 冷却期", () => {
     });
     expect(decision.included.map((c) => c.titleKey)).toEqual(["k1", "k3"]);
     expect(decision.skipped.map((s) => s.titleKey)).toEqual(["k2"]);
+  });
+
+  it("**跳过的条目带 accountId**（worker 的过滤键是 (account, title)，缺了它就会按 title 过滤）", async () => {
+    const decision = await planPatrolScope({
+      candidates: [candidate("k1", "A")],
+      lookupPolicy: lookupOf({ k1: cooling }),
+      now: NOW,
+    });
+    expect(decision.skipped).toHaveLength(1);
+    expect(decision.skipped[0]).toMatchObject({ accountId: "acct_a", titleKey: "k1" });
+    // patrolSkipKey 把两个账号的同名作品分开
+    expect(patrolSkipKey(decision.skipped[0]!)).not.toBe(patrolSkipKey({ accountId: "acct_b", titleKey: "k1" }));
   });
 
   it("**不同 account 的同名作品互不影响**（按 (account, work) 判定）", async () => {
