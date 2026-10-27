@@ -2,8 +2,9 @@ import {
   buildMovieCandidateId,
   buildTitleId,
   buildTvCandidateId,
-  parseMovieCandidateId as parseMovieCandidateIdModule,
-  parseTvCandidateId as parseTvCandidateIdModule,
+  parseMovieCandidateId,
+  parseTvCandidateId,
+  type MediaIdParseReason,
 } from "@media-track/workflow";
 import { isLiveSearch } from "./search-provider";
 import { createHash, randomBytes } from "node:crypto";
@@ -949,8 +950,9 @@ export async function queueCandidateTracking(
   if (workspace.frozen) {
     return { status: "unsupported", message: frozenDriveMessage(workspace.provider, "获取") };
   }
-  const movieTmdbId = parseMovieCandidateId(candidateId);
-  if (movieTmdbId !== null) {
+  const movieParsed = parseMovieCandidateId(candidateId);
+  if (movieParsed.ok) {
+    const movieTmdbId = movieParsed.value.id;
     const movie = await movieTargetFromTmdbId(movieTmdbId);
     if (!movie) {
       return { status: "unsupported", message: "无法获取该电影的信息。" };
@@ -1679,19 +1681,6 @@ export async function getDailySweepTimes(
   return [await getDailySweepTime(repository)];
 }
 
-  /**
-   * 委托给 media-identity。保留 `number | null` 的本地签名，是为了不动四个调用点的
-   * 控制流；但**失败原因必须记下来**——裸 null 分不清「id 写错了」和「这片不在库里」，
-   * 而 media-identity 的判别联合本来就能区分。见规格失败模式 #2。
-   */
-function parseMovieCandidateId(candidateId: string): number | null {
-  const parsed = parseMovieCandidateIdModule(candidateId);
-  if (!parsed.ok) {
-    console.warn(`[media-identity] movie candidate id 解析失败（${parsed.reason}）: ${candidateId}`);
-    return null;
-  }
-  return parsed.value.id;
-}
 
 export async function movieTargetFromTmdbId(
   tmdbId: number,
@@ -1746,11 +1735,13 @@ export async function reserveCandidate(
       message: error instanceof Error ? error.message : "未登录，无法预定。",
     };
   }
-  const movieTmdbId = parseMovieCandidateId(candidateId);
-  if (movieTmdbId === null) {
-    return { status: "unsupported", message: "只有电影可以预定。" };
+  const movieParsed = parseMovieCandidateId(candidateId);
+  if (!movieParsed.ok) {
+    // malformed 与「不是电影」是两回事：前者说明 id 本身坏了（数据污染/客户端乱传），
+    // 后者才是功能边界。混成一句「只有电影可以预定」会让人去查不存在的限制。
+    return unsupportedCandidateId(movieParsed.reason, candidateId, "只有电影可以预定。");
   }
-  const movie = await movieTargetFromTmdbId(movieTmdbId);
+  const movie = await movieTargetFromTmdbId(movieParsed.value.id);
   if (!movie) {
     return { status: "unsupported", message: "无法获取该电影的信息。" };
   }
@@ -1862,13 +1853,32 @@ async function pushNotificationsSince(
   }
 }
 
+/**
+ * 把 media-identity 的解析失败翻译成用户可见的 `unsupported` 结果。
+ *
+ * 抽出来是因为「畸形 id」与「不是这个种类的 id」必须给不同文案，而这个判断在两个入口
+ * （预定/获取）都要用。内联到两个函数里会把它们的复杂度各推高 2——ESLint 上限 15，
+ * `queueCandidateSeries` 已经因此红过一次。
+ */
+function unsupportedCandidateId(
+  reason: MediaIdParseReason,
+  candidateId: string,
+  wrongKindMessage: string,
+): { status: "unsupported"; message: string } {
+  if (reason === "malformed") {
+    console.warn(`[media-identity] candidate id 畸形（${reason}）: ${candidateId}`);
+    return { status: "unsupported", message: "资源标识无法识别，请刷新页面后重试。" };
+  }
+  return { status: "unsupported", message: wrongKindMessage };
+}
+
 export async function queueCandidateSeries(
   candidateId: string,
   connectedStorageId?: string | null,
 ): Promise<CandidateTrackingRequestResult> {
   const parsed = parseTvCandidateId(candidateId);
-  if (!parsed) {
-    return { status: "unsupported", message: "暂时只支持剧集的全剧获取。" };
+  if (!parsed.ok) {
+    return unsupportedCandidateId(parsed.reason, candidateId, "暂时只支持剧集的全剧获取。");
   }
   let accountId: string;
   try {
@@ -1888,7 +1898,7 @@ export async function queueCandidateSeries(
   }
   if (isLiveSearch()) {
     const target = await prepareSeriesTarget({
-      tmdbId: parsed.tmdbId,
+      tmdbId: parsed.value.id,
       qualityPreference: defaultQuality(),
       metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(accountId))),
     });
@@ -2345,15 +2355,18 @@ async function trackingTargetFromCandidateId(candidateId: string): Promise<{
   keyword: string;
 } | null> {
   const parsed = parseTvCandidateId(candidateId);
-  if (!parsed) {
+  if (!parsed.ok) {
+    if (parsed.reason === "malformed") {
+      console.warn(`[media-identity] trackingTargetFromCandidateId 收到畸形 id: ${candidateId}`);
+    }
     return null;
   }
 
   if (isLiveSearch()) {
     return prepareTrackingTarget({
-      tmdbId: parsed.tmdbId,
+      tmdbId: parsed.value.id,
       mediaType: "tv",
-      seasonNumber: parsed.seasonNumber,
+      seasonNumber: parsed.value.seasonNumber,
       qualityPreference: defaultQuality(),
       storageDirectoryId: storageDirectoryIdForCandidate(candidateId),
       metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()))),
@@ -2364,7 +2377,7 @@ async function trackingTargetFromCandidateId(candidateId: string): Promise<{
   if (!candidate || candidate.mediaType !== "tv") {
     return null;
   }
-  return targetFromSearchCandidate(candidate, parsed.seasonNumber, candidateId);
+  return targetFromSearchCandidate(candidate, parsed.value.seasonNumber, candidateId);
 }
 
 function targetFromSearchCandidate(
@@ -2410,16 +2423,6 @@ function targetFromSearchCandidate(
     season: trackedSeason,
     keyword: candidate.title.trim(), // quality NEVER in the keyword (search-methodology law)
   };
-}
-
-  /** 同 parseMovieCandidateId：委托 + 记 reason。 */
-function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber: number } | null {
-  const parsed = parseTvCandidateIdModule(candidateId);
-  if (!parsed.ok) {
-    console.warn(`[media-identity] tv candidate id 解析失败（${parsed.reason}）: ${candidateId}`);
-    return null;
-  }
-  return { tmdbId: parsed.value.id, seasonNumber: parsed.value.seasonNumber };
 }
 
 /** 供用户态资源搜索端点复用（W2）。此前是模块私有；端点要拿同一个按品牌装配的
