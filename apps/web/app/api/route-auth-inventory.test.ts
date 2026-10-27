@@ -27,6 +27,36 @@ const API_ROOT = fileURLToPath(new URL(".", import.meta.url)).replace(/\/$/, "")
  * 留一行含 requireApiAccount 的注释就能双双放行（逐维核查的探针实证过）。
  * 只认 CallExpression 的标识符 callee；注释和字符串字面量都不是 CallExpression。
  */
+/** 该文件是否真的从某个模块 import 了 `name`（默认 import / 具名 import 都算）。 */
+function importsName(source: string, name: string): boolean {
+  const file = ts.createSourceFile("route.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isImportDeclaration(node)) {
+      const clause = node.importClause;
+      if (!clause) return;
+      if (clause.name && clause.name.text === name) found = true;
+      if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+        for (const el of clause.namedBindings.elements) {
+          const imported = el.propertyName?.text ?? el.name.text;
+          if (imported === name) found = true;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+/**
+ * 「调用」= AST 里真的有一次 `name(...)` 调用。第三轮起加了这道判定，挡住
+ * 「注释/字符串里提一句就放行」；第四轮补上第二半：调用的必须是从别处 **import**
+ * 的那个函数，而不是本地同名函数——否则新文件里写一个自己的
+ * `function requireApiAccount() { return "acct_x" }` 再调用它，清单测试照样放行，
+ * 而路由数断言（40）只在路由数量变化时才红。
+ */
 function callsFunction(source: string, name: string): boolean {
   const file = ts.createSourceFile("route.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
   let found = false;
@@ -40,6 +70,11 @@ function callsFunction(source: string, name: string): boolean {
   };
   visit(file);
   return found;
+}
+
+/** 既 import 了 `name`、又真的调用它——防「本地同名函数」自娱自乐。 */
+function usesImportedFunction(source: string, name: string): boolean {
+  return importsName(source, name) && callsFunction(source, name);
 }
 
 const OPEN_ROUTES = new Set([
@@ -94,7 +129,7 @@ describe("S5.4 /api 路由鉴权清单", () => {
   it("23 个非白名单路由全部引用 requireApiAccount 登录链", () => {
     const missing = routes
       .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path))
-      .filter((r) => !callsFunction(r.source, "requireApiAccount"))
+      .filter((r) => !usesImportedFunction(r.source, "requireApiAccount"))
       .map((r) => r.path);
     expect(missing).toEqual([]);
   });
@@ -102,7 +137,7 @@ describe("S5.4 /api 路由鉴权清单", () => {
   it("12 个白名单路由不挂登录链（保持免登录）", () => {
     const leaked = routes
       .filter((r) => OPEN_ROUTES.has(r.path))
-      .filter((r) => callsFunction(r.source, "requireApiAccount"))
+      .filter((r) => usesImportedFunction(r.source, "requireApiAccount"))
       .map((r) => r.path);
     expect(leaked).toEqual([]);
   });
@@ -158,6 +193,41 @@ export async function GET(request: NextRequest) {
   return Response.json({ name });
 }`;
     expect(callsFunction(src, "requireApiAccount")).toBe(false);
+  });
+
+  it("本地同名函数 + 调用它 → callsFunction 为 true，但 usesImportedFunction 为 false", () => {
+    // 第四轮复核的 low：AST 判定原本只看「有没有一次 name(...) 调用」，于是新文件里
+    // 写一个自己的 requireApiAccount 桩再调用它，清单测试照样放行——而兜底的
+    // 路由数断言（40）只在路由数量变化时才红。加「必须真的 import」这一半。
+    const src = `function requireApiAccount(request: NextRequest): string {
+  return "acct_default";
+}
+export async function GET(request: NextRequest) {
+  return Response.json({ account: requireApiAccount(request) });
+}`;
+    expect(callsFunction(src, "requireApiAccount")).toBe(true);
+    expect(importsName(src, "requireApiAccount")).toBe(false);
+    expect(usesImportedFunction(src, "requireApiAccount")).toBe(false);
+  });
+
+  it("import 了但没调用 → usesImportedFunction 为 false（声明不等于生效）", () => {
+    const src = `import { requireApiAccount } from "../../lib/auth-chain";
+export async function GET(request: NextRequest) {
+  return Response.json({ ok: true });
+}`;
+    expect(callsFunction(src, "requireApiAccount")).toBe(false);
+    expect(importsName(src, "requireApiAccount")).toBe(true);
+    expect(usesImportedFunction(src, "requireApiAccount")).toBe(false);
+  });
+
+  it("import 了 requireApiAccount 并调用（真实路由的形态）→ true", () => {
+    const src = `import { requireApiAccount } from "../../lib/auth-chain";
+export async function GET(request: NextRequest) {
+  const account = await requireApiAccount(request);
+  if (account instanceof Response) return account;
+  return Response.json({ account });
+}`;
+    expect(usesImportedFunction(src, "requireApiAccount")).toBe(true);
   });
 
   it("同名本地函数（不是导入的那个）→ 也算调用（保守：宁可放行也不误伤，lint 层同语义）", () => {

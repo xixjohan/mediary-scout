@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { LanguageModel } from "ai";
+import { parseBearerToken } from "./bearer-scheme";
 import { isAgentMemoryEnabled } from "./agent-memory-server";
 import { sqliteDbPath } from "./durable-cache";
 import { cache } from "react";
@@ -159,7 +160,7 @@ export type AuthOutcome =
   | { ok: false; error: string };
 
 /** Create a session row + signed httpOnly cookie value for an account. */
-async function createLoginSession(accountId: string): Promise<string> {
+export async function createLoginSession(accountId: string): Promise<string> {
   const repository = getWorkflowRepository();
   const sessionId = generateSessionId();
   const nowMs = Date.now();
@@ -527,13 +528,11 @@ export function getJwtTtlSeconds(): number | null {
  * 由调用方 fail-closed。auth-chain 也调这个函数，全仓只有一份实现。
  */
 export async function resolveBearerAccountId(headers: Headers | undefined): Promise<string | null> {
-  const header = headers?.get("authorization");
+  // 规则在 lib/bearer-scheme.ts（proxy 粗筛、本函数、测试 mock 共用一份）：
   // scheme 大小写无关（RFC 7235）——proxy 的 presence 粗筛本来就是 /^bearer /i，
   // 这里若只认大写，"bearer <jwt>" 会过了 proxy 再到路由 401，两层语义分裂。
-  const match = /^bearer (.+)$/i.exec(header ?? "");
-  if (!match) return null;
-  const token = match[1]!.trim();
-  if (token.length === 0) return null;
+  const token = parseBearerToken(headers?.get("authorization"));
+  if (!token) return null;
   try {
     const claims = await verifyToken(token, await getJwtSecret());
     return claims.sub;
@@ -833,12 +832,19 @@ export async function getCurrentAccountId(): Promise<string> {
   // 数据送给未认证调用方（本文件反复强调的「reads fail CLOSED」的反面）。
   try {
     const raw = store.get(SESSION_COOKIE_NAME)?.value;
-    if (!raw) {
-      // 无 cookie：Bearer JWT 是 API 客户端唯一的凭据（S5.4 自审修的缺口——
-      // 此前这里直接返回哨兵，JWT 认证成功的请求拿不到账号作用域）。
-      return (await bearerAccountFromRequestScope()) ?? UNAUTHENTICATED_ACCOUNT_ID;
+    // 优先级与 auth-chain 的责任链一致：**session 优先，Bearer 兜底**。两处若
+    // 不一致，同一个请求会在闸机和数据层落到不同账号（闸机放行 A、数据层读 B）。
+    //
+    // 关键不变量：Bearer 兜底不能被 cookie 的存在性挡住。多用户分支原先是
+    // 「无 cookie 才看 Bearer」，于是一枚过期/解析不出的 cookie 就把 JWT 通道
+    // 整个吞掉——JWT 认证成功的调用方只拿到哨兵（第四轮复核实证：同一枚 JWT，
+    // 把 cookie 的 expires_at 改到过去，结果从 200 翻成 404）。session 解析
+    // **成功**时优先（与 auth-chain 通道 1 同序）；解析不出才落到 Bearer。
+    if (raw) {
+      const sessionAccountId = await resolveSessionAccountId(raw);
+      if (sessionAccountId) return sessionAccountId;
     }
-    return (await resolveSessionAccountId(raw)) ?? UNAUTHENTICATED_ACCOUNT_ID;
+    return (await bearerAccountFromRequestScope()) ?? UNAUTHENTICATED_ACCOUNT_ID;
   } catch {
     return UNAUTHENTICATED_ACCOUNT_ID;
   }

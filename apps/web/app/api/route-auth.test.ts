@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { issueToken, verifyToken } from "@media-track/shared";
+import { parseBearerToken } from "../../lib/bearer-scheme";
 
 /**
  * S5.4 行为层：抽 6 个形态各异的路由，逐一验证三种凭据状态。
@@ -38,11 +39,10 @@ vi.mock("../../lib/workflow-runtime", () => ({
   // mock 用同一个假 secret 复现真实语义（验签失败 → null = 视同无凭据）。
   resolveBearerAccountId: async (headers?: Headers) => {
     const header = headers?.get("authorization");
-    // 与真实实现同一语义：scheme 大小写无关（proxy 粗筛也是 /^bearer /i）
-    const match = /^bearer (.+)$/i.exec(header ?? "");
-    if (!match) return null;
-    const token = match[1]!.trim();
-    if (token.length === 0) return null;
+    // 与真实实现**同一份代码**（lib/bearer-scheme.ts）：此前这里是手抄的正则
+    // 复刻版，真实实现退化（如去掉 trim）时这些用例全绿——第四轮复核的 medium。
+    const token = parseBearerToken(header);
+    if (!token) return null;
     try {
       const claims = await verifyToken(token, JWT_SECRET);
       return claims.sub;

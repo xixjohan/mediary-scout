@@ -55,6 +55,29 @@ describe("docker-compose.yml web service config", () => {
     expect(() => validateRuntimeConfig(webEnv)).not.toThrow();
   });
 
+  // H1：更新链「四处同源」此前只有 updater 脚本那一处有用例——compose 的镜像
+  // 推导与透传删掉后全量 5195 用例照样全绿（第四轮复核实测）。这里把它们钉住。
+  it("H1：web/worker 镜像默认值由更新源推导，且 web 与 updater 透传同一个更新源", () => {
+    const composePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../docker-compose.yml");
+    const compose = parse(readFileSync(composePath, "utf8")) as {
+      services: {
+        web: { image: string; environment: Record<string, string> };
+        worker: { image: string };
+        updater: { environment: Record<string, string> };
+      };
+    };
+    const derived = "ghcr.io/${MEDIA_TRACK_UPDATE_REPO:-xixjohan/mediary-scout}:latest";
+    // 两处镜像默认值都必须从更新源推导，且互不相同地写死上游
+    expect(compose.services.web.image).toBe("${MEDIARY_IMAGE:-" + derived + "}");
+    expect(compose.services.worker.image).toBe("${MEDIARY_IMAGE:-" + derived + "}");
+    // 宿主设了 MEDIA_TRACK_UPDATE_REPO 时，web 与 updater 必须看到同一个值
+    expect(compose.services.web.environment.MEDIA_TRACK_UPDATE_REPO).toBe("${MEDIA_TRACK_UPDATE_REPO:-}");
+    expect(compose.services.updater.environment.MEDIA_TRACK_UPDATE_REPO).toBe("${MEDIA_TRACK_UPDATE_REPO:-}");
+    // 不再残留写死的上游镜像默认值
+    expect(compose.services.web.image).not.toContain("fancydirty");
+    expect(compose.services.worker.image).not.toContain("fancydirty");
+  });
+
   it("gives the Docker socket only to updater, and the token volume to web read-only", () => {
     const composePath = resolve(dirname(fileURLToPath(import.meta.url)), "../../../docker-compose.yml");
     const compose = parse(readFileSync(composePath, "utf8")) as {

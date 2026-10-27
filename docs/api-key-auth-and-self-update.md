@@ -66,7 +66,7 @@
 
 | 模式 | 用在哪 | 与现状的衔接 |
 |---|---|---|
-| **策略模式** | `ApiKeySource` 策略：`EnvApiKeySource` / `DbApiKeySource` / `DisabledApiKeySource`，由 `resolveApiKey()` 按优先级选路 | 与 `createBrandPacer`、`StorageExecutor` 工厂同款；新文件 `packages/shared/src/auth/api-key-source.ts` |
+| **策略模式** | `ApiKeySource` 策略：`EnvApiKeySource` / `DbApiKeySource` / `DisabledApiKeySource`，由 `resolveApiKey()` 按优先级选路 | 与 `createBrandPacer`、`StorageExecutor` 工厂同款；新文件 `packages/shared/src/api-key-source.ts` |
 | **适配器/端口** | `IApiKeyStore`（revoke/rotate/verifyMask）入 `packages/contracts`，SQLite 实现入 workflow 包 | `packages/contracts` 已有 4 个基础设施端口，直接扩展 |
 | **责任链** | `Authenticator` 链：`SessionCookieAuthenticator` → `BearerJwtAuthenticator` → `WorkerSecretAuthenticator`（仅/workflows）→ `UpdaterTokenAuthenticator`（仅/update）→ 401 | 每个 authenticator 只回答"这是不是你管的凭据" |
 | **状态机** | API key 生命周期 `absent → active → rotating(旧key宽限) → revoked` | 仓库已用 XState（acquisition-v2）。**评估后建议不用 XState**：状态仅 4 个且无并发补偿诉求，用 TS 判别式联合 + 纯函数更轻；若将来加"双 key 宽限期"再上 FSM。**明确记录此为有意识的取舍** |
@@ -77,7 +77,7 @@
 
 | 库 | 许可 | 体积/依赖 | 运行时 | 结论 |
 |---|---|---|---|---|
-| **jose** v5 | MIT | 0 依赖，~100KB | Node/Edge/Workers（Web Crypto） | ✅ **选它**。RFC 7519 全套、Auth.js/Hono 内部都用它、`none` 算法默认拒绝 |
+| **jose** v5（调研时最新；交付时装的是 **v6**）| MIT | 0 依赖，~100KB | Node/Edge/Workers（Web Crypto） | ✅ **选它**。RFC 7519 全套、Auth.js/Hono 内部都用它、`none` 算法默认拒绝 |
 | jsonwebtoken | MIT | 0 依赖，~70KB | **仅 Node**（crypto） | ❌  legacy；同步 API 在 middleware 里反而诱人写阻塞代码 |
 | fast-jwt | Apache-2.0 | 0 依赖 | 仅 Node | ❌ 性能场景（本项目不需要 µs 级） |
 | @node-rs/argon2 等 | — | 原生绑定 | — | ❌ 本项目 API key 是**服务端持有的长期凭据**（不是用户口令），不需要慢哈希 |
@@ -105,7 +105,7 @@
 - 验收：首页无横幅；`shouldShowConnectNotice` 相关测试改为断言"不再展示"或删除；全量回归绿。
 
 ### S5.2 API Key 策略 + 端口（F3 的地基）
-- `packages/shared/src/auth/api-key-source.ts`：`resolveApiKey(env, store)` → `{ value, origin: "db"\|"env"\|"none", masked }`，**DB 优先**；`mask` 只露末 4 位。
+- `packages/shared/src/api-key-source.ts`：`resolveApiKey(env, store)` → `{ value, origin: "db"\|"env"\|"none", masked }`，**DB 优先**；`mask` 只露末 4 位。
 - `packages/contracts`：`IApiKeyStore { get/put/rotate/clear }`；`SqliteApiKeyStore`（workflow 包）落 `app_settings`，key 名 `api_key`，**入 `SECRET_SETTING_KEYS`**（自动 GCM 加密）。
 - 测试：四象限（仅 DB / 仅 env / 都有→DB / 都无）、掩码、加密落盘（读文件是 `enc:v1:`）、`timingSafeEqual` 语义。
 
@@ -152,12 +152,13 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 > jose 是 **v6**（`jwtVerify`/`SignJWT`，不是文档早期写的 jsonwebtoken）；
 > 白名单「四类」按**机制**数（health / auth / worker-secret / updater-token），
 > 路由数则是 12 个——`worker-secret` 管 run-next|run-type3、`updater-token` 管
-> hold|busy|status（`status` 不换 token，但同属 updater 豁免族，见 §3）。
+> hold|busy|status（`status` 不换 token，但同属 updater 豁免族，见表下第 3 条验收）。
 
-1. 每任务 TDD 红→绿；全量测试保持绿（当前基线 382 文件 / 5195 用例）。
+1. 每任务 TDD 红→绿；全量测试保持绿（当前基线 384 文件 / 5214 用例，第四轮复核后）。
 2. 门禁全绿：`npm run gate`（layout + deps + `eslint . --max-warnings 0`）、
    **五处** typecheck（根 `npm run typecheck` 一棵树管住 shared/workflow/contracts，
-   加 web / desktop / host-worker / tmdb-proxy 四处独立工程）、
+   加 web / desktop / host-worker / tmdb-proxy 四处独立工程；tmdb-proxy 与
+   scout-connect 各自另有 tsc，按需跑）、
    `build:shared` / `build:workflow` / `build:web`、`npm run e2e`。
    「gate」本身不含 typecheck，别把它当全量门禁。
 3. F2 验收：40 路由逐一确认"无凭据 401 / 有 session 200 / 有 JWT 200"；白名单四类
@@ -178,7 +179,7 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | S5.3 JWT 颁发/验证 | ✅ | `packages/shared/src/auth/jwt.ts`（jose HS256，`algorithms` 显式拒降级）+ `POST /api/auth/token`：恒定时间比 key、复用登录限流、401 统一文案「api key 无效」（不区分未配/错 key，防枚举）；secret 走 env > `app_settings:jwt_secret`（加密，缺失自动生成 32 字节 hex）。round-trip/过期/篡改/错算法/限流单测全绿 |
 | S5.4 全接口认证 | ✅ | `apps/web/lib/auth-chain.ts` 责任链（session cookie → Bearer JWT → 单用户局域网默认账号，远程 fail-closed）；22+1 个非白名单路由一行守卫；白名单机制原位不动（health / auth/* / run-next+run-type3 的 worker secret / hold+busy 的 updater token / status 的 owner session / agent/* 独立 token）。**两层兜底**：vitest 路由清单测试（40 路由逐一归类，新增路由必须显式表态）+ ESLint L2 新规则 `local/api-auth-required`（漏挂即 lint 红，白名单同源）。6 路由 × 3 凭据状态行为测试。修掉一个被 mock 掩盖的真 bug：workflow-runtime 只 import 未 re-export `DEFAULT_ACCOUNT_ID`，真实构建下 auth-chain 会炸 |
 | S5.5 设置页管理 | ✅ | `GET/POST/DELETE /api/settings/api-key`（全过 S5.4 登录链；demo 403）+ `components/settings/api-key-section.tsx`（owner 门禁，落在「远程访问」tab）+ `components/api-key-panel.tsx`（掩码 + 来源徽标 db/env/none + 轮换返回**一次性完整值** + env 态禁清除并说明；后端 409 兜底）。三态读取/轮换/清除状态机 + 路由 14 用例 |
-| S5.6 更新源改当前仓库 | ✅ | `updateRepoSlug()` env 可配 + 畸形值抛错；Dockerfile/workflow/compose/updater 全链透传；21/21 单测 + **干净实例实测 env 生效**（fork 无 tag → feed 为空，不再显示上游发布）；顺手清掉两个残留 next-server 进程 |
+| S5.6 更新源改当前仓库 | ✅ | `updateRepoSlug()` env 可配 + 畸形值抛错；Dockerfile/workflow/compose/updater 全链透传；24/24 单测 + **干净实例实测 env 生效**（fork 无 tag → feed 为空，不再显示上游发布）；顺手清掉两个残留 next-server 进程 |
 
 ### 附：E2E 幂等性修复（S5.4 收尾时发现）
 
@@ -222,7 +223,7 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 
 | # | 问题 | 修法 |
 |---|---|---|
-| H1 | **M5 把更新链拆成了两半**：网页 feed 默认源改成本仓库，可 `updater/run-update.sh` 仍默认上游、compose 的 updater 服务压根没透传 `MEDIA_TRACK_UPDATE_REPO`；更糟的是 compose 的 `MEDIA_TRACK_UPDATE_REPO: ${VAR:-}` 会恒设一个空串、把 Release Docker 烘焙进镜像的 `github.repository` 覆盖掉——默认部署去检查一个运营者从未选择的仓库。`scripts/deploy.sh` 又把上游镜像钉进 `.env` | 三处同源：updater 脚本、compose（改成裸变量形式，宿主没设时不注入、让烘焙值活下来；updater 服务补透传）、deploy.sh（镜像基址改由更新源推导）。补 4 个 updater 默认值用例钉住 |
+| H1 | **M5 把更新链拆成了两半**：网页 feed 默认源改成本仓库，可 `updater/run-update.sh` 仍默认上游、compose 的 updater 服务压根没透传 `MEDIA_TRACK_UPDATE_REPO`；更糟的是 compose 的 `MEDIA_TRACK_UPDATE_REPO: ${VAR:-}` 会恒设一个空串、把 Release Docker 烘焙进镜像的 `github.repository` 覆盖掉——默认部署去检查一个运营者从未选择的仓库。`scripts/deploy.sh` 又把上游镜像钉进 `.env` | 三处同源：updater 脚本、compose（updater 服务补透传；`MEDIA_TRACK_UPDATE_REPO: ${VAR:-}` 是 map 形式、**恒设**（可能为空串），空串在应用侧被视作未设并回落默认源——compose 没有「未设就不注入」的写法，烘焙值要靠镜像默认 env 或 .env 显式写同值来保留）、deploy.sh（镜像基址改由更新源推导）。补 4 个 updater 默认值用例钉住；后续几轮又补了 compose/deploy 两处推导的行为级测试（删掉不红） |
 | H2 | L1 的 16 位下限在路由层没兜底：短 key 直接 500 空体，「至少 16 位」这条原因永远到不了调用方；顺带发现非字符串 `apiKey` 被静默丢弃、转而发一枚随机 key（调用方以为设了自己的值） | 路由层 try/catch 翻成 400；形状错误也 400。补 3 个用例 |
 | H3 | M6 只对齐了 session 通道：单用户模式下 Bearer 通道仍放行**任意 sub** 的 JWT，与数据层「只认 acct_default」相反——当前 token 路由只签默认账号所以尚不可利用，但 per-account key 已写在它的规划里，而且上一轮的测试还把这条分歧断言成了「正确」 | 通道 2 与通道 1 同一裁决；补 4 个用例，改 2 个把分歧写成正确的旧用例 |
 | H4 | 数据层单用户远程分支把 Bearer 判定包在 `sessionAccountId === null` 里：一枚能解析出别账号的残留 cookie 会让整个 Bearer 通道被跳过，持合法默认账号 JWT 的站主只拿到哨兵——200 空数据，而不是干净 401（真实 runtime 探针复现） | Bearer 改为无条件判定；用真实 `registerAccount`/`setSingleUserPassword` 造合法 cookie 做端到端用例（自引用 mock 拦不住模块内部调用，只会假装通过） |

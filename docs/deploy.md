@@ -471,7 +471,9 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 > git fetch --tags
 > TAG=$(git tag --list 'v*' --sort=-creatordate | head -n 1)
 > git -c advice.detachedHead=false checkout "refs/tags/$TAG"
-> sed -i "s|^MEDIARY_IMAGE=.*|MEDIARY_IMAGE=ghcr.io/fancydirty/mediary-scout:$TAG|" .env
+> # 镜像基址由更新源推导（与 scripts/deploy.sh 同一默认值）：默认当前仓库，
+> # fork 指回上游就把 fancydirty 换成自己的 owner/name。
+> sed -i "s|^MEDIARY_IMAGE=.*|MEDIARY_IMAGE=ghcr.io/xixjohan/mediary-scout:$TAG|" .env
 > docker compose pull web worker
 > docker compose up -d
 > # 核对容器真在跑该标签的代码(应等于 git rev-parse HEAD):
@@ -503,8 +505,10 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 
 ## 在线更新源（指向哪个仓库）
 
-「设置 → 更新」检查的发布标签、更新说明、桌面安装包，全部来自一个仓库。默认上游
-`fancydirty/mediary-scout`；fork 用 `MEDIA_TRACK_UPDATE_REPO=<owner>/<name>` 指向自己：
+「设置 → 更新」检查的发布标签、更新说明、桌面安装包，全部来自一个仓库。默认
+**当前仓库** `xixjohan/mediary-scout`（`origin` 指向谁就是谁——本仓库是上游的 fork，
+所以默认值从上游改成了 fork 自己）；要指回上游或任意 fork，用
+`MEDIA_TRACK_UPDATE_REPO=<owner>/<name>`：
 
 - **发布镜像已自带**：`Release Docker` 构建时把 `github.repository` 烤进镜像，
   所以 fork 拉自己的镜像部署，开箱即检查自己的发布，无需任何配置。

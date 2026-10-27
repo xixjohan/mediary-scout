@@ -299,14 +299,17 @@ describe("未设密码 + 远程 = 必须 fail-closed（移除 Access 后的公�
 describe("Bearer JWT 通道：getCurrentAccountId 必须认（S5.4 自审）", () => {
   const JWT_SECRET = "jwt-bearer-channel-test-secret-32-bytes!";
 
-  /** 多用户 + 指定请求头启动 runtime（JWT secret 走 env，避开 DB）。 */
-  const bootMultiUser = async (headers: Record<string, string>) => {
+  /** 多用户 + 指定请求头启动 runtime（JWT secret 走 env，避开 DB）。
+   *  opts.cookie 给一个**存在但解析不出账号**的 cookie 值（默认无 cookie）。 */
+  const bootMultiUser = async (headers: Record<string, string>, opts: { cookie?: string } = {}) => {
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
     process.env.MEDIA_TRACK_MULTI_USER = "1";
     process.env.MEDIA_TRACK_JWT_SECRET = JWT_SECRET;
     vi.doMock("next/headers", () => ({
       headers: async () => new Headers(headers),
-      cookies: async () => ({ get: () => undefined }), // 无 session cookie
+      cookies: async () => ({
+        get: (k: string) => (k === "mt_session" && opts.cookie ? { value: opts.cookie } : undefined),
+      }),
     }));
     vi.resetModules();
     return import("./workflow-runtime");
@@ -323,6 +326,36 @@ describe("Bearer JWT 通道：getCurrentAccountId 必须认（S5.4 自审）", (
     const token = await issueToken({ sub: "acct_jwt_owner" }, JWT_SECRET, 600);
     const rt = await bootMultiUser({ authorization: `Bearer ${token}` });
     expect(await rt.getCurrentAccountId()).toBe("acct_jwt_owner");
+  });
+
+  it("多用户 + 无效 cookie + 有效 JWT → JWT 账号（cookie 不得吞掉 Bearer 通道，H4b）", async () => {
+    const { issueToken } = await import("@media-track/shared");
+    const token = `Bearer ${await issueToken({ sub: "acct_jwt_owner" }, JWT_SECRET, 600)}`;
+    const rt = await bootMultiUser({ authorization: token }, { cookie: "garbage.sig" });
+    expect(await rt.getCurrentAccountId()).toBe("acct_jwt_owner");
+  });
+
+  it("多用户 + 有效 session + 有效 JWT → session 优先（两条都有效时取 session）", async () => {
+    const { issueToken } = await import("@media-track/shared");
+    // 造 cookie 与拿 getCurrentAccountId 必须是**同一个**模块实例：第二次
+    // resetModules 会连 :memory: 库一起重建，session 行消失，用例空转
+    // （H4 那三个用例就这么假绿过）。故先起实例、用模块自己的
+    // createLoginSession 落行签名（session secret 由 getSessionSecret 决定，
+    // 与 JWT secret 无关，手搓签名必然对不上）。
+    let cookie: string | undefined;
+    vi.doMock("next/headers", () => ({
+      headers: async () =>
+        new Headers({ authorization: `Bearer ${await issueToken({ sub: "acct_jwt_owner" }, JWT_SECRET, 600)}` }),
+      cookies: async () => ({ get: (k: string) => (k === "mt_session" && cookie ? { value: cookie } : undefined) }),
+    }));
+    process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    process.env.MEDIA_TRACK_JWT_SECRET = JWT_SECRET;
+    vi.resetModules();
+    const rt = await import("./workflow-runtime");
+    cookie = await rt.createLoginSession("acct_session_owner");
+    expect(await rt.resolveSessionAccountId(cookie)).toBe("acct_session_owner"); // 自证：cookie 真有效
+    expect(await rt.getCurrentAccountId()).toBe("acct_session_owner");
   });
 
   it("多用户 + 篡改的 JWT → 哨兵（fail-closed，不得放行）", async () => {
@@ -404,51 +437,67 @@ describe("单用户远程：残留别账号 cookie 不得吞掉 Bearer 通道（
   });
 
   /**
-   * 单用户 + 远程。用真实的 createLoginSession 造一枚能解析出
-   * `leftoverAccountId` 的合法 cookie（不 mock 模块内部调用——自引用 mock 拦不住
-   * 函数体内的本地引用，只会让测试假装通过）。
+   * 单用户 + 远程，一枚**真能解析出 leftoverAccountId** 的 session cookie。
+   *
+   * 关键约束（第四轮复核揪出的假绿）：必须全程只用**一个** workflow-runtime
+   * 模块实例。早先的写法是「先 import 造 cookie，再 resetModules + 重新 import
+   * 拿 getCurrentAccountId」——第二次 resetModules 会把模块级 repository 单例
+   * 连同它的 :memory: 库一起重建，session 行随之消失，cookie 解析回 null，
+   * Bearer 通道从来就没被「跳过」过：把 H4 修复整段删掉，那三个用例照样全绿。
+   * 所以这里 next/headers 的 mock 用可变闭包，先注册再 import，之后不再 reset。
    */
   async function boot(opts: { leftoverAccountId: string | null; authorization?: string }) {
     process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:";
     delete process.env.MEDIA_TRACK_MULTI_USER; // 单用户
     process.env.MEDIA_TRACK_JWT_SECRET = SECRET;
     process.env.MEDIA_TRACK_SESSION_SECRET = SECRET;
+
+    // 可变闭包：mock 在 import 之前注册，取值发生在 getCurrentAccountId() 调用时。
+    let cookieValue: string | undefined;
+    let authHeader: string | undefined;
+    vi.doMock("next/headers", () => ({
+      cookies: async () => ({
+        get: (k: string) => (k === "mt_session" && cookieValue ? { value: cookieValue } : undefined),
+      }),
+      headers: async () => {
+        const h = new Headers({ "cf-ray": "h4-probe" });
+        if (authHeader) h.set("authorization", authHeader);
+        return h;
+      },
+    }));
     vi.resetModules();
 
     const rt = await import("./workflow-runtime");
-    let cookie: string | undefined;
+    const { generateSessionId, signSession } = await import("@media-track/workflow");
+
     if (opts.leftoverAccountId !== null) {
-      // 用真实注册出口造一枚能解析出该账号的合法 cookie（registerAccount 内部
-      // createLoginSession 落库 + 签名）。默认账号则用 loginAccount 的 adopt 分支。
-      if (opts.leftoverAccountId === "acct_default") {
-        // 单用户登录只认 acct_default 且必须已设密码
-        expect((await rt.setSingleUserPassword("pw-1234567890")).ok).toBe(true);
-        const outcome = await rt.loginAccount("owner", "pw-1234567890");
-        cookie = outcome.ok ? outcome.signedCookie : undefined;
-      } else {
-        const outcome = await rt.registerAccount("leftover-user", "pw-1234567890");
-        cookie = outcome.ok ? outcome.signedCookie : undefined;
-      }
-      expect(cookie, "必须造出合法 session cookie").toBeTruthy();
+      // 直接往**这个实例的**库里插一行 session，再用同一 secret 签名——
+      // 不绕道 registerAccount/loginAccount（它们各自还会改库状态）。
+      const sessionId = generateSessionId();
+      await rt.getWorkflowRepository().createSession({
+        id: sessionId,
+        accountId: opts.leftoverAccountId,
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        createdAt: new Date().toISOString(),
+      });
+      cookieValue = signSession(sessionId, SECRET);
     }
-    const hdrs = new Headers({ "cf-ray": "h4-probe" });
-    if (cookie) hdrs.set("cookie", `${rt.SESSION_COOKIE_NAME}=${cookie}`);
-    if (opts.authorization !== undefined) hdrs.set("authorization", opts.authorization);
-    vi.doMock("next/headers", () => ({
-      cookies: async () => ({
-        get: (k: string) => (k === rt.SESSION_COOKIE_NAME && cookie ? { value: cookie } : undefined),
-      }),
-      headers: async () => hdrs,
-    }));
-    // createLoginSession 已在上面用真实仓库落过库；这里只为隔离重取模块。
-    vi.resetModules();
-    return import("./workflow-runtime");
+    authHeader = opts.authorization;
+
+    // 自证：cookie 必须真能解析出目标账号，否则这条用例又是空转的。
+    if (opts.leftoverAccountId !== null) {
+      expect(await rt.resolveSessionAccountId(cookieValue!), opts.leftoverAccountId).toBe(
+        opts.leftoverAccountId,
+      );
+    }
+    return rt;
   }
 
+  const bearer = async (sub: string) =>
+    `Bearer ${await (await import("@media-track/shared")).issueToken({ sub }, SECRET, 600)}`;
+
   it("残留别账号 session + 有效 acct_default JWT → 默认账号（Bearer 不被跳过）", async () => {
-    const { issueToken } = await import("@media-track/shared");
-    const token = `Bearer ${await issueToken({ sub: "acct_default" }, SECRET, 600)}`;
-    const rt = await boot({ leftoverAccountId: "acct_somebody_else", authorization: token });
+    const rt = await boot({ leftoverAccountId: "acct_somebody_else", authorization: await bearer("acct_default") });
     expect(await rt.getCurrentAccountId()).toBe("acct_default");
   });
 
@@ -458,9 +507,7 @@ describe("单用户远程：残留别账号 cookie 不得吞掉 Bearer 通道（
   });
 
   it("默认账号 session + 有效 JWT → 默认账号（两条路同一答案）", async () => {
-    const { issueToken } = await import("@media-track/shared");
-    const token = `Bearer ${await issueToken({ sub: "acct_default" }, SECRET, 600)}`;
-    const rt = await boot({ leftoverAccountId: "acct_default", authorization: token });
+    const rt = await boot({ leftoverAccountId: "acct_default", authorization: await bearer("acct_default") });
     expect(await rt.getCurrentAccountId()).toBe("acct_default");
   });
 });

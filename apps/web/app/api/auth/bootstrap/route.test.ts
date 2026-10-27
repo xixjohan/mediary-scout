@@ -26,7 +26,14 @@ const get = (headers: Record<string, string> = {}) =>
 
 describe("GET /api/auth/bootstrap", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    // resetAllMocks 而非 clearAllMocks：后者只清调用记录，本文件里
+    // isMultiUserEnabled 的 mockReturnValue(true) 会泄漏到同 worker 的后续
+    // 文件——--sequence.shuffle 下必红，固定顺序下看不见（第四轮复核实测）。
+    // 还原三处实现的返回值，让每个用例都从同一状态起步。
+    vi.resetAllMocks();
+    vi.mocked(runtime.isMultiUserEnabled).mockReturnValue(false);
+    vi.mocked(runtime.hasLoginPassword).mockResolvedValue(false);
+    vi.mocked(runtime.getBootstrapState).mockResolvedValue({ needsClaim: true, hasExistingLibrary: false });
   });
 
   it("tells the login page whether the visitor came through the tunnel (single user)", async () => {

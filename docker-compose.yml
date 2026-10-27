@@ -51,7 +51,11 @@ services:
   # 或指向本地自建镜像（docker build -t mediary-scout . 后
   # MEDIARY_IMAGE=mediary-scout:latest）。留空默认取上游 canonical 镜像。
   web:
-    image: ${MEDIARY_IMAGE:-ghcr.io/fancydirty/mediary-scout:latest}
+    # 镜像默认值由更新源推导（与 updater/run-update.sh、deploy.sh、网页 feed 同一
+    # 个 knob）：默认部署「跑的镜像」与「一键更新拉的镜像」必须是同一个仓库，
+    # 否则更新后镜像 revision 永远对不上（H1）。不发布自己镜像的 fork 需要显式设
+    # MEDIA_TRACK_UPDATE_REPO（或 MEDIARY_IMAGE）指回有发布的仓库。
+    image: ${MEDIARY_IMAGE:-ghcr.io/${MEDIA_TRACK_UPDATE_REPO:-xixjohan/mediary-scout}:latest}
     depends_on:
       pansou:
         condition: service_started
@@ -72,12 +76,11 @@ services:
       # "real" is not a valid value — it fails the policy and the worker can never drain the
       # queue (获取 stuck "排队", category dirs never provisioned). Must be vercel-ai.
       MEDIA_TRACK_AGENT_ADAPTER: vercel-ai
-      # S5.6：宿主的 .env 可覆盖；留空 = 交给镜像构建时烘焙的更新源（Release
-      # Docker 写入的 github.repository）。**注意**：compose 的 map 形式没有
-      # 「未设就不注入」的写法，所以这里恒设（可能为空串）——空串在应用侧被
-      # 视作未设并回落，见 apps/web/lib/release-feed-server.ts 的
-      # DEFAULT_UPDATE_REPO。真正想保留烘焙值的部署方，改直接用镜像默认 env、
-      # 或在 .env 里显式写同一个值。
+      # S5.6：宿主的 .env 可覆盖；留空 = 回落应用侧默认源（当前仓库，见
+      # apps/web/lib/release-feed-server.ts 的 DEFAULT_UPDATE_REPO）。注意 compose
+      # 的 map 形式没有「未设就不注入」的写法，所以这里恒设（可能为空串），
+      # 镜像构建时 Release Docker 烘焙的 github.repository 会被它盖掉——想保留
+      # 烘焙值就在 .env 里显式写同一个值。
       MEDIA_TRACK_UPDATE_REPO: ${MEDIA_TRACK_UPDATE_REPO:-}
       MEDIA_TRACK_DEMO_SEED: "0"
       # 隧道 token 也给 web:设置页「远程访问」用它作实例身份，向 Mediary Connect
@@ -123,7 +126,9 @@ services:
   # 零数据库访问、零业务代码共享；web 保留全部逻辑。
   # 与 web 同一个发布镜像（单镜像模式），只换启动命令。
   worker:
-    image: ${MEDIARY_IMAGE:-ghcr.io/fancydirty/mediary-scout:latest}
+    # 与 web 同一个镜像、同一条推导（见 web 的注释）：worker 与 web 必须是同一
+    # 个仓库的同一个 tag，否则 poke 的可能是另一套代码。
+    image: ${MEDIARY_IMAGE:-ghcr.io/${MEDIA_TRACK_UPDATE_REPO:-xixjohan/mediary-scout}:latest}
     command: ["node", "apps/host-worker/dist/main.js"]
     environment:
       MEDIA_TRACK_WEB_BASE: http://web:3000

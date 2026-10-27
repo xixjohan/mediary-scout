@@ -151,7 +151,11 @@ compose() { docker compose -p "$PROJECT" --project-directory "$REPO" "$@"; }
 # **默认值也必须与网页 feed 的 DEFAULT_UPDATE_REPO 同源**——曾有一边改成当前仓库、
 # 一边还留上游，结果「更新检查指向自己、一键更新拉别家镜像」，镜像 revision 永远
 # 对不上（第三轮复核的 high）。改这里时同步 apps/web/lib/release-feed-server.ts。
-UPDATE_REPO="${MEDIA_TRACK_UPDATE_REPO:-xixjohan/mediary-scout}"
+# 与应用侧（release-feed-server.ts 的 updateRepoSlug）同一口径：env 去掉首尾空白，
+# 纯空白视为「没设」而回落默认；否则 "   " 会拼出 ghcr.io/   这种地址。
+_UPDATE_REPO_RAW="${MEDIA_TRACK_UPDATE_REPO:-}"
+_UPDATE_REPO=$(printf '%s' "$_UPDATE_REPO_RAW" | tr -d '[:space:]')
+UPDATE_REPO="${_UPDATE_REPO:-xixjohan/mediary-scout}"
 IMAGE_BASE="${MEDIA_IMAGE_BASE:-ghcr.io/${UPDATE_REPO}}"
 
 # 镜像里烘焙的 commit（Release Docker 的 org.opencontainers.image.revision label）。

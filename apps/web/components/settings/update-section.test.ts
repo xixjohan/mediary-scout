@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement, isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -71,6 +72,17 @@ describe("UpdateTab on desktop", () => {
   it("points to the release page when it cannot tell", () => {
     expect(render({ desktop: true, view: view({ status: "offline" }) })).toContain("releases/latest");
     expect(render({ desktop: true, view: view({ status: "unknown" }) })).toContain("releases/latest");
+  });
+
+  // H1：两个外链必须与更新日志同一个仓库。此前写死上游 fancydirty，于是「日志列
+  // fork 的发布、全部发布说明跳上游的仓库」——用户点进去看到的是别家的发布。
+  it("release/notes 外链由 updateRepoSlug() 推导，不写死仓库", () => {
+    const src = readFileSync(new URL("./update-section.tsx", import.meta.url), "utf8");
+    expect(src).toContain("const REPO_SLUG = updateRepoSlug();");
+    expect(src).toContain("github.com/${REPO_SLUG}/releases/latest");
+    expect(src).toContain("github.com/${REPO_SLUG}/tree/main/release-notes");
+    // 组件里再出现 fancydirty 即是回归（写死的仓库外链）
+    expect(src).not.toContain("fancydirty/mediary-scout");
   });
 
   it("never shows the desktop download on a Docker instance", () => {

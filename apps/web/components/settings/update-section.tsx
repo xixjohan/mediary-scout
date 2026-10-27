@@ -3,6 +3,7 @@ import { isDemoMode } from "../../lib/demo-mode";
 import { getAutoUpdateSettings, getWorkflowRepository, resolveIsDesktop } from "../../lib/workflow-runtime";
 import { ACTIVE_UPDATER_PHASES, type UpdateView } from "../../lib/update-state";
 import { loadUpdateView } from "../../lib/update-view-server";
+import { updateRepoSlug } from "../../lib/release-feed-server";
 import { resolveCurrentIsOwner } from "../../lib/settings-attention-server";
 import type { UpdaterPhase } from "../../lib/updater-client";
 import { AutoUpdateSwitch, CheckUpdatesButton, CopyCommandButton, UpdateNowButton } from "./update-actions";
@@ -10,6 +11,9 @@ import { AutoUpdateSwitch, CheckUpdatesButton, CopyCommandButton, UpdateNowButto
 const MIGRATE_COMMAND = "./scripts/deploy.sh";
 
 const KIND_LABEL = { add: "新增", improve: "改进", fix: "修复" } as const;
+
+/** 更新日志来自哪个仓库，外链就去哪个仓库（同源，别让用户点去别家）。 */
+const REPO_SLUG = updateRepoSlug();
 
 /** How to install the download, by installer type ("page" = the release page). */
 const INSTALL_HINT = {
@@ -65,7 +69,7 @@ function DesktopUpdateHint({ view }: { view: UpdateView }) {
   return (
     <p className="update-muted">
       桌面版在{" "}
-      <a href="https://github.com/fancydirty/mediary-scout/releases/latest" target="_blank" rel="noopener noreferrer">
+      <a href={`https://github.com/${REPO_SLUG}/releases/latest`} target="_blank" rel="noopener noreferrer">
         发布页
       </a>{" "}
       下载新版本安装包。
@@ -177,7 +181,7 @@ export function UpdateTab({
             {view.releases.length > 10 ? (
               <p className="update-muted">
                 这里只列最近 10 个版本，更早的见{" "}
-                <a href="https://github.com/fancydirty/mediary-scout/tree/main/release-notes" target="_blank" rel="noopener noreferrer">
+                <a href={`https://github.com/${REPO_SLUG}/tree/main/release-notes`} target="_blank" rel="noopener noreferrer">
                   全部发布说明
                 </a>
                 。
