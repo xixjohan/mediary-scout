@@ -1,0 +1,19 @@
+/**
+ * Per-brand transfer-model notes injected into the acquisition agent's prompt.
+ *
+ * Dependency-free on purpose: `storage-brands.ts` references these from each brand
+ * entry, and task-agents.ts reads them back out — importing them from task-agents.ts
+ * would be circular (task-agents.ts needs getStorageBrand), leaving the constants
+ * `undefined` at registry-evaluation time.
+ *
+ * 115 keeps the in-prompt guidance and needs no extra line, so its registry entry
+ * holds an empty string.
+ */
+
+export const TRANSFER_MODEL_NOTE_QUARK = `\nTRANSFER MODEL — 夸克网盘 (this drive): every candidate is a 夸克分享链 (转存分享链, the 秒传 equivalent). 夸克 has NO magnet / offline-download API, so there are NO magnet candidates and a magnet would fail loud (QUARK_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已取消 / 已过期 / 提取码错误) — switch to the next covering 夸克分享. Read the "dead-links-black-box" skill section: on this drive it is the 夸克 version.`;
+
+export const TRANSFER_MODEL_NOTE_GUANGYA = `\nTRANSFER MODEL — 光鸭云盘 (this drive): DUAL path like 123. (1) 光鸭分享链 (guangyapan.com/s/<id>): a server-side 转存 (restore_share) into staging — the whole share root (folders included) lands in seconds. It FAILS LOUD when unusable: 分享已失效 / 分享链接错误 / 参数错误 (dead or malformed link), or GUANGYA_SHARE_EMPTY (the share opens but lists no files — common on PanSou; treat it as dead) — switch to the next covering candidate at once. GUANGYA_RESTORE_TIMEOUT is different: the 转存 is still running (no_target_change) — inspectStaging before trying anything else, or the film may land twice. Because it fails loud, a ranked list of 光鸭分享 for one film may go to transferUntilLanded. (2) 磁力/ed2k/BT: offline download (resolve_res → create_task → poll); a dead magnet does NOT error loudly — trust the staging reread, and on nothing-landed switch to the next covering candidate. Prefer a transparent 光鸭分享 when one covers the need (instant, no seeding). Another brand's share (夸克/115/123/天翼) cannot land here and fails loud (GUANGYA_UNSUPPORTED_LINK). Read the "dead-links-black-box" skill section: on this drive it is the 光鸭 version.`;
+
+export const TRANSFER_MODEL_NOTE_TIANYI = `\nTRANSFER MODEL — 天翼云盘 (this drive): every candidate is a 天翼分享链 (cloud.189.cn/t/<code>, a 转存分享链 — the 115-秒传 equivalent): the system SHARE_SAVE's the share's files into staging. 天翼 has NO magnet / offline-download API, so there are NO magnet candidates and a magnet would fail loud (TIANYI_NO_MAGNET); ignore any 115/magnet wording — it does not apply here. A dead/expired share fails LOUD (分享不存在 / 已失效 / 已过期 / 需要提取码 / ShareNotFound) — switch to the next covering 天翼分享. Read the "dead-links-black-box" skill section: on this drive it is the 天翼 version.`;
+
+export const TRANSFER_MODEL_NOTE_PAN123 = `\nTRANSFER MODEL — 123网盘 (this drive): DUAL path like 115. (1) 123 分享链 (123pan.com/s/<key>): 秒传复制 into staging (server-side async copy; bounded settle-polling is built in). Dead/expired share fails LOUD (分享不存在 / 已取消 / 提取码错误 / 链接失效) — switch to the next covering 123 分享. (2) 磁力/ed2k: native offline (resolve → submit → poll) — a dead magnet fails LOUD (PAN123_OFFLINE_RESOLVE_FAILED / PAN123_OFFLINE_FAILED); a poll timeout is no_target_change after the task is cancelled, so inspect staging once before switching to the next covering 磁力 or 123 分享. Prefer a transparent 123 分享 when both exist (instant copy); use magnet when share coverage is thin. Read the "dead-links-black-box" skill section: on this drive it is the 123 version.`;

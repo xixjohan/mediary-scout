@@ -26,6 +26,12 @@ import {
   DEAD_LINKS_BLACK_BOX_QUARK,
   DEAD_LINKS_BLACK_BOX_TIANYI,
 } from "./acquisition-v2/skill-manuals.js";
+import {
+  TRANSFER_MODEL_NOTE_GUANGYA,
+  TRANSFER_MODEL_NOTE_PAN123,
+  TRANSFER_MODEL_NOTE_QUARK,
+  TRANSFER_MODEL_NOTE_TIANYI,
+} from "./acquisition-v2/transfer-model-notes.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import {
   createBootstrapPan115CookieStorageExecutor,
@@ -159,6 +165,16 @@ export interface StorageBrand {
    *  exactly the G1 silent-failure class. Each brand must now say how it
    *  provisions itself. */
   createBootstrap: (input: StorageBootstrapInput) => StorageExecutor;
+  /** The transfer-model note injected into the acquisition agent's prompt for a run
+   *  on this drive: which link kinds can land here and how a dead one fails.
+   *  Empty for 115 (it keeps the in-prompt guidance).
+   *
+   *  REQUIRED. It used to be four `if (provider === ...)` branches plus a silent
+   *  `return ""` default in task-agents.ts, so a brand that forgot to add one got
+   *  NO transfer-model guidance — the agent would operate the drive without knowing
+   *  whether magnets work. The text lives in transfer-model-notes.ts (dependency-free,
+   *  see the note there). */
+  transferModelNote: string;
 }
 
 /** Input to a brand's `createBootstrap`. Cookie brands read `cookie`, token brands
@@ -182,6 +198,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "parents",
     minApiIntervalMs: 0, // 115 client 自带 1.2s 漏桶
     deadLinksSkill: DEAD_LINKS_BLACK_BOX,
+        transferModelNote: "",
     createBootstrap: ({ cookie, env }) =>
           createBootstrapPan115CookieStorageExecutor({ cookie, ...(env === undefined ? {} : { env }) }),
     create: (input) => {
@@ -206,6 +223,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "parents",
     minApiIntervalMs: 0, // 夸克 client 自带 3/s 令牌桶
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_QUARK,
+        transferModelNote: TRANSFER_MODEL_NOTE_QUARK,
     createBootstrap: ({ cookie }) =>
           new QuarkStorageExecutor({ client: new QuarkCookieClient({ cookie }), writeScopeDirectoryIds: [] }),
     create: (input) => {
@@ -234,6 +252,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "listed",
     minApiIntervalMs: 0,
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_GUANGYA,
+        transferModelNote: TRANSFER_MODEL_NOTE_GUANGYA,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
           const clientOptions: GuangYaClientOptions = {
@@ -283,6 +302,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "listed",
     minApiIntervalMs: 0,
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_TIANYI,
+        transferModelNote: TRANSFER_MODEL_NOTE_TIANYI,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as Partial<TianyiCredential>;
           const clientOptions: TianyiClientOptions = {
@@ -331,6 +351,7 @@ export const STORAGE_BRANDS: StorageBrand[] = [
     writeScope: "listed",
     minApiIntervalMs: 1500, // 123 用 code=100011 请勿频繁操作 回应突发
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_PAN123,
+        transferModelNote: TRANSFER_MODEL_NOTE_PAN123,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as Partial<Pan123Credential>;
           return new Pan123StorageExecutor({ client: new Pan123Client({ token: c.token ?? "" }), writeScopeDirectoryIds: [] });

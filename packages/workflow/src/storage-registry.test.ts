@@ -3,6 +3,7 @@ import {
   buildBootstrapExecutorForBrand,
   buildExecutorForBrand,
   createExecutorForBrand,
+  transferModelLine,
   getStorageSkill,
   STORAGE_BRANDS,
   type StorageBrand,
@@ -127,5 +128,51 @@ describe("STORAGE_BRANDS 的 bootstrap executor 也在注册表里", () => {
     expect(() => buildBootstrapExecutorForBrand(broken, { cookie: "", env: {} })).toThrowError(
       /without a bootstrap/i,
     );
+  });
+});
+
+/**
+ * 转存模型提示词也必须在注册表里。
+ *
+ * transferModelLine 原是四个 `if (provider === ...)` 分支加一个静默的
+ * `return ""` 默认值。漏掉一家的后果不是报错，而是**agent 完全不知道这块盘能落
+ * 什么链接**（磁力行不行、死链怎么报错）——比没有提示更危险。
+ */
+describe("STORAGE_BRANDS 的转存模型提示词也在注册表里", () => {
+  it("每个已登记品牌都有这个字段（115 为显式空串）", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(typeof brand.transferModelNote, `${brand.provider} 缺 transferModelNote`).toBe("string");
+    }
+  });
+
+  it("除 115 外每家都真的有内容（静默空串 = agent 不知道能落什么）", () => {
+    for (const brand of STORAGE_BRANDS) {
+      if (brand.provider === "pan115") {
+        expect(brand.transferModelNote, "115 靠 prompt 内既有指引，应为空").toBe("");
+        continue;
+      }
+      expect(brand.transferModelNote.length, `${brand.provider} 的提示词是空的`).toBeGreaterThan(0);
+    }
+  });
+
+  it("transferModelLine(provider) 返回该品牌自己的提示词", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(transferModelLine({ storageProvider: brand.provider })).toBe(brand.transferModelNote);
+    }
+  });
+
+  it("storageProvider 缺省 → 115 → 空串（与旧默认行为一致）", () => {
+    expect(transferModelLine({})).toBe("");
+    expect(transferModelLine({ storageProvider: "pan115" })).toBe("");
+  });
+
+  it("各家提示词互不相同", () => {
+    const seen = new Map<string, string>();
+    for (const brand of STORAGE_BRANDS) {
+      if (brand.transferModelNote === "") continue;
+      const prior = seen.get(brand.transferModelNote);
+      expect(prior, `${brand.provider} 与 ${prior} 用了同一段提示词`).toBeUndefined();
+      seen.set(brand.transferModelNote, brand.provider);
+    }
   });
 });
