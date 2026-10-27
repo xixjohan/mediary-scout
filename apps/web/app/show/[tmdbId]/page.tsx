@@ -10,6 +10,7 @@ import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
 import { AppSidebar } from "../../../components/app-sidebar";
 import { GitHubNameplate } from "../../../components/github-nameplate";
 import { BackLink } from "../../../components/back-link";
+import { TitleResourcePanel } from "../../../components/title-resource-panel";
 import { MovieSynopsis } from "../../../components/movie-synopsis";
 import { RequestTrackButton } from "../../../components/request-track-button";
 import { SeasonDetails } from "../../../components/season-details";
@@ -271,6 +272,8 @@ function TvHub({
         {view.overview ? <MovieSynopsis overview={view.overview} /> : null}
       </div>
 
+      <TitleResourcePanel tmdbId={view.tmdbId} />
+
       <section className="hub-seasons" aria-label="季列表">
         <ul className="hub-season-list">
           <SeasonRowsWithSwap view={view} storageId={storageId} basePath={basePath} />
@@ -399,6 +402,9 @@ function MovieHub({
             </div>
           ) : null}
         </div>
+          {view.state !== "untracked" ? (
+            <TitleResourcePanel tmdbId={view.tmdbId} />
+          ) : null}
         {view.state !== "untracked" ? (
           <TitleMessageSection tmdbId={view.tmdbId} mediaType="movie" storageId={storageId} hasFile={view.obtained} episodes={[]} />
         ) : null}
