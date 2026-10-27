@@ -143,6 +143,22 @@ interface StorageDriverEntry {
   builder，builder 格式一改夹具会跟着静默改，没有任何东西能发现 wire format 变了。
   真正的格式守护是「格式契约」那一条测试。
 
+### 遗留：一个 gate 看不见的盲区（未修，如实记录）
+
+`packages/workflow/tsconfig.json` 的 `include` 只收 `src/**/*.ts`，**`tests/` 从来不被
+tsc 检查**。根 `tsconfig.json` 收 `packages/**/*.ts`，能扫出 **34 个测试文件类型错误**
+（分布在 9 个测试文件，集中在 `manual-import-worker.test.ts` 19 条）；而
+`npm run gate` 一个都看不到——`gate = gate:layout && gate:deps && lint`，不含
+`npm run typecheck`。
+
+这 34 条全部在我未改动的文件里（本次只碰 `media-identity.test.ts`、
+`media-identity-drift.test.ts`、`workflow-runtime.test.ts`），属既有问题。
+性质以 TS7006 隐式 any、TS2322/TS2741 夹具与声明类型不符为主，意味着这些测试里
+有一部分代码并不是它看上去的样子。
+
+**未修**：修 34 个与本次无关的既有类型错误超出本任务范围，且在本会话「正确性优先」的
+取向下，不宜顺手改我没写的夹具而引入回归。建议单开一项，并考虑把 `typecheck` 纳入 gate。
+
 顺带查出一个 gate 的结构性盲区：`packages/workflow/tsconfig.json` 的 include 只收
 `src/**/*.ts`，**tests/ 从来不被 tsc 检查**。根 tsconfig 能扫出 37 个测试文件类型错误，
 而 `npm run gate` 一个都看不到。本任务的编译期穷尽性断言因此必须落在 `src/` 里
