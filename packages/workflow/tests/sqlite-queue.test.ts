@@ -150,3 +150,95 @@ describe("SqliteJobQueue", () => {
     }
   });
 });
+
+/**
+ * G10 停滞任务回收。
+ *
+ * 静默故障：worker 在中途崩溃（进程被杀、OOM、未捕获异常没走到 reportFailure），
+ * 任务永远停在 status='running' + locked_at。而 claimNextJob 只选 status='queued'
+ * ——于是「某个任务永远不跑且无提示」。手动模式会大幅增加长时挂起任务数，不补会把
+ * 问题放大。
+ */
+describe("SqliteJobQueue 停滞锁回收（G10）", () => {
+  /** 直接把一行改成指定状态，模拟 worker 崩溃后的残留。 */
+  function forceState(
+    db: Database.Database,
+    jobId: string,
+    state: { status: string; lockedAt: string | null; retryCount?: number },
+  ): void {
+    db.prepare(
+      `UPDATE sys_queue_jobs SET status = ?, locked_at = ?, locked_by = ?, retry_count = COALESCE(?, retry_count) WHERE id = ?`,
+    ).run(state.status, state.lockedAt, state.lockedAt === null ? null : "worker-dead", state.retryCount ?? null, jobId);
+  }
+
+  /** 库内当前时间（SQLite datetime('now')），用于算超阈值的 locked_at。 */
+  function dbNow(db: Database.Database): string {
+    return (db.prepare(`SELECT datetime('now') AS n`).get() as { n: string }).n;
+  }
+
+  it("running 且 locked_at 未超阈值 → 不回收，仍归原 worker", () => {
+    const db = new Database(":memory:");
+    const queue = new SqliteJobQueue(db);
+    const job = queue.enqueue({ queueName: "acquire", payload: {} });
+    forceState(db, job.id, { status: "running", lockedAt: dbNow(db) });
+
+    expect(queue.claimNextJob("acquire", "worker-2")).toBeNull();
+  });
+
+  it("running 且 locked_at 超阈值 → 被重新认领（G10 核心）", () => {
+    const db = new Database(":memory:");
+    const queue = new SqliteJobQueue(db);
+    const job = queue.enqueue({ queueName: "acquire", payload: {} });
+    // 2 小时前锁的，远超任何合理阈值
+    forceState(db, job.id, { status: "running", lockedAt: "2000-01-01 00:00:00" });
+
+    const reclaimed = queue.claimNextJob("acquire", "worker-2");
+    expect(reclaimed?.id).toBe(job.id);
+    expect(reclaimed?.status).toBe("running");
+    expect(reclaimed?.lockedBy).toBe("worker-2");
+    expect(reclaimed?.lockedAt).not.toBe("2000-01-01 00:00:00");
+  });
+
+  it("回收会推进 retry_count（worker 反复崩溃不能无限重试）", () => {
+    const db = new Database(":memory:");
+    const queue = new SqliteJobQueue(db);
+    const job = queue.enqueue({ queueName: "acquire", payload: {}, maxRetries: 3 });
+    forceState(db, job.id, { status: "running", lockedAt: "2000-01-01 00:00:00" });
+
+    const first = queue.claimNextJob("acquire", "w1");
+    expect(first?.retryCount).toBe(1);
+  });
+
+  it("回收后再次崩溃仍可再回收，直到用尽重试", () => {
+    const db = new Database(":memory:");
+    const queue = new SqliteJobQueue(db);
+    const job = queue.enqueue({ queueName: "acquire", payload: {}, maxRetries: 2 });
+    forceState(db, job.id, { status: "running", lockedAt: "2000-01-01 00:00:00" });
+
+    // 第 1 次回收：retry 0 → 1，仍未用尽
+    expect(queue.claimNextJob("acquire", "w1")?.retryCount).toBe(1);
+    // 再次崩溃
+    forceState(db, job.id, { status: "running", lockedAt: "2000-01-01 00:00:00" });
+    // 第 2 次回收：retry 1 → 2，达到 max_retries → 进死信，不再被认领
+    const second = queue.claimNextJob("acquire", "w2");
+    expect(second).toBeNull();
+
+    const row = db.prepare(`SELECT status, error_message FROM sys_queue_jobs WHERE id = ?`).get(job.id) as {
+      status: string;
+      error_message: string | null;
+    };
+    expect(row.status).toBe("dead_letter");
+    // 死信必须带原因，否则又是一个「无提示」的静默故障
+    expect(row.error_message).toMatch(/stale lock|停滞/i);
+  });
+
+  it("queued 任务不受回收逻辑影响（照常认领，retry_count 不变）", () => {
+    const db = new Database(":memory:");
+    const queue = new SqliteJobQueue(db);
+    const job = queue.enqueue({ queueName: "acquire", payload: {} });
+
+    const claimed = queue.claimNextJob("acquire", "worker-1");
+    expect(claimed?.id).toBe(job.id);
+    expect(claimed?.retryCount).toBe(0);
+  });
+});

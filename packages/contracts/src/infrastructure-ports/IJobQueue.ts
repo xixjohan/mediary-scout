@@ -37,8 +37,19 @@ export interface IJobQueue {
   /** 投递任务，返回落库后的完整 Job */
   enqueue(input: EnqueueJobInput): Job;
 
-  /** 原子认领下一个可执行任务；无任务返回 null。同一任务只会被认领一次。 */
-  claimNextJob(queueName: string, workerId: string): Job | null;
+  /**
+   * 原子认领下一个可执行任务；无任务返回 null。同一任务只会被认领一次。
+   *
+   * 实现必须在本调用内回收「停滞锁」——status='running' 且 locked_at 超过
+   * `options.staleAfterMs` 的任务（worker 崩溃的残留）。只认领 queued 会让崩溃
+   * 残留永远停在 running：无人认领且无提示，是静默故障（G10）。重试用尽的停滞
+   * 任务进死信而非继续重试。
+   */
+  claimNextJob(
+    queueName: string,
+    workerId: string,
+    options?: { staleAfterMs?: number },
+  ): Job | null;
 
   /** 标记成功 */
   markSucceeded(jobId: string): void;
