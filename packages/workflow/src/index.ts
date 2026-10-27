@@ -21,6 +21,9 @@ export { SqliteJobQueue, DEFAULT_STALE_LOCK_MS } from "./sqlite-queue.js";
 // 写入侧脱敏会毁掉 args 的法证价值（agent-trace-integration.test.ts 特意断言
 // search.args.keyword 保持可复盘）。写入侧已有的是体积上限 cappedArgs，与脱敏无关。
 export * from "./agent-step-redaction.js";
+// 资源面板（W2）的投影层：候选视图只带「有哪些资源、多大、什么时候发的」，
+// providerPayload（分享 url/提取码/magnet/downloadUrl）绝不散播。
+export * from "./resource-candidate-view.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
