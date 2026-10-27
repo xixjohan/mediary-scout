@@ -2392,7 +2392,9 @@ function parseTvCandidateId(candidateId: string): { tmdbId: number; seasonNumber
   };
 }
 
-async function getWorkerResourceProvider(
+/** 供用户态资源搜索端点复用（W2）。此前是模块私有；端点要拿同一个按品牌装配的
+ *  provider 链，另起一套会让两处的 kind 集合悄悄漂移。 */
+export async function getWorkerResourceProvider(
   settings: { getSetting(key: string): Promise<string | null> } = getWorkflowRepository(),
   provider: string = "pan115",
   accountId?: string,

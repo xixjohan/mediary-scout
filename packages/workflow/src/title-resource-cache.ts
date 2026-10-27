@@ -15,7 +15,7 @@
  * The clock is injected so the TTL is tested without sleeping, and so the real
  * endpoint can share one cache across requests.
  */
-export interface TitleResourceCacheOptions {
+export interface TitleResourceCacheOptions<T> {
   /** Injectable clock (ms since epoch). Tests drive it; prod passes Date.now. */
   now: () => number;
   ttlMs: number;
@@ -25,13 +25,13 @@ export interface TitleResourceCacheOptions {
    * needs (the candidate views), while `hasFreshCandidate` answers whether a
    * held candidateId is still valid — one source, not two.
    */
-  idOf: (value: unknown) => string;
+  idOf: (value: T) => string;
 }
 
 export class TitleResourceCache<T = unknown> {
   private readonly entries = new Map<string, { values: readonly T[]; storedAtMs: number }>();
 
-  constructor(private readonly options: TitleResourceCacheOptions) {
+  constructor(private readonly options: TitleResourceCacheOptions<T>) {
     if (!Number.isFinite(options.ttlMs) || options.ttlMs <= 0) {
       throw new Error("TitleResourceCache: ttlMs must be a positive number");
     }
