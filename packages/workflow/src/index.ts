@@ -44,6 +44,8 @@ export * from "./manual-import-endpoint.js";
 export * from "./candidate-selector.js";
 // 批次 3：把用户态搜索的快照落成一个不可见的 run（resource_search）。
 export * from "./resource-search-run.js";
+// 批次 3：关键词阶梯的多份快照合并成用户看到的那一份。
+export * from "./merged-search-snapshot.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
