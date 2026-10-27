@@ -349,3 +349,37 @@ describe("Bearer JWT 通道：getCurrentAccountId 必须认（S5.4 自审）", (
     expect(await rt.getCurrentAccountId()).toBe("acct_unauthenticated");
   });
 });
+
+/**
+ * L1（逐维核查补缺）：规格列的畸形 Bearer 形态此前只对 auth-chain 测试里的
+ * mock 复刻版断言过，**真实** resolveBearerAccountId 一个都没覆盖。
+ */
+describe("resolveBearerAccountId：畸形形态对真实实现（L1）", () => {
+  const REAL_SECRET = "l1-real-secret-32-bytes-xxxxxxxxxx";
+
+  async function resolveReal(authorization: string | undefined): Promise<string | null> {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    process.env.MEDIA_TRACK_JWT_SECRET = REAL_SECRET;
+    vi.resetModules();
+    const { resolveBearerAccountId } = await import("./workflow-runtime");
+    const headers = new Headers();
+    if (authorization !== undefined) headers.set("authorization", authorization);
+    return resolveBearerAccountId(headers);
+  }
+
+  it("五种畸形形态全部视同无凭据（null）", async () => {
+    for (const bad of ["Bearer", "Bearer ", "Basic abc", "Token xyz", "bearer"]) {
+      expect(await resolveReal(bad), bad).toBeNull();
+    }
+  });
+
+  it("无 authorization 头 → null", async () => {
+    expect(await resolveReal(undefined)).toBeNull();
+  });
+
+  it("大小写混排的 bearer 前缀 + 有效 token → 认（与 scheme 大小写无关）", async () => {
+    const { issueToken } = await import("@media-track/shared");
+    const token = await issueToken({ sub: "acct_l1" }, REAL_SECRET, 600);
+    expect(await resolveReal(`BeArEr ${token}`)).toBe("acct_l1");
+  });
+});

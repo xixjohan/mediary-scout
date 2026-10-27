@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../lib/demo-mode";
+import { resolveCurrentIsOwner } from "../../../../lib/settings-attention-server";
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import {
   clearApiKey,
@@ -26,6 +27,10 @@ export async function GET(request: NextRequest) {
   const gate = await requireApiAccount(request);
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
+  // key 是**实例级**凭据（/api/auth/token 用它换 JWT），多用户模式下普通账号
+  // 不该能轮换/清除——登录 ≠ 有权改 everyone 用的钥匙。与 /api/update/status
+  // 同款：非 owner 一律 404（不泄露端点存在性），也不写库。
+  if (!(await resolveCurrentIsOwner())) return new Response(null, { status: 404 });
 
   const { getWorkflowRepository } = await import("../../../../lib/workflow-runtime");
   const repository = getWorkflowRepository();
@@ -41,13 +46,17 @@ export async function POST(request: NextRequest) {
   const gate = await requireApiAccount(request);
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
+  // key 是**实例级**凭据（/api/auth/token 用它换 JWT），多用户模式下普通账号
+  // 不该能轮换/清除——登录 ≠ 有权改 everyone 用的钥匙。与 /api/update/status
+  // 同款：非 owner 一律 404（不泄露端点存在性），也不写库。
+  if (!(await resolveCurrentIsOwner())) return new Response(null, { status: 404 });
 
   const body = (await request.json().catch(() => null)) as { apiKey?: unknown } | null;
   const explicit = typeof body?.apiKey === "string" ? body.apiKey : undefined;
 
   const { getWorkflowRepository } = await import("../../../../lib/workflow-runtime");
   const repository = getWorkflowRepository();
-  const rotation = await rotateApiKey(process.env, {
+  const rotation = await rotateApiKey({
     get: () => repository.getSetting(API_KEY_SETTING_KEY),
     set: (value) => repository.setSetting(API_KEY_SETTING_KEY, value),
     clear: () => repository.setSetting(API_KEY_SETTING_KEY, ""),
@@ -61,6 +70,10 @@ export async function DELETE(request: NextRequest) {
   const gate = await requireApiAccount(request);
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
+  // key 是**实例级**凭据（/api/auth/token 用它换 JWT），多用户模式下普通账号
+  // 不该能轮换/清除——登录 ≠ 有权改 everyone 用的钥匙。与 /api/update/status
+  // 同款：非 owner 一律 404（不泄露端点存在性），也不写库。
+  if (!(await resolveCurrentIsOwner())) return new Response(null, { status: 404 });
 
   const { getWorkflowRepository } = await import("../../../../lib/workflow-runtime");
   const repository = getWorkflowRepository();

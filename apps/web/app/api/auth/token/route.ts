@@ -66,7 +66,6 @@ export async function POST(request: NextRequest) {
   // API key 是**实例级**凭据（不是 per-account）：单用户与多用户模式都落到
   // 默认账号。将来若要 per-account key，在设置页创建时记录 owner 即可——
   // resolveApiKey 的 IApiKeyStore 端口已为此留好位置。
-  void isMultiUserEnabled;
   const accountId = DEFAULT_ACCOUNT_ID;
   const secret = await getJwtSecret();
   const ttl = getJwtTtlSeconds() ?? JWT_DEFAULT_TTL_SECONDS;

@@ -22,10 +22,15 @@ const state = {
   multiUser: true,
   sessionAccount: null as string | null,
   demo: false,
+  owner: true,
   store: { value: null as string | null, calls: [] as string[] },
 };
 
 vi.mock("../../../../lib/demo-mode", () => ({ isDemoMode: () => state.demo }));
+
+vi.mock("../../../../lib/settings-attention-server", () => ({
+  resolveCurrentIsOwner: async () => state.owner,
+}));
 
 vi.mock("../../../../lib/workflow-runtime", () => ({
   SESSION_COOKIE_NAME: "mt_session",
@@ -36,8 +41,10 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   getJwtSecret: async () => JWT_SECRET,
     resolveBearerAccountId: async (headers?: Headers) => {
       const header = headers?.get("authorization");
-      if (!header?.startsWith("Bearer ")) return null;
-      const token = header.slice("Bearer ".length).trim();
+      // 与真实实现同一语义：scheme 大小写无关（proxy 粗筛也是 /^bearer /i）
+    const match = /^bearer (.+)$/i.exec(header ?? "");
+    if (!match) return null;
+      const token = match[1]!.trim();
       if (token.length === 0) return null;
       try {
         const claims = await verifyToken(token, JWT_SECRET);
@@ -82,6 +89,7 @@ describe("/api/settings/api-key", () => {
     state.multiUser = true;
     state.sessionAccount = null;
     state.demo = false;
+    state.owner = true;
     state.store = { value: null, calls: [] };
   });
 
@@ -107,6 +115,26 @@ describe("/api/settings/api-key", () => {
 
     it("有效 Bearer JWT → 放行", async () => {
       const res = await GET(req("GET", await jwtHeaders()));
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe("owner 门禁（多用户越权写，M1 自审修复）", () => {
+    it("已登录但非 owner → 三个方法全部 404（与 /api/update/status 同款，不泄露存在性）", async () => {
+      state.owner = false;
+      const get = await GET(req("GET", sessionHeaders()));
+      const post = await POST(req("POST", sessionHeaders()));
+      const del = await DELETE(req("DELETE", sessionHeaders()));
+      for (const res of [get, post, del]) {
+        expect(res.status).toBe(404);
+      }
+      // 非 owner 不得写库
+      expect(state.store.calls).toEqual([]);
+    });
+
+    it("owner → 放行（不被门禁误伤）", async () => {
+      state.owner = true;
+      const res = await GET(req("GET", sessionHeaders()));
       expect(res.status).toBe(200);
     });
   });

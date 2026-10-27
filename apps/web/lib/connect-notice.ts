@@ -1,13 +1,10 @@
 /**
- * Connect notice — top banner on home page.
+ * Connect notice — 顶栏横幅（S5.1 已整体移除）。
  *
- * 两态:
- * - 未开通(无 TUNNEL_TOKEN):推广横幅,邀请开通远程访问。
- * - 已开通(有 TUNNEL_TOKEN):「远程访问已上线」确认横幅(可关闭)。
- * Pure logic, testable without DB.
+ * 原两态（未开通推广 / 已开通确认且可关闭）连同一个 dismissed key 常量全部
+ * 清空：那个 localStorage key 零引用，留着只会让人以为关闭逻辑还活着。
+ * 本文件只保留永久保险丝（见下）。
  */
-
-export const CONNECT_NOTICE_DISMISSED_KEY = "connect_notice_dismissed_at";
 
 export interface ConnectNoticeConditions {
   isDemo: boolean;

@@ -6,17 +6,20 @@
  *   · /api/workflows/run-next|run-type3                 —— worker secret（workerApiGuard）
  *   · /api/update/hold|busy|status                      —— updater token / owner session
  *   · /api/agent/*                                      —— 独立 Bearer token（agentApiGuard）
- * 其余 apps/web/app/api 下各层目录的 route.ts 必须引用 requireApiAccount 登录链；
+ * 其余 apps/web/app/api 下的 route.ts（含顶层 /api/route.ts）必须引用
+ * requireApiAccount 登录链；
  * agent/* 必须引用 agentApiGuard。新增路由忘记挂鉴权 → lint 直接红。
  *
- * 纯源码文本判定（import 名稳定、无类型信息需求），不依赖类型感知，
- * 因此可在 tseslint.configs.base 的同一遍里跑完。
+ * 判定走 **AST**（真的有一次函数调用），不是源码文本包含：注释或字符串字面量
+ * 里写 "requireApiAccount" 骗不过这条规则——两层兜底都靠它，文本包含等于没有
+ * 兜底（逐维核查用探针实证过：留一行含该标识符的注释，lint 与清单测试双双放行）。
+ * 只用标识符 callee，不依赖类型感知，可在 tseslint.configs.base 同一遍里跑完。
  */
 
 const OPEN_PATTERN =
   /\/app\/api\/(health|auth\/(bootstrap|login|logout|password|register|token)|workflows\/(run-next|run-type3)|update\/(hold|busy|status))\/route\.ts$/;
 const AGENT_PATTERN = /\/app\/api\/agent\/[^/]+\/route\.ts$/;
-const API_ROUTE_PATTERN = /\/app\/api\/.+?\/route\.ts$/;
+const API_ROUTE_PATTERN = /\/app\/api\/(?:.+?\/)?route\.ts$/;
 
 /** @type {import("eslint").Rule.RuleModule} */
 const apiAuthRequired = {
@@ -38,17 +41,26 @@ const apiAuthRequired = {
     const filename = context.filename ?? context.getFilename?.() ?? "";
     if (!API_ROUTE_PATTERN.test(filename)) return {};
 
+    // 「有没有真的调用」：只看 CallExpression 的 callee 标识符，注释与字符串都
+    // 不是 CallExpression，天然排除。
+    let callsChain = false;
+    let callsAgentGuard = false;
     return {
+      CallExpression(node) {
+        const callee = node.callee;
+        if (callee?.type !== "Identifier") return;
+        if (callee.name === "requireApiAccount") callsChain = true;
+        if (callee.name === "agentApiGuard") callsAgentGuard = true;
+      },
       "Program:exit"(node) {
         if (OPEN_PATTERN.test(filename)) return;
-        const source = context.sourceCode.getText();
         if (AGENT_PATTERN.test(filename)) {
-          if (!source.includes("agentApiGuard")) {
+          if (!callsAgentGuard) {
             context.report({ node, messageId: "missingAgentGuard", data: { path: filename } });
           }
           return;
         }
-        if (!source.includes("requireApiAccount")) {
+        if (!callsChain) {
           context.report({ node, messageId: "missingChain", data: { path: filename } });
         }
       },

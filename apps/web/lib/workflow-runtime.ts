@@ -528,8 +528,11 @@ export function getJwtTtlSeconds(): number | null {
  */
 export async function resolveBearerAccountId(headers: Headers | undefined): Promise<string | null> {
   const header = headers?.get("authorization");
-  if (!header?.startsWith("Bearer ")) return null;
-  const token = header.slice("Bearer ".length).trim();
+  // scheme 大小写无关（RFC 7235）——proxy 的 presence 粗筛本来就是 /^bearer /i，
+  // 这里若只认大写，"bearer <jwt>" 会过了 proxy 再到路由 401，两层语义分裂。
+  const match = /^bearer (.+)$/i.exec(header ?? "");
+  if (!match) return null;
+  const token = match[1]!.trim();
   if (token.length === 0) return null;
   try {
     const claims = await verifyToken(token, await getJwtSecret());

@@ -2,13 +2,15 @@ import { compareReleaseTags, parseReleaseNotes, parseReleaseTag, type ReleaseNot
 import { normalizeCommit } from "./deployment-update";
 
 /**
- * 在线更新源（S5.6，需求 #5）：默认上游 `fancydirty/mediary-scout`，可用
- * `MEDIA_TRACK_UPDATE_REPO=<owner>/<name>` 覆盖成当前仓库（fork 发布时由
- * Release Docker 写入 `github.repository`，见 .github/workflows/release-docker.yml）。
+ * 在线更新源（S5.6，需求 #5）：默认指向**当前仓库** `xixjohan/mediary-scout`
+ * ——源码直跑的实例要能检查自己的发布，而不是永远盯着上游（此前默认上游，
+ * 只有 Release Docker 写入 `MEDIA_TRACK_UPDATE_REPO=github.repository` 的镜像
+ * 才指得对，源码运行与本地 dev 全部指向别处）。需要指回上游或别的 fork 时用
+ * `MEDIA_TRACK_UPDATE_REPO=<owner>/<name>` 覆盖。
  * 空值/空白按未设处理；畸形值直接抛错——拼出一个坏 URL 会让更新检查静默失败，
  * 而那正是「更新源指错了」最难发现的形式。
  */
-export const DEFAULT_UPDATE_REPO = "fancydirty/mediary-scout";
+export const DEFAULT_UPDATE_REPO = "xixjohan/mediary-scout";
 
 export function updateRepoSlug(): string {
   const raw = (process.env.MEDIA_TRACK_UPDATE_REPO ?? "").trim();

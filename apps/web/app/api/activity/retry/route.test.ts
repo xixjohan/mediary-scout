@@ -20,8 +20,10 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   getJwtSecret: async () => "retry-test-secret",
     resolveBearerAccountId: async (headers?: Headers) => {
       const header = headers?.get("authorization");
-      if (!header?.startsWith("Bearer ")) return null;
-      const token = header.slice("Bearer ".length).trim();
+      // 与真实实现同一语义：scheme 大小写无关（proxy 粗筛也是 /^bearer /i）
+    const match = /^bearer (.+)$/i.exec(header ?? "");
+    if (!match) return null;
+      const token = match[1]!.trim();
       if (token.length === 0) return null;
       try {
         const claims = await verifyToken(token, "retry-test-secret");

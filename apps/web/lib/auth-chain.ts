@@ -40,11 +40,27 @@ import {
  * token」对下游不可区分。
  */
 export async function resolveApiAccount(request: NextRequest): Promise<string | null> {
-  // 通道 1：session cookie。
+  // 通道 1：session cookie。读取失败（DB 抖动）视同「这个通道没说话」——
+  // 契约是「永不抛异常」，裸调会让路由 500：单用户 + LAN 带 cookie 的请求本该
+  // 落到局域网默认账号，却会被一个 store 异常打死。
   const cookie = request.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (cookie) {
-    const accountId = await resolveSessionAccountId(cookie);
-    if (accountId) return accountId;
+    try {
+      const accountId = await resolveSessionAccountId(cookie);
+      if (accountId) {
+        if (isMultiUserEnabled()) return accountId;
+        // 单用户：与 resolveSingleUserAccount 完全同一裁决（数据层权威），
+        // 否则闸机认的账号与数据层作用域会对不上：
+        //   · LAN → 开放，忽略 session（落到通道 3 拿默认账号）；
+        //   · 远程 → 只认 acct_default 自己的 session，别账号的残留 cookie
+        //     在此放行 = 「认证通过的陌生人」（数据层随后会 fail-closed）。
+        if (isRemoteRequest(request.headers)) {
+          if (accountId === DEFAULT_ACCOUNT_ID) return accountId;
+        }
+      }
+    } catch {
+      // 与通道 2 同一理由：读不到 ≠ 认证失败，继续问别的通道。
+    }
   }
 
   // 通道 2：Bearer JWT。验签失败（过期/篡改/错算法/错 secret）视同无凭据，

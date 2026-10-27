@@ -49,17 +49,23 @@ export async function readApiKeyState(
   };
 }
 
+/** 显式（用户粘贴）apiKey 的最小长度；生成值固定 64 位十六进制，不受此限。 */
+const MIN_EXPLICIT_API_KEY_LENGTH = 16;
+
 export async function rotateApiKey(
-  env: Record<string, string | undefined>,
   store: ApiKeyManagementStore,
   explicitValue?: string,
 ): Promise<ApiKeyRotation> {
   const trimmed = explicitValue?.trim();
+  // 显式值也要有强度下限：这个 key 是**长期实例凭据**（换 JWT 的钥匙），
+  // 允许 1 字符等于把认证交给人手输入。16 位起，低于此直接拒并滚回去。
+  if (trimmed !== undefined && trimmed.length > 0 && trimmed.length < MIN_EXPLICIT_API_KEY_LENGTH) {
+    throw new Error(`显式 apiKey 长度太短：至少需要 ${MIN_EXPLICIT_API_KEY_LENGTH} 个字符`);
+  }
   const apiKey = trimmed && trimmed.length > 0 ? trimmed : generateApiKey();
   await store.set(apiKey);
   // 写库后 origin 必然是 db：resolveApiKey 的 DB 优先语义保证立即生效，
   // 哪怕 env 里还躺着一个旧值（轮换的意义就是盖掉它）。
-  void env;
   return { apiKey, masked: maskApiKey(apiKey), origin: "db" };
 }
 

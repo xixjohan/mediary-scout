@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from "vitest";
 import {
+  DEFAULT_UPDATE_REPO,
   fetchCommitRelation,
   fetchLatestDesktopRelease,
   fetchReleaseFeed,
@@ -15,12 +16,12 @@ function fakeFetch(routes: Record<string, { status: number; body: string }>) {
   }) as unknown as typeof fetch;
 }
 
-const TAGS = "https://api.github.com/repos/fancydirty/mediary-scout/git/matching-refs/tags/v";
+const TAGS = "https://api.github.com/repos/xixjohan/mediary-scout/git/matching-refs/tags/v";
 const ref = (tag: string, sha: string, type = "commit") => ({ ref: `refs/tags/${tag}`, object: { sha, type } });
 const notes = (tag: string) =>
-  `https://api.github.com/repos/fancydirty/mediary-scout/contents/release-notes/${tag}.md?ref=${tag}`;
+  `https://api.github.com/repos/xixjohan/mediary-scout/contents/release-notes/${tag}.md?ref=${tag}`;
 const compare = (base: string, head: string) =>
-  `https://api.github.com/repos/fancydirty/mediary-scout/compare/${base}...${head}`;
+  `https://api.github.com/repos/xixjohan/mediary-scout/compare/${base}...${head}`;
 
 describe("fetchReleaseFeed", () => {
   beforeEach(() => invalidateReleaseFeedCache());
@@ -162,10 +163,10 @@ describe("fetchCommitRelation", () => {
   });
 });
 
-const LATEST = "https://api.github.com/repos/fancydirty/mediary-scout/releases/latest";
+const LATEST = "https://api.github.com/repos/xixjohan/mediary-scout/releases/latest";
 const asset = (name: string) => ({
   name,
-  browser_download_url: `https://github.com/fancydirty/mediary-scout/releases/download/v2026.10.02/${name}`,
+  browser_download_url: `https://github.com/xixjohan/mediary-scout/releases/download/v2026.10.02/${name}`,
 });
 
 describe("fetchLatestDesktopRelease", () => {
@@ -183,7 +184,7 @@ describe("fetchLatestDesktopRelease", () => {
     });
     expect(await fetchLatestDesktopRelease(fetchImpl)).toEqual({
       tag: "v2026.10.02",
-      pageUrl: "https://github.com/fancydirty/mediary-scout/releases/tag/v2026.10.02",
+      pageUrl: "https://github.com/xixjohan/mediary-scout/releases/tag/v2026.10.02",
       dmgUrl: asset("Mediary.Scout-2026.1002.0-arm64.dmg").browser_download_url,
       exeUrl: asset("Mediary.Scout.Setup.2026.1002.0.exe").browser_download_url,
     });
@@ -260,7 +261,7 @@ describe("fetchLatestDesktopRelease", () => {
       vi.setSystemTime(new Date(start.getTime() + failTtl));
       expect(await fetchLatestDesktopRelease(fetchImpl)).toEqual({
         tag: "v2026.10.02",
-        pageUrl: "https://github.com/fancydirty/mediary-scout/releases/tag/v2026.10.02",
+        pageUrl: "https://github.com/xixjohan/mediary-scout/releases/tag/v2026.10.02",
         dmgUrl: asset("Mediary.Scout-2026.1002.0-arm64.dmg").browser_download_url,
         exeUrl: asset("Mediary.Scout.Setup.2026.1002.0.exe").browser_download_url,
       });
@@ -289,19 +290,30 @@ describe("updateRepoSlug（S5.6：在线更新源可配置）", () => {
     invalidateReleaseFeedCache();
   });
 
-  it("默认是上游 fancydirty/mediary-scout（未设 env 时）", () => {
+  it("默认指向**当前仓库**（未设 env 时）——S5.6 需求原文", () => {
     delete process.env.MEDIA_TRACK_UPDATE_REPO;
-    expect(updateRepoSlug()).toBe("fancydirty/mediary-scout");
+    expect(updateRepoSlug()).toBe("xixjohan/mediary-scout");
+    expect(DEFAULT_UPDATE_REPO).toBe("xixjohan/mediary-scout");
   });
 
-  it("env 覆盖为自己 fork 的 owner/name", () => {
-    process.env.MEDIA_TRACK_UPDATE_REPO = "xixjohan/mediary-scout";
+  it("安装包只信默认源的 release 下载（源指错 = 更新检查静默失效）", () => {
+    // 上面 fetchReleaseFeed / fetchLatestDesktopRelease 的夹具 URL 全部键在
+    // xixjohan/mediary-scout 上，且那些用例不设 env（走默认源）——它们绿，
+    // 就等于默认源的 tags/notes/安装包三类 URL 都指向当前仓库。
+    delete process.env.MEDIA_TRACK_UPDATE_REPO;
     expect(updateRepoSlug()).toBe("xixjohan/mediary-scout");
   });
 
-  it("空串/空白按未设处理（回落到默认）", () => {
+  it("env 可覆盖成任意 owner/name（含指回上游）", () => {
+    process.env.MEDIA_TRACK_UPDATE_REPO = "xixjohan/mediary-scout";
+    expect(updateRepoSlug()).toBe("xixjohan/mediary-scout");
+    process.env.MEDIA_TRACK_UPDATE_REPO = "someone/mediary-scout";
+    expect(updateRepoSlug()).toBe("someone/mediary-scout");
+  });
+
+  it("空串/空白按未设处理（回落到默认 = 当前仓库）", () => {
     process.env.MEDIA_TRACK_UPDATE_REPO = "   ";
-    expect(updateRepoSlug()).toBe("fancydirty/mediary-scout");
+    expect(updateRepoSlug()).toBe("xixjohan/mediary-scout");
   });
 
   it("拒绝畸形值（缺 owner、含空格、URL 形态、三段路径）", () => {

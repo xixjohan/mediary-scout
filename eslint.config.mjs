@@ -142,7 +142,10 @@ export default tseslint.config(
     // owner-session 白名单与 agent 独立 token 之外的每个 route.ts，都必须调用
     // requireApiAccount 登录链；漏挂即 lint 红。与 vitest 的
     // route-auth-inventory.test.ts 同源白名单，两层兜底。
-    files: ["apps/web/app/api/**/route.ts"],
+    // 显式列出顶层 route.ts：`**/` 在多数 glob 实现里匹配零层也行，但这里
+    // 不赌实现——顶层 /api/route.ts 曾是两层门禁的共同盲区（ESLint glob 与
+    // 规则正则都要求 api 下至少一层目录），补上才算真兜底。
+    files: ["apps/web/app/api/**/route.ts", "apps/web/app/api/route.ts"],
     plugins: { local: localRules },
     rules: {
       "local/api-auth-required": "error",
