@@ -30,6 +30,88 @@ runRepositoryContract("SQLite", {
 // (via claimableQueuedRuns). This locks the PRODUCTION engine's gate directly — and, more
 // SQLite-specifically, proves nextAttemptAt survives the JSON *text* payload round-trip so
 // the gate can actually see it.
+/**
+ * 批次 5：**旧形状的库必须被补上 last_taken_at 列**。
+ *
+ * 这不是假想的风险：本批次先提了 subscription_policies 表（无 last_taken_at），
+ * 再提了列。任何在这两个提交之间启过的库（包括 data/mediary.db 这样的生产卷）
+ * 都处于这个状态，而 CREATE TABLE IF NOT EXISTS 对已存在的表是空操作。
+ *
+ * 不补的后果有两层，都是静黙的：
+ *   · 读：row.last_taken_at 是 undefined，lastTakenAt 不是 null —— withinCooldown 对读不出的
+ *     时间戳 fail-open，冷却永远不触发。
+ *   · 写：UPDATE ... SET last_taken_at 报 no such column，一次成功入库之后的巡检直接崩。
+ */
+describe("SQLite upgrades a subscription_policies table that predates last_taken_at", () => {
+  const OLD_SHAPE = `
+    CREATE TABLE IF NOT EXISTS subscription_policies (
+      account_id text NOT NULL,
+      title_key text NOT NULL,
+      must_contain text NOT NULL DEFAULT '[]',
+      must_not_contain text NOT NULL DEFAULT '[]',
+      episode_filter text NOT NULL DEFAULT '',
+      use_regex integer NOT NULL DEFAULT 0,
+      cooldown_days integer NOT NULL DEFAULT 0,
+      created_at text NOT NULL,
+      updated_at text NOT NULL,
+      PRIMARY KEY (account_id, title_key)
+    );`;
+
+  function openOldShapedDb(): SqliteWorkflowRepository {
+    // A repo on a path, so the DDL we plant survives: ":memory:" would be private.
+    const path = `/tmp/ms-old-shape-${Math.random().toString(36).slice(2)}.db`;
+    const seeded = createSqliteWorkflowRepository({ path });
+    seeded.exec("DROP TABLE subscription_policies");
+    seeded.exec(OLD_SHAPE);
+    seeded.close();
+    return createSqliteWorkflowRepository({ path });
+  }
+
+  it("**打开旧库后，列就在了，读写都通**", async () => {
+    const repo = openOldShapedDb();
+    try {
+      const t0 = "2026-01-01T00:00:00.000Z";
+      const t1 = "2026-01-02T00:00:00.000Z";
+      await repo.upsertSubscriptionPolicy({
+        accountId: "acct_a",
+        titleKey: "k",
+        policy: { mustContain: [], mustNotContain: [], episodeFilter: "", useRegex: false, cooldownDays: 7 },
+        now: t0,
+      });
+      // 没匹配过必须是 null，不是 undefined
+      expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "k" }))?.lastTakenAt).toBeNull();
+      // 写必须成功（旧库里这一句会抛 no such column）
+      expect(await repo.recordPolicyMatch({ accountId: "acct_a", titleKey: "k", now: t1 })).toBe(t1);
+      expect((await repo.getSubscriptionPolicy({ accountId: "acct_a", titleKey: "k" }))?.lastTakenAt).toBe(t1);
+    } finally {
+      repo.close();
+    }
+  });
+
+  it("**补列是幂等的**（第二次打开不重复加、不报错）", async () => {
+    const path = `/tmp/ms-old-shape-${Math.random().toString(36).slice(2)}.db`;
+    const first = createSqliteWorkflowRepository({ path });
+    first.exec("DROP TABLE subscription_policies");
+    first.exec(OLD_SHAPE);
+    first.close();
+    // 开两次：第二次看到的是已补好的表
+    const a = createSqliteWorkflowRepository({ path });
+    a.close();
+    const b = createSqliteWorkflowRepository({ path });
+    try {
+      await b.upsertSubscriptionPolicy({
+        accountId: "acct_a",
+        titleKey: "k",
+        policy: { mustContain: [], mustNotContain: [], episodeFilter: "", useRegex: false, cooldownDays: 7 },
+        now: "2026-01-01T00:00:00.000Z",
+      });
+      expect(await b.recordPolicyMatch({ accountId: "acct_a", titleKey: "k", now: "2026-01-02T00:00:00.000Z" })).not.toBeNull();
+    } finally {
+      b.close();
+    }
+  });
+});
+
 describe("SQLite claim honors nextAttemptAt backoff gate", () => {
   const base = workflowPersistenceFixture();
   const gatedRun = (nextAttemptAt: string) => ({

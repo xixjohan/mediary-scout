@@ -175,6 +175,31 @@ describe("emptyStoredPolicy", () => {
     });
   });
 
+  it("**缺 last_taken_at 列的行归一成 null**（SQLite 对缺失列给 undefined，不是 null）", () => {
+    // SubscriptionPolicyRow 的类型写的是 string | null，但 SQLite 对**不存在的列**返回
+    // undefined —— 类型在这件事上是谎。undefined !== null，而 withinCooldown 只对 null
+    // fail-open，所以一个未补列的旧库会让冷却静默失效。
+    //
+    // 正常路径已由 upgradeSubscriptionPolicyShape 保证列一定在；这一条守的是
+    // 「万一没补上」：fromRow 自己不能再把这个坑挖深。
+    const row = {
+      account_id: "a",
+      title_key: "t",
+      must_contain: "[]",
+      must_not_contain: "[]",
+      episode_filter: "",
+      use_regex: 0,
+      cooldown_days: 7,
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    } as unknown as SubscriptionPolicyRow;
+    expect(subscriptionPolicyFromRow(row).lastTakenAt).toBeNull();
+    // 有值时必须原样穿过，不能被归一成 null
+    expect(subscriptionPolicyFromRow({ ...row, last_taken_at: "2026-01-02T00:00:00.000Z" }).lastTakenAt).toBe(
+      "2026-01-02T00:00:00.000Z",
+    );
+  });
+
   it("**空策略匹配一切**（没配过规则不该挡掉任何东西）", () => {
     const policy = emptyStoredPolicy({ accountId: "a", titleKey: "t", now: "n" });
     expect(policy.mustContain).toEqual([]);

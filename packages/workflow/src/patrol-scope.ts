@@ -46,7 +46,13 @@ export interface PatrolCandidate {
   titleName: string;
 }
 
-export type PatrolSkipReason = "cooldown" | "no_policy";
+/**
+ * Why a candidate did not get swept. Only `cooldown` exists today: no policy means
+ * "sweep normally" (the strategy layer is an opt-in filter, not a gate), so there is
+ * nothing to report. A member with no producer is a lie about what the code does —
+ * it reads like a branch that exists somewhere.
+ */
+export type PatrolSkipReason = "cooldown";
 
 export interface PatrolSkip {
   /** Which account's cooldown this was. A title is shared across accounts, so the
