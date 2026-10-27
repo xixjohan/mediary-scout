@@ -8,7 +8,10 @@ vi.mock("../lib/release-feed-server", () => ({ invalidateReleaseFeedCache: vi.fn
 const settings = vi.hoisted(() => new Map<string, string>());
 /** Keys that fail to write (simulates a DB error part way through a save). */
 const failingWrites = vi.hoisted(() => new Set<string>());
-vi.mock("../lib/workflow-runtime", () => ({
+vi.mock("../lib/workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
+  // 局域网也要登录），漏了它会在 LAN 无凭据用例上炸。
+  hasLoginPassword: vi.fn(async () => false),
+
   AUTO_UPDATE_ENABLED_SETTING_KEY: "auto_update_enabled",
   AUTO_UPDATE_TIME_SETTING_KEY: "auto_update_time",
   AUTO_UPDATE_FAIL_STREAK_SETTING_KEY: "auto_update_fail_streak",

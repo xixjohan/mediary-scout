@@ -728,45 +728,6 @@ export function isRemoteRequest(hdrs: Headers): boolean {
   return hdrs.has("cf-ray") || hdrs.has("cdn-loop") || hdrs.has("cf-connecting-ip");
 }
 
-/**
- * 单用户账号判定（纯函数，本 plan 的安全核心）。**LAN 开放、远程一律需 session。**
- *
- * 远程判定不看密码状态。旧实现第一行是
- * `if (hasPassword === false) return DEFAULT_ACCOUNT_ID`，于是一台尚未设密码的
- * 实例对**公网匿名访客**完全敞开：经隧道进来即拿到 `acct_default`，可读整个
- * 媒体库、五个网盘的凭据与 LLM key，并且能写——`requireAuthenticatedAccountId()`
- * 只拦哨兵，而那条路径压根产不出哨兵。有 Cloudflare Access 挡在前面时这尚可
- * 存活；Access 一移除它就是个活的公网洞，故改为「远程无条件需要 session」。
- *
- * `hasPassword` 因此**不再参与判定**，但**刻意保留**在入参里：
- *  1. 调用方与测试都在传它，删掉是无谓的破坏性改动；
- *  2. 后续 plan 需要据此区分「该显示登录框」还是「该显示设置密码表单」；
- *  3. 留着它能让这段注释持续提醒：任何想用它放宽远程的改动都是在重开这个洞。
- * 未设密码的实例远程会被挡在 `/login`，那里提供设置密码表单（见 app/login/page.tsx），
- * 不会把站主锁死。
- *
- * `"unknown"`（状态读取失败）同样无需特判：远程本来就要 session，局域网本来就放行。
- *
- * 远程放行只认 `acct_default`：同一个库可能残留多用户时期的账号
- * （`MEDIA_TRACK_MULTI_USER` 是运行时开关，可来回切），那些账号的 session
- * 不该在单用户模式下被当作站主，况且改密/清密只会吊销 `acct_default` 的 session，
- * 吊销不掉它们。
- *
- * 抽成纯函数是为了能确定性覆盖全部「内外 × 有无 session」组合——
- * Emby/Jellyfin 的事故正是内外判定出错，这段逻辑必须可被精确测试。
- */
-export function resolveSingleUserAccount(opts: {
-  /** 已不参与判定（远程一律需 session）。保留原因见上方 JSDoc。 */
-  hasPassword: LoginPasswordState;
-  isRemote: boolean;
-  sessionAccountId: string | null;
-}): string {
-  if (!opts.isRemote) return DEFAULT_ACCOUNT_ID; // LAN 免登录（含状态未知）
-  // 远程：必须持有 acct_default 自己的有效 session，与是否设过密码无关
-  return opts.sessionAccountId === DEFAULT_ACCOUNT_ID
-    ? DEFAULT_ACCOUNT_ID
-    : UNAUTHENTICATED_ACCOUNT_ID;
-}
 
 /**
  * 从请求作用域读 Bearer 账号；读不到请求头（无作用域 / 头读取失败）一律 null，
@@ -781,6 +742,47 @@ async function bearerAccountFromRequestScope(): Promise<string | null> {
     return null;
   }
   return resolveBearerAccountId(requestHeaders);
+}
+
+/**
+ * 读 session cookie 对应的账号；读失败一律视同无凭据（null）。
+ *
+ * 「读不到」不等于「认证失败」——与 auth-chain 通道 1 的 catch 同一契约。若在这里
+ * 直接返回哨兵，会跳过后续 Bearer 判定，持合法 JWT 的站主在 DB 抖动时只拿到哨兵，
+ * 闸机却已放行，症状是 200 空数据而不是干净 401（第五轮复核的探针实证：
+ * THROW+Bearer → gate=acct_default / data=哨兵）。
+ */
+async function readSessionAccountId(sessionCookie: string | undefined): Promise<string | null> {
+  if (!sessionCookie) return null;
+  try {
+    return await resolveSessionAccountId(sessionCookie);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 单用户模式下的身份裁决：与 auth-chain（闸机）**必须同账号**。
+ *
+ *   · 未设密码 + LAN → 默认账号。桌面端/本地脚本/E2E 依赖这条既有语义。
+ *   · 设了密码 + LAN → 只有 acct_default 自己的 session 能进（S5.7：「设了
+ *     密码就要登录」与请求来自哪里无关；此前只有经隧道的远程被门禁，站主在
+ *     自家网络上打开也看不到登录页）。
+ *   · 读不出密码状态（"unknown"）→ LAN 宽容放行：一次 DB 抖动不该把局域网
+ *     用户锁在门外。收紧由 proxy（不看 DB）与页面守卫共同负责。
+ *   · 远程 → 一律需 acct_default 自己的 session，与是否设过密码无关。
+ */
+export function resolveSingleUserAccountId(opts: {
+  hasPassword: LoginPasswordState;
+  isRemote: boolean;
+  sessionAccountId: string | null;
+}): string {
+  // LAN + 未设密码 → 开放。**必须先判 isRemote 再判密码**：远程未设密码的实例
+  // 曾经直接返回 acct_default，那正是被移除的公网洞（匿名访客拿到站主身份）。
+  if (!opts.isRemote && opts.hasPassword !== true) return DEFAULT_ACCOUNT_ID;
+  // 其余（远程一律、LAN 且设了密码）：只有默认账号自己的 session 能进。
+  if (opts.sessionAccountId === DEFAULT_ACCOUNT_ID) return DEFAULT_ACCOUNT_ID;
+  return UNAUTHENTICATED_ACCOUNT_ID;
 }
 
 export async function getCurrentAccountId(): Promise<string> {
@@ -800,21 +802,17 @@ export async function getCurrentAccountId(): Promise<string> {
       // 无请求上下文（in-process worker）：视为本地直通——采集任务不认 cookie。
       return DEFAULT_ACCOUNT_ID;
     }
-    if (!isRemoteRequest(hdrs)) return DEFAULT_ACCOUNT_ID; // LAN → 开放
-    // 已确认是远程：此后任何读取失败都必须 fail-closed，不能退回开放默认值
-    let sessionAccountId: string | null = null;
-    if (sessionCookie) {
-      try {
-        sessionAccountId = await resolveSessionAccountId(sessionCookie);
-      } catch {
-        // session 读失败 ≠ 认证失败：与 auth-chain 通道 1 的 catch 同一契约
-        // （「读不到 ≠ 认证失败，继续问别的通道」）。这里若直接返回哨兵，
-        // 会跳过下面的 Bearer 判定——持合法 JWT 的站主在 DB 抖动时只拿到
-        // 哨兵，闸机却已放行，症状是 200 空数据而不是干净 401（第五轮复核
-        // 的探针实证：THROW+Bearer → gate=acct_default / data=哨兵）。
-        sessionAccountId = null;
-      }
+    // session 解析提前到远程判定之前：S5.7 起「设了密码」的实例在**局域网**也要
+    // 登录，LAN 分支必须能看见 session。读失败一律视同无凭据（≠ 认证失败）：
+    // 与 auth-chain 通道 1 的 catch 同一契约——若在这里直接返回哨兵，会跳过
+    // Bearer 判定，持合法 JWT 的站主在 DB 抖动时只拿到哨兵，闸机却已放行，
+    // 症状是 200 空数据而不是干净 401（第五轮复核的探针实证：
+    // THROW+Bearer → gate=acct_default / data=哨兵）。
+    const sessionAccountId = await readSessionAccountId(sessionCookie);
+    if (!isRemoteRequest(hdrs)) {
+      return resolveSingleUserAccountId({ hasPassword, isRemote: false, sessionAccountId });
     }
+    // 已确认是远程：此后任何读取失败都必须 fail-closed，不能退回开放默认值
     // Bearer JWT（S5.3 签发的 API token）：单用户模式只认 acct_default 自己的
     // token——与 resolveSingleUserAccount 拒绝别账号 session 同一 invariants。
     // 必须**无条件**判定，不能包在 `sessionAccountId === null` 里：一枚能解析出
@@ -822,7 +820,7 @@ export async function getCurrentAccountId(): Promise<string> {
     // 只拿到哨兵（200 空数据，而不是干净 401）——H4 复核实证过这条静默路径。
     const bearerAccountId = await resolveBearerAccountId(hdrs);
     if (bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
-    return resolveSingleUserAccount({ hasPassword, isRemote: true, sessionAccountId });
+    return resolveSingleUserAccountId({ hasPassword, isRemote: true, sessionAccountId });
   }
   // 先只取 cookies()：它抛异常 = 没有请求作用域（in-process worker 按 claimed
   // run 的 accountId 结算，压根不读请求 cookie），此时直通默认账号。

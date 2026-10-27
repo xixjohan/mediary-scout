@@ -20,6 +20,7 @@ vi.mock("./workflow-runtime", () => ({
   UnauthenticatedAccountError: class UnauthenticatedAccountError extends Error {},
   isMultiUserEnabled: vi.fn(() => false),
   isRemoteRequest: vi.fn(() => false),
+  hasLoginPassword: vi.fn(async () => false),
   resolveSessionAccountId: vi.fn(async () => null),
   getJwtSecret: vi.fn(async () => JWT_SECRET),
   // S5.4 自审后 auth-chain 的 JWT 通道与 getCurrentAccountId 共用这一个函数
@@ -41,6 +42,7 @@ vi.mock("./workflow-runtime", () => ({
 }));
 
 import {
+  hasLoginPassword,
   isMultiUserEnabled,
   isRemoteRequest,
   resolveSessionAccountId,
@@ -69,6 +71,10 @@ describe("resolveApiAccount", () => {
     (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false);
     (isRemoteRequest as ReturnType<typeof vi.fn>).mockReturnValue(false);
     (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    // S5.7：密码三态默认值必须显式还原。vi.clearAllMocks() 只清调用记录，
+    // mockResolvedValue 的持久值会跨用例/跨 describe 泄漏——本会话已因同族
+    // 问题假绿三次（bootstrap / connect-actions / update-actions）。
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue(false);
   });
 
   it("有效 session cookie → 该账号（多用户）", async () => {
@@ -90,6 +96,30 @@ describe("resolveApiAccount", () => {
     (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue("acct_cookie");
     const req = request({ cookie: "sess_x.hmac", authorization: await bearer({ sub: "acct_jwt" }) });
     expect(await resolveApiAccount(req)).toBe("acct_cookie");
+  });
+
+  // S5.7：设了访问密码 → 局域网也要登录（此前只有远程被门禁，站主在自家
+  // 网络上打开也看不到登录页）。这是对通道 3 的第一次收紧。
+  it("单用户 + 局域网 + 设了密码 + 无凭据 → null（要登录）", async () => {
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    expect(await resolveApiAccount(request())).toBeNull();
+  });
+
+  it("单用户 + 局域网 + 设了密码 + 有效 session → 该账号", async () => {
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue("acct_default");
+    expect(await resolveApiAccount(request({ cookie: "sess_x.hmac" }))).toBe("acct_default");
+  });
+
+  it("单用户 + 局域网 + 设了密码 + 有效 Bearer → 该账号（JWT 通道不受影响）", async () => {
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const req = request({ authorization: await bearer({ sub: "acct_default" }) });
+    expect(await resolveApiAccount(req)).toBe("acct_default");
+  });
+
+  it("单用户 + 局域网 + 密码状态读不出来（unknown）→ 默认账号（本地宽容）", async () => {
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue("unknown");
+    expect(await resolveApiAccount(request())).toBe("acct_default");
   });
 
   it("单用户 + 局域网 + 无凭据 → 默认账号（既有开放语义不回归）", async () => {
@@ -138,6 +168,10 @@ describe("requireApiAccount", () => {
     (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false);
     (isRemoteRequest as ReturnType<typeof vi.fn>).mockReturnValue(false);
     (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    // S5.7：密码三态默认值必须显式还原。vi.clearAllMocks() 只清调用记录，
+    // mockResolvedValue 的持久值会跨用例/跨 describe 泄漏——本会话已因同族
+    // 问题假绿三次（bootstrap / connect-actions / update-actions）。
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue(false);
   });
 
   it("解析成功 → 返回账号 id（string）", async () => {
@@ -162,6 +196,16 @@ describe("requireApiAccount", () => {
  * （本该落到局域网默认账号）。修法：读失败视同「这个通道没说话」。
  */
 describe("resolveApiAccount — session 读取失败不得外抛（M2）", () => {
+  // 这几个 describe 原先没有 beforeEach，靠各用例内联 vi.mocked(...) 自设状态。
+  // 问题：mock 的持久值会跨用例泄漏——M6 首个用例把 isRemoteRequest 设成 true
+  // 后不复位，同 describe 后续用例全在「远程」语境里跑。补一次完整还原，
+  // 让每个用例从同一基准出发（各用例仍然自己设需要的值）。
+  beforeEach(() => {
+    (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (isRemoteRequest as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+  });
   it("session 库读抛错 + 单用户局域网 → 落到默认账号（不 500）", async () => {
     vi.mocked(isMultiUserEnabled).mockReturnValue(false);
     vi.mocked(isRemoteRequest).mockReturnValue(false);
@@ -200,6 +244,16 @@ describe("resolveApiAccount — session 读取失败不得外抛（M2）", () =>
  * 「认证通过的陌生人」。修法：单用户模式下非默认账号的 session 直接判无效。
  */
 describe("resolveApiAccount — 单用户模式的 session 裁决（M6：与 resolveSingleUserAccount 对齐）", () => {
+  // 这几个 describe 原先没有 beforeEach，靠各用例内联 vi.mocked(...) 自设状态。
+  // 问题：mock 的持久值会跨用例泄漏——M6 首个用例把 isRemoteRequest 设成 true
+  // 后不复位，同 describe 后续用例全在「远程」语境里跑。补一次完整还原，
+  // 让每个用例从同一基准出发（各用例仍然自己设需要的值）。
+  beforeEach(() => {
+    (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (isRemoteRequest as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+  });
   it("单用户 + 远程 + 别账号 session → null（401）：数据层本来就拒，闸机不能放行", async () => {
     vi.mocked(isMultiUserEnabled).mockReturnValue(false);
     vi.mocked(isRemoteRequest).mockReturnValue(true);
@@ -239,6 +293,16 @@ describe("resolveApiAccount — 单用户模式的 session 裁决（M6：与 res
  * 但注释里已规划 per-account key，分歧必须先钉死。
  */
 describe("resolveApiAccount — 单用户模式的 Bearer 也只认默认账号（H3）", () => {
+  // 这几个 describe 原先没有 beforeEach，靠各用例内联 vi.mocked(...) 自设状态。
+  // 问题：mock 的持久值会跨用例泄漏——M6 首个用例把 isRemoteRequest 设成 true
+  // 后不复位，同 describe 后续用例全在「远程」语境里跑。补一次完整还原，
+  // 让每个用例从同一基准出发（各用例仍然自己设需要的值）。
+  beforeEach(() => {
+    (isMultiUserEnabled as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (isRemoteRequest as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    (resolveSessionAccountId as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (hasLoginPassword as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+  });
   it("单用户 + 远程 + 非默认 sub 的 JWT → null（401），不是放行", async () => {
     vi.mocked(isMultiUserEnabled).mockReturnValue(false);
     vi.mocked(isRemoteRequest).mockReturnValue(true);

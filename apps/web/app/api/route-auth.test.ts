@@ -28,7 +28,10 @@ const state = {
   workspace: { accountId: "acct_default", connectedStorageId: null as string | null },
 };
 
-vi.mock("../../lib/workflow-runtime", () => ({
+vi.mock("../../lib/workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
+  // 局域网也要登录），漏了它会在 LAN 无凭据用例上炸。
+  hasLoginPassword: vi.fn(async () => false),
+
   SESSION_COOKIE_NAME: "mt_session",
   DEFAULT_ACCOUNT_ID: "acct_default",
   isMultiUserEnabled: () => state.multiUser,

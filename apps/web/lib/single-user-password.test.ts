@@ -40,17 +40,25 @@ describe("single-user password gate", () => {
   );
 
   it(
-    "resolveSingleUserAccount：LAN 一律开放；远程一律需 session（与密码状态无关）",
+    "resolveSingleUserAccountId：LAN 认密码、远程一律需 session",
     async () => {
       const rt = await boot();
-      // 纯函数，覆盖全部内外/有无 session 组合（这是本 plan 的安全核心判定）
-      expect(rt.resolveSingleUserAccount({ hasPassword: false, isRemote: false, sessionAccountId: null })).toBe("acct_default");
+      // 纯函数，覆盖全部内外/密码/session 组合（这是本 plan 的安全核心判定）。
+      // 注意 resolveSingleUserAccount 已在 S5.7 改名为 resolveSingleUserAccountId
+      // 并收紧：LAN 也认密码了。下面每条都直接钉新语义。
+      expect(rt.resolveSingleUserAccountId({ hasPassword: false, isRemote: false, sessionAccountId: null })).toBe("acct_default"); // 未设密码 + LAN → 开放
       // 未设密码 + 远程：曾经返回 acct_default —— 匿名公网访客直接拿到站主身份。
       // Cloudflare Access 移除后这是活的公网洞，已收紧为哨兵。
-      expect(rt.resolveSingleUserAccount({ hasPassword: false, isRemote: true, sessionAccountId: null })).toBe("acct_unauthenticated");
-      expect(rt.resolveSingleUserAccount({ hasPassword: true, isRemote: false, sessionAccountId: null })).toBe("acct_default"); // LAN 免登录
-      expect(rt.resolveSingleUserAccount({ hasPassword: true, isRemote: true, sessionAccountId: null })).toBe("acct_unauthenticated"); // 远程无 session → 哨兵
-      expect(rt.resolveSingleUserAccount({ hasPassword: true, isRemote: true, sessionAccountId: "acct_default" })).toBe("acct_default"); // 远程已登录 → 放行
+      expect(rt.resolveSingleUserAccountId({ hasPassword: false, isRemote: true, sessionAccountId: null })).toBe("acct_unauthenticated");
+      // S5.7：设了密码 + LAN 无 session → 哨兵（此前 LAN 一律开放，站主在自家
+      // 网络上也看不到登录页）。
+      expect(rt.resolveSingleUserAccountId({ hasPassword: true, isRemote: false, sessionAccountId: null })).toBe("acct_unauthenticated");
+      expect(rt.resolveSingleUserAccountId({ hasPassword: true, isRemote: false, sessionAccountId: "acct_default" })).toBe("acct_default"); // LAN 已登录 → 放行
+      expect(rt.resolveSingleUserAccountId({ hasPassword: true, isRemote: false, sessionAccountId: "acct_other" })).toBe("acct_unauthenticated"); // LAN 别账号 → 哨兵
+      expect(rt.resolveSingleUserAccountId({ hasPassword: true, isRemote: true, sessionAccountId: null })).toBe("acct_unauthenticated"); // 远程无 session → 哨兵
+      expect(rt.resolveSingleUserAccountId({ hasPassword: true, isRemote: true, sessionAccountId: "acct_default" })).toBe("acct_default"); // 远程已登录 → 放行
+      expect(rt.resolveSingleUserAccountId({ hasPassword: "unknown", isRemote: false, sessionAccountId: null })).toBe("acct_default"); // DB 抖动 + LAN → 宽容
+      expect(rt.resolveSingleUserAccountId({ hasPassword: "unknown", isRemote: true, sessionAccountId: null })).toBe("acct_unauthenticated"); // DB 抖动 + 远程 → 收紧
     },
     CRYPTO_TIMEOUT_MS,
   );

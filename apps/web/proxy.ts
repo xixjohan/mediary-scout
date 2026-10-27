@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { PAGE_GUARD_COOKIE } from "./lib/page-auth-guard";
 
 /**
  * §7 P1 auth gate (Next 16 "proxy" convention, formerly middleware).
@@ -42,18 +43,43 @@ function isRemoteRequest(request: NextRequest): boolean {
   );
 }
 
+/**
+ * 给请求头加上「当前路径」，供根 layout 的页面守卫读取（S5.7）。
+ *
+ * 抽成导出纯函数的理由：`NextResponse.next({ request })` 的改写请求头**不挂在
+ * 响应对象上**，单元测试里观测不到（实测 `res.request` 为 undefined），于是
+ * 「proxy 真的注入了路径」这件事会退化成一句空断言。交给纯函数后可以直接验证，
+ * proxy() 本身只负责接线。
+ *
+ * 对所有出口一视同仁（直通 / 重定向 / handler 豁免）：重定向到 /login 之后，
+ * 浏览器再请求 /login 时它不在 matcher 里、压根不进这个函数，那时本来就没有头。
+ */
+export function withPageGuardCookie(request: NextRequest): string {
+  // 只写「存在」信号，不写路径：守卫不需要知道路径，只需要知道「这个请求归我管」。
+  // 见 page-auth-guard.ts 里关于为什么用 cookie 而非请求头的说明。
+  return PAGE_GUARD_COOKIE;
+}
+
 export function proxy(request: NextRequest): NextResponse {
   const multiUser = process.env.MEDIA_TRACK_MULTI_USER === "1";
   const gated = multiUser || isRemoteRequest(request);
+  const guardCookie = withPageGuardCookie(request);
+  // 每个出口都带上「这个页面归页面守卫管」的 cookie。/login 不在 matcher 里，
+  // 它的请求压根不进这个函数，因此拿不到该 cookie，守卫会跳过它——不可能成环。
+  const passThrough = () => {
+    const res = NextResponse.next();
+    res.cookies.set(guardCookie, "1", { path: "/", httpOnly: true, sameSite: "lax" });
+    return res;
+  };
   if (!gated) {
-    return NextResponse.next();
+    return passThrough();
   }
   if (HANDLER_GUARDED_API_PREFIXES.some((prefix) => request.nextUrl.pathname.startsWith(prefix))) {
-    return NextResponse.next();
+    return passThrough();
   }
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);
   if (hasSession) {
-    return NextResponse.next();
+    return passThrough();
   }
   // S5.4：带 Bearer JWT 的 API 客户端同样免跳转。proxy 只做 presence 粗筛，
   // 权威判定（签名 + 过期）在路由的 requireApiAccount()——与上方 updater token /
@@ -65,13 +91,18 @@ export function proxy(request: NextRequest): NextResponse {
   // `.+` 吃得下 tab/多个空格，粗筛收紧一个字符就会把「proxy 放行、路由认」的
   // 组合翻转为「proxy 拦死、路由根本看不到」（L4 复核实测：Bearer<tab>token）。
   if (request.nextUrl.pathname.startsWith("/api/") && /^bearer\s/i.test(authorization)) {
-    return NextResponse.next();
+    return passThrough();
   }
   const url = request.nextUrl.clone();
   url.pathname = "/login";
   url.search = "";
-  return NextResponse.redirect(url);
+  const res = NextResponse.redirect(url);
+  // 重定向响应也带信号：远程被挡 → /login → 登录成功回跳原页时，那一跳仍归
+  // 页面守卫管（否则「设了密码」的实例在登录后会有一瞬间的免检窗口）。
+  res.cookies.set(guardCookie, "1", { path: "/", httpOnly: true, sameSite: "lax" });
+  return res;
 }
+
 
 export const config = {
   // Gate pages; exclude the auth API, the login page, Next internals and assets.

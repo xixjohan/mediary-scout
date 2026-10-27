@@ -6,7 +6,10 @@ vi.mock("next/server", async () => {
   return { ...actual, connection: vi.fn().mockResolvedValue(undefined) };
 });
 
-vi.mock("../../../../lib/workflow-runtime", () => ({
+vi.mock("../../../../lib/workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
+  // 局域网也要登录），漏了它会在 LAN 无凭据用例上炸。
+  hasLoginPassword: vi.fn(async () => false),
+
   runNextQueuedWorkflow: vi.fn().mockResolvedValue({ status: "idle" }),
 }));
 

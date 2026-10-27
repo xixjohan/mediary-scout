@@ -9,7 +9,10 @@ const getWorkflowRunSnapshot = vi.fn();
 // S5.4：路由经 lib/auth-chain 登录链取账号，mock 需补上链路所需导出。
 // 默认单用户 + 局域网（isMultiUserEnabled=false 且非远程请求）→ 落到默认账号，
 // 与生产「LAN 开放」语义一致，既有断言全部保持原值。
-vi.mock("../../../../lib/workflow-runtime", () => ({
+vi.mock("../../../../lib/workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
+  // 局域网也要登录），漏了它会在 LAN 无凭据用例上炸。
+  hasLoginPassword: vi.fn(async () => false),
+
   getCurrentAccountId: vi.fn(async () => "acct_default"),
   getWorkflowRepository: vi.fn(() => ({ retryFailedWorkflowRun, getWorkflowRunSnapshot })),
   SESSION_COOKIE_NAME: "mt_session",

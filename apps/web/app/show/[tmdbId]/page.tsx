@@ -1,6 +1,8 @@
+import { Suspense } from "react";
+import { PageLoginGuard } from "../../../lib/page-auth-guard";
 import Link from "next/link";
 import { connection } from "next/server";
-import { Suspense, cache, type ReactNode } from "react";
+import { cache, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
 import { isMovieUnreleased, type EpisodeDisplayState } from "@media-track/workflow";
 import { AcquiringPoller } from "../../../components/acquiring-poller";
@@ -52,7 +54,7 @@ const seasonBadge = {
   complete: { label: "已完结", tone: "green" },
 } as const;
 
-export default function ShowPage({
+function ShowPageInner({
   params,
   searchParams,
 }: {
@@ -676,5 +678,25 @@ async function TitleMemorySection({ mediaType, tmdbId }: { mediaType: "movie" | 
         now={new Date().toISOString()}
       />
     </div>
+  );
+}
+
+/**
+ * S5.7 页面登录守卫（见 lib/page-auth-guard.ts）。
+ *
+ * 为什么每页都要包一层：cacheComponents（PPR）下，请求期读取必须发生在
+ * <Suspense> 边界内，否则构建期预渲染直接失败；而 layout 顶层读又被同一规则
+ * 挡下（S5.7 两条路都实测过）。页面级是唯一同时满足「构建能过」与「redirect
+ * 能生效」的位置——redirect 在 streaming 下插 meta 标签让客户端跳转，且 React
+ * 会在该边界抛出时中止渲染，原页面的数据不会进入 HTML（已实测确认）。
+ */
+export default function ShowPage(props: Parameters<typeof ShowPageInner>[0]) {
+  return (
+    <>
+      <Suspense fallback={null}>
+        <PageLoginGuard />
+      </Suspense>
+      <ShowPageInner {...props} />
+    </>
   );
 }

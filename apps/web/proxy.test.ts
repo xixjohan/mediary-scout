@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { proxy } from "./proxy";
+import { proxy, withPageGuardCookie } from "./proxy";
+import { PAGE_GUARD_COOKIE } from "./lib/page-auth-guard";
 import type { NextRequest } from "next/server";
 
 /**
@@ -195,5 +196,54 @@ describe("proxy gate — Bearer JWT（S5.4 自审）", () => {
     expect(
       redirectsToLogin(makeRequest({ cf: true, path: "/settings", authorization: JWT })),
     ).toBe(true);
+  });
+});
+
+/**
+ * S5.7：proxy 给页面请求写一个「归页面守卫管」的 cookie，供根 layout 读取。
+ *
+ * 为什么绕这一圈：页面（/、/settings、…）不经过 requireApiAccount()，「设了密码
+ * 就要登录」若只改 /api，浏览器打开页面仍会直进（数据层收紧后页面只会变成空数据，
+ * 而不是一个登录框）。proxy 跑在 Edge、**刻意不读 DB**（见文件头注释），所以它
+ * 不判断「要不要放行」，只负责发信号；判定由有 DB 访问权的 layout 做。
+ *
+ * 为什么是 cookie 而不是请求头：根 layout 顶层 await 守卫，redirect() 才真正
+ * 生效（<Suspense> 会吞掉 NEXT_REDIRECT）。而顶层读 headers() 会撞上
+ * cacheComponents（PPR）的「请求期读取必须在 Suspense 边界内」硬规则，构建期
+ * 直接失败（S5.7 实测）。cookies() 不在该规则内，于是用 cookie 传信号。
+ *
+ * 关键性质：/login 不在下方 matcher 里 → 登录页请求压根不进这个函数 → 拿不到
+ * 信号 cookie → 守卫自动跳过它。不需要在页面组件里写「别拦我」的特例，
+ * 也就不可能写成 /login → /login 的无限重定向环。
+ */
+describe("proxy — 页面守卫信号（S5.7）", () => {
+  it("信号 cookie 名与 layout 共用一份（导出常量，避免两边字符串漂移）", () => {
+    expect(PAGE_GUARD_COOKIE).toBe("mt_page_guarded");
+  });
+
+  it("任何路径都返回同一个信号名（守卫只需要「归我管」，不需要知道路径）", () => {
+    expect(withPageGuardCookie(makeRequest({ path: "/settings" }))).toBe(PAGE_GUARD_COOKIE);
+    expect(withPageGuardCookie(makeRequest({ path: "/" }))).toBe(PAGE_GUARD_COOKIE);
+    for (const prefix of ["/api/health", "/api/workflows/run-next", "/api/agent/acquire", "/api/update/busy"]) {
+      expect(withPageGuardCookie(makeRequest({ path: prefix }))).toBe(PAGE_GUARD_COOKIE);
+    }
+  });
+
+  it("直通响应上真的写下了该 cookie（layout 才读得到）", () => {
+    const res = proxy(makeRequest({ path: "/settings" }));
+    expect(res.cookies.get(PAGE_GUARD_COOKIE)?.value).toBe("1");
+    expect(res.status).toBeLessThan(300);
+  });
+
+  it("远程重定向到 /login 的响应也带信号（登录成功后回跳仍归守卫管）", () => {
+    const res = proxy(makeRequest({ cf: true, path: "/settings" }));
+    expect(redirectsToLogin(makeRequest({ cf: true, path: "/settings" }))).toBe(true);
+    expect(res.cookies.get(PAGE_GUARD_COOKIE)?.value).toBe("1");
+  });
+
+  it("handler 豁免的 API 前缀也带信号（守卫对 /api 不适用，但信号不因此丢失）", () => {
+    for (const prefix of ["/api/health", "/api/workflows/run-next", "/api/agent/acquire", "/api/update/busy"]) {
+      expect(proxy(makeRequest({ path: prefix })).cookies.get(PAGE_GUARD_COOKIE)?.value).toBe("1");
+    }
   });
 });

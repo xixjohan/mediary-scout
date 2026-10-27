@@ -3,7 +3,10 @@ import { FREE_LLM_PRESET } from "@media-track/workflow";
 
 vi.mock("./demo-mode", () => ({ isDemoMode: vi.fn(() => false) }));
 vi.mock("./update-view-server", () => ({ loadUpdateView: vi.fn(async () => ({ available: null, current: { label: "v2026.09.28", tag: "v2026.09.28" } })) }));
-vi.mock("./workflow-runtime", () => ({
+vi.mock("./workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
+  // 局域网也要登录），漏了它会在 LAN 无凭据用例上炸。
+  hasLoginPassword: vi.fn(async () => false),
+
   getAccountScopedSettings: vi.fn(() => ({ getSetting: async () => null })),
   getCurrentAccountId: vi.fn(async () => "acct_default"),
   getLlmConfig: vi.fn(async () => ({ baseURL: "https://llm.example", modelId: "m" })),
