@@ -38,6 +38,8 @@ export * from "./title-search-keywords.js";
 export * from "./manual-import-resolver.js";
 // 手动入库任务载体（进 sys_queue_jobs.payload_json，worker 读回时校验）。
 export * from "./manual-import-job.js";
+// 手动入库端点的决策核心（纯函数：快照归属/TTL/装载，与「快照从哪来」解耦）。
+export * from "./manual-import-endpoint.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
