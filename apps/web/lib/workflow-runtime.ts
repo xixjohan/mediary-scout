@@ -99,6 +99,11 @@ import {
   type TrackedSeasonStatusView,
   type VerifiedFile,
   type WorkflowRepository,
+  type StorageProvider,
+  Pan115CookieClient,
+  QuarkCookieClient,
+  TianyiClient,
+  Pan123Client,
 } from "@media-track/workflow";
 import {
   buildPanSouProviderChain,
@@ -2778,37 +2783,54 @@ export async function testConnection(
   }
 }
 
-/** A cheap brand-specific read used to probe whether a drive's cookie is alive.
- *  Throws the brand's auth error on a dead cookie (caller freezes). */
-async function probeStorageConnection(
-  provider: string,
-  cookie: string,
-  rootCid: string | null,
-  credential: TokenCredential | null,
-  // Persist a rotated credential if the probe refreshes it mid-flight. Wired by
-  // testConnection (an existing drive). Omitted at first-connect (no row yet).
-  onCredentialRefresh?: ((creds: unknown) => Promise<void>) | undefined,
-): Promise<void> {
-  const { Pan115CookieClient, Pan123Client, QuarkCookieClient, TianyiClient } = await import("@media-track/workflow");
-  if (provider === "guangya") {
+/**
+ * Per-brand 探活表：一次便宜调用证明凭证还活着，死凭证抛该品牌自己的 auth error
+ * （调用方据此冻结；其他错误视为瞬时，不冻结）。
+ *
+ * 用 `Record<StorageProvider, …>` 而不是五个 `if (provider === ...)`：往
+ * `StorageProvider` 联合里加一家网盘时，漏掉探活就是**编译错误**，而不是运行到
+ * 那家盘才炸。这正是原来 5 分支 + 末尾 throw 的坑。
+ *
+ * 为什么表在 apps/web 而不在 workflow 包的注册表里：这些测试通过 mock
+ * `@media-track/workflow` 的 barrel 来替换 client（无网络）。注册表内部的
+ * storage-brands.ts 用相对导入拿 client，绕过了 barrel——探活放进注册表会让
+ * 那层缝失效，桩只能打到 dist 路径上。`create` 没这个问题，因为它是由 apps/web
+ * 调用的。保持「由 apps/web 调用 ⇒ 可被 barrel 缝替换」的一致性。
+ *
+ * `onCredentialRefresh` 必须接在会轮换凭证的 client 上（光鸭 401 刷新 token、
+ * 天翼 session 自愈）：不接则 DB 留着过期凭证，盘被永久误判为冻结。
+ */
+export const STORAGE_PROBES: Record<
+  StorageProvider,
+  (input: {
+    cookie: string;
+    credential: TokenCredential | null;
+    rootCid: string | null;
+    onCredentialRefresh?: ((creds: unknown) => Promise<void>) | undefined;
+  }) => Promise<void>
+> = {
+  pan115: async ({ cookie, rootCid }) => {
+    await new Pan115CookieClient({ cookie, listPageDelayMs: 0 }).getDirectoryInfo({
+      directoryId: rootCid ?? "0",
+    });
+  },
+  quark: async ({ cookie, rootCid }) => {
+    await new QuarkCookieClient({ cookie }).listItems({ directoryId: rootCid ?? "0" });
+  },
+  guangya: async ({ credential, rootCid: _rootCid, onCredentialRefresh }) => {
     const blob = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
     // Token-auth: validateToken() does account/v1/user/me + refresh-retry on 401;
     // a dead token pair throws GuangYaAuthError (caller freezes). rootCid unused.
+    // Pin the SAME persisted device id as connect/worker so "Test connection"
+    // doesn't mint a fresh one.
     await new GuangYaClient({
       accessToken: blob.accessToken ?? "",
       refreshToken: blob.refreshToken ?? "",
-      // Pin the SAME persisted device id as connect/worker so "Test connection"
-      // doesn't mint a fresh one (harmless today — validate is account-host — but
-      // consistent with the rest of the brand's device-pinning).
       ...(blob.deviceId === undefined ? {} : { deviceId: blob.deviceId }),
-      // A 401 during the probe refreshes the token pair; persist it so the DB
-      // doesn't keep a stale token that later wrongly freezes the drive. (The
-      // client option keeps 光鸭's own onTokensRefreshed vocabulary.)
       ...(onCredentialRefresh ? { onTokensRefreshed: onCredentialRefresh } : {}),
     }).validateToken();
-    return;
-  }
-  if (provider === "tianyi") {
+  },
+  tianyi: async ({ credential, rootCid: _rootCid, onCredentialRefresh }) => {
     const blob = (credential ?? {}) as {
       sessionKey?: string;
       accessToken?: string;
@@ -2818,8 +2840,7 @@ async function probeStorageConnection(
     // Token-auth: a cheap personal-cloud root listing ("-11") verifies the
     // sessionKey. A stale session triggers the client's renewSession (accessToken
     // → refreshToken fallback) — persist the renewed blob so the DB doesn't keep
-    // a dead session that later wrongly freezes the drive. Both renewal steps
-    // failing throws TianyiAuthError (caller freezes). rootCid unused.
+    // a dead session that later wrongly freezes the drive.
     await new TianyiClient({
       sessionKey: blob.sessionKey ?? "",
       accessToken: blob.accessToken ?? "",
@@ -2827,28 +2848,34 @@ async function probeStorageConnection(
       ...(blob.familySessionKey === undefined ? {} : { familySessionKey: blob.familySessionKey }),
       ...(onCredentialRefresh ? { onCredentialRefresh } : {}),
     }).listFiles("-11");
-    return;
-  }
-  if (provider === "pan123") {
+  },
+  pan123: async ({ credential, rootCid: _rootCid }) => {
     const blob = (credential ?? {}) as { token?: string };
     // 纯 token(v1 无刷新——web 面无 refresh 端点):listFiles("0") 验根可读。
     // maxPages:1 守住 cheap-read 契约——验活只需第一页,不为存量大账号全量翻页。
     // 死 token → Pan123Client 抛 Pan123AuthError → registry isAuthError 冻结。
-    // onCredentialRefresh 不接(client 无该 option),签名里的参数对 pan123 闲置。
     await new Pan123Client({ token: blob.token ?? "" }).listFiles("0", { maxPages: 1 });
-    return;
+  },
+};
+
+/** A cheap brand-specific read used to probe whether a drive's credential is alive.
+ *  Throws the brand's auth error on a dead one (caller freezes). */
+async function probeStorageConnection(
+  provider: string,
+  cookie: string,
+  rootCid: string | null,
+  credential: TokenCredential | null,
+  // Persist a rotated credential if the probe refreshes it mid-flight. Wired by
+  // testConnection (an existing drive). Omitted at first-connect (no row yet).
+  onCredentialRefresh?: ((creds: unknown) => Promise<void>) | undefined,
+): Promise<void> {
+  const probe = STORAGE_PROBES[provider as StorageProvider];
+  if (!probe) {
+    // Unreachable for a registered brand (the table is exhaustive over
+    // StorageProvider); reached only if a DB row carries an unregistered provider.
+    throw new Error(`unknown storage brand: ${provider}`);
   }
-  if (provider === "quark") {
-    await new QuarkCookieClient({ cookie }).listItems({ directoryId: rootCid ?? "0" });
-    return;
-  }
-  if (provider === "pan115") {
-    await new Pan115CookieClient({ cookie, listPageDelayMs: 0 }).getDirectoryInfo({
-      directoryId: rootCid ?? "0",
-    });
-    return;
-  }
-  throw new Error(`unknown storage brand: ${provider}`);
+  return probe({ cookie, credential, rootCid, onCredentialRefresh });
 }
 
 /**
