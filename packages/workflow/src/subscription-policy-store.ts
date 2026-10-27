@@ -108,7 +108,12 @@ export function subscriptionPolicyFromRow(row: SubscriptionPolicyRow): StoredSub
     cooldownDays: row.cooldown_days,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    lastTakenAt: row.last_taken_at,
+    // `?? null` 不是多余的：SubscriptionPolicyRow 的类型写 string | null，但 SQLite 对
+    // **不存在的列**返回 undefined，而 undefined !== null。withinCooldown 只对 null
+    // fail-open，所以漏掉这一归一会让未补列的旧库把冷却悄悄关掉。
+    // 正常路径由 SqliteWorkflowRepository.upgradeSubscriptionPolicyShape 保证列一定在；
+    // 这一行是第二道防线。
+    lastTakenAt: row.last_taken_at ?? null,
   };
 }
 

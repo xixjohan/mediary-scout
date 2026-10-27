@@ -399,6 +399,28 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.db.pragma("cache_size = -64000"); // 64MB 页面缓存
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SQLITE_SCHEMA);
+    this.upgradeSubscriptionPolicyShape();
+  }
+
+  /**
+   * 补上早于 last_taken_at 的库缺的列。
+   *
+   * 项目策略是「新库一次性成型，无迁移链」（见 SQLITE_SCHEMA 上方注释），但那只能护住
+   * 从新表建出来的库。subscription_policies 本批次先提表、再提列，两个提交之间启过的库
+   * （真实生产卷就是）落在缝隙里：CREATE TABLE IF NOT EXISTS 对已存在的表不做任何事。
+   *
+   * 不补的后果两层，都不会告诉你：
+   *   · 读到 undefined（不是 null），而 withinCooldown 对读不出的时间戳 fail-open
+   *     ——冷却静默永远不触发；
+   *   · UPDATE ... SET last_taken_at 报 no such column，一次成功入库之后的巡检直接崩。
+   * 用 PRAGMA table_info 判存在再加：SQLite 没有 ADD COLUMN IF NOT EXISTS，而直接
+   * ALTER 会在第二次开库时报 duplicate column。
+   */
+  private upgradeSubscriptionPolicyShape(): void {
+    const cols = this.db.pragma("table_info(subscription_policies)") as Array<{ name: string }>;
+    if (cols.length === 0) return; // 表还没建（全新库刚建好，或没有这张表）
+    if (cols.some((c) => c.name === "last_taken_at")) return; // 已是最终形状
+    this.db.exec("ALTER TABLE subscription_policies ADD COLUMN last_taken_at text");
   }
 
   close(): void {
