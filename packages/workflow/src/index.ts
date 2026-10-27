@@ -30,6 +30,8 @@ export * from "./title-resource-cache.js";
 export * from "./cooldown-limiter.js";
 // POST /api/titles/resources 的决策核心（不含 HTTP，门控可单测）。
 export * from "./title-resource-resolver.js";
+// 用户态资源搜索的服务端关键词阶梯（不让用户手打关键词）。
+export * from "./title-search-keywords.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,
