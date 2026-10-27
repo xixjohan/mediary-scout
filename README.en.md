@@ -23,7 +23,7 @@ Ask for a movie, show or anime; an agent searches for it, transfers the best mat
 
 Download: [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases/latest) (macOS / Windows desktop app)
 
-Support the author: [buy me a coffee](docs/support/README.md)
+Want to help? [An Issue or a docs fix beats a donation](docs/support/README.md)
 
 Community: this project takes part in and endorses the [LINUX DO community](https://linux.do), where many users self-host, share drive tips, and get deployment questions answered fast. [![认可 LINUX DO](https://img.shields.io/badge/LINUX%20DO-认可-2ecc71?style=flat&labelColor=1f1f1f)](https://linux.do)
 
