@@ -51,6 +51,9 @@ export * from "./manual-import-command.js";
 // 批次 3：手动入库的 worker 半边（认领 + 转存）。没有它，queued 的 manual_import
 // run 会一直算 active，把它 reserved 时带的 blockIfTitleHasActiveRun 变成永久堵死。
 export * from "./manual-import-worker.js";
+// 批次 4：自动整理的决策半边 + planned/actual 护栏。整理是破坏性操作且网盘无回收站，
+// 所以「先算目标再执行、执行后比对、出偏差即停」是 plan 钉死的共同护栏。
+export * from "./organize-plan.js";
 export {
   SqliteJsonCache,
   openSqliteJsonCache,

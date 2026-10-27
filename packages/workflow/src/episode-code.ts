@@ -24,6 +24,20 @@ export function episodeCodeFromFileName(name: string): string | null {
   return null;
 }
 
+/**
+ * Whether the file name itself names a season (an `SxxEyy` token).
+ *
+ * Exported because the distinction is invisible in the returned code: a bare
+ * 第N集 is normalized to `S01Enn`, so downstream code that reads the season off the
+ * code cannot tell "the file said season 1" from "season 1 was assumed". The
+ * assumption is only trustworthy for season 1 (see the heuristic above), and a
+ * caller that acts on it as fact would silently file a package into the wrong
+ * season — which is exactly what 自动整理 must never do.
+ */
+export function episodeCodeNamesSeason(name: string): boolean {
+  return /[Ss]\d{1,2}[Ee]\d{1,4}/.test(name);
+}
+
 export function canonicalEpisodeFileName(input: {
   title: string;
   episodeCode: string;
