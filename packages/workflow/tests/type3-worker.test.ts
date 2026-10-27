@@ -43,6 +43,52 @@ function noCoverageModel() {
 
 /** Throws on any call — a model whose API is down, and a guard the no-op path
  *  must never invoke. */
+  /**
+   * Lands one episode end to end: search -> transfer -> move to season -> mark obtained.
+   *
+   * Only ONE of the two episodes lands, so the run is `partial` — the shape the cooldown
+   * watermark must react to (a match was accepted even though the season is not complete).
+   */
+  function landingModel(episodeCode: string, landingCount: number) {
+    let i = 0;
+    const tool = (name: string, input: unknown) => ({
+      content: [{ type: "tool-call" as const, toolCallId: `c${i}`, toolName: name, input: JSON.stringify(input) }],
+      finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+      usage: USAGE,
+      warnings: [],
+    });
+    return new MockLanguageModelV3({
+      doGenerate: async () => {
+        i += 1;
+        if (i === 1) return tool("searchResources", { keyword: "Show" });
+        if (i === 2) return tool("transferCandidate", { snapshotId: "snapshot_1", candidateId: "snapshot_1_candidate_1" });
+        if (i === 3) return tool("moveToSeason", { moves: [{ season: 1, fileIds: ["landed_1"] }] });
+        if (i === 4) return tool("markObtained", { codes: [episodeCode] });
+        if (i === 5) return tool("reportNoCoverage", { reason: "one left" });
+        return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+  }
+
+  /**
+   * A repository that records every recordPolicyMatch call.
+   *
+   * The watermark is the ONE thing in this batch that is written from a run's outcome, so
+   * the wiring has to be observed rather than inferred: a wrapper is the only way to see
+   * "the patrol called it" without also asserting on how the run landed its file.
+   */
+  function watermarkRecordingRepository(inner: InMemoryWorkflowRepository) {
+    const calls: { accountId: string; titleKey: string; now: string }[] = [];
+    const wrapped = Object.create(inner) as InMemoryWorkflowRepository;
+    Object.defineProperty(wrapped, "recordPolicyMatch", {
+      value: async (input: { accountId: string; titleKey: string; now: string }) => {
+        calls.push(input);
+        return inner.recordPolicyMatch(input);
+      },
+    });
+    return { repository: wrapped, calls };
+  }
+
 function throwingModel() {
   return new MockLanguageModelV3({
     doGenerate: async () => {
@@ -406,6 +452,144 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(patrol[0]!.trigger).toBe("scheduled");
     expect(patrol[0]!.report?.status).toBe("airing");
   });
+
+    /**
+     * 批次 5：冷却期水位线（lastTakenAt）的巡检侧接线。
+     *
+     * 水位线是这个批次里唯一“从运行结果写回去”的东西，所以必须观测它而不是推断：
+     * 一个包裹存储库记录调用，另一个真落一个集。
+     *
+     * 两条边界同等重要：“空搜不移水位线”（否则一次空搜就重置冷却，那部作品每次巡检都重搜）。
+     */
+    describe("cooldown watermark (lastTakenAt) — written from the run's outcome", () => {
+      const policy = {
+        mustContain: [],
+        mustNotContain: [],
+        episodeFilter: "",
+        useRegex: false,
+        cooldownDays: 7,
+      };
+
+      /** A landing provider + executor: one episode transfers and moves into the season. */
+      function landingSetup(title: MediaTitle, season: TrackedSeason) {
+        return new FakeStorageExecutor({
+          transferOutcomes: {
+            snapshot_1_candidate_1: {
+              status: "succeeded",
+              providerMessage: "ok",
+              files: [{ id: "landed_1", storageDirectoryId: "staging", name: "Show.S01E01.mkv", sizeBytes: 1_000_000_000, episodeCode: "S01E01", providerFileId: "p1" }],
+            },
+          },
+        });
+      }
+
+      const landingProvider = () =>
+        new FakeResourceProvider({ keywordResults: { "Show show": [{ title: "Show S01 2160p WEB-DL" }] } });
+
+      it("**真采纳了资源 => 水位线前进**", async () => {
+        const inner = new InMemoryWorkflowRepository();
+        const { repository, calls } = watermarkRecordingRepository(inner);
+        const { title, season } = trackedFixture();
+        await seedTrackedSeason({ repository: inner, title, season, obtainedCodes: [] });
+        await inner.upsertSubscriptionPolicy({ accountId: "acct_default", titleKey: title.id, policy, now: fixedNow() });
+        const storage = landingSetup(title, season);
+        await seedV2Season(storage, title, season, []);
+
+        const outcomes = await runScheduledType3Monitoring({
+          repository,
+          resourceProvider: landingProvider(),
+          storage,
+          model: landingModel("S01E01", 1),
+          storageParentDirectoryId: "library_root",
+          now: fixedNow,
+          createWorkflowRunId: () => "run_watermark_hit",
+        });
+
+        expect(outcomes[0]).toMatchObject({ status: "ran" });
+        // partial = 一集落地〄一集还差。如果这不是 partial，说明落地本身没成立，
+        // 那么下面的水位线断言就是空说——一个从来没落地的跑步不该移动它。
+        expect(outcomes[0]!.workflowStatus).toBe("partial");
+        expect(calls).toHaveLength(1);
+        expect(calls[0]).toMatchObject({ accountId: "acct_default", titleKey: title.id });
+        expect((await inner.getSubscriptionPolicy({ accountId: "acct_default", titleKey: title.id }))?.lastTakenAt).toBe(fixedNow());
+      });
+
+      it("**搜了但没命中 => 水位线不动**（一次空搜不能重置冷却）", async () => {
+        const inner = new InMemoryWorkflowRepository();
+        const { repository, calls } = watermarkRecordingRepository(inner);
+        const { title, season } = trackedFixture();
+        await seedTrackedSeason({ repository: inner, title, season, obtainedCodes: [] });
+        await inner.upsertSubscriptionPolicy({ accountId: "acct_default", titleKey: title.id, policy, now: fixedNow() });
+        const storage = new FakeStorageExecutor();
+        await seedV2Season(storage, title, season, []);
+
+        await runScheduledType3Monitoring({
+          repository,
+          resourceProvider: emptyProvider(),
+          storage,
+          model: noCoverageModel(),
+          storageParentDirectoryId: "library_root",
+          now: fixedNow,
+          createWorkflowRunId: () => "run_watermark_miss",
+        });
+
+        expect(calls).toEqual([]);
+        expect((await inner.getSubscriptionPolicy({ accountId: "acct_default", titleKey: title.id }))?.lastTakenAt).toBeNull();
+      });
+
+      it("**没配策略 => 返回 null 而不是抛错**（策略层是 opt-in 的）", async () => {
+        const inner = new InMemoryWorkflowRepository();
+        const { repository, calls } = watermarkRecordingRepository(inner);
+        const { title, season } = trackedFixture();
+        await seedTrackedSeason({ repository: inner, title, season, obtainedCodes: [] });
+        const storage = landingSetup(title, season);
+        await seedV2Season(storage, title, season, []);
+
+        await runScheduledType3Monitoring({
+          repository,
+          resourceProvider: landingProvider(),
+          storage,
+          model: landingModel("S01E01", 1),
+          storageParentDirectoryId: "library_root",
+          now: fixedNow,
+          createWorkflowRunId: () => "run_watermark_nopolicy",
+        });
+
+        expect(calls).toHaveLength(1);
+        // recordPolicyMatch 对没配过策略的作品返回 null，不是抛错
+        expect(await inner.recordPolicyMatch({ accountId: "acct_default", titleKey: title.id, now: fixedNow() })).toBeNull();
+      });
+
+      it("**水位线接上之后，冷却期内同一部不再被重搜**", async () => {
+        const inner = new InMemoryWorkflowRepository();
+        const { repository } = watermarkRecordingRepository(inner);
+        const { title, season } = trackedFixture();
+        await seedTrackedSeason({ repository: inner, title, season, obtainedCodes: [] });
+        await inner.upsertSubscriptionPolicy({ accountId: "acct_default", titleKey: title.id, policy, now: fixedNow() });
+        const storage = new FakeStorageExecutor();
+        await seedV2Season(storage, title, season, []);
+        // 2 天前匹配过一次 —— now 是 06-12，7 天冷却未满。
+        // 注意边界：正好满 7 天**不算**冷却内（withinCooldown 是 elapsedDays < cooldownDays，
+        // 排他的）。qBittorrent 的 "ignore subsequent matches for N days" 就是这个语义：
+        // N 整天之后恢复匹配。
+        await inner.recordPolicyMatch({ accountId: "acct_default", titleKey: title.id, now: "2026-06-10T00:00:00.000Z" });
+
+        const outcomes = await runScheduledType3Monitoring({
+          repository,
+          resourceProvider: emptyProvider(),
+          storage,
+          model: noCoverageModel(),
+          storageParentDirectoryId: "library_root",
+          now: fixedNow,
+          createWorkflowRunId: () => "run_watermark_cooling",
+        });
+
+        // 冷却中：这部没被巡检（唯一的候选被过滤掉，sweep 空转）
+        expect(outcomes).toEqual([]);
+        // 水位线也没被这次空转动过
+        expect((await inner.getSubscriptionPolicy({ accountId: "acct_default", titleKey: title.id }))?.lastTakenAt).toBe("2026-06-10T00:00:00.000Z");
+      });
+    });
 
   it("skips a season that already has an active workflow run", async () => {
     const repository = new InMemoryWorkflowRepository();

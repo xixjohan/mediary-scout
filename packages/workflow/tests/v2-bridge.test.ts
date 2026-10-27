@@ -26,6 +26,51 @@ function v2Result(over: Partial<RunAcquisitionV2WorkflowResult>): RunAcquisition
   };
 }
 
+/**
+ * 批次 5：冷却期水位线的信号源。
+ *
+ * `cooldownDays` 意味着“忽略之后 N 天内的匹配”，所以水位线只能在真的采纳了资源
+ * 时才往前走。这里固定两条边界：
+ *   · 搜了但没命中（no_coverage）不能移动水位线，否则一次空搜就会重置冷却，那部作品每次巡检都被重搜。
+ *   · 部分落地（partial）也算采纳——取到了就是取到了。
+ */
+describe("bridgeV2WorkflowToResult — newlyObtainedCodes (cooldown watermark source)", () => {
+  function bridge(over: Partial<Parameters<typeof bridgeV2WorkflowToResult>[0]["v2"]>) {
+    return bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      v2: v2Result(over),
+      workflowRunId: "run-x",
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+  }
+
+  it("**搜了但没命中 => 空**（一次空搜不能重置冷却）", () => {
+    const result = bridge({ missingBefore: ["S01E01", "S01E02"], stillMissing: ["S01E01", "S01E02"], obtained: [] });
+    expect(result.newlyObtainedCodes).toEqual([]);
+  });
+
+  it("**部分落地 => 只列本次新拿到的**", () => {
+    const result = bridge({
+      missingBefore: ["S01E01", "S01E02", "S01E03"],
+      stillMissing: ["S01E03"],
+      obtained: ["S01E01", "S01E02"],
+    });
+    expect(result.newlyObtainedCodes).toEqual(["S01E01", "S01E02"]);
+  });
+
+  it("**之前就已经有、本次没变 => 不算新拿到**（否则冷却永远不启动）", () => {
+    const result = bridge({ missingBefore: ["S01E01"], stillMissing: ["S01E01"], obtained: [] });
+    expect(result.newlyObtainedCodes).toEqual([]);
+  });
+
+  it("**全部落地 => 全部列出**", () => {
+    const result = bridge({ missingBefore: ["S01E01", "S01E02"], stillMissing: [], obtained: ["S01E01", "S01E02"] });
+    expect(result.newlyObtainedCodes).toEqual(["S01E01", "S01E02"]);
+  });
+});
+
 describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult shape", () => {
   it("single-season type2, everything obtained → succeeded, season tracked with the V2 directory, all episodes obtained, user notification", () => {
     const result = bridgeV2WorkflowToResult({
