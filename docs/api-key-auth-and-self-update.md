@@ -257,3 +257,20 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | L6 | `account-bootstrap.ts` 本地抄一份 `"acct_default"` 字面量，与 `@media-track/workflow` 的 `DEFAULT_ACCOUNT_ID` 重复 | 改 import |
 
 第四轮修复后门禁全绿：384 文件 / 5218 用例（`--sequence.shuffle` 同绿）、`npm run gate` exit 0、六处 tsc 全 0、`build:shared`/`build:workflow`/`build:web` 全 0、`npm run e2e` 4 passed。提交 `537b69b`。
+
+### 附四：第五轮复核——「闸机与数据层是否同一账号」这一问法揪出的真缺陷
+
+前四轮都在问「代码对不对」「用例是否在测它假装在测的」。第五轮加了一问：**同一请求头在 proxy / 路由规则 / 闸机 / 数据层四层上，判定是否一致**。这一问直接抓到一个此前四轮都没碰到的真缺陷（DB 抖动 + 有效 JWT → 闸机放行、数据层哨兵 → 200 空数据而不是干净 401），外加第三处同族 mock 泄漏和一个真实的门禁缺口。
+
+| 编号 | 问题 | 修法 |
+|---|---|---|
+| G1 | **闸机与数据层分裂**：`resolveSessionAccountId` 抛错（DB 抖动）时，单用户分支的 `catch { return UNAUTHENTICATED_ACCOUNT_ID }` 直接返回哨兵——而 Bearer 判定在它**之后**，永远不会被执行；多用户分支则被外层 catch 吞。auth-chain 的契约明写「读不到 ≠ 认证失败，继续问别的通道」，数据层没遵守。症状：JWT 认证成功的请求拿到 200 空数据（而不是干净 401），且两层的账号不一致 | 两处 catch 都改为落 Bearer 兜底。复核留下的探针转正为 `auth-gate-data-parity.test.ts`（13 例：Bearer 形态矩阵四层并排 + 闸机/数据层同账号不变式），并做变异验证（回退单用户 catch → 红） |
+| G2 | **第三处 mock 泄漏**（同族）：`update-actions.test.ts` 的 `failingWrites`（`vi.hoisted` 的 Set）被别的 describe 污染——`clearAllMocks` 清不到它，`--sequence.shuffle` seed=20 稳定复现，固定顺序下看不见 | describe 2 的 `beforeEach` 补 `failingWrites.clear()`；seed=20 转绿。至此三处（bootstrap / connect-actions / update-actions）全修 |
+| G3 | **host-worker 没有任何类型检查门禁**：`apps/host-worker/src/{main,poker}.ts` 是真实代码（S2.1/S2.2 的 drain 宿主），但根 tsconfig 只 include `packages/**` 与 `e2e/**`，CI 五处 tsc 也没有它——而文档一直把它列在 typecheck 名录里 | CI 补 `npx tsc -p apps/host-worker/tsconfig.json --noEmit`（实测干净）；文档改「六处」并写清根 tsconfig 覆盖面 |
+| G4 | **shell trim 与应用侧不同口径**：脚本用 `tr -d '[:space:]'` 删掉**所有**空白（含内部的），应用侧只 `.trim()` 首尾。于是 `" x / y "` 同一输入四处四种行为：脚本静默修成合法 slug、应用抛 `MEDIA_TRACK_UPDATE_REPO_INVALID`、桌面拼出坏 URL、compose 非法引用 | 两个脚本改 `sed` 只去首尾（与应用侧一致）；内部空白的畸形值原样透传，交给应用侧正则 fail-loud。parity 测试加内部空白用例；变异验证（改回 `tr -d` → 红） |
+| G5 | 文档一批：compose:52 残留旧注释与 :58 推导默认值矛盾；.env.example:21 示例指上游（同文件却说「留空=当前仓库」）；README「fork 必须覆盖 MEDIARY_IMAGE」过时；deploy.md 475 注释方向反了、509「origin 指向谁就是谁」机理错（`DEFAULT_UPDATE_REPO` 是源码常量，不读 git origin）、513-514「发布镜像已自带、开箱检查自己的发布」在 compose 路径下不成立（map 写法恒注入空串会盖掉烘焙值） | 逐条按代码事实改正 |
+| G6 | deploy.md 没写 fork 0 tag/0 release 的后果，也没写 updater 的 `git fetch --tags origin` 取的是**部署目录自己的 origin**（与 `MEDIA_TRACK_UPDATE_REPO` 无关）这条隐含耦合 | 新增「fork 从不打 tag / 发 release 时会发生什么」一节（三现象表 + 解法）+ origin 耦合说明 |
+
+第五轮同时确认了几件「没有问题」的事：四处更新源默认值全部有行为级测试覆盖（逐个变异：run-update 6 红 / deploy 3 红 / compose 1 红 / feed-server 13 红）；设 `MEDIA_TRACK_UPDATE_REPO=fancydirty/mediary-scout` 时全链自洽（镜像基址、feed、updater 三者一起变）；Bearer 形态矩阵在真实服务上四层同判（实测：标准/小写/混合大小写/双空格/tab/尾部空格全 200，无头/Basic/空 token 307，篡改 401）。
+
+第五轮修复后门禁全绿：385 文件 / 5231 用例（`--sequence.shuffle` seed=20 同绿）、`npm run gate` exit 0、九处 tsc 全 0、`build:shared`/`build:workflow`/`build:web` 全 0、`npm run e2e` 4 passed。提交 `6dc2bab`。
