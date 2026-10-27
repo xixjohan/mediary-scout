@@ -5,6 +5,10 @@ import {
   createExecutorForBrand,
   transferModelLine,
   getStorageSkill,
+  brandSupportsProwlarr,
+  brandSupportsSubtitleDirectLink,
+  brandsSupportingProwlarr,
+  brandsSupportingSubtitleDirectLink,
   STORAGE_BRANDS,
   type StorageBrand,
   type StorageDriverCreateInput,
@@ -198,5 +202,79 @@ describe("STORAGE_BRANDS 与 StorageProvider 联合严格对应", () => {
   it("没有重复 provider（重复条目会让 getStorageBrand 随机命中一个）", () => {
     const providers = STORAGE_BRANDS.map((b) => b.provider);
     expect(new Set(providers).size, `重复 provider：${providers.join(", ")}`).toBe(providers.length);
+  });
+});
+
+/**
+ * W5 网盘管理统一合同：**能力声明必须与 executor 的真实实现一致**。
+ *
+ * 声明放在注册表条目里（plan：「能力声明就放在注册表条目里，一处定义、前后端共用」），
+ * orchestrator 与设置页都读它，而不是各自 `typeof executor.transferSubtitleUrl === "function"`
+ * 或在文案里硬编码品牌名单。
+ *
+ * 这条断言是防漂移的钉子，两个方向都要红：
+ *   · 声明支持但 executor 没实现 → agent 拿到一个必然失败的工具，用户看到能用却不能用；
+ *   · executor 实现了但没声明 → 设置页把它列进不支持，用户白白少一个能用功能
+ *     （字幕设置页此前正是硬编码「115 / 光鸭 / 123」，加第六家时不会有人想起改那句话）。
+ *
+ * 为什么不用鸭子类型代替声明：鸭子类型只有拿到 executor 才知道，而设置页渲染时并没有
+ * executor——它只有 provider 字符串。声明是唯一能在前后端共用、且不需要构造网盘连接的形式。
+ */
+describe("STORAGE_BRANDS 的能力声明与 executor 实现一致", () => {
+  it("**声明支持字幕直链落盘的品牌，executor 真的实现了 transferSubtitleUrl**", () => {
+    for (const brand of STORAGE_BRANDS) {
+      const executor = brand.create({
+        provider: brand.provider,
+        cookie: "UID=1_A1_2;CID=2;SEID=3;__uid=1",
+        credential: ANY_CREDENTIAL,
+        scopeCids: ["scope-root"],
+        env: {},
+      });
+      const declared = brand.supportsSubtitleDirectLink;
+      // transferSubtitleUrl 是可选方法，联合类型上不可见——按名字问出来，正是鸭子类型
+      // 本身在做的事。这里刻意用鸭子类型去验声明，而不是反过来：声明必须解释现实。
+      const implemented =
+        typeof (executor as { transferSubtitleUrl?: unknown }).transferSubtitleUrl === "function";
+      expect(
+        implemented,
+        `${brand.provider} 声明 supportsSubtitleDirectLink=${String(declared)}，但 executor ${implemented ? "实现了" : "没实现"} transferSubtitleUrl`,
+      ).toBe(declared);
+    }
+  });
+
+  it("**每家都显式声明**（漏声明的条目 = 前端把它当成不支持，静默少一个功能）", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(typeof brand.supportsSubtitleDirectLink, `${brand.provider} 没声明 supportsSubtitleDirectLink`).toBe("boolean");
+    }
+  });
+
+  it("**按 provider 查得到的声明与条目一致**（前端只有 provider 字符串）", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(brandSupportsSubtitleDirectLink(brand.provider)).toBe(brand.supportsSubtitleDirectLink);
+    }
+  });
+
+  it("**未登记的 provider 视为不支持**（不抛错：设置页会拿未知值来问）", () => {
+    expect(brandSupportsSubtitleDirectLink("nope")).toBe(false);
+    expect(brandSupportsSubtitleDirectLink(undefined)).toBe(false);
+  });
+
+  it("**两条能力轴今天恰好同一批盘，但来源是不同字段**（不是复制粘贴）", () => {
+    // 磁力看 resourceProviderKinds（搜索侧：哪些资源提供商适用于这个盘），
+    // 字幕看 supportsSubtitleDirectLink（落盘侧：executor 会不会外链离线）。
+    // 今天两批盘重合，是因为「有秒传/离线接口」这件事同时决定了两者——115/光鸭/123 有，
+    // 夸克/天翼两个都没有。但它们是**不同的字段**：将来一家盘完全可能有磁力却没有离线
+    // 下载额度（或反过来），那时两张名单必须各自正确，而这条断言保证它们不是同一个值。
+    const magnet = brandsSupportingProwlarr().slice().sort();
+    const subtitle = brandsSupportingSubtitleDirectLink().slice().sort();
+    expect(subtitle).toEqual(magnet);
+    // 各自是从自己的字段推的，不是把对方的结果抄过来
+    for (const brand of STORAGE_BRANDS) {
+      // brandSupportsProwlarr 读 resourceProviderKinds，brandSupportsSubtitleDirectLink
+      // 读 supportsSubtitleDirectLink —— 两个不同字段，只是今天取值重合。
+      const viaKinds = brandSupportsProwlarr(brand.provider);
+      const viaDeclaration = brandSupportsSubtitleDirectLink(brand.provider);
+      expect(viaDeclaration, `${brand.provider}`).toBe(viaKinds);
+    }
   });
 });

@@ -175,6 +175,25 @@ export interface StorageBrand {
    *  whether magnets work. The text lives in transfer-model-notes.ts (dependency-free,
    *  see the note there). */
   transferModelNote: string;
+  /**
+   * W5 网盘管理统一合同：**该盘的 executor 是否实现了 transferSubtitleUrl**
+   * （外链离线落盘——字幕直链落盘的能力门）。
+   *
+   * REQUIRED，和 minApiIntervalMs / deadLinksSkill 同一个理由：漏声明必须是编译
+   * 错误，而不是运行时才发现。漏声明的后果不是崩，是**静默少一个功能**——设置页
+   * 会把这个盘列进「不支持」，用户在 115 上白白看不到字幕来源生效。
+   *
+   * 为什么值得单独声明：这项能力此前只在 orchestrator 里用
+   * `typeof executor.transferSubtitleUrl === "function"` 鸭子类型判断，而设置页的
+   * 文案是硬编码的「115 / 光鸭 / 123 支持」。两条路径各自为政：加第六家网盘时，
+   * executor 实现了、orchestrator 认了，但设置页那句话不会有人想起改——用户看着
+   * 一句过期的话判断自己的盘能不能用。声明放进注册表后，前后端读同一处。
+   *
+   * 声明与实现必须一致，由 storage-registry.test.ts 的「能力声明与 executor
+   * 实现一致」双向断言守住：声明了没实现 = agent 拿到必失败的工具；实现了没声明 =
+   * 前端把它藏起来。
+   */
+  supportsSubtitleDirectLink: boolean;
 }
 
 /** Input to a brand's `createBootstrap`. Cookie brands read `cookie`, token brands
@@ -204,6 +223,8 @@ export const STORAGE_BRANDS = [
     minApiIntervalMs: 0, // 115 client 自带 1.2s 漏桶
     deadLinksSkill: DEAD_LINKS_BLACK_BOX,
         transferModelNote: "",
+  // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
+    supportsSubtitleDirectLink: true,
     createBootstrap: ({ cookie, env }) =>
           createBootstrapPan115CookieStorageExecutor({ cookie, ...(env === undefined ? {} : { env }) }),
     create: (input) => {
@@ -229,6 +250,8 @@ export const STORAGE_BRANDS = [
     minApiIntervalMs: 0, // 夸克 client 自带 3/s 令牌桶
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_QUARK,
         transferModelNote: TRANSFER_MODEL_NOTE_QUARK,
+  // W5 能力声明：executor 没有 transferSubtitleUrl（无外链离线接口）。声明不支持让设置页判失真，否则用户会以为配了 token 就能落字幕。
+    supportsSubtitleDirectLink: false,
     createBootstrap: ({ cookie }) =>
           new QuarkStorageExecutor({ client: new QuarkCookieClient({ cookie }), writeScopeDirectoryIds: [] }),
     create: (input) => {
@@ -258,6 +281,8 @@ export const STORAGE_BRANDS = [
     minApiIntervalMs: 0,
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_GUANGYA,
         transferModelNote: TRANSFER_MODEL_NOTE_GUANGYA,
+  // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
+    supportsSubtitleDirectLink: true,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
           const clientOptions: GuangYaClientOptions = {
@@ -308,6 +333,8 @@ export const STORAGE_BRANDS = [
     minApiIntervalMs: 0,
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_TIANYI,
         transferModelNote: TRANSFER_MODEL_NOTE_TIANYI,
+  // W5 能力声明：executor 没有 transferSubtitleUrl（无外链离线接口）。声明不支持让设置页判失真，否则用户会以为配了 token 就能落字幕。
+    supportsSubtitleDirectLink: false,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as Partial<TianyiCredential>;
           const clientOptions: TianyiClientOptions = {
@@ -357,6 +384,8 @@ export const STORAGE_BRANDS = [
     minApiIntervalMs: 1500, // 123 用 code=100011 请勿频繁操作 回应突发
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_PAN123,
         transferModelNote: TRANSFER_MODEL_NOTE_PAN123,
+  // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
+    supportsSubtitleDirectLink: true,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as Partial<Pan123Credential>;
           return new Pan123StorageExecutor({ client: new Pan123Client({ token: c.token ?? "" }), writeScopeDirectoryIds: [] });
@@ -475,6 +504,23 @@ export function brandSupportsProwlarr(provider: string): boolean {
     isRegisteredStorageProvider(provider) &&
     getStorageBrand(provider).resourceProviderKinds.includes("prowlarr")
   );
+}
+
+/** W5: whether this drive's executor can land a direct link (subtitle offline task).
+ *  Registry data, not logic — the orchestrator's subtitle gate reads this instead of
+ *  duck-typing the executor, so the decision and the settings-page wording share one
+ *  source. `undefined`/unregistered providers answer false rather than throwing: the
+ *  settings page asks with whatever string it has. */
+export function brandSupportsSubtitleDirectLink(provider: string | undefined): boolean {
+  if (provider === undefined || !isRegisteredStorageProvider(provider)) return false;
+  return getStorageBrand(provider).supportsSubtitleDirectLink;
+}
+
+/** Display labels of every registered brand that can land direct links, in registry
+ *  order. The subtitle settings block derives "which drives this works on" from this
+ *  instead of a hardcoded list — the same source of truth as the orchestrator's gate. */
+export function brandsSupportingSubtitleDirectLink(): string[] {
+  return STORAGE_BRANDS.filter((brand) => brand.supportsSubtitleDirectLink).map((brand) => brand.label);
 }
 
 /** Display labels of every registered brand that can use Prowlarr, in registry
