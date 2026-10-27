@@ -208,7 +208,7 @@ S5.1 / S5.6 无依赖，可与 S5.2 并行；**S5.4 必须最后做**（它依�
 | L2 | 死代码与门禁盲区：contracts 的 `IApiKeyStore` 与 shared 同形重复且零消费者、S5.1 声称删净的 dismissed key 仍在、两处 `void x;` 哑语句、顶层 `/api/route.ts` 不在两层门禁管辖内（该文件当前不存在，是**预防性**收口：glob 与规则正则都只匹配「至少一层目录」，真建一个就会两处同时漏） | 删掉 contracts 侧的重复定义（shared 保持唯一定义，contracts 恢复零依赖）；删死常量与哑语句（`rotateApiKey` 去掉没用到的 `env` 形参）；ESLint glob + 规则正则 + 单测都覆盖顶层路由 |
 | L3 | 文档口径过期：路由数 36、e2e「4/4」易读成 4 个 spec、jose 版本、gate 只写「三处 typecheck」、F5 默认值 | §7 全部按交付事实改写，历史快照加标注 |
 
-修复后门禁：vitest 382 文件 / 5195 用例、`npm run gate`、五个 tsc、三构建、e2e 1 文件 4 用例，全绿。
+修复后门禁：vitest 382 文件 / 5195 用例、`npm run gate`、五处 tsc、三构建、e2e 1 文件 4 用例，全绿。
 
 ## 9. 需要用户确认的三个点
 
