@@ -5632,3 +5632,85 @@ select.setting-control {
   flex: none;
   font-variant-numeric: tabular-nums;
 }
+
+/* 详情页「资源」面板（批次 2 只读，批次 3 加手动入库）。
+   批次 2 上线时这些类名没有配套规则——面板因此是无样式的。这里补上最小一套：
+   候选行、行内「手动入库」按钮、以及导入状态说明。 */
+.title-resources {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.title-resources-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.title-resources-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.title-resources-search,
+.title-resources-import {
+  background: var(--surface, transparent);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.title-resources-search:disabled,
+.title-resources-import:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.title-resources-hint,
+.title-resources-empty,
+.title-resources-cached,
+.title-resources-import-queued {
+  color: var(--muted);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.title-resources-error {
+  color: var(--danger, #b42318);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.title-resources-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.title-resources-item {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  justify-content: space-between;
+}
+
+.title-resources-item-title {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.title-resources-item-meta {
+  color: var(--muted);
+  flex: 1 1 160px;
+  font-size: 0.8125rem;
+}

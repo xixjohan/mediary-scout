@@ -21,7 +21,7 @@ function view(overrides: Partial<ResourceCandidateView> = {}): ResourceCandidate
   };
 }
 
-import { mapResourceResponse } from "./title-resource-panel";
+import { mapImportResponse, mapResourceResponse } from "./title-resource-panel";
 
 describe("mapResourceResponse — 降级契约", () => {
   it("200 ⇒ ready，带上 cached 标记", () => {
@@ -81,5 +81,65 @@ describe("资源面板 — 用户要的三个事实", () => {
     const candidate = view({ candidateId: "3f2504e0-4f89-11d3-9a0c-0305e82c3301" });
     const serialized = JSON.stringify(candidate);
     expect(serialized).not.toMatch(/(?:https?|magnet):\/\/|ed2k:\/\//i);
+  });
+});
+
+describe("mapResourceResponse — snapshotId 句柄", () => {
+  it("带出 snapshotId（入库端点需要的不透明句柄）", () => {
+    const state = mapResourceResponse(200, { candidates: [], cached: false, snapshotId: "snap-1" });
+    if (state.kind !== "ready") throw new Error("unexpected");
+    expect(state.snapshotId).toBe("snap-1");
+  });
+
+  it("**缓存命中 ⇒ snapshotId 为 null**（DB 才是权威，前端不重推导）", () => {
+    // 这条钉住一个真实风险：缓存命中时后端刻意不回 snapshotId。若哪天后端开始回，
+    // 而它回的是重新推导的那一份，前端就会拿着一个与 DB 不一致的句柄去入库。
+    const state = mapResourceResponse(200, { candidates: [], cached: true });
+    if (state.kind !== "ready") throw new Error("unexpected");
+    expect(state.snapshotId).toBeNull();
+  });
+});
+
+describe("mapImportResponse — 入库终局", () => {
+  it("202 ⇒ queued", () => {
+    expect(mapImportResponse(202, { status: "queued", workflowRunId: "r1" }).kind).toBe("queued");
+  });
+
+  it("200 already_running ⇒ 不是错误（什么都没新入队）", () => {
+    const state = mapImportResponse(200, { status: "already_running", workflowRunId: "r1" });
+    expect(state.kind).toBe("already_running");
+  });
+
+  it("410 ⇒ rejected 并带上 reason（客户端据此知道别原样重试）", () => {
+    const state = mapImportResponse(410, { error: "搜索结果已超过 30 分钟", reason: "expired" });
+    if (state.kind !== "rejected") throw new Error("unexpected");
+    expect(state.reason).toBe("expired");
+    expect(state.message).toContain("30 分钟");
+  });
+
+  it("400/404 ⇒ rejected，带上游说明", () => {
+    for (const status of [400, 404]) {
+      const state = mapImportResponse(status, { error: "boom" });
+      if (state.kind !== "rejected") throw new Error("unexpected");
+      expect(state.message).toBe("boom");
+    }
+  });
+
+  it("无 error 字段 ⇒ 退回带状态码的说明", () => {
+    const state = mapImportResponse(500, {});
+    if (state.kind !== "rejected") throw new Error("unexpected");
+    expect(state.message).toBe("入库失败（500）");
+  });
+
+  it("**没有任何终局形态会吐出 URL**（分享链自始至终不下前端）", () => {
+    for (const [status, body] of [
+      [202, { status: "queued", workflowRunId: "r1" }],
+      [200, { status: "already_running", workflowRunId: "r1" }],
+      [410, { error: "x", reason: "expired" }],
+    ] as const) {
+      expect(JSON.stringify(mapImportResponse(status, body))).not.toMatch(
+        /(?:https?|magnet):\/\/|ed2k:\/\//i,
+      );
+    }
   });
 });
