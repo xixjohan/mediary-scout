@@ -42,6 +42,9 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(state);
 }
 
+/** 与 lib/api-key-management 的强度下限同一句话：错误契约两端一致。 */
+const TOO_SHORT_MESSAGE = "至少需要 16 个字符";
+
 export async function POST(request: NextRequest) {
   const gate = await requireApiAccount(request);
   if (gate instanceof Response) return gate;
@@ -57,6 +60,12 @@ export async function POST(request: NextRequest) {
   if (body !== null && body.apiKey !== undefined && typeof body.apiKey !== "string") {
     return NextResponse.json({ error: "apiKey 必须是字符串" }, { status: 400 });
   }
+  // 空串/纯空白也是形状错误：lib 层对「长度 0 的显式值」的语义是「没给，生成
+  // 一枚」，于是 POST {apiKey:""} 会静默换成随机 key——调用方以为设了自己的
+  // 值（H2 复核的同一类惊喜）。显式给了空串就该报错，不猜。
+  if (typeof body?.apiKey === "string" && body.apiKey.trim().length === 0) {
+    return NextResponse.json({ error: "apiKey 不能为空" }, { status: 400 });
+  }
   const explicit = typeof body?.apiKey === "string" ? body.apiKey : undefined;
 
   const { getWorkflowRepository } = await import("../../../../lib/workflow-runtime");
@@ -69,10 +78,15 @@ export async function POST(request: NextRequest) {
       clear: () => repository.setSetting(API_KEY_SETTING_KEY, ""),
     }, explicit);
   } catch (error) {
-    // rotateApiKey 对过短显式值抛错（lib 层已保证不写库）；这里必须翻成 4xx——
-    // 直接溅出去是 500 空体，调用方看不到「至少 16 位」这条原因（H2 复核）。
-    const message = error instanceof Error ? error.message : "apiKey 不合法";
-    return NextResponse.json({ error: message }, { status: 400 });
+    // 只把**输入校验**类错误翻成 400。直接 catch-all 会把 DB 故障也变成客户端
+    // 错误、还把 sqlite 细节（"database is locked (code=5)"）回显给调用方——
+    // 第四轮复核实测过这条。区分方式：校验错误的文案由本路由的 lib 常量定义，
+    // 其余一律按 500 处理（文案统一，不泄露内部状态）。
+    const message = error instanceof Error ? error.message : "";
+    if (message.includes(TOO_SHORT_MESSAGE)) {
+      return NextResponse.json({ error: message }, { status: 400 });
+    }
+    throw error;
   }
 
   // apiKey 是完整值，只在这一个响应里出现；此后端上只剩掩码。

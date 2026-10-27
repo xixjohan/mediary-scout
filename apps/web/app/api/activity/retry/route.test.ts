@@ -20,11 +20,10 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   getJwtSecret: async () => "retry-test-secret",
     resolveBearerAccountId: async (headers?: Headers) => {
       const header = headers?.get("authorization");
-      // 与真实实现同一语义：scheme 大小写无关（proxy 粗筛也是 /^bearer /i）
-    const match = /^bearer (.+)$/i.exec(header ?? "");
-    if (!match) return null;
-      const token = match[1]!.trim();
-      if (token.length === 0) return null;
+      // 与真实实现**同一份代码**（lib/bearer-scheme.ts）：此前这里是手抄的正则
+      // 复刻版，真实实现退化（如去掉 trim）时这些用例全绿——第四轮复核的 medium。
+      const token = parseBearerToken(header);
+      if (!token) return null;
       try {
         const claims = await verifyToken(token, "retry-test-secret");
         return claims.sub;
@@ -37,6 +36,7 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { POST } from "./route";
 import { verifyToken } from "@media-track/shared";
+import { parseBearerToken } from "../../../../lib/bearer-scheme";
 
 function post(body: unknown) {
   return POST(

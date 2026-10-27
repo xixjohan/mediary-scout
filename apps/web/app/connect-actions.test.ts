@@ -104,7 +104,15 @@ beforeEach(() => {
   state.stored = [];
   state.cleared = [];
   state.headers = new Headers({ host: "scout.local:3000", "x-forwarded-proto": "https" });
-  vi.clearAllMocks();
+  // resetAllMocks + 还原默认返回值：本文件多处用 mockResolvedValue 改
+  // startTunnel 等客户端的结果，而 clearAllMocks 只清调用记录、不清已设置的
+  // 返回值——泄漏到后续用例，--sequence.shuffle 下必红（第四轮复核实测：
+  // 「stores the tunnel token…」拿到上一个用例留下的 invalid_input）。
+  vi.resetAllMocks();
+  vi.mocked(startTunnel).mockResolvedValue({ ok: true });
+  vi.mocked(pollInstanceLink).mockResolvedValue({ ok: true, status: "approved", credential: "ic_new", email: "owner@example.com" });
+  vi.mocked(revokeInstanceLink).mockResolvedValue({ ok: true });
+  vi.mocked(getConnectAccount).mockResolvedValue({ ok: true, email: "owner@example.com", active: true, expiresAt: null, endpoint: null, checkoutOpen: true, tiers: [], restorable: null });
 });
 
 describe("connect actions common guards", () => {

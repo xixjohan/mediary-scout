@@ -1159,16 +1159,20 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
  * MEDIA_TRACK_UPDATE_REPO，按文档设 env 的 fork 也覆盖不到这里。
  */
 describe("run-update.sh — 更新源与镜像基址同源（H1）", () => {
-  /** 只跑脚本最前面的变量推导段（在一切副作用之前 exit），读它打印的默认值。 */
+  // 与 tools/update-source-parity.test.mjs 同一个探针写法（两处都要稳健）：
+  // 抽定义段**执行**，而不是行截取——「在 IMAGE_BASE= 之后又偷偷覆盖」这类改动
+  // 必须被测出来（第四轮复核实测过行截取的两个盲区：覆盖在后的赋值测不到、
+  // 两行之间插入打印会让断言错位误报）。
   function probeDefaults(env = {}) {
     const dir = mkdtempSync(join(tmpdir(), "updater-defaults-"));
-    // 截取 UPDATE_REPO/IMAGE_BASE 两行定义，然后打印并退出：不碰 docker/git。
-    const head = readFileSync(SCRIPT, "utf8").split("\n");
-    const start = head.findIndex((l) => l.startsWith('UPDATE_REPO="'));
-    const end = head.findIndex((l, i) => i > start && l.startsWith("IMAGE_BASE="));
+    const src = readFileSync(SCRIPT, "utf8").split("\n");
+    const from = src.findIndex((l) => l.startsWith('_UPDATE_REPO_RAW='));
+    const to = src.findIndex((l, i) => i > from && l.startsWith("IMAGE_BASE="));
+    expect(from, "run-update.sh 必须有 UPDATE_REPO= 定义").toBeGreaterThanOrEqual(0);
+    expect(to, "run-update.sh 必须有 IMAGE_BASE= 定义").toBeGreaterThan(from);
     const snippet = [
       "#!/bin/sh",
-      ...head.slice(start, end + 1),
+      ...src.slice(from, to + 1),
       'printf "%s\\n" "$UPDATE_REPO"',
       'printf "%s\\n" "$IMAGE_BASE"',
     ].join("\n");
@@ -1176,8 +1180,8 @@ describe("run-update.sh — 更新源与镜像基址同源（H1）", () => {
     writeFileSync(probe, snippet);
     chmodSync(probe, 0o755);
     const out = spawnSync(probe, [], { env: { PATH: process.env.PATH, ...env }, encoding: "utf8" });
-    const lines = out.stdout.trim().split("\n");
-    return { updateRepo: lines[0], imageBase: lines[1], status: out.status };
+    const printed = out.stdout.trim().split("\n");
+    return { updateRepo: printed[0], imageBase: printed[1], status: out.status };
   }
 
   it("默认更新源 = 当前仓库（与网页 feed 的 DEFAULT_UPDATE_REPO 同源，不再是上游）", () => {

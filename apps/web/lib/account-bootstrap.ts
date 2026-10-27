@@ -1,6 +1,7 @@
-import type { Account } from "@media-track/workflow";
+import { DEFAULT_ACCOUNT_ID, type Account } from "@media-track/workflow";
 
-const DEFAULT_ACCOUNT_ID = "acct_default";
+// DEFAULT_ACCOUNT_ID 从 workflow 导入，不在这里再抄一份字面量：两处各写
+// "acct_default"，将来改名只改一边，另一处会静默指向不存在的账号（第四轮复核）。
 
 /** No account has set a password yet → the instance is unclaimed. */
 function noneClaimed(accounts: Account[]): boolean {

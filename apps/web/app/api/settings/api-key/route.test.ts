@@ -23,7 +23,7 @@ const state = {
   sessionAccount: null as string | null,
   demo: false,
   owner: true,
-  store: { value: null as string | null, calls: [] as string[] },
+  store: { value: null as string | null, calls: [] as string[], failNextSet: false },
 };
 
 vi.mock("../../../../lib/demo-mode", () => ({ isDemoMode: () => state.demo }));
@@ -41,11 +41,10 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   getJwtSecret: async () => JWT_SECRET,
     resolveBearerAccountId: async (headers?: Headers) => {
       const header = headers?.get("authorization");
-      // 与真实实现同一语义：scheme 大小写无关（proxy 粗筛也是 /^bearer /i）
-    const match = /^bearer (.+)$/i.exec(header ?? "");
-    if (!match) return null;
-      const token = match[1]!.trim();
-      if (token.length === 0) return null;
+      // 与真实实现**同一份代码**（lib/bearer-scheme.ts）：此前这里是手抄的正则
+      // 复刻版，真实实现退化（如去掉 trim）时这些用例全绿——第四轮复核的 medium。
+      const token = parseBearerToken(header);
+      if (!token) return null;
       try {
         const claims = await verifyToken(token, JWT_SECRET);
         return claims.sub;
@@ -58,6 +57,10 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: () => ({
     getSetting: async () => state.store.value,
     setSetting: async (_key: string, value: string) => {
+      if (state.store.failNextSet) {
+        state.store.failNextSet = false;
+        throw new Error("SqliteError: database is locked (code=5, sqlite=SQLITE_BUSY) key=api_key");
+      }
       state.store.calls.push(`set:${value}`);
       state.store.value = value;
     },
@@ -65,6 +68,7 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
 }));
 
 import { GET, POST, DELETE } from "./route";
+import { parseBearerToken } from "../../../../lib/bearer-scheme";
 
 function req(method: string, headers?: Record<string, string>, body?: unknown): NextRequest {
   return new NextRequest("http://localhost/api/settings/api-key", {
@@ -90,7 +94,7 @@ describe("/api/settings/api-key", () => {
     state.sessionAccount = null;
     state.demo = false;
     state.owner = true;
-    state.store = { value: null, calls: [] };
+    state.store = { value: null, calls: [], failNextSet: false };
   });
 
   afterEach(() => {
@@ -141,6 +145,27 @@ describe("/api/settings/api-key", () => {
     it("非字符串 apiKey → 400（形状错误），而不是静默改发一枚随机 key", async () => {
       const res = await POST(req("POST", sessionHeaders(), { apiKey: 123 }));
       expect(res.status).toBe(400);
+      expect(state.store.calls).toEqual([]);
+    });
+
+    it("空串 / 纯空白 apiKey → 400（不静默改发随机 key）", async () => {
+      for (const apiKey of ["", "   ", "\t\n"]) {
+        const res = await POST(req("POST", sessionHeaders(), { apiKey }));
+        expect(res.status, JSON.stringify(apiKey)).toBe(400);
+      }
+      expect(state.store.calls).toEqual([]);
+    });
+
+    it("DB 故障不被翻成 400，也不回显 sqlite 细节（客户端错误 vs 服务端故障分开）", async () => {
+      state.store.failNextSet = true;
+      // 500 由 Next 的 error boundary 产出；路由层的契约是「让异常穿透」而不是
+      // catch-all 成 400 + 原样回显 error.message（第四轮复核实测过后者会泄露
+      // "database is locked (code=5)"）。
+      await expect(POST(req("POST", sessionHeaders(), { apiKey: "0123456789abcdef" }))).rejects.toThrow(
+        /database is locked/,
+      );
+      // 异常里带着的是原始 DB 错误，而**响应体**不会带上它——这条由上面的
+      // rejects 证明「没被吞成 200/400」。
       expect(state.store.calls).toEqual([]);
     });
 

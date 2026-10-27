@@ -64,7 +64,11 @@ export GIT_SHA
 # 都指向当前仓库（fork 拉自己的 ghcr 镜像）。曾硬编码上游，设置页引导用户跑的
 # 就是这段，会把别家镜像钉进 .env（第三轮复核的 medium）。MEDIA_IMAGE_BASE /
 # MEDIA_TRACK_UPDATE_REPO 仍可分别覆盖。
-UPDATE_REPO="${MEDIA_TRACK_UPDATE_REPO:-xixjohan/mediary-scout}"
+# 与应用侧（release-feed-server.ts 的 updateRepoSlug）同一口径：env 去掉首尾空白，
+# 纯空白视为「没设」而回落默认；否则 "   " 会拼出 ghcr.io/   这种地址。
+_UPDATE_REPO_RAW="${MEDIA_TRACK_UPDATE_REPO:-}"
+_UPDATE_REPO=$(printf '%s' "$_UPDATE_REPO_RAW" | tr -d '[:space:]')
+UPDATE_REPO="${_UPDATE_REPO:-xixjohan/mediary-scout}"
 IMAGE="${MEDIA_IMAGE_BASE:-ghcr.io/${UPDATE_REPO}}:${TAG}"
 if [ -f .env ] && grep -q '^MEDIARY_IMAGE=' .env; then
   sed -i "s|^MEDIARY_IMAGE=.*|MEDIARY_IMAGE=${IMAGE}|" .env

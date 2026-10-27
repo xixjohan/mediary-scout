@@ -64,7 +64,7 @@ MEDIARY_IMAGE=mediary-scout:local docker compose up -d
 
 ```bash
 docker run -d --name mediary-scout -p 3000:3000 -v mediary-data:/app/data \
-  ghcr.io/fancydirty/mediary-scout:v2026.10.22
+  ghcr.io/xixjohan/mediary-scout:v2026.10.22
 ```
 
 打开 `http://<主机IP>:3000`，在设置里配置。以后在 **设置 → 更新** 里一键升级，也可以设成每天自动更新。国内构建加速、Tailscale / Cloudflare Tunnel 远程访问、多用户、备份，以及让 AI agent 替你部署的提示词，都在 **[部署指南](docs/deploy.md)**。
