@@ -118,6 +118,7 @@ import {
 } from "@media-track/workflow";
 import {
   buildPanSouProviderChain,
+  getPanSouAuth,
   resolveUserPanSouBaseUrl,
   DEFAULT_PANSOU_BASE_URL as PUBLIC_PANSOU_BASE_URL,
 } from "./pansou-chain";
@@ -2455,6 +2456,10 @@ export async function getWorkerResourceProvider(
             await settings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
           ),
           allowedTypes,
+          // 自建源开了认证就把凭据带进去。官方源那一侧由 buildPanSouProviderChain
+          // 决定不带（把用户令牌送到第三方既无用又泄露），这里只负责把库里的
+          // 凭据解析成 auth 形态。
+          auth: await getPanSouAuth(settings),
           // 把每次真实搜索观察到的结论回写,设置页徽章才有东西可读。缺了这条,
           // 告警在生产中永远不触发:保存时探活只写 "ok",而本次事故恰恰是
           // 「保存时好的、之后才挂」。写失败不能影响搜索本身,所以 catch 后

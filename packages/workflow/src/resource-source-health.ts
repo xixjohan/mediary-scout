@@ -59,6 +59,26 @@ export class PanSouRequestError extends Error {
   }
 }
 
+/** 「源就在那儿，但我们没有资格进这道门」——登录失败、令牌无效/过期、
+ *  实例没开认证却配了凭据（403 认证功能未启用）。
+ *
+ *  与 protocol_error / unreachable 三足鼎立的理由完全相同，而且更尖锐：另两者
+ *  都该触发 FallbackResourceProvider 退到官方源续命，**这一类绝不**。认证失败
+ *  意味着用户配的自建源是**他自己配错了一处**，退到官方源只会让一次配置错误
+ *  靠公共源静默续命——正是这个仓库反复要消灭的那个「活六天没人发现」。
+ *
+ *  因此它必须在两层都穿透：pollSearch 不能把它吞进 sourceHealth（那会让它变成
+ *  unreachable），FallbackResourceProvider.attempt 不能把它折成 status。 */
+export class PanSouAuthError extends Error {
+  constructor(detail: string) {
+    super(`PANSOU_AUTH_ERROR: ${detail}`);
+    this.name = "PanSouAuthError";
+  }
+}
+
+/** 认证失败的哨兵前缀。跨进程/跨包兜底识别用；同进程内请用 instanceof。 */
+export const AUTH_ERROR_PREFIX = "PANSOU_AUTH_ERROR";
+
 const UNREACHABLE_CODES = new Set([
   "ECONNREFUSED",
   "ENOTFOUND",

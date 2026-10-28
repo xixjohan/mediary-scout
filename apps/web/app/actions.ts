@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { PanSouAuth } from "@media-track/workflow";
 import { queueCandidateSeries, queueCandidateTracking, reserveCandidate } from "../lib/workflow-runtime";
 import { assertNotDemo } from "../lib/demo-mode";
 
@@ -739,19 +740,75 @@ export async function clearAssrtTokenAction(): Promise<PushSettingsActionResult>
   }
 }
 
-export async function savePanSouBaseUrlAction(baseURL: string): Promise<PushSettingsActionResult> {
+/** 自建搜索源的一份完整配置：地址 + 认证凭据（可选）。
+ *  凭据只写库、密文落 account_settings（见 pansou-chain.ts 键上方注释）。 */
+export interface PanSouConfigInput {
+  username?: string;
+  password?: string;
+  /** 直接粘贴的 JWT。与用户名密码互斥，同时给定时以它为准。 */
+  token?: string;
+}
+
+/** 归一化并校验后的凭据。auth 与三元组一起算出来，免得调用方再判一遍分支。 */
+type ParsedPanSouCredentials =
+  | { ok: false; message: string }
+  | {
+      ok: true;
+      username: string;
+      password: string;
+      token: string;
+      auth: PanSouAuth | undefined;
+    };
+
+/**
+ * 把表单交上来的凭据收敛成一种形态。
+ *
+ * 抽成独立函数不只是为了降复杂度：这里集中了全部凭据规则（trim、互斥、优先级），
+ * 保存入口是唯一的调用方，但规则必须能被单独读到、单独测。
+ *
+ * 「只配了一半」判失败 —— 一个没有密码的用户名发出去只会得到 401，而那会被报成
+ * 「认证失败」，把用户引向「密码错了」这个错误结论。
+ */
+function parsePanSouCredentials(input: PanSouConfigInput): ParsedPanSouCredentials {
+  const username = (input.username ?? "").trim();
+  const password = input.password ?? "";
+  const token = (input.token ?? "").trim();
+  if ((username && !password) || (!username && password)) {
+    return { ok: false, message: "用户名和密码需同时填写，未保存。" };
+  }
+  // token 优先：粘贴的令牌是用户明确指定「用这一个」，不该被一份可能已过期的
+  // 旧密码覆盖。这是规格明确的互斥规则，表单上也这么提示。
+  if (token) {
+    return { ok: true, username, password, token, auth: { kind: "bearer", token } };
+  }
+  if (username && password) {
+    return { ok: true, username, password, token, auth: { kind: "login", username, password } };
+  }
+  return { ok: true, username, password, token, auth: undefined };
+}
+
+export async function savePanSouConfigAction(
+  baseURL: string,
+  credentials: PanSouConfigInput = {},
+): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
+    const parsed = parsePanSouCredentials(credentials);
+    if (!parsed.ok) {
+      return { success: false, message: parsed.message };
+    }
     const { getWorkflowRepository, getCurrentAccountId, PANSOU_BASE_URL_SETTING_KEY, PANSOU_HEALTH_SETTING_KEY } = await import("../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
     const trimmed = baseURL.trim();
     // Empty = clear the override → falls back to env / public default.
     // 清空是正当操作,不必探活;顺手把上次的探活结论也清掉,否则设置页会对着一个
-    // 已经不存在的自建源继续告警。
+    // 已经不存在的自建源继续告警。凭据一并清掉：留着一段连不到的源对应的密码
+    // 没有任何用处,只是多一份要轮换的秘密。
     if (!trimmed) {
       await repository.setAccountSetting(accountId, PANSOU_BASE_URL_SETTING_KEY, "");
       await repository.setAccountSetting(accountId, PANSOU_HEALTH_SETTING_KEY, "");
+      await clearPanSouCredentials(accountId);
       return { success: true };
     }
     // 先做便宜的格式校验再花 8s 探活:少了它,一个漏写 scheme 的地址会拿到
@@ -764,16 +821,52 @@ export async function savePanSouBaseUrlAction(baseURL: string): Promise<PushSett
     }
     // 存之前先真打一次。以前只校验 ^https?:// ,于是一个打不通的地址会被欣然
     // 保存,之后每次获取都静默失败并报成「未找到资源」——事故里这样活了 6 天。
-    const probe = await probePanSou(trimmed);
+    // 带认证探活：跳过登录就去打 /api/search，对一台开了认证的实例只会拿到 401，
+    // 于是一条配对的配置被无解地拒绝。
+    const probe = await probePanSou(trimmed, { auth: parsed.auth });
     if (!probe.ok) {
       return { success: false, message: probe.message };
     }
     await repository.setAccountSetting(accountId, PANSOU_BASE_URL_SETTING_KEY, trimmed);
     await repository.setAccountSetting(accountId, PANSOU_HEALTH_SETTING_KEY, "ok");
+    await writePanSouCredentials(accountId, parsed);
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };
   }
+}
+
+/** 凭据落库。空值一律写成空串（删键），不写 null —— 仓库其余设置项都沿用
+ *  空串表示「未配」，混用会让读取侧多一种要分辨的形态。 */
+async function writePanSouCredentials(
+  accountId: string,
+  credentials: { username: string; password: string; token: string },
+): Promise<void> {
+  const { getWorkflowRepository } = await import("../lib/workflow-runtime");
+  const repository = getWorkflowRepository();
+  const {
+    PANSOU_USERNAME_SETTING_KEY,
+    PANSOU_PASSWORD_SETTING_KEY,
+    PANSOU_TOKEN_SETTING_KEY,
+  } = await import("../lib/pansou-chain");
+  // encryptSecret 在 shared 里：AES-256-GCM + enc:v1: 信封，与网盘 cookie 同一把
+  // 密钥、同一种格式。明文落库是不可接受的退化，所以加密失败就整体失败。
+  const { encryptSecret } = await import("@media-track/shared");
+  await repository.setAccountSetting(accountId, PANSOU_USERNAME_SETTING_KEY, credentials.username);
+  await repository.setAccountSetting(
+    accountId,
+    PANSOU_PASSWORD_SETTING_KEY,
+    credentials.password ? encryptSecret(credentials.password) : "",
+  );
+  await repository.setAccountSetting(
+    accountId,
+    PANSOU_TOKEN_SETTING_KEY,
+    credentials.token ? encryptSecret(credentials.token) : "",
+  );
+}
+
+async function clearPanSouCredentials(accountId: string): Promise<void> {
+  await writePanSouCredentials(accountId, { username: "", password: "", token: "" });
 }
 
 export async function saveProwlarrConfigAction(input: {

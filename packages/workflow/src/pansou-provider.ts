@@ -9,6 +9,7 @@ import type { ResourceProvider } from "./ports.js";
 import {
   classifySourceFailure,
   mergeSourceHealth,
+  PanSouAuthError,
   PanSouProtocolError,
   PanSouRequestError,
   type SourceHealth,
@@ -58,9 +59,79 @@ async function withServerSlot<T>(baseURL: string, call: () => Promise<T>): Promi
 
 export type PanSouFetchJson = (url: string, init: PanSouFetchInit) => Promise<unknown>;
 
+/** 登录换令牌。与 PanSouFetchJson 同形制但单独可注入：登录响应的形状
+ *  （`{token, expires_at, username}`）与搜索响应（`{code, message, data}`）毫无
+ *  关系，共用一条路径就得在每个调用点分辨「这是登录还是搜索」。分开之后，
+ *  「登录发了什么」与「搜索带了什么头」可以各用一个记录数组断言。 */
+export type PanSouLoginJson = (url: string, init: PanSouFetchInit) => Promise<unknown>;
+
+/** PanSou 实例的认证形态。缺省 = 该实例没开认证（官方公共源的常态）。 */
+export type PanSouAuth =
+  /** 无需认证。显式表达「我知道这台不用认证」，便于与「忘了配」区分。 */
+  | { kind: "none" }
+  /** 用户直接粘贴的 JWT。适用于不方便交出登录密码的共用实例；过期后需人工更换。 */
+  | { kind: "bearer"; token: string }
+  /** 用户名 + 密码，运行时自行登录换 JWT 并缓存。 */
+  | { kind: "login"; username: string; password: string };
+
+/** 缓存里的一条令牌。expiresAt 是 epoch **毫秒**（登录响应给的是秒，入库前换算）。 */
+export interface PanSouCachedToken {
+  token: string;
+  expiresAt: number;
+}
+
+/** 令牌缓存。默认实现是模块级 Map —— getWorkerResourceProvider 每次调用都新建
+ *  provider，缓存放在实例里等于没有缓存（每次搜索都要重新登录一次）。 */
+export interface PanSouTokenCache {
+  get(key: string): PanSouCachedToken | undefined;
+  set(key: string, token: PanSouCachedToken): void;
+}
+
+/** 距过期还有这么多毫秒就开始重登。 PanSou 默认 24h 过期；一次搜索可能跑几十秒，
+ *  不留余量就会有一次搜索拿着临期令牌出门、中途失效。 */
+const TOKEN_REFRESH_MARGIN_MS = 5 * 60_000;
+
+/** fish2018/pansou api/router.go：登录/登出/health 是公开路径，其余全要 Bearer。 */
+const PANSOU_LOGIN_PATH = "/api/auth/login";
+
+const defaultTokenCache = new Map<string, PanSouCachedToken>();
+
+/** 登录的兜底实现。与 defaultFetchJson 分开，因为失败的可判定性要求不同：
+ *  搜索失败只需知道「这次没拿到」，登录失败必须能把服务端的原话（401 密码错、
+ *  403 认证功能未启用）带给用户，所以要读 body。 */
+async function defaultLoginJson(url: string, init: PanSouFetchInit): Promise<unknown> {
+  const response = await fetch(url, {
+    method: init.method,
+    headers: init.headers,
+    body: init.body,
+    signal: AbortSignal.timeout(init.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new PanSouAuthError(`PanSou 登录返回 HTTP ${response.status}：${text.slice(0, 200)}`);
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new PanSouAuthError(`PanSou 登录响应不是 JSON：${text.slice(0, 200)}`);
+  }
+}
+
+function numberValue(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : Number.NaN;
+}
+
 export interface PanSouResourceProviderOptions {
   baseURL: string;
-  fetchJson?: PanSouFetchJson;
+  // `| undefined` 是给 apps/web 的 exactOptionalPropertyTypes 用的：那里的 tsconfig
+  // 比本包严格，`{ auth: maybeUndefined }` 这种传法在严格模式下要显式允许 undefined。
+  fetchJson?: PanSouFetchJson | undefined;
+  /** 这台 PanSou 要不要认证、怎么认证。缺省视为无需认证。 */
+  auth?: PanSouAuth | undefined;
+  /** 登录换令牌的出口。测试注入假实现；生产走 defaultLoginJson。 */
+  loginJson?: PanSouLoginJson | undefined;
+  /** 令牌缓存。测试必须注入全新实例，否则模块级默认缓存会串味。 */
+  tokenCache?: PanSouTokenCache | undefined;
   now?: () => string;
   /** How many times to re-query before treating the result set as complete. */
   maxSearchAttempts?: number;
@@ -88,6 +159,9 @@ interface PanSouLinkFact {
 export class PanSouResourceProvider implements ResourceProvider {
   private readonly baseURL: string;
   private readonly fetchJson: PanSouFetchJson;
+  private readonly auth: PanSouAuth | undefined;
+  private readonly loginJson: PanSouLoginJson;
+  private readonly tokenCache: PanSouTokenCache;
   private readonly now: () => string;
   private readonly maxSearchAttempts: number;
   private readonly searchPollMs: number;
@@ -98,6 +172,9 @@ export class PanSouResourceProvider implements ResourceProvider {
   constructor(options: PanSouResourceProviderOptions) {
     this.baseURL = options.baseURL.replace(/\/+$/, "");
     this.fetchJson = options.fetchJson ?? defaultFetchJson;
+    this.auth = options.auth;
+    this.loginJson = options.loginJson ?? defaultLoginJson;
+    this.tokenCache = options.tokenCache ?? defaultTokenCache;
     this.now = options.now ?? (() => new Date().toISOString());
     this.maxSearchAttempts = options.maxSearchAttempts ?? 4;
     this.searchPollMs = options.searchPollMs ?? 2500;
@@ -106,12 +183,80 @@ export class PanSouResourceProvider implements ResourceProvider {
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   }
 
+  /**
+   * 解析本次搜索要带的认证头。空对象 = 不带 Authorization。
+   *
+   * 登录形态在这里完成「缓存未命中或临期 → 登录 → 落缓存」。登录放在搜索之前，
+   * 所以第一次搜索永远带着有效令牌出门，不会先裸奔一次再补。
+   */
+  private async authHeaders(): Promise<Record<string, string>> {
+    const auth = this.auth;
+    if (!auth || auth.kind === "none") {
+      return {};
+    }
+    if (auth.kind === "bearer") {
+      return { Authorization: `Bearer ${auth.token}` };
+    }
+    const key = `${this.baseURL}|${auth.username}`;
+    const cached = this.tokenCache.get(key);
+    const now = Date.now();
+    if (cached && cached.expiresAt - now > TOKEN_REFRESH_MARGIN_MS) {
+      return { Authorization: `Bearer ${cached.token}` };
+    }
+    const fresh = await this.login(auth);
+    this.tokenCache.set(key, fresh);
+    return { Authorization: `Bearer ${fresh.token}` };
+  }
+
+  /** POST /api/auth/login 换 JWT。任何失败都升级成 PanSouAuthError —— 它必须在
+   *  pollSearch 与 FallbackResourceProvider 两层都穿透，不能被折成 unreachable。 */
+  private async login(auth: {
+    kind: "login";
+    username: string;
+    password: string;
+  }): Promise<PanSouCachedToken> {
+    let payload: unknown;
+    try {
+      payload = await this.loginJson(`${this.baseURL}${PANSOU_LOGIN_PATH}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "User-Agent": "clawd-media-track/1.0",
+        },
+        body: JSON.stringify({ username: auth.username, password: auth.password }),
+        timeoutMs: this.requestTimeoutMs,
+      });
+    } catch (error) {
+      // defaultLoginJson 已经抛的是 PanSouAuthError，别再包一层。
+      if (error instanceof PanSouAuthError) throw error;
+      throw new PanSouAuthError(
+        `PanSou 登录请求失败：${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    const record = isRecord(payload) ? payload : {};
+    const token = stringValue(record["token"]);
+    if (!token) {
+      throw new PanSouAuthError(
+        `PanSou 登录响应缺少 token 字段：${JSON.stringify(payload).slice(0, 200)}`,
+      );
+    }
+    const expiresAtSeconds = numberValue(record["expires_at"]);
+    // 缺 expires_at 或它不是数字 → 视为立刻过期：下次搜索必重登。绝不因为
+    // 「不知道何时过期」就无限期缓存一个可能已经失效的令牌。
+    const expiresAt =
+      Number.isFinite(expiresAtSeconds) && expiresAtSeconds > 0
+        ? expiresAtSeconds * 1000
+        : Date.now();
+    return { token, expiresAt };
+  }
+
   private async fetchFacts(keyword: string): Promise<PanSouLinkFact[]> {
     const response = await this.fetchJson(`${this.baseURL}/api/search`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "User-Agent": "clawd-media-track/1.0",
+        ...(await this.authHeaders()),
       },
       body: JSON.stringify({ kw: keyword, res: "all" }),
       timeoutMs: this.requestTimeoutMs,
@@ -152,6 +297,13 @@ export class PanSouResourceProvider implements ResourceProvider {
       try {
         next = await this.fetchFacts(input.keyword);
       } catch (error) {
+        // 认证失败不是「源临时不可用」，是「我们没资格进这道门」，必须原样抛出。
+        // 吞成 sourceHealth 会让它被 classifySourceFailure 折成 unreachable，而
+        // FallbackResourceProvider 正是靠那个信号降级到官方源 —— 于是一次配错凭据的
+        // 自建源会靠公共源静默续命，用户永远看不到「认证失败」这四个字。
+        if (error instanceof PanSouAuthError) {
+          throw error;
+        }
         // 只有「一条证据都没拿到」才算源不可用。中途失败但先前已有结果时,
         // 保留旧行为(保住已拿到的最完整集合)——那不是源挂了,是轮询被打断。
         failure = error;
