@@ -697,6 +697,13 @@ export async function runScheduledType3Monitoring(input: {
   // 成本门会按冷却期筛掉一部分，所以是 let 而非 const。
   let patrolStates: typeof trackedStates = [];
   for (const s of trackedStates) {
+    // 订阅完成防重复运行：已入库电影、未上映预定电影、已完结剧集季不加入巡检队列
+    if (s.title.type === "movie") {
+      if (s.episodes.some((e) => e.obtained)) continue;
+      if (isMovieUnreleased(s.title.releaseDate, now())) continue;
+    } else {
+      if (s.season.status !== "active" || s.episodes.length === 0) continue;
+    }
     const key = workKey({ accountId: s.accountId, drive: userMessageDrive(s.connectedStorageId), titleKey: s.title.id });
     if (requestKeys.has(key) || busyKeys.has(key)) continue;
     if (await onFrozenDrive(s.accountId, s.connectedStorageId)) continue;

@@ -61,6 +61,7 @@ export interface SubscriptionPolicyRow {
   created_at: string;
   updated_at: string;
   last_taken_at: string | null;
+  custom_keywords?: string | null;
 }
 
 /**
@@ -108,12 +109,8 @@ export function subscriptionPolicyFromRow(row: SubscriptionPolicyRow): StoredSub
     cooldownDays: row.cooldown_days,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
-    // `?? null` 不是多余的：SubscriptionPolicyRow 的类型写 string | null，但 SQLite 对
-    // **不存在的列**返回 undefined，而 undefined !== null。withinCooldown 只对 null
-    // fail-open，所以漏掉这一归一会让未补列的旧库把冷却悄悄关掉。
-    // 正常路径由 SqliteWorkflowRepository.upgradeSubscriptionPolicyShape 保证列一定在；
-    // 这一行是第二道防线。
     lastTakenAt: row.last_taken_at ?? null,
+    customKeywords: row.custom_keywords ? parseTermList(row.custom_keywords, "custom_keywords") : [],
   };
 }
 
@@ -124,6 +121,7 @@ export interface SubscriptionPolicyWrite {
   episodeFilter: string;
   useRegex: boolean;
   cooldownDays: number;
+  customKeywords?: readonly string[];
 }
 
 /** The write input → the row's column values. */
@@ -133,6 +131,7 @@ export function subscriptionPolicyToColumns(policy: SubscriptionPolicyWrite): {
   episode_filter: string;
   use_regex: number;
   cooldown_days: number;
+  custom_keywords: string;
 } {
   return {
     must_contain: serializeTermList(policy.mustContain),
@@ -140,6 +139,7 @@ export function subscriptionPolicyToColumns(policy: SubscriptionPolicyWrite): {
     episode_filter: policy.episodeFilter,
     use_regex: policy.useRegex ? 1 : 0,
     cooldown_days: policy.cooldownDays,
+    custom_keywords: serializeTermList(policy.customKeywords ?? []),
   };
 }
 
@@ -168,5 +168,8 @@ export function roundTripPolicy(policy: SubscriptionPolicyWrite): SubscriptionPo
     episodeFilter: columns.episode_filter,
     useRegex: columns.use_regex === 1,
     cooldownDays: columns.cooldown_days,
+    ...(policy.customKeywords !== undefined
+      ? { customKeywords: parseTermList(columns.custom_keywords, "custom_keywords") }
+      : {}),
   };
 }

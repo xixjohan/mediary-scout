@@ -16,8 +16,11 @@ import { NextRequest, NextResponse } from "next/server";
 const repo = {
   listTrackedSeasonStates: vi.fn(),
   saveWorkflowRunSnapshot: vi.fn(),
+  getSubscriptionPolicy: vi.fn().mockResolvedValue(null),
 };
 const provider = { search: vi.fn() };
+const movieTargetFromTmdbId = vi.fn().mockResolvedValue(null);
+const seriesTargetFor = vi.fn().mockResolvedValue(null);
 
 vi.mock("next/server", async () => {
   const actual = await vi.importActual<typeof import("next/server")>("next/server");
@@ -31,6 +34,11 @@ vi.mock("../../../../lib/auth-chain", () => ({
 vi.mock("../../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: () => repo,
   getWorkerResourceProvider: async () => provider,
+  movieTargetFromTmdbId: (tmdbId: number) => movieTargetFromTmdbId(tmdbId),
+}));
+
+vi.mock("../../../../lib/title-hub", () => ({
+  seriesTargetFor: (tmdbId: number) => seriesTargetFor(tmdbId),
 }));
 
 const URL_SHAPE = /(?:https?|magnet):\/\/|ed2k:\/\//i;
@@ -282,5 +290,43 @@ describe("POST /api/titles/resources — 上游失败", () => {
       const res = await POST(request({ tmdbId: 283428 }));
       expect(res.status).toBe(404);
       expect(repo.saveWorkflowRunSnapshot).not.toHaveBeenCalled();
+    });
+
+    it("从搜索页进入的未追踪标题可通过 TMDB 元数据搜索资源并落库快照", async () => {
+      const { requireApiAccount } = await import("../../../../lib/auth-chain");
+      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      repo.listTrackedSeasonStates.mockResolvedValue([]);
+      movieTargetFromTmdbId.mockResolvedValue({
+        title: {
+          id: "tmdb_movie_123",
+          tmdbId: 123,
+          type: "movie" as const,
+          title: "奥本海默",
+          originalTitle: "Oppenheimer",
+          year: 2023,
+          aliases: [],
+        },
+      });
+      provider.search.mockResolvedValue(
+        snapshot([{ id: "c_opp", url: "https://115.com/s/opp", password: "opp", datetime: "2023-08-01" }]),
+      );
+
+      const res = await POST(request({ tmdbId: 123, type: "movie" }));
+      expect(res.status).toBe(200);
+      expect(provider.search).toHaveBeenCalledWith(expect.objectContaining({ keyword: "奥本海默" }));
+      expect(repo.saveWorkflowRunSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it("支持自定义搜索关键词，并将自定义关键词排在第一位", async () => {
+      const { requireApiAccount } = await import("../../../../lib/auth-chain");
+      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle()]);
+      provider.search.mockResolvedValue(
+        snapshot([{ id: "c_custom", url: "https://115.com/s/custom", password: "c", datetime: "2024-01-01" }]),
+      );
+
+      const res = await POST(request({ tmdbId: 283428, customKeyword: "孤独摇滚 喵萌奶茶屋" }));
+      expect(res.status).toBe(200);
+      expect(provider.search).toHaveBeenCalledWith(expect.objectContaining({ keyword: "孤独摇滚 喵萌奶茶屋" }));
     });
   });

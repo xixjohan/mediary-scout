@@ -31,6 +31,7 @@ export function LibraryQuickFind({
   mode,
   mediaType,
   filter,
+  status,
 }: {
   wallEntries: LibraryWallEntry[];
   inProgressTitles: InProgressTitle[];
@@ -39,6 +40,8 @@ export function LibraryQuickFind({
   mode: "home" | "category";
   mediaType?: "movie" | "tv" | "anime" | undefined;
   filter?: "all" | "complete" | "tracking" | "partial" | undefined;
+  /** "active"=订阅中；"completed"=已完成；"all"=全部 */
+  status?: "active" | "completed" | "all" | undefined;
 }): JSX.Element {
   const router = useRouter();
   const [query, setQuery] = useState("");
@@ -51,7 +54,14 @@ export function LibraryQuickFind({
     inputRef.current?.focus();
   };
 
+  const homeActiveWall = wallEntries.filter((entry) => entry.state !== "complete");
+  const homeCompletedWall = wallEntries.filter((entry) => entry.state === "complete");
+  const activeCount = homeActiveWall.length + inProgressTitles.length;
+  const completedCount = homeCompletedWall.length;
+  const allCount = wallEntries.length + inProgressTitles.length;
+
   // category 模式：先按现有 filter（complete/tracking/partial）过滤，再按 query 过滤。
+  // home 模式：按 status（active/completed/all）过滤。
   const scopedWall =
     mode === "category"
       ? wallEntries.filter((entry) => {
@@ -61,11 +71,17 @@ export function LibraryQuickFind({
           if (filter === "partial") return entry.state === "partial";
           return true;
         })
-      : wallEntries;
+      : status === "active"
+        ? homeActiveWall
+        : status === "completed"
+          ? homeCompletedWall
+          : wallEntries;
   const scopedInProgress =
     mode === "category" && mediaType
       ? inProgressTitles.filter((title) => title.type === mediaType)
-      : inProgressTitles;
+      : status === "completed"
+        ? []
+        : inProgressTitles;
 
   const matchedWall = filterLibraryEntries(scopedWall, query);
   const matchedInProgress = filterLibraryEntries(scopedInProgress, query);
@@ -138,6 +154,43 @@ export function LibraryQuickFind({
         <p className="panel-note" aria-live="polite" aria-atomic="true">
           匹配 {totalCount} 部
         </p>
+      ) : null}
+      {mode === "home" ? (
+        <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>
+          <Link
+            className={`filter-pill ${status === "active" ? "is-active" : ""}`}
+            href={`${workspaceBasePath(storageId)}?tab=library&status=active`}
+          >
+            订阅中 ({activeCount})
+          </Link>
+          <Link
+            className={`filter-pill ${status === "completed" ? "is-active" : ""}`}
+            href={`${workspaceBasePath(storageId)}?tab=library&status=completed`}
+          >
+            已完成 ({completedCount})
+          </Link>
+          <Link
+            className={`filter-pill ${status === "all" || !status ? "is-active" : ""}`}
+            href={`${workspaceBasePath(storageId)}?tab=library&status=all`}
+          >
+            全部 ({allCount})
+          </Link>
+        </div>
+      ) : null}
+      {mode === "home" && status === "completed" && completedCount === 0 ? (
+        <div className="quiet-state compact" style={{ marginBottom: 16 }}>
+          <strong>暂无已完成作品</strong>
+          <span>当剧集完结且全集入库、或电影入库完成后，会自动归档到这里。</span>
+        </div>
+      ) : null}
+      {mode === "home" && status === "active" && activeCount === 0 && completedCount > 0 ? (
+        <div className="quiet-state compact" style={{ marginBottom: 16 }}>
+          <strong>暂无追更或缺集作品</strong>
+          <span>共有 {completedCount} 部作品已完结并归档至「已完成」页面。</span>
+          <Link className="secondary-button" href={`${workspaceBasePath(storageId)}?tab=library&status=completed`}>
+            查看已完成 ({completedCount})
+          </Link>
+        </div>
       ) : null}
       {mode === "category" ? (
         <div style={{ marginBottom: 16, display: "flex", gap: 8 }}>

@@ -1047,6 +1047,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       ...input.policy,
       mustContain: [...input.policy.mustContain],
       mustNotContain: [...input.policy.mustNotContain],
+      customKeywords: input.policy.customKeywords ? [...input.policy.customKeywords] : [],
       accountId: input.accountId,
       titleKey: input.titleKey,
       // created_at 只在首次写入时定；之后的保存只动 updated_at。

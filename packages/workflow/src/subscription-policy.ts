@@ -46,6 +46,8 @@ export interface SubscriptionPolicy {
   /** Days to ignore further matches after one is taken (qBittorrent's "Ignore subsequent
    *  matches for"). 0 = no cooldown. */
   cooldownDays: number;
+  /** User-defined custom search keywords to use during search / automated patrol. */
+  customKeywords?: string[];
 }
 
 export const EMPTY_POLICY: SubscriptionPolicy = {
@@ -54,6 +56,7 @@ export const EMPTY_POLICY: SubscriptionPolicy = {
   episodeFilter: "",
   useRegex: false,
   cooldownDays: 0,
+  customKeywords: [],
 };
 
 /**

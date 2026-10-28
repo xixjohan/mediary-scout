@@ -276,6 +276,7 @@ export const SQLITE_SCHEMA = `
     -- cooldownDays 的水位线：这条策略最后一次被采纳的时间。刻意与 updated_at 分开——
     -- 后者是用户改规则的时间，拿它当水位线会让每次编辑都看起来像刚匹配过。
     last_taken_at text,
+    custom_keywords text NOT NULL DEFAULT '[]',
     PRIMARY KEY (account_id, title_key)
   );
   CREATE TABLE IF NOT EXISTS episode_sources (
@@ -424,8 +425,12 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   private upgradeSubscriptionPolicyShape(): void {
     const cols = this.db.pragma("table_info(subscription_policies)") as Array<{ name: string }>;
     if (cols.length === 0) return; // 表还没建（全新库刚建好，或没有这张表）
-    if (cols.some((c) => c.name === "last_taken_at")) return; // 已是最终形状
-    this.db.exec("ALTER TABLE subscription_policies ADD COLUMN last_taken_at text");
+    if (!cols.some((c) => c.name === "last_taken_at")) {
+      this.db.exec("ALTER TABLE subscription_policies ADD COLUMN last_taken_at text");
+    }
+    if (!cols.some((c) => c.name === "custom_keywords")) {
+      this.db.exec("ALTER TABLE subscription_policies ADD COLUMN custom_keywords text NOT NULL DEFAULT '[]'");
+    }
   }
 
   close(): void {
@@ -2156,12 +2161,13 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // created_at 用 ON CONFLICT 时**不**覆盖：一次保存只该动 updated_at。
     this.db
       .prepare(
-        "INSERT INTO subscription_policies (account_id, title_key, must_contain, must_not_contain, episode_filter, use_regex, cooldown_days, created_at, updated_at) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+        "INSERT INTO subscription_policies (account_id, title_key, must_contain, must_not_contain, episode_filter, use_regex, cooldown_days, created_at, updated_at, custom_keywords) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT (account_id, title_key) DO UPDATE SET " +
           "must_contain = excluded.must_contain, must_not_contain = excluded.must_not_contain, " +
           "episode_filter = excluded.episode_filter, use_regex = excluded.use_regex, " +
-          "cooldown_days = excluded.cooldown_days, updated_at = excluded.updated_at",
+          "cooldown_days = excluded.cooldown_days, updated_at = excluded.updated_at, " +
+          "custom_keywords = excluded.custom_keywords",
       )
       .run(
         input.accountId,
@@ -2173,6 +2179,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         columns.cooldown_days,
         input.now,
         input.now,
+        columns.custom_keywords,
       );
     const stored = await this.getSubscriptionPolicy({ accountId: input.accountId, titleKey: input.titleKey });
     // 写完读不回来是仓库的 bug，不是「策略没了」——宁可炸也别返回一个假策略。

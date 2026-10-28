@@ -85,3 +85,28 @@ describe("titleSearchKeywordStrings", () => {
     expect(titleSearchKeywordStrings(title())).toEqual(["孤独摇滚", "孤独摇滚 2022", "Bocchi the Rock!"]);
   });
 });
+
+describe("buildTitleSearchKeywords — 策略模式扩展（自定义关键词与单季单集）", () => {
+  it("用户自定义关键词置顶于阶梯第一优先级", () => {
+    const ladder = buildTitleSearchKeywords(title(), { customKeyword: "孤独摇滚 喵萌奶茶屋 1080p" });
+    expect(ladder[0]).toEqual({
+      keyword: "孤独摇滚 喵萌奶茶屋 1080p",
+      origin: "custom",
+    });
+    expect(ladder.map((e) => e.keyword)).toContain("孤独摇滚");
+  });
+
+  it("单季单集精准检索生成 S01E05 等关键词", () => {
+    const ladder = buildTitleSearchKeywords(title(), { seasonNumber: 1, episodeNumber: 5 });
+    expect(ladder.map((e) => e.origin)).toContain("episode");
+    expect(ladder.map((e) => e.keyword)).toContain("孤独摇滚 S01E05");
+  });
+
+  it("多条自定义关键词（如策略层配置）按序优先排入", () => {
+    const ladder = buildTitleSearchKeywords(title(), {
+      customKeywords: ["孤独摇滚 内嵌中字", "孤独摇滚 4K"],
+    });
+    expect(ladder[0]?.keyword).toBe("孤独摇滚 内嵌中字");
+    expect(ladder[1]?.keyword).toBe("孤独摇滚 4K");
+  });
+});

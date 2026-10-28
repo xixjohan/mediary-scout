@@ -3,32 +3,201 @@ import {
   resolveTitleResources,
   buildTitleSearchKeywords,
   buildResourceSearchRun,
+  movieAnchorSeason,
+  type MediaTitle,
+  type TrackedSeason,
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
-import { getWorkflowRepository, getWorkerResourceProvider } from "../../../../lib/workflow-runtime";
+import {
+  getWorkflowRepository,
+  getWorkerResourceProvider,
+  movieTargetFromTmdbId,
+} from "../../../../lib/workflow-runtime";
+import { seriesTargetFor } from "../../../../lib/title-hub";
 import { resourceCache, resourceLimiter } from "./cache";
 
 /**
- * POST /api/titles/resources — the user-triggered resource search (W2, batch 2).
+ * POST /api/titles/resources — resource search (W2, batch 2 + enhancements).
  *
- * Read-only: this endpoint spends indexer/drive budget but never writes to a drive.
- * It is the first of the three new things the plan lists for W2; the other two
- * (candidate → import resolution, and the manual-import job carrier) are batch 3.
+ * Supports searching resources for both tracked titles and untracked titles
+ * viewed from the search results page. Supports custom keywords, specific seasons,
+ * and specific episodes via the SearchKeywordStrategy.
  *
- * Gates, in this order (the order is the design — see title-resource-resolver.ts):
- *   1. scope   — no resolvable account ⇒ 401, and the limiter is NOT touched
+ * Gates:
+ *   1. scope    — no resolvable account ⇒ 401
  *   2. cooldown — 60s per (account, title) ⇒ 429 + Retry-After
- *   3. TTL     — 30 min per (account, title) ⇒ same candidateIds, no re-search
- *
- * The title must be one THIS account tracks. `listTrackedSeasonStates(scope)` is
- * fail-closed, so "not in my scoped list" is the scope verdict — an untracked tmdbId
- * is invisible (404), not searchable. Without that check the endpoint would let any
- * caller probe resources for any title in the catalogue.
- *
- * The keyword ladder is built server-side from the title; the user never types one.
+ *   3. TTL      — 30 min per (account, title, queryKey) ⇒ cached candidates
  */
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
+
+interface ParsedResourceRequest {
+  tmdbId: number;
+  customKeyword?: string;
+  seasonNumber?: number;
+  episodeNumber?: number;
+  typeHint?: "movie" | "tv" | "anime";
+}
+
+function parsePositiveInt(val: unknown): number | undefined {
+  return typeof val === "number" && Number.isInteger(val) && val > 0 ? val : undefined;
+}
+
+function parseOptionalString(val: unknown): string | undefined {
+  if (typeof val !== "string") return undefined;
+  const trimmed = val.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseTypeHint(val: unknown): "movie" | "tv" | "anime" | undefined {
+  if (val === "movie" || val === "tv" || val === "anime") return val;
+  return undefined;
+}
+
+async function parseRequestBody(request: NextRequest): Promise<ParsedResourceRequest | NextResponse> {
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "invalid body" }, { status: 400, headers: NO_STORE });
+  }
+
+  const tmdbId = typeof body["tmdbId"] === "number" ? body["tmdbId"] : Number.NaN;
+  if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
+    return NextResponse.json({ error: "tmdbId must be a positive integer" }, { status: 400, headers: NO_STORE });
+  }
+
+  return {
+    tmdbId,
+    customKeyword: parseOptionalString(body["customKeyword"]),
+    seasonNumber: parsePositiveInt(body["seasonNumber"]),
+    episodeNumber: parsePositiveInt(body["episodeNumber"]),
+    typeHint: parseTypeHint(body["type"]),
+  };
+}
+
+interface ResolvedTitleContext {
+  title: MediaTitle;
+  season: TrackedSeason;
+  connectedStorageId: string | null;
+}
+
+function buildSyntheticSeason(title: MediaTitle, seasonNumber?: number, target?: unknown): TrackedSeason {
+  if (title.type === "movie") {
+    return movieAnchorSeason({
+      titleId: title.id,
+      qualityPreference: "4K",
+      storageDirectoryId: "",
+    });
+  }
+  const sNum = seasonNumber ?? 1;
+  const targetSeasons =
+    target && typeof target === "object" && "seasons" in target && Array.isArray(target.seasons)
+      ? target.seasons
+      : [];
+  const targetSeason = targetSeasons.find(
+    (s) => typeof s === "object" && s !== null && "seasonNumber" in s && s.seasonNumber === sNum,
+  ) as { totalEpisodes?: number; latestAiredEpisode?: number } | undefined;
+
+  return {
+    id: `${title.id}_s${sNum}`,
+    mediaTitleId: title.id,
+    seasonNumber: sNum,
+    status: "active",
+    qualityPreference: "4K",
+    storageDirectoryId: "",
+    totalEpisodes: targetSeason?.totalEpisodes ?? 1,
+    latestAiredEpisode: targetSeason?.latestAiredEpisode ?? 1,
+    latestAiredSource: "metadata",
+  };
+}
+
+async function resolveTitleContext(
+  accountId: string,
+  tmdbId: number,
+  typeHint?: "movie" | "tv" | "anime",
+  seasonNumber?: number,
+): Promise<ResolvedTitleContext | null> {
+  const states = await getWorkflowRepository().listTrackedSeasonStates(accountId);
+  const tracked = states.find((state) => state.title.tmdbId === tmdbId);
+  if (tracked) {
+    return {
+      title: tracked.title,
+      season: tracked.season,
+      connectedStorageId: tracked.connectedStorageId,
+    };
+  }
+
+  if (typeHint === "movie") {
+    const movieTarget = await movieTargetFromTmdbId(tmdbId);
+    if (!movieTarget) return null;
+    return {
+      title: movieTarget.title,
+      season: buildSyntheticSeason(movieTarget.title),
+      connectedStorageId: null,
+    };
+  }
+
+  const target = (await seriesTargetFor(tmdbId)) ?? (await movieTargetFromTmdbId(tmdbId));
+  if (!target) return null;
+  return {
+    title: target.title,
+    season: buildSyntheticSeason(target.title, seasonNumber, target),
+    connectedStorageId: null,
+  };
+}
+
+async function handleResourceResult(
+  result: TitleResourceResult,
+  context: {
+    accountId: string;
+    tmdbId: number;
+    title: MediaTitle;
+    season: TrackedSeason;
+    connectedStorageId: string | null;
+  },
+): Promise<NextResponse> {
+  if (result.kind === "unauthorized") {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: NO_STORE });
+  }
+  if (result.kind === "throttled") {
+    return NextResponse.json(
+      { error: "too many requests", retryAfterMs: result.retryAfterMs },
+      { status: 429, headers: { ...NO_STORE, "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)) } },
+    );
+  }
+  if (result.kind === "error") {
+    return NextResponse.json({ error: "search failed", detail: result.message }, { status: 502, headers: NO_STORE });
+  }
+
+  if (result.snapshot !== null) {
+    try {
+      await getWorkflowRepository().saveWorkflowRunSnapshot(
+        buildResourceSearchRun({
+          snapshot: result.snapshot,
+          title: context.title,
+          season: context.season,
+          accountId: context.accountId,
+          connectedStorageId: context.connectedStorageId,
+          now: result.snapshot.createdAt,
+        }),
+      );
+    } catch (error) {
+      console.error("[titles/resources] snapshot persist failed", error);
+    }
+  }
+
+  return NextResponse.json(
+    {
+      tmdbId: context.tmdbId,
+      cached: result.cached,
+      count: result.candidates.length,
+      candidates: result.candidates,
+      ...(result.snapshot === null ? {} : { snapshotId: result.snapshot.id }),
+    },
+    { headers: NO_STORE },
+  );
+}
 
 export async function POST(request: NextRequest) {
   await connection();
@@ -37,29 +206,36 @@ export async function POST(request: NextRequest) {
   const accountId = await requireApiAccount(request);
   if (accountId instanceof Response) return accountId;
 
-  let tmdbId: number;
-  try {
-    const body = (await request.json()) as { tmdbId?: unknown };
-    tmdbId = typeof body.tmdbId === "number" ? body.tmdbId : Number.NaN;
-  } catch {
-    return NextResponse.json({ error: "invalid body" }, { status: 400, headers: NO_STORE });
-  }
-  if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
-    return NextResponse.json({ error: "tmdbId must be a positive integer" }, { status: 400, headers: NO_STORE });
-  }
+  const parsed = await parseRequestBody(request);
+  if (parsed instanceof Response) return parsed;
+  const { tmdbId, customKeyword, seasonNumber, episodeNumber, typeHint } = parsed;
 
-  // 2) Scope verdict: the title must be tracked by THIS account.
-  // ScopeArg 的 string 形态即 { accountId, connectedStorageId: null }——按账号取，
-  // 跨所有 drive。这里要的是「这个账号追踪了这部片吗」，drive 归属不影响判定。
-  const states = await getWorkflowRepository().listTrackedSeasonStates(accountId);
-  const tracked = states.find((state) => state.title.tmdbId === tmdbId);
-  if (!tracked) {
-    // Fail closed: an untracked title is invisible, not searchable.
-    return NextResponse.json({ error: "title not tracked" }, { status: 404, headers: NO_STORE });
+  // 2) Resolve title and season
+  const resolved = await resolveTitleContext(accountId, tmdbId, typeHint, seasonNumber);
+  if (!resolved) {
+    return NextResponse.json({ error: "title not found" }, { status: 404, headers: NO_STORE });
   }
-  const title = tracked.title;
+  const { title, season, connectedStorageId } = resolved;
 
-  const keywords = buildTitleSearchKeywords(title).map((entry) => entry.keyword);
+  // Look up subscription policy custom keywords if configured
+  const policy = await getWorkflowRepository().getSubscriptionPolicy({
+    accountId,
+    titleKey: title.id,
+  });
+
+  const keywords = buildTitleSearchKeywords(title, {
+    customKeyword,
+    customKeywords: policy?.customKeywords,
+    seasonNumber,
+    episodeNumber,
+  }).map((entry) => entry.keyword);
+
+  const cacheKeyParts = [
+    customKeyword ?? "",
+    seasonNumber ? `s${seasonNumber}` : "",
+    episodeNumber ? `e${episodeNumber}` : "",
+  ].filter(Boolean);
+  const cacheKeySuffix = cacheKeyParts.length > 0 ? cacheKeyParts.join(":") : undefined;
 
   const provider = await getWorkerResourceProvider();
   const result = await resolveTitleResources({
@@ -70,58 +246,14 @@ export async function POST(request: NextRequest) {
     cache: resourceCache,
     limiter: resourceLimiter,
     loadCachedCandidates: async () => [],
+    ...(cacheKeySuffix ? { cacheKeySuffix } : {}),
   });
 
-  switch (result.kind) {
-    case "unauthorized":
-      return NextResponse.json({ error: "unauthorized" }, { status: 401, headers: NO_STORE });
-    case "throttled":
-      return NextResponse.json(
-        { error: "too many requests", retryAfterMs: result.retryAfterMs },
-        { status: 429, headers: { ...NO_STORE, "Retry-After": String(Math.ceil(result.retryAfterMs / 1000)) } },
-      );
-    case "error":
-      // 502, not 500: the failure is upstream (indexer), not this request's fault.
-      return NextResponse.json({ error: "search failed", detail: result.message }, { status: 502, headers: NO_STORE });
-    case "ok":
-      // Persist the merged snapshot as an invisible `resource_search` run (batch 3).
-      // This is the only reason the later import can recover a candidate's payload
-      // from the DB instead of the process-local CandidateRegistry. On a cache hit
-      // `result.snapshot` is null — that miss already persisted it.
-      //
-      // A persistence failure must NOT fail the search: the user asked for resources
-      // and got them. The only consequence is that a later import of one of these
-      // candidates is refused with 「请重新查询」, which is recoverable; failing the
-      // search here would hide results the user is entitled to see.
-      if (result.snapshot !== null) {
-        try {
-          await getWorkflowRepository().saveWorkflowRunSnapshot(
-            buildResourceSearchRun({
-              snapshot: result.snapshot,
-              title,
-              season: tracked.season,
-              accountId,
-              connectedStorageId: tracked.connectedStorageId,
-              now: result.snapshot.createdAt,
-            }),
-          );
-        } catch (error) {
-          console.error("[titles/resources] snapshot persist failed", error);
-        }
-      }
-      return NextResponse.json(
-        {
-          tmdbId,
-          cached: result.cached,
-          count: result.candidates.length,
-          candidates: result.candidates,
-          // The opaque handle the import endpoint needs. Not sensitive: it encodes the
-          // accountId and tmdbId the caller already has. Without it the client could
-          // only send a candidateId, and the server would have to guess which of the
-          // user's searches it came from.
-          ...(result.snapshot === null ? {} : { snapshotId: result.snapshot.id }),
-        },
-        { headers: NO_STORE },
-      );
-  }
+  return handleResourceResult(result, {
+    accountId,
+    tmdbId,
+    title,
+    season,
+    connectedStorageId,
+  });
 }

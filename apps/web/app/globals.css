@@ -5681,6 +5681,74 @@ select.setting-control {
   margin: 0;
 }
 
+.title-resources-search-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.title-resources-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 220px;
+}
+
+.title-resources-input-wrap svg {
+  position: absolute;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.title-resources-input-wrap input {
+  width: 100%;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 6px 28px 6px 30px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.title-resources-input-wrap input:focus {
+  border-color: var(--accent);
+}
+
+.title-resources-input-clear {
+  position: absolute;
+  right: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+}
+
+.title-resources-select,
+.title-resources-number-input {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 6px 10px;
+  outline: none;
+}
+
+.title-resources-number-input {
+  width: 85px;
+}
+
 /* 三个面板共用的行内操作按钮：中性盒式。绿色 pill 留给「获取/预定」这类
    获取动作——面板内的动作不抢它的戏，这与批次 2 起建立的视觉分工一致。 */
 .title-resources-search,

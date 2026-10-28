@@ -224,6 +224,7 @@ describe("parseSubscriptionPolicyWrite", () => {
       episodeFilter: "",
       useRegex: false,
       cooldownDays: 0,
+      customKeywords: [],
     });
   });
 
