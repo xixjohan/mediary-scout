@@ -16,7 +16,7 @@ function candidate(payload: Record<string, unknown>): ResourceCandidate {
     snapshotId: "snap-1",
     index: 0,
     title: "复仇者联盟4：终局之战",
-    type: "share",
+    type: "115",
     source: "pansou-115",
     providerPayload: payload,
   };
@@ -33,7 +33,7 @@ describe("toCandidateView — 用户要的三个事实", () => {
     expect(view).toEqual({
       candidateId: "cand-1",
       title: "复仇者联盟4：终局之战",
-      type: "share",
+      type: "115",
       source: "pansou-115",
       postedAt: "2024-05-01T10:00:00Z",
     });

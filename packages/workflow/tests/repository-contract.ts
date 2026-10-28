@@ -25,7 +25,7 @@ export interface RepoHarness {
     accountId: string,
     titleKey: string,
     column: string,
-    raw: string,
+    raw: string | number,
   ) => Promise<void> | void;
 }
 

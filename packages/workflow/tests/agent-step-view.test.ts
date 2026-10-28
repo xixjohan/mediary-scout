@@ -29,7 +29,7 @@ describe("toAgentStepViews — 展示字段原样透传", () => {
   it("ordinal/toolName/activity/phase/at 不改，apiCalls 可选", () => {
     const views = toAgentStepViews([
       step({ ordinal: 1, apiCalls: 7 }),
-      step({ ordinal: 2, apiCalls: undefined }),
+      step({ ordinal: 2 }),
     ]);
     expect(views[0]).toMatchObject({
       ordinal: 1,

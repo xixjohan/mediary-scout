@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { ResourceSnapshot, StorageExecutor, TransferAttempt } from "../src/domain.js";
+import type { MediaTitle, ResourceSnapshot, TransferAttempt } from "../src/domain.js";
+import type { StorageExecutor } from "../src/ports.js";
 import { InMemoryWorkflowRepository } from "../src/repository.js";
 import { MANUAL_IMPORT_TTL_MS } from "../src/manual-import-resolver.js";
 import { runQueuedManualImport } from "../src/manual-import-worker.js";
@@ -18,7 +19,7 @@ const NOW_MS = Date.parse("2026-01-10T12:00:00.000Z");
 const FRESH_AT = new Date(NOW_MS - 5 * 60 * 1000).toISOString();
 const STALE_AT = new Date(NOW_MS - MANUAL_IMPORT_TTL_MS - 60_000).toISOString();
 
-function title(type: "tv" | "movie" = "tv") {
+function title(type: "tv" | "movie" = "tv"): MediaTitle {
   return {
     id: "t1",
     tmdbId: 283428,
@@ -27,7 +28,7 @@ function title(type: "tv" | "movie" = "tv") {
     originalTitle: "Bocchi the Rock!",
     year: 2022,
     aliases: [],
-  } as const;
+  };
 }
 
 function season() {
@@ -65,7 +66,7 @@ function snapshot(id: string, createdAt: string, candidateId = "c1"): ResourceSn
 }
 
 function fakeStorage(overrides: Partial<StorageExecutor> = {}): StorageExecutor {
-  return {
+  const storage: StorageExecutor = {
     createDirectory: async ({ name }) => `dir_${name}`,
     listVideoFiles: async () => [],
     listUnparsedVideoFiles: async () => [],
@@ -82,10 +83,16 @@ function fakeStorage(overrides: Partial<StorageExecutor> = {}): StorageExecutor 
     flattenDirectory: async () => ({ moved: [], removed: [] }),
     deleteFiles: async () => ({ deleted: [] }),
     removeDirectory: async () => ({ removed: true }),
-    snapshotStagingDirectory: async () => ({ files: [] }),
     listChildDirectories: async () => [],
-    ...overrides,
-  } as StorageExecutor;
+    // 原先没有这三个，是 `as StorageExecutor` 把它们盖住了。manual-import 不调用它们，
+    // 补空实现只为让这个 fake 真的满足端口——否则端口加方法时这里不会报错。
+    listTree: async () => [],
+    listSubdirectories: async () => [],
+    moveFiles: async () => ({ moved: [] }),
+  };
+  // Partial 展开在 exactOptionalPropertyTypes 下会把可选属性变成 `T | undefined`，
+  // 与端口声明的 `?: T` 不相容。强转只掩盖这一处合并，方法体本身仍受上下文类型约束。
+  return { ...storage, ...overrides } as StorageExecutor;
 }
 
 /** Queue a manual_import run the way the HTTP route does. */
@@ -110,6 +117,7 @@ async function seedQueuedRun(
       status: "queued",
       trackedSeasonId: "t1_s1",
       startedAt: FRESH_AT,
+      finishedAt: null,
       auditEvents: [],
     },
     episodes: [],
@@ -242,6 +250,7 @@ describe("runQueuedManualImport — 不会留下 queued 的 run", () => {
           status: "queued",
           trackedSeasonId: "t1_s1",
           startedAt: FRESH_AT,
+          finishedAt: null,
           auditEvents: [],
         },
         episodes: [],
@@ -322,6 +331,7 @@ describe("runQueuedManualImport — 不会留下 queued 的 run", () => {
         status: "queued",
         trackedSeasonId: "t1_s1",
         startedAt: FRESH_AT,
+        finishedAt: null,
         auditEvents: [],
       },
       episodes: [],
@@ -458,6 +468,7 @@ describe("runQueuedManualImport — 空队列", () => {
         status: "queued",
         trackedSeasonId: "t1_s1",
         startedAt: FRESH_AT,
+        finishedAt: null,
         auditEvents: [],
       },
       episodes: [],

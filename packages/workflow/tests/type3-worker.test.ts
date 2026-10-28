@@ -141,6 +141,7 @@ async function seedTrackedSeason(input: {
   title: MediaTitle;
   season: TrackedSeason;
   obtainedCodes: string[];
+  accountId?: string;
 }) {
   const files = input.obtainedCodes.map((code, index) =>
     verifiedFile(input.season.storageDirectoryId, `seed_${index}`, code),
@@ -509,7 +510,7 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
         expect(outcomes[0]).toMatchObject({ status: "ran" });
         // partial = 一集落地〄一集还差。如果这不是 partial，说明落地本身没成立，
         // 那么下面的水位线断言就是空说——一个从来没落地的跑步不该移动它。
-        expect(outcomes[0]!.workflowStatus).toBe("partial");
+        expect(outcomes[0]).toMatchObject({ workflowStatus: "partial" });
         expect(calls).toHaveLength(1);
         expect(calls[0]).toMatchObject({ accountId: "acct_default", titleKey: title.id });
         expect((await inner.getSubscriptionPolicy({ accountId: "acct_default", titleKey: title.id }))?.lastTakenAt).toBe(fixedNow());
