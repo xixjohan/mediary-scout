@@ -1,39 +1,24 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import { Search, X } from "lucide-react";
 import type { ResourceCandidateView, ResourceType } from "@media-track/workflow";
 import { useRouter } from "../lib/use-router";
 
 /**
- * 详情页「资源」面板（批次 2 的 UI 部分）。
+ * 详情页「资源」面板（批次 2 的 UI 部分 + 精准搜索与自定义关键词支持）。
  *
- * 用户价值（plan 原话）：「终于能看到某部片有哪些资源、多大、什么时候发的」——
- * 即使还不能一键入库（那是批次 3）。所以这块**只读**：一个查询按钮 + 一份候选列表。
- *
- * 三条边界，都是 plan 钉死的：
- *  1. 仅手动触发。没有自动轮询、没有进页面即搜——每一次查询都花真实索引器预算，
- *     而 §2.3 实测一次转存要过 1.2s 漏桶加数十次 drive 调用。
- *  2. 响应里没有 URL。后端只回 id/title/type/source/postedAt/sizeBytes，分享链和
- *     提取码留在服务端。前端拿到的 candidateId 是**不透明句柄，不是 URL**——所以
- *     这里不渲染任何可点开的链接，只渲染标题与元信息。
- *  3. 冷却期禁用按钮并显示剩余秒数。后端 60s 冷却会还给我们 retryAfterMs，
- *     禁用是为了不制造注定失败的请求，不是因为要教用户规矩。
- *
- * 批次 3 在此基础上加了「手动入库」。它没有放宽上面任何一条：查询仍然只手动触发，
- * 响应里仍然没有 URL。多出来的只是每行候选一个按钮，点了之后：
- *
- *   · 前端把 **不透明句柄**（snapshotId + candidateId）POST 给 /api/titles/import。
- *     分享链和提取码自始至终没有出现在前端——它们随 run 落在服务端，由 worker 读回。
- *   · 202 之后前端只做一件事：router.refresh()。进度不是前端自己计的——服务端的
- *     `view.acquiring` 已经包含 manual_import（用户可见 + queued 算 active），刷新后
- *     页面挂上 AcquiringPoller，由它持续轮询到 run 结束。徽章因此是服务端真相的投影，
- *     关掉浏览器再回来也还在（AcquiringPoller 的设计前提）。
- *
- * 数据源不可用时降级为空态 + 错误说明，不抛到页面外（规格 failure mode）。
+ * 用户价值：
+ *  1. 手动查询某部作品的资源、大小、发布时间与做种数。
+ *  2. 支持在未追踪状态下进行先验探查（搜索页直达）。
+ *  3. 支持自定义搜索关键词与精准按季/按集检索。
+ *  4. 选定满意候选后支持「手动入库」。
  */
 
-interface ResourcePanelProps {
+export interface ResourcePanelProps {
   tmdbId: number;
+  mediaType?: "movie" | "tv" | "anime";
+  seasonNumbers?: number[];
 }
 
 export type PanelState =
@@ -155,18 +140,200 @@ export function resourceTypeLabel(type: ResourceType): string {
   }
 }
 
-export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
+interface SearchBarProps {
+  customKeyword: string;
+  setCustomKeyword: (v: string) => void;
+  selectedSeason: number | undefined;
+  setSelectedSeason: (v: number | undefined) => void;
+  selectedEpisode: string;
+  setSelectedEpisode: (v: string) => void;
+  mediaType?: "movie" | "tv" | "anime";
+  seasonNumbers?: readonly number[];
+  busy: boolean;
+  throttled: boolean;
+  retryAfterMs?: number;
+  onSearch: () => void;
+  onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+}
+
+function ResourceSearchBar({
+  customKeyword,
+  setCustomKeyword,
+  selectedSeason,
+  setSelectedSeason,
+  selectedEpisode,
+  setSelectedEpisode,
+  mediaType,
+  seasonNumbers,
+  busy,
+  throttled,
+  retryAfterMs,
+  onSearch,
+  onKeyDown,
+}: SearchBarProps) {
+  return (
+    <div className="title-resources-search-bar">
+      <div className="title-resources-input-wrap">
+        <Search size={14} aria-hidden />
+        <input
+          type="text"
+          value={customKeyword}
+          onChange={(e) => setCustomKeyword(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="自定义搜索关键词（如：4K 喵萌奶茶屋 S01...）"
+          aria-label="自定义搜索关键词"
+        />
+        {customKeyword.trim() ? (
+          <button
+            type="button"
+            className="title-resources-input-clear"
+            aria-label="清空关键词"
+            onClick={() => setCustomKeyword("")}
+          >
+            <X size={12} aria-hidden />
+          </button>
+        ) : null}
+      </div>
+
+      {mediaType !== "movie" && seasonNumbers && seasonNumbers.length > 1 ? (
+        <select
+          className="title-resources-select"
+          value={selectedSeason ?? ""}
+          onChange={(e) => setSelectedSeason(e.target.value ? Number(e.target.value) : undefined)}
+          aria-label="选择季度"
+        >
+          <option value="">全部季</option>
+          {seasonNumbers.map((num) => (
+            <option key={num} value={num}>
+              第 {num} 季
+            </option>
+          ))}
+        </select>
+      ) : null}
+
+      {mediaType !== "movie" ? (
+        <input
+          type="number"
+          min="1"
+          className="title-resources-number-input"
+          value={selectedEpisode}
+          onChange={(e) => setSelectedEpisode(e.target.value)}
+          onKeyDown={onKeyDown}
+          placeholder="集数(选填)"
+          aria-label="指定集数"
+        />
+      ) : null}
+
+      <button
+        type="button"
+        className="title-resources-search"
+        onClick={onSearch}
+        disabled={busy || throttled}
+      >
+        {busy ? "查询中…" : throttled ? `请稍候 ${Math.ceil((retryAfterMs ?? 0) / 1000)}s` : "查询资源"}
+      </button>
+    </div>
+  );
+}
+
+interface CandidatesListProps {
+  state: Extract<PanelState, { kind: "ready" }>;
+  importState: ImportState;
+  busy: boolean;
+  throttled: boolean;
+  submitting: boolean;
+  onImportCandidate: (candidateId: string) => void;
+}
+
+function ResourceCandidatesList({
+  state,
+  importState,
+  busy,
+  throttled,
+  submitting,
+  onImportCandidate,
+}: CandidatesListProps) {
+  if (state.candidates.length === 0) {
+    return <p className="title-resources-empty">没有找到可获取的资源。</p>;
+  }
+
+  return (
+    <>
+      <div className="title-resources-summary">
+        <span>{state.candidates.length} 个候选</span>
+        {state.cached && <span className="title-resources-cached">30 分钟内的缓存结果</span>}
+      </div>
+      <ul className="title-resources-list">
+        {state.candidates.map((candidate) => {
+          const importable = state.snapshotId !== null;
+          const rowBusy =
+            submitting && importState.kind === "submitting" && importState.candidateId === candidate.candidateId;
+          return (
+            <li key={candidate.candidateId} className="title-resources-item">
+              <div className="title-resources-item-main">
+                <span className="title-resources-item-title" title={candidate.title}>
+                  {candidate.title}
+                </span>
+                <span className="title-resources-item-meta">
+                  <span className="resource-type-chip">{resourceTypeLabel(candidate.type)}</span>
+                  {candidate.sizeBytes !== undefined && ` · ${formatSize(candidate.sizeBytes)}`}
+                  {candidate.postedAt !== undefined && ` · ${formatPostedAt(candidate.postedAt)}`}
+                  {candidate.seeders !== undefined && ` · ${candidate.seeders} 做种`}
+                </span>
+              </div>
+              <button
+                type="button"
+                className="title-resources-import"
+                onClick={() => void onImportCandidate(candidate.candidateId)}
+                disabled={!importable || rowBusy || busy || throttled}
+                title={importable ? undefined : "这是 30 分钟内的缓存结果，请重新查询后再入库"}
+              >
+                {rowBusy ? "入库中…" : "手动入库"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+
+      {importState.kind === "queued" && (
+        <p className="title-resources-import-queued">已加入队列，正在转存到网盘。可以离开这个页面。</p>
+      )}
+      {importState.kind === "already_running" && (
+        <p className="title-resources-import-queued">这部片已有导入在进行中。</p>
+      )}
+      {importState.kind === "rejected" && (
+        <p className="title-resources-error">入库失败：{importState.message}</p>
+      )}
+    </>
+  );
+}
+
+export function TitleResourcePanel({
+  tmdbId,
+  mediaType,
+  seasonNumbers,
+}: ResourcePanelProps) {
   const [state, setState] = useState<PanelState>({ kind: "idle" });
   const [importState, setImportState] = useState<ImportState>({ kind: "idle" });
+  const [customKeyword, setCustomKeyword] = useState("");
+  const [selectedSeason, setSelectedSeason] = useState<number | undefined>(undefined);
+  const [selectedEpisode, setSelectedEpisode] = useState<string>("");
   const router = useRouter();
 
   const search = useCallback(async () => {
     setState({ kind: "loading" });
     try {
+      const epNum = selectedEpisode.trim() ? parseInt(selectedEpisode.trim(), 10) : undefined;
       const response = await fetch("/api/titles/resources", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tmdbId }),
+        body: JSON.stringify({
+          tmdbId,
+          type: mediaType,
+          customKeyword: customKeyword.trim() || undefined,
+          seasonNumber: selectedSeason,
+          episodeNumber: Number.isInteger(epNum) && epNum! > 0 ? epNum : undefined,
+        }),
       });
       const body = await response.json().catch(() => ({}));
       setState(mapResourceResponse(response.status, body));
@@ -174,7 +341,7 @@ export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
       // 网络层失败也降级为空态，不把异常抛给页面
       setState({ kind: "error", message: error instanceof Error ? error.message : String(error) });
     }
-  }, [tmdbId]);
+  }, [tmdbId, mediaType, customKeyword, selectedSeason, selectedEpisode]);
 
   /**
    * 手动入库。只递不透明句柄；分享链从头到尾没到过前端。
@@ -214,79 +381,48 @@ export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
   const throttled = state.kind === "throttled";
   const submitting = importState.kind === "submitting";
 
+  const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.key === "Enter" && !busy && !throttled) {
+      void search();
+    }
+  };
+
   return (
     <section className="hub-panel title-resources" aria-label="资源">
       <header className="title-resources-head">
-        <h2>资源</h2>
-        <button
-          type="button"
-          className="title-resources-search"
-          onClick={search}
-          disabled={busy || throttled}
-        >
-          {busy ? "查询中…" : throttled ? `请稍候 ${Math.ceil(state.retryAfterMs / 1000)}s` : "查询资源"}
-        </button>
+        <h2>资源检索</h2>
       </header>
+
+      <ResourceSearchBar
+        customKeyword={customKeyword}
+        setCustomKeyword={setCustomKeyword}
+        selectedSeason={selectedSeason}
+        setSelectedSeason={setSelectedSeason}
+        selectedEpisode={selectedEpisode}
+        setSelectedEpisode={setSelectedEpisode}
+        mediaType={mediaType}
+        seasonNumbers={seasonNumbers}
+        busy={busy}
+        throttled={throttled}
+        retryAfterMs={throttled ? state.retryAfterMs : undefined}
+        onSearch={search}
+        onKeyDown={onKeyDown}
+      />
 
       {state.kind === "idle" && (
         <p className="title-resources-hint">手动查询这部片的可获取资源。查询会花真实索引器预算，60 秒内不能重复。</p>
       )}
 
-      {state.kind === "ready" && state.candidates.length === 0 && (
-        <p className="title-resources-empty">没有找到可获取的资源。</p>
-      )}
-
-      {state.kind === "ready" && state.candidates.length > 0 && (
-        <>
-          <div className="title-resources-summary">
-            <span>{state.candidates.length} 个候选</span>
-            {state.cached && <span className="title-resources-cached">30 分钟内的缓存结果</span>}
-          </div>
-          <ul className="title-resources-list">
-            {state.candidates.map((candidate) => {
-              // 缓存命中时没有 snapshotId：那一份快照的归属要以 DB 为准，前端不重推导，
-              // 所以按钮禁用并说清原因，而不是拿一个猜的句柄去请求。
-              const importable = state.snapshotId !== null;
-              const rowBusy = submitting && importState.kind === "submitting" && importState.candidateId === candidate.candidateId;
-              return (
-                <li key={candidate.candidateId} className="title-resources-item">
-                  <div className="title-resources-item-main">
-                    {/* 候选标题是网盘里的原始文件名，可以很长：单行截断，
-                        全名留 title 属性，鼠标悬停能看到。 */}
-                    <span className="title-resources-item-title" title={candidate.title}>
-                      {candidate.title}
-                    </span>
-                    <span className="title-resources-item-meta">
-                      <span className="resource-type-chip">{resourceTypeLabel(candidate.type)}</span>
-                      {candidate.sizeBytes !== undefined && ` · ${formatSize(candidate.sizeBytes)}`}
-                      {candidate.postedAt !== undefined && ` · ${formatPostedAt(candidate.postedAt)}`}
-                      {candidate.seeders !== undefined && ` · ${candidate.seeders} 做种`}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="title-resources-import"
-                    onClick={() => void importCandidate(candidate.candidateId)}
-                    disabled={!importable || rowBusy || busy || throttled}
-                    title={importable ? undefined : "这是 30 分钟内的缓存结果，请重新查询后再入库"}
-                  >
-                    {rowBusy ? "入库中…" : "手动入库"}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-
-          {importState.kind === "queued" && (
-            <p className="title-resources-import-queued">已加入队列，正在转存到网盘。可以离开这个页面。</p>
-          )}
-          {importState.kind === "already_running" && (
-            <p className="title-resources-import-queued">这部片已有导入在进行中。</p>
-          )}
-          {importState.kind === "rejected" && (
-            <p className="title-resources-error">入库失败：{importState.message}</p>
-          )}
-        </>
+      {state.kind === "ready" && (
+        <ResourceCandidatesList
+          state={state}
+          importState={importState}
+          busy={busy}
+          throttled={throttled}
+          submitting={submitting}
+          onImportCandidate={importCandidate}
+        />
       )}
 
       {state.kind === "throttled" && (

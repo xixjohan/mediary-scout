@@ -160,7 +160,7 @@ const seriesTargetMemo = createTtlMemo<PreparedSeriesTarget>({
  * write failure does not discard a live result. Demo candidates otherwise;
  * null when the title was never known.
  */
-async function seriesTargetFor(tmdbId: number): Promise<PreparedSeriesTarget | null> {
+export async function seriesTargetFor(tmdbId: number): Promise<PreparedSeriesTarget | null> {
   if (isLiveSearch()) {
     return seriesTargetMemo(tmdbId);
   }

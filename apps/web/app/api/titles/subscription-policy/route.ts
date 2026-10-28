@@ -60,9 +60,11 @@ export function parseSubscriptionPolicyWrite(
   }
   let mustContain: string[];
   let mustNotContain: string[];
+  let customKeywords: string[] = [];
   try {
     mustContain = terms("mustContain");
     mustNotContain = terms("mustNotContain");
+    customKeywords = terms("customKeywords");
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "policy 无法解析" };
   }
@@ -79,6 +81,7 @@ export function parseSubscriptionPolicyWrite(
       episodeFilter: filter,
       useRegex: raw["useRegex"] === true,
       cooldownDays: cooldownDays ?? 0,
+      customKeywords,
     },
   };
 }

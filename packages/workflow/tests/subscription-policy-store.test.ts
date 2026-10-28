@@ -117,6 +117,7 @@ describe("subscriptionPolicyToColumns", () => {
       episode_filter: "S01-S03",
       use_regex: 1,
       cooldown_days: 7,
+      custom_keywords: "[]",
     });
   });
 
@@ -167,6 +168,7 @@ describe("emptyStoredPolicy", () => {
       episodeFilter: "",
       useRegex: false,
       cooldownDays: 0,
+      customKeywords: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       // 冷却期水位线：一个从没匹配过的策略是 null，不是空串（空串 Date.parse 成 NaN，

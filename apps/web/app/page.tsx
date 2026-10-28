@@ -93,6 +93,9 @@ async function HomeSurface({
   const activeTab = stringParam(params.tab) === "library" ? "library" : "search";
   const mediaType = stringParam(params.type) || "all";
   const filter = stringParam(params.filter) || "all";
+  const statusParam = stringParam(params.status);
+  const status: "active" | "completed" | "all" =
+    statusParam === "completed" || statusParam === "all" ? statusParam : "active";
   const trendingParam = stringParam(params.trending);
   const activeTrending: TrendingKind =
     trendingParam === "tv" ? "tv" : trendingParam === "anime" ? "anime" : "movie";
@@ -136,7 +139,7 @@ async function HomeSurface({
           <>
             <DemoSessionLibrary />
             <Suspense fallback={<LibrarySurfaceSkeleton />}>
-              <LibrarySurface mediaType={mediaType} filter={filter} storageId={storageId} />
+              <LibrarySurface mediaType={mediaType} filter={filter} status={status} storageId={storageId} />
             </Suspense>
           </>
         )}
@@ -428,7 +431,17 @@ function CandidateCard({
   );
 }
 
-async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: string; filter: string; storageId?: string | undefined }) {
+async function LibrarySurface({
+  mediaType,
+  filter,
+  status = "active",
+  storageId,
+}: {
+  mediaType: string;
+  filter: string;
+  status?: "active" | "completed" | "all";
+  storageId?: string | undefined;
+}) {
   const [rawWall, inProgress] = await Promise.all([getLibraryWall(storageId), getInProgressTitles(storageId)]);
   const inProgressIds = new Set(inProgress.map((title) => title.tmdbId));
   // A title still being fetched shows as a 获取中 placeholder, not (yet) a card.
@@ -455,9 +468,9 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
       {/* 缺失待办区：正名为「订阅」后，用户要的第一答案是「还缺什么」。
           数据来自 LibraryWallEntry.missingAiredCount（与 /api/agent/library、
           详情页季行同一口径，见 lib/subscription-missing），这里不重算。
-          category 视图下不显示——那一屏已被 type/filter 收窄，再叠一块全局
+          category 视图及「已完成」视图下不显示——那一屏已被收窄，再叠一块全局
           待办会让人以为数字对应当前筛选。 */}
-      {category === null ? <SubscriptionTodo wallEntries={wall} storageId={storageId} /> : null}
+      {category === null && status !== "completed" ? <SubscriptionTodo wallEntries={wall} storageId={storageId} /> : null}
       <LibraryQuickFind
         wallEntries={wall}
         inProgressTitles={inProgress}
@@ -465,6 +478,7 @@ async function LibrarySurface({ mediaType, filter, storageId }: { mediaType: str
         mode={category ? "category" : "home"}
         mediaType={category ?? undefined}
         filter={filter === "complete" || filter === "tracking" || filter === "partial" ? filter : "all"}
+        status={status}
       />
     </section>
   );

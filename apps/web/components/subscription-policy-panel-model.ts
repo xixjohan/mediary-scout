@@ -16,6 +16,7 @@ export interface PolicyDraft {
   episodeFilter: string;
   useRegex: boolean;
   cooldownDays: number;
+  customKeywords?: string;
 }
 
 /** One excluded candidate, with WHY it was excluded — 「排了 N 个」会让人回去猜是哪条规则干的。 */
@@ -99,12 +100,14 @@ export function previewReasonCopy(reason: PreviewExcludedEntry["reason"]): strin
 export function mapSavedPolicy(policy: unknown): PolicyDraft | null {
   if (typeof policy !== "object" || policy === null) return null;
   const parsed = policy as Record<string, unknown>;
+  const custom = joined(parsed["customKeywords"]);
   return {
     mustContain: joined(parsed["mustContain"]),
     mustNotContain: joined(parsed["mustNotContain"]),
     episodeFilter: str(parsed["episodeFilter"]),
     useRegex: parsed["useRegex"] === true,
     cooldownDays: num(parsed["cooldownDays"]),
+    ...(custom ? { customKeywords: custom } : {}),
   };
 }
 
@@ -145,13 +148,16 @@ export function draftToPolicy(draft: PolicyDraft): {
   episodeFilter: string;
   useRegex: boolean;
   cooldownDays: number;
+  customKeywords?: string[];
 } {
+  const custom = draft.customKeywords ? splitTerms(draft.customKeywords) : [];
   return {
     mustContain: splitTerms(draft.mustContain),
     mustNotContain: splitTerms(draft.mustNotContain),
     episodeFilter: draft.episodeFilter.trim(),
     useRegex: draft.useRegex,
     cooldownDays: draft.cooldownDays,
+    ...(custom.length > 0 ? { customKeywords: custom } : {}),
   };
 }
 

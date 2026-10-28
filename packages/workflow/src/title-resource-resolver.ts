@@ -37,6 +37,8 @@ export interface TitleResourceDeps {
   limiter: CooldownLimiter;
   /** Resolves candidates for a cached hit (re-reads the stored snapshot). */
   loadCachedCandidates: (candidateIds: readonly string[]) => Promise<ResourceCandidate[]>;
+  /** Optional suffix for cache key (e.g. hash of custom keyword) so custom queries don't collide. */
+  cacheKeySuffix?: string | undefined;
 }
 
 export type TitleResourceResult =
@@ -51,12 +53,13 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
     return { kind: "unauthorized" };
   }
 
-  const scopeKey = TitleResourceCache.key(deps.accountId, deps.titleId);
+  const baseKey = TitleResourceCache.key(deps.accountId, deps.titleId);
+  const scopeKey = deps.cacheKeySuffix ? `${baseKey}:${deps.cacheKeySuffix}` : baseKey;
 
   // 2) Cooldown. Checked before the cache so a throttled user cannot probe the
   // cache for free — and so a throttled response still reports a useful delay.
-  if (!deps.limiter.tryAcquire(scopeKey)) {
-    return { kind: "throttled", retryAfterMs: deps.limiter.remainingMs(scopeKey) };
+  if (!deps.limiter.tryAcquire(baseKey)) {
+    return { kind: "throttled", retryAfterMs: deps.limiter.remainingMs(baseKey) };
   }
 
   // 3) Cache.

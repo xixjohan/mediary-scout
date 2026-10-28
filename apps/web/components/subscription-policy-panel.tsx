@@ -41,6 +41,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
     episodeFilter: "",
     useRegex: false,
     cooldownDays: 0,
+    customKeywords: "",
   });
   const [state, setState] = useState<PolicyPanelState>({ kind: "idle" });
   const [saved, setSaved] = useState<PolicyDraft | null>(null);
@@ -156,6 +157,14 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
             value={draft.mustContain}
             onChange={(event) => update({ mustContain: event.target.value })}
             placeholder="2160p, 简中"
+          />
+        </label>
+        <label>
+          自定义搜索词
+          <input
+            value={draft.customKeywords ?? ""}
+            onChange={(event) => update({ customKeywords: event.target.value })}
+            placeholder="4K, 喵萌奶茶屋"
           />
         </label>
         <label>
