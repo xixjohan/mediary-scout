@@ -82,4 +82,46 @@ describe("凭据解不开时 listConnectedStorages 的降级", () => {
     await back.close?.();
     await reader.close?.();
   });
+
+  it("密钥更换后 findConnectedStorageByUid 与 tryUnbind 不抛：解密失败降级为空 payload 并允许解绑与覆盖", async () => {
+    const path = tmpDb();
+
+    // 用密钥 A 写入一块盘和一个加密 setting
+    process.env.MEDIA_TRACK_CREDENTIAL_KEY = KEY_A;
+    const writer = createSqliteWorkflowRepository({ path });
+    await writer.upsertConnectedStorage(storageRow("cs_dead", "AA11111111111111111111"));
+    await writer.setAccountSetting("acct_default", "llm_api_key", "secret-key-val");
+    await writer.close?.();
+
+    // 换密钥 B 开库
+    process.env.MEDIA_TRACK_CREDENTIAL_KEY = KEY_B;
+    const reader = createSqliteWorkflowRepository({ path });
+
+    // 1. findConnectedStorageByUid 不再抛，保留 accountId / providerUid 等元信息，payload 降级为空对象
+    const found = await reader.findConnectedStorageByUid("quark", "AA11111111111111111111");
+    expect(found).not.toBeNull();
+    expect(found?.id).toBe("cs_dead");
+    expect(found?.accountId).toBe("acct_default");
+    expect(found?.payload).toEqual({});
+
+    // 2. 加密 setting 解不开时优雅返回 null，不抛异常
+    expect(await reader.getAccountSetting("acct_default", "llm_api_key")).toBeNull();
+
+    // 3. 可以正常进行重新绑定覆盖写入（用当前有效密钥写入新 cookie）
+    await reader.upsertConnectedStorage({
+      ...storageRow("cs_dead", "AA11111111111111111111"),
+      payload: { cookie: "QUARK_COOKIE=renewed-cookie" },
+    });
+
+    // 4. 新写入的行在当前密钥 B 下即可正常解密返回
+    const renewed = await reader.findConnectedStorageByUid("quark", "AA11111111111111111111");
+    expect(renewed?.payload).toEqual({ cookie: "QUARK_COOKIE=renewed-cookie" });
+
+    // 5. tryUnbindConnectedStorage 不会因旧数据解密失败而崩溃，能正常删除
+    const unbindRes = await reader.tryUnbindConnectedStorage("acct_default", "cs_dead");
+    expect(unbindRes.ok).toBe(true);
+    expect(await reader.findConnectedStorageByUid("quark", "AA11111111111111111111")).toBeNull();
+
+    await reader.close?.();
+  });
 });
