@@ -22,7 +22,7 @@ function fakeClock(startAt = 1_700_000_000_000) {
 }
 
 function view(id: string): ResourceCandidateView {
-  return { candidateId: id, title: "t", type: "share", source: "pansou-115" };
+  return { candidateId: id, title: "t", type: "115", source: "pansou-115" };
 }
 
 function snapshotOf(ids: string[]): ResourceSnapshot {
@@ -31,7 +31,7 @@ function snapshotOf(ids: string[]): ResourceSnapshot {
     snapshotId: "snap",
     index,
     title: "t",
-    type: "share",
+    type: "115",
     source: "pansou-115",
     providerPayload: { url: "https://115.com/s/leak", password: "abcd" },
   }));

@@ -271,13 +271,13 @@ describe("巡检日志行", () => {
 
   it("没有冷却跳过 ⇒ 没有冷却日志行", () => {
     expect(cooldownLogLine([])).toBeNull();
-    expect(cooldownLogLine([{ titleKey: "k", titleName: "n", reason: "cooldown", detail: "d" }])).toContain("冷却中");
+    expect(cooldownLogLine([{ accountId: "acct_a", titleKey: "k", titleName: "n", reason: "cooldown", detail: "d" }])).toContain("冷却中");
   });
 
   it("**冷却日志行点名跳过了哪几部**（默默跳过等于订阅凭空停摆）", () => {
     const line = cooldownLogLine([
-      { titleKey: "k1", titleName: "孤独摇滚", reason: "cooldown", detail: "冷却中（7 天内已匹配过）" },
-      { titleKey: "k2", titleName: "药屋少女", reason: "cooldown", detail: "冷却中（7 天内已匹配过）" },
+      { accountId: "acct_a", titleKey: "k1", titleName: "孤独摇滚", reason: "cooldown", detail: "冷却中（7 天内已匹配过）" },
+      { accountId: "acct_a", titleKey: "k2", titleName: "药屋少女", reason: "cooldown", detail: "冷却中（7 天内已匹配过）" },
     ]);
     expect(line).toContain("2");
     expect(line).toContain("孤独摇滚");

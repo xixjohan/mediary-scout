@@ -65,7 +65,12 @@ describe("decideManualImport — 放行", () => {
   });
 
   it("connectedStorageId 省略 ⇒ null（单盘/遗留）", () => {
-    const decision = decideManualImport(request({ connectedStorageId: undefined }));
+    // request() 的默认值带 drive_1，所以「省略」必须真的把键删掉——
+    // 传 { connectedStorageId: undefined } 在 exactOptionalPropertyTypes 下过不了类型关，
+    // 而只写 request() 又会退化成正戴着 drive_1（那样这条用例就是假的省略）。
+    const withoutDrive = request();
+    delete (withoutDrive as { connectedStorageId?: string }).connectedStorageId;
+    const decision = decideManualImport(withoutDrive);
     if (decision.kind !== "enqueue") throw new Error("unexpected");
     expect(decision.payload.connectedStorageId).toBeNull();
   });

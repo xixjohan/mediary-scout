@@ -31,7 +31,7 @@ function lastToolOutput(prompt: unknown, toolName: string): any {
 const NOW = "2026-09-20T00:00:00.000Z";
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
-  outputTokens: { text: undefined, reasoning: undefined },
+  outputTokens: { total: undefined, text: undefined, reasoning: undefined },
 } as const;
 const tool = (name: string, input: unknown, i: number) => ({
   content: [{ type: "tool-call" as const, toolCallId: `c${i}`, toolName: name, input: JSON.stringify(input) }],
