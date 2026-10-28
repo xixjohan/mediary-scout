@@ -17,7 +17,16 @@ function fs(): FsLike {
  *  进入静态模块图——客户端可达链上一旦静态引入 node: 内置就会炸 Turbopack。 */
 // createRequire 不静态 import：见 native-require.ts。静态 import 会让 node:module 进入
 // 客户端可达的 chunk，Turbopack 直接拒掉整个生产构建。
-const requireNative = createNativeRequire(import.meta.url);
+let nativeRequire: ReturnType<typeof createNativeRequire> | undefined;
+/** 懒建：**模块求值时绝不调** createNativeRequire。本文件经 shared barrel 被客户端
+ *  可达链 import，顶层调用会让 `process.getBuiltinModule("node:module")` 打进浏览器
+ *  chunk 并在求值时抛 TypeError（浏览器没有该 API）——整个客户端包随之死掉，页面只剩
+ *  错误边界（实测：首页 /settings 全崩，SSR 却是 200，因为崩在水合/客户端求值阶段）。
+ *  native-require.ts 的「不静态 import node:module」只保证构建能过，管不了这一条。 */
+const requireNative = (id: string): unknown => {
+  nativeRequire ??= createNativeRequire(import.meta.url);
+  return nativeRequire(id);
+};
 type BetterSqlite3 = typeof import("better-sqlite3");
 function loadDatabase(): BetterSqlite3 {
   return requireNative("better-sqlite3") as BetterSqlite3;

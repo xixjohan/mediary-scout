@@ -127,7 +127,7 @@ export function OrganizePanel({ tmdbId, seasonNumber }: OrganizePanelProps) {
   }, [router, seasonNumber, tmdbId]);
 
   return (
-    <section className="title-organize" aria-label="自动整理">
+    <section className="hub-panel title-organize" aria-label="自动整理">
       <div className="title-organize-head">
         <h2>整理</h2>
         <button

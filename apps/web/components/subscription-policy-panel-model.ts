@@ -109,6 +109,27 @@ export function mapSavedPolicy(policy: unknown): PolicyDraft | null {
 }
 
 /**
+ * GET /api/titles/subscription-policy ⇒ the draft to fill the form with, or null.
+ *
+ * This mapping is what keeps a saved rule VISIBLE: the panel loads it on mount, so a
+ * user who comes back to the page sees the rule they saved instead of an empty form
+ * that claims 「还没配规则」. Without it the save endpoint and the read endpoint both
+ * exist and are both tested, and the rule still vanishes from the user's eyes on every
+ * reload.
+ *
+ * Every non-honest answer degrades to null rather than throwing: 404 (the work is not
+ * tracked on this drive), 5xx, a broken body shape. null renders as the honest
+ * 「还没配规则」 empty form — which is exactly what an unconfigured work should look
+ * like. A thrown fetch or a half-parsed policy would take the whole panel down, and
+ * the panel's job (configure a rule) does not depend on the read succeeding.
+ */
+export function mapPolicyLoadResponse(status: number, body: unknown): PolicyDraft | null {
+  if (status !== 200) return null;
+  const parsed = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+  return mapSavedPolicy(parsed["policy"]);
+}
+
+/**
  * Draft → the wire shape the API expects.
  *
  * The draft holds the term lists as strings (one text input each), the API wants arrays.
