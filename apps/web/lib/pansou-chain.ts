@@ -1,6 +1,9 @@
+import { decryptSecret } from "@media-track/shared";
 import {
   FallbackResourceProvider,
   PanSouResourceProvider,
+  type PanSouAuth,
+  type PanSouFetchJson,
   type ResourceProvider,
   type ResourceType,
 } from "@media-track/workflow";
@@ -12,6 +15,63 @@ export function normalizePanSouBaseUrl(baseURL: string | null | undefined): stri
 
 /** 官方公共 PanSou。用户留空时的默认，也是自建源挂掉时的退路。 */
 export const DEFAULT_PANSOU_BASE_URL = "https://so.252035.xyz";
+
+/** 自建搜索源的凭据。三个键都只写库、不走 env —— 凭据下沉到 compose/.env 会让
+ *  它出现在 `docker inspect`、进程环境和每一次 compose  diff 里，那是把秘密
+ *  交给了错误的保管层。密码与令牌用 shared 的 enc:v1: 信封加密后落库。 */
+export const PANSOU_USERNAME_SETTING_KEY = "pansou_username";
+export const PANSOU_PASSWORD_SETTING_KEY = "pansou_password";
+export const PANSOU_TOKEN_SETTING_KEY = "pansou_token";
+
+/** 解密一个设置值；空/未配返回 undefined。解密失败（密钥换了、密文被截断）时
+ *  返回 undefined 而不是抛出：一处坏凭据不该让整个搜索路径崩掉，调用方会把它
+ *  当成「没配」处理，用户在下一次保存时自然覆盖它。 */
+function readSecret(
+  entries: Record<string, string | null>,
+  key: string,
+): string | undefined {
+  const stored = entries[key];
+  if (!stored) return undefined;
+  try {
+    const plain = decryptSecret(stored).trim();
+    return plain ? plain : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 解析自建搜索源的认证形态。与 getPanSouBaseUrl 同层，但**没有 env 兜底**
+ * （见键上方注释）。
+ *
+ * 优先级：token > 用户名+密码 > 无认证。token 优先是规格明确的互斥规则 ——
+ * 粘贴的令牌是用户明确指定「用这一个」，不该被一份可能已过期的旧密码覆盖。
+ *
+ * 「只配了一半」按无认证处理，绝不拿一半配置去登录：一个没有密码的用户名
+ * 发出去只会得到 401，而那会被报成「认证失败」，把用户引向错误的排查方向。
+ */
+export async function getPanSouAuth(repository: {
+  getSetting: (key: string) => Promise<string | null>;
+}): Promise<PanSouAuth> {
+  const entries: Record<string, string | null> = {};
+  for (const key of [
+    PANSOU_TOKEN_SETTING_KEY,
+    PANSOU_USERNAME_SETTING_KEY,
+    PANSOU_PASSWORD_SETTING_KEY,
+  ]) {
+    entries[key] = await repository.getSetting(key);
+  }
+  const token = readSecret(entries, PANSOU_TOKEN_SETTING_KEY);
+  if (token) {
+    return { kind: "bearer", token };
+  }
+  const username = entries[PANSOU_USERNAME_SETTING_KEY]?.trim();
+  const password = readSecret(entries, PANSOU_PASSWORD_SETTING_KEY);
+  if (username && password) {
+    return { kind: "login", username, password };
+  }
+  return { kind: "none" };
+}
 
 /**
  * 解析「用户自己的源」：DB 设置 > env PANSOU_BASE_URL > 空。
@@ -40,6 +100,12 @@ export function resolveUserPanSouBaseUrl(
 export function buildPanSouProviderChain(input: {
   userBaseURL: string;
   allowedTypes: ResourceType[];
+  /** 这台自建源要不要认证、怎么认证。**只传给 primary**：官方公共源没有认证，
+   *  把用户的令牌带到官方源去既无用、又会把凭据泄露给第三方。 */
+  auth?: PanSouAuth | undefined;
+  /** 测试 seam：与 PanSouResourceProviderOptions.fetchJson 同义，透传下去。
+   *  没有它就断言不了「认证头一路带到了最终 provider」。 */
+  fetchJson?: PanSouFetchJson | undefined;
   /** 每次搜索后把「自建源这次行不行」记下来。设置页徽章每 8s 轮询,绝不能在那条
    *  路径上真打网络,所以只能由真实搜索顺手回写。
    *
@@ -58,7 +124,12 @@ export function buildPanSouProviderChain(input: {
       allowedTypes: input.allowedTypes,
     });
   }
-  const primary = new PanSouResourceProvider({ baseURL: user, allowedTypes: input.allowedTypes });
+  const primary = new PanSouResourceProvider({
+    baseURL: user,
+    allowedTypes: input.allowedTypes,
+    auth: input.auth,
+    fetchJson: input.fetchJson,
+  });
   return new FallbackResourceProvider({
     primary: {
       name: "自建搜索源",

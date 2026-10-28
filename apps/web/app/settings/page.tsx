@@ -78,6 +78,11 @@ import {
   resolveGlobalWorkspace,
   resolveIsDesktop,
 } from "../../lib/workflow-runtime";
+import {
+  PANSOU_USERNAME_SETTING_KEY,
+  PANSOU_PASSWORD_SETTING_KEY,
+  PANSOU_TOKEN_SETTING_KEY,
+} from "../../lib/pansou-chain";
 import { brandSupportsProwlarr, brandsSupportingProwlarr, brandsSupportingSubtitleDirectLink, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
 
@@ -521,6 +526,13 @@ async function ResourceProviderSection() {
   const repository = getAccountScopedSettings(accountId);
   const pansouBaseURL = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY)) ?? "";
   const pansouHealth = (await repository.getSetting(PANSOU_HEALTH_SETTING_KEY)) ?? "";
+  // 只判断「有没有」，不回显值：表单据此显示占位符（「已保存，输入可替换」）。
+  // 密码与令牌一旦进了服务端渲染的 HTML，就会被浏览器历史、扩展和截图一起带走。
+  const pansouUsername = (await repository.getSetting(PANSOU_USERNAME_SETTING_KEY))?.trim() ?? "";
+  const pansouPasswordSet = Boolean(
+    (await repository.getSetting(PANSOU_PASSWORD_SETTING_KEY))?.trim(),
+  );
+  const pansouTokenSet = Boolean((await repository.getSetting(PANSOU_TOKEN_SETTING_KEY))?.trim());
   const prowlarrBaseURL = (await repository.getSetting(PROWLARR_BASE_URL_SETTING_KEY)) ?? "";
   const prowlarrApiKeySet = Boolean((await repository.getSetting(PROWLARR_API_KEY_SETTING_KEY))?.trim());
   // The form shows the DB values; the pill follows what the worker mounts
@@ -588,7 +600,14 @@ async function ResourceProviderSection() {
           </>
         }
       >
-        <PanSouConfigForm baseURL={pansouBaseURL} />
+        <PanSouConfigForm
+          baseURL={pansouBaseURL}
+          credentials={{
+            username: pansouUsername,
+            hasPassword: pansouPasswordSet,
+            hasToken: pansouTokenSet,
+          }}
+        />
       </ServiceBlock>
       {showProwlarr ? (
         <ServiceBlock

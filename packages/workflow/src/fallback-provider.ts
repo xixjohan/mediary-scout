@@ -3,6 +3,7 @@ import type { ResourceProvider } from "./ports.js";
 import {
   classifySourceFailure,
   mergeSourceHealth,
+  PanSouAuthError,
   type SourceStatus,
 } from "./resource-source-health.js";
 
@@ -108,6 +109,13 @@ async function attempt(
   try {
     return { ok: true, snapshot: await provider.search(input) };
   } catch (error) {
+    // 认证失败必须穿透，不能折成 status。折了它就会走完下面的降级流程：
+    // 用户配错一处凭据的自建源，靠官方公共源静默续命，而界面上只会看到
+    // 「degraded」甚至一次成功的搜索。这与本类顶部第 2 条设计(fallback 后
+    // 仍标 degraded)是同一条教义，只是这里更极端 —— 连 fallback 都不该发生。
+    if (error instanceof PanSouAuthError) {
+      throw error;
+    }
     return { ok: false, status: classifySourceFailure(error) };
   }
 }
