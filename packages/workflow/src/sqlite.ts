@@ -1579,7 +1579,21 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
   async listConnectedStorages(accountId: string): Promise<ConnectedStorage[]> {
     const records = await this.credentials.listConnectedStorages(accountId);
-    return records.map((record) => this.connectedStorageFromRecord(record));
+    const storages: ConnectedStorage[] = [];
+    for (const record of records) {
+      try {
+        storages.push(this.connectedStorageFromRecord(record));
+      } catch (error) {
+        // 密钥更换 / 丢失 / 损坏时，单条 payload 解不开。此处绝不外抛：那会把
+        // 「一块盘需要重新绑定」放大成设置页与 /api/activity 的整体 500，而根错误
+        // 边界还会把责任误导成「连不上 TMDB／资源搜索」——用户照着查网络，方向整个错。
+        // 降级为「当作没这块盘」，用户才进得去 UI 重新绑定。日志保留可诊断性。
+        console.error(
+          `[media-track] connected storage ${record.id} payload undecryptable, skipping: ${String(error)}`,
+        );
+      }
+    }
+    return storages;
   }
 
   async hasAnyConnectedStorage(): Promise<boolean> {
