@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   draftToPolicy,
+  mapPolicyLoadResponse,
   mapPreviewResponse,
-  mapSavedPolicy,
   previewHeadlineCopy,
   previewReasonCopy,
   ruleExcludesEverything,
@@ -46,7 +46,54 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
   const [saved, setSaved] = useState<PolicyDraft | null>(null);
   const router = useRouter();
 
+  /**
+   * 用户是否已经在挂载后动过这个表单（改字段或保存）。
+   *
+   * 挂载即读回（下面的 effect）是一次异步竞态：GET 在飞的时候用户完全可能已经
+   * 开始打字，甚至已经保存了一条新规则。若不看这个标记就无条件 setDraft，
+   * 迟到的那次读回会把用户刚写的内容擦成旧值——正是「刷新丢策略」的镜像 bug。
+   * 用户一动过，这次读回就作废：表单以用户看到的内容为准。
+   */
+  const touchedRef = useRef(false);
+  const update = useCallback((patch: Partial<PolicyDraft>) => {
+    touchedRef.current = true;
+    setDraft((prev) => ({ ...prev, ...patch }));
+  }, []);
+
+  /**
+   * 挂载即读回已保存的策略。
+   *
+   * 修的是一个真 bug：GET 端点和 mapSavedPolicy 都在、都被测过，但面板从不调用——
+   * 刷新页面后表单永远空白、标题永远说「还没配规则」，用户存过的规则从眼前消失。
+   * 读失败（404 未追踪 / 5xx / 坏形状）一律降级成 null：空表单 + 「还没配规则」
+   * 正是没配过规则该有的样子，配规则这个动作不依赖读成功。
+   */
+  useEffect(() => {
+    let alive = true;
+    fetch(`/api/titles/subscription-policy?tmdbId=${tmdbId}`)
+      .then(async (response) => {
+        const body: unknown = await response.json().catch(() => null);
+        return mapPolicyLoadResponse(response.status, body);
+      })
+      .then((loaded) => {
+        // 用户在读回在飞期间动了表单/存了规则 ⇒ 这次读回已过期，别擦掉人家刚写的
+        if (!alive || touchedRef.current) return;
+        if (loaded === null) return;
+        setDraft(loaded);
+        setSaved(loaded);
+      })
+      .catch(() => {
+        // 网络错误：表单留空，用户照样能现配一条
+      });
+    return () => {
+      alive = false;
+    };
+  }, [tmdbId]);
+
   const preview = useCallback(async () => {
+    // 预览同样依赖当前表单：读回在飞时预览过，表单就不能再被旧值替换，
+    // 否则屏幕上会出现「表单是旧规则、预览结果是新规则」的错位画面
+    touchedRef.current = true;
     setState({ kind: "previewing" });
     try {
       const response = await fetch("/api/titles/subscription-policy/preview", {
@@ -62,6 +109,8 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
   }, [draft, tmdbId]);
 
   const save = useCallback(async () => {
+    // 保存即「用户动过」：迟到的挂载读回不许把刚存的新规则擦回旧值
+    touchedRef.current = true;
     setState({ kind: "saving" });
     try {
       const response = await fetch("/api/titles/subscription-policy", {
@@ -90,7 +139,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
     state.kind === "previewed" && ruleExcludesEverything(state.outcome);
 
   return (
-    <section className="sub-policy" aria-label="订阅策略">
+    <section className="hub-panel sub-policy" aria-label="订阅策略">
       <div className="sub-policy-head">
         <h2>订阅策略</h2>
         {saved === null ? (
@@ -105,7 +154,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
           必须包含
           <input
             value={draft.mustContain}
-            onChange={(event) => setDraft({ ...draft, mustContain: event.target.value })}
+            onChange={(event) => update({ mustContain: event.target.value })}
             placeholder="2160p, 简中"
           />
         </label>
@@ -113,7 +162,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
           必须排除
           <input
             value={draft.mustNotContain}
-            onChange={(event) => setDraft({ ...draft, mustNotContain: event.target.value })}
+            onChange={(event) => update({ mustNotContain: event.target.value })}
             placeholder="CAM, 枪版"
           />
         </label>
@@ -121,7 +170,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
           集数范围
           <input
             value={draft.episodeFilter}
-            onChange={(event) => setDraft({ ...draft, episodeFilter: event.target.value })}
+            onChange={(event) => update({ episodeFilter: event.target.value })}
             placeholder="S01-S03;E01-E10"
           />
         </label>
@@ -131,14 +180,14 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
             type="number"
             min={0}
             value={draft.cooldownDays}
-            onChange={(event) => setDraft({ ...draft, cooldownDays: Number(event.target.value) })}
+            onChange={(event) => update({ cooldownDays: Number(event.target.value) })}
           />
         </label>
         <label className="sub-policy-regex">
           <input
             type="checkbox"
             checked={draft.useRegex}
-            onChange={(event) => setDraft({ ...draft, useRegex: event.target.checked })}
+            onChange={(event) => update({ useRegex: event.target.checked })}
           />
           用正则
         </label>
@@ -160,25 +209,36 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
             // The one case where the numbers mean the user's rule, not the search.
             <p className="sub-policy-warn">这条规则排除了全部候选——检查一下是不是写得太严</p>
           ) : null}
-          <ul className="sub-policy-matched">
-            {state.outcome.matched.map((name) => (
-              <li key={name}>{name}</li>
-            ))}
-          </ul>
-          <ul className="sub-policy-excluded">
-            {state.outcome.excluded.map((entry) => (
-              <li key={entry.name}>
-                {entry.name}
-                <span className="sub-policy-reason">{previewReasonCopy(entry.reason)}</span>
-              </li>
-            ))}
-          </ul>
+          {state.outcome.matched.length > 0 ? (
+            <>
+              <p className="sub-policy-sublist-label">命中 {state.outcome.matched.length} 个</p>
+              <ul className="sub-policy-matched">
+                {state.outcome.matched.map((name) => (
+                  <li key={name}>{name}</li>
+                ))}
+              </ul>
+            </>
+          ) : null}
+          {state.outcome.excluded.length > 0 ? (
+            <>
+              <p className="sub-policy-sublist-label">排除 {state.outcome.excluded.length} 个</p>
+              <ul className="sub-policy-excluded">
+                {state.outcome.excluded.map((entry) => (
+                  <li key={entry.name}>
+                    {entry.name}
+                    <span className="sub-policy-reason">{previewReasonCopy(entry.reason)}</span>
+                  </li>
+                ))}
+              </ul>
+            </>
+          ) : null}
         </div>
       ) : null}
 
-      {state.kind === "saved" ? <p className="sub-policy-copy">{state.copy}</p> : null}
-      {state.kind === "rejected" ? <p className="sub-policy-copy">{state.copy}</p> : null}
-      {state.kind === "failed" ? <p className="sub-policy-copy">{state.copy}</p> : null}
+      {/* 三态分色：保存是绿，拒绝/失败是红——被 API 拒绝的保存绝不能看起来像成功。 */}
+      {state.kind === "saved" ? <p className="sub-policy-copy is-ok">{state.copy}</p> : null}
+      {state.kind === "rejected" ? <p className="sub-policy-copy is-bad">{state.copy}</p> : null}
+      {state.kind === "failed" ? <p className="sub-policy-copy is-bad">{state.copy}</p> : null}
     </section>
   );
 }

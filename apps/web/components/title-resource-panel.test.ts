@@ -21,7 +21,7 @@ function view(overrides: Partial<ResourceCandidateView> = {}): ResourceCandidate
   };
 }
 
-import { mapImportResponse, mapResourceResponse } from "./title-resource-panel";
+import { mapImportResponse, mapResourceResponse, resourceTypeLabel } from "./title-resource-panel";
 
 describe("mapResourceResponse — 降级契约", () => {
   it("200 ⇒ ready，带上 cached 标记", () => {
@@ -140,6 +140,29 @@ describe("mapImportResponse — 入库终局", () => {
       expect(JSON.stringify(mapImportResponse(status, body))).not.toMatch(
         /(?:https?|magnet):\/\/|ed2k:\/\//i,
       );
+    }
+  });
+});
+
+describe("resourceTypeLabel — 候选行的资源类型标签", () => {
+  /**
+   * 网盘品牌名与设置页、连接组件里的叫法一致（115/夸克/天翼/123/光鸭），
+   * 磁力叫「磁力」——pansou 结果的 source 字段已经带品牌，这枚标签让
+   * pansou-115 与磁力候选在一眼里分得开。
+   */
+  it("每个 ResourceType 都有用户看得懂的中文标签", () => {
+    expect(resourceTypeLabel("115")).toBe("115");
+    expect(resourceTypeLabel("quark")).toBe("夸克");
+    expect(resourceTypeLabel("tianyi")).toBe("天翼");
+    expect(resourceTypeLabel("123")).toBe("123");
+    expect(resourceTypeLabel("guangya")).toBe("光鸭");
+    expect(resourceTypeLabel("magnet")).toBe("磁力");
+    expect(resourceTypeLabel("manual")).toBe("手动");
+  });
+
+  it("标签里不含 URL 形态（不泄露、也不引导用户去拼分享链）", () => {
+    for (const type of ["115", "quark", "tianyi", "123", "guangya", "magnet", "manual"] as const) {
+      expect(resourceTypeLabel(type)).not.toMatch(/(?:https?|magnet):\/\/|ed2k:\/\//i);
     }
   });
 });

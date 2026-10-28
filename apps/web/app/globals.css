@@ -5633,9 +5633,36 @@ select.setting-control {
   font-variant-numeric: tabular-nums;
 }
 
+/* 详情页三个动作面板（资源 / 整理 / 订阅策略）共用的卡片容器。
+   这里修掉两个问题：
+   ① 边距——这三个面板是 .title-hub-immersive 的直接子级，而 immersive 用
+      -32px 侧出血让 hero 艺术图贴到内容边缘；没有自己边距的子级于是跟着贴到
+      视口边缘。简介、季行、留言卡都有 32px 的内/外边距，面板不能没有。
+      取值与 .hub-message 完全相同：桌面 32px、≤860px 16px。
+   ② 卡片化——与季行、留言卡同一设计语言：bg-surface + radius-card。
+      订阅策略面板此前**一条 CSS 都没有**（sub-policy* 在全仓库不存在），
+      表单因此用浏览器默认样式：标签与输入框挤在一行、复选框漂在右端。 */
+.hub-panel {
+  position: relative;
+  z-index: 1;
+  margin: 16px 32px 8px;
+  padding: 16px 18px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-card);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+@media (max-width: 860px) {
+  .hub-panel {
+    margin: 12px 16px 8px;
+    padding: 14px 14px;
+  }
+}
+
 /* 详情页「资源」面板（批次 2 只读，批次 3 加手动入库）。
-   批次 2 上线时这些类名没有配套规则——面板因此是无样式的。这里补上最小一套：
-   候选行、行内「手动入库」按钮、以及导入状态说明。 */
+   候选行：标题单行截断（网盘原始文件名可以很长，全名留 title 属性），
+   元信息一行带过；每行末尾一个行内「手动入库」。 */
 .title-resources {
   display: flex;
   flex-direction: column;
@@ -5654,35 +5681,68 @@ select.setting-control {
   margin: 0;
 }
 
+/* 三个面板共用的行内操作按钮：中性盒式。绿色 pill 留给「获取/预定」这类
+   获取动作——面板内的动作不抢它的戏，这与批次 2 起建立的视觉分工一致。 */
 .title-resources-search,
-.title-resources-import {
-  background: var(--surface, transparent);
+.title-organize-run,
+.sub-policy-actions button {
+  background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
-  color: inherit;
+  color: var(--text);
   cursor: pointer;
   font: inherit;
-  padding: 6px 12px;
+  font-size: 0.8125rem;
+  padding: 6px 14px;
   white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.title-resources-search:hover:not(:disabled),
+.title-organize-run:hover:not(:disabled),
+.sub-policy-actions button:hover:not(:disabled) {
+  background: var(--bg-chip-hover);
+  border-color: var(--border-soft);
+}
+
+.title-resources-search:focus-visible,
+.title-organize-run:focus-visible,
+.sub-policy-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .title-resources-search:disabled,
-.title-resources-import:disabled {
+.title-organize-run:disabled,
+.sub-policy-actions button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
 .title-resources-hint,
-.title-resources-empty,
-.title-resources-cached,
-.title-resources-import-queued {
-  color: var(--muted);
+.title-resources-empty {
+  color: var(--text-muted);
   font-size: 0.875rem;
   margin: 0;
 }
 
+/* 候选计数 + 缓存说明：一行两端，计数在左、缓存在右。 */
+.title-resources-summary {
+  align-items: baseline;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.title-resources-cached {
+  color: var(--text-faint);
+  font-size: 0.78rem;
+}
+
 .title-resources-error {
-  color: var(--danger, #b42318);
+  color: var(--negative);
   font-size: 0.875rem;
   margin: 0;
 }
@@ -5699,20 +5759,78 @@ select.setting-control {
 .title-resources-item {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  gap: 8px 12px;
+  gap: 12px;
   justify-content: space-between;
 }
 
-.title-resources-item-title {
-  flex: 1 1 240px;
+.title-resources-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   min-width: 0;
+  flex: 1;
+}
+
+.title-resources-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .title-resources-item-meta {
-  color: var(--muted);
-  flex: 1 1 160px;
+  color: var(--text-muted);
   font-size: 0.8125rem;
+  min-width: 0;
+}
+
+/* 资源类型标签：115/夸克/天翼/123/光鸭/磁力/手动。让网盘秒传候选与磁力候选
+   在一眼里分得开——后者依赖网盘的磁力秒传能力，不是每个盘都有。 */
+.resource-type-chip {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-soft);
+  font-size: 0.72rem;
+  line-height: 1.6;
+}
+
+.title-resources-import {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  flex: none;
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.title-resources-import:hover:not(:disabled) {
+  background: var(--bg-chip-hover);
+  border-color: var(--border-soft);
+}
+
+.title-resources-import:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.title-resources-import:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+/* 入队是好事：用强调绿，不用中性灰。 */
+.title-resources-import-queued {
+  color: var(--accent);
+  font-size: 0.875rem;
+  margin: 0;
 }
 
 /* 批次 4：整理面板。L1 只说做了什么；L2 列出每个文件与建议目标让用户点头。
@@ -5735,21 +5853,9 @@ select.setting-control {
   margin: 0;
 }
 
-.title-organize-run {
-  background: var(--surface, transparent);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-  padding: 6px 12px;
-  white-space: nowrap;
-}
-
-.title-organize-run:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
+/* 「整理此目录」的盒式样式走上面 .title-resources-search/.sub-policy-actions 共享的
+   那条规则（同文件靠前）。这里曾有一份等特异性的旧规则，按源码顺序会覆盖共享样式，
+   把按钮打回透明底——删掉，让三个面板的按钮真正长成同一副样子。 */
 
 .title-organize-copy,
 .title-organize-stopped {
@@ -5758,7 +5864,7 @@ select.setting-control {
 }
 
 .title-organize-stopped {
-  color: var(--danger, #b42318);
+  color: var(--negative);
 }
 
 .title-organize-subhead {
@@ -5784,7 +5890,7 @@ select.setting-control {
 }
 
 .title-organize-item-blocked {
-  border-left: 2px solid var(--danger, #b42318);
+  border-left: 2px solid var(--negative);
   padding-left: 8px;
 }
 
@@ -5795,6 +5901,221 @@ select.setting-control {
 
 .title-organize-item-meta,
 .title-organize-item-suggest {
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 0.8125rem;
+}
+
+/* 批次 5：订阅策略面板。这个面板上线时**一条 CSS 都没有**——sub-policy* 类名
+   在全仓库不存在，表单因此是浏览器默认样式：四个标签和输入框挤在同一行、
+   复选框漂在右端、预览结果是无序列表加点。这里补上整套：
+   字段栅格（两列，窄屏一列）、与设计系统同款的输入框/复选框/按钮、
+   以及预览结果的命中/排除两个清单（每条排除带原因）。 */
+.sub-policy {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sub-policy-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.sub-policy-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+/* 配没配过规则，一眼可辨。绿点 = 已配；灰 = 还没配。 */
+.sub-policy-unset,
+.sub-policy-set {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 0.78rem;
+}
+
+.sub-policy-unset {
+  color: var(--text-faint);
+}
+
+.sub-policy-set {
+  color: var(--accent);
+}
+
+.sub-policy-unset::before,
+.sub-policy-set::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sub-policy-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+/* 标签在输入框上方，输入框撑满栅格格——浏览器默认的「标签+控件挤一行」
+   在这里不存在。 */
+.sub-policy-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-policy-fields input {
+  width: 100%;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 6px 10px;
+}
+
+.sub-policy-fields input::placeholder {
+  color: var(--text-faint);
+}
+
+.sub-policy-fields input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(30, 215, 96, 0.22);
+}
+
+/* 「用正则」是横跨整行的一个开关，不占半个栅格。 */
+.sub-policy-regex {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.sub-policy-regex input {
+  width: auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sub-policy-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* 预览结果：一条标题 + 两个清单。清单限高内滚——候选多的时候卡片不无限拉长。 */
+.sub-policy-preview {
+  border-top: 1px solid var(--divider);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.sub-policy-headline {
+  color: var(--text);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.sub-policy-warn {
+  color: var(--warning);
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+.sub-policy-sublist-label {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  margin: 2px 0 0;
+}
+
+.sub-policy-matched,
+.sub-policy-excluded {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.sub-policy-matched li,
+.sub-policy-excluded li {
+  padding-left: 14px;
+  position: relative;
+  min-width: 0;
+}
+
+.sub-policy-matched li::before,
+.sub-policy-excluded li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.55em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.sub-policy-matched li {
+  color: var(--text-soft);
+}
+
+.sub-policy-matched li::before {
+  background: var(--accent);
+}
+
+.sub-policy-excluded li {
+  color: var(--text-muted);
+}
+
+.sub-policy-excluded li::before {
+  background: var(--text-faint);
+}
+
+/* 「为什么被排掉」——用户调规则靠的是这个，不是一个猜。 */
+.sub-policy-reason {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  color: var(--text-faint);
+  font-size: 0.72rem;
+}
+
+/* 保存/拒绝/失败三态同班不同色：保存是绿，拒绝与失败是红——绝不能让一个
+   被 API 拒绝的保存看起来像成功。 */
+.sub-policy-copy {
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+.sub-policy-copy.is-ok {
+  color: var(--accent);
+}
+
+.sub-policy-copy.is-bad {
+  color: var(--negative);
+}
+
+@media (max-width: 860px) {
+  /* 手机上两列字段挤成一列——输入框不该窄于半个屏幕。 */
+  .sub-policy-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   draftToPolicy,
+  mapPolicyLoadResponse,
   mapPreviewResponse,
   mapSavedPolicy,
   previewHeadlineCopy,
@@ -218,5 +219,42 @@ describe("mapSavedPolicy", () => {
       useRegex: false,
       cooldownDays: 0,
     });
+  });
+});
+
+describe("mapPolicyLoadResponse — 挂载时回填（GET /api/titles/subscription-policy）", () => {
+  /**
+   * 这条映射修的是一个真 bug：面板此前从不 GET 已保存的策略，于是刷新页面后
+   * 表单永远空白、标题永远说「还没配规则」——用户存过的规则从眼前消失。
+   * 映射抽成纯函数，四种终局在没有 fetch 的情况下可测。
+   */
+  it("200 + 有策略 ⇒ 回填成草稿（刷新后规则还在眼前）", () => {
+    const draft = mapPolicyLoadResponse(200, {
+      policy: { mustContain: ["2160p", "简中"], mustNotContain: [], episodeFilter: "S01-S02", useRegex: true, cooldownDays: 3 },
+    });
+    expect(draft).toEqual({
+      mustContain: "2160p, 简中",
+      mustNotContain: "",
+      episodeFilter: "S01-S02",
+      useRegex: true,
+      cooldownDays: 3,
+    });
+  });
+
+  it("200 + policy: null ⇒ null（没配过规则，不是空草稿）", () => {
+    expect(mapPolicyLoadResponse(200, { policy: null })).toBeNull();
+  });
+
+  it("404（这部片没被追踪）⇒ null，降级成「还没配规则」而不是抛到页面外", () => {
+    expect(mapPolicyLoadResponse(404, { error: "title not tracked" })).toBeNull();
+  });
+
+  it("5xx ⇒ null（网络/上游失败同样降级，面板仍是可用表单）", () => {
+    expect(mapPolicyLoadResponse(502, { error: "boom" })).toBeNull();
+  });
+
+  it("200 但 body 形状坏了 ⇒ null（不让坏数据进表单）", () => {
+    expect(mapPolicyLoadResponse(200, { policy: "garbage" })).toBeNull();
+    expect(mapPolicyLoadResponse(200, null)).toBeNull();
   });
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type { ResourceCandidateView } from "@media-track/workflow";
+import type { ResourceCandidateView, ResourceType } from "@media-track/workflow";
 import { useRouter } from "../lib/use-router";
 
 /**
@@ -130,6 +130,31 @@ function formatPostedAt(iso: string): string {
   return parsed.toISOString().slice(0, 10);
 }
 
+/**
+ * 候选的资源类型 ⇒ 用户看得懂的品牌名。与设置页、各网盘连接组件同一套叫法
+ * （115/夸克/天翼/123/光鸭），磁力叫「磁力」—— pansou 的 source 字段虽然也带
+ * 品牌，但一枚固定位置的标签让「网盘秒传候选」和「磁力候选」在一眼里分得开，
+ * 后者要走 Prowlarr、且依赖网盘的磁力秒传能力。
+ */
+export function resourceTypeLabel(type: ResourceType): string {
+  switch (type) {
+    case "115":
+      return "115";
+    case "quark":
+      return "夸克";
+    case "tianyi":
+      return "天翼";
+    case "123":
+      return "123";
+    case "guangya":
+      return "光鸭";
+    case "magnet":
+      return "磁力";
+    case "manual":
+      return "手动";
+  }
+}
+
 export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
   const [state, setState] = useState<PanelState>({ kind: "idle" });
   const [importState, setImportState] = useState<ImportState>({ kind: "idle" });
@@ -190,7 +215,7 @@ export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
   const submitting = importState.kind === "submitting";
 
   return (
-    <section className="title-resources" aria-label="资源">
+    <section className="hub-panel title-resources" aria-label="资源">
       <header className="title-resources-head">
         <h2>资源</h2>
         <button
@@ -213,7 +238,10 @@ export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
 
       {state.kind === "ready" && state.candidates.length > 0 && (
         <>
-          {state.cached && <p className="title-resources-cached">30 分钟内的缓存结果。</p>}
+          <div className="title-resources-summary">
+            <span>{state.candidates.length} 个候选</span>
+            {state.cached && <span className="title-resources-cached">30 分钟内的缓存结果</span>}
+          </div>
           <ul className="title-resources-list">
             {state.candidates.map((candidate) => {
               // 缓存命中时没有 snapshotId：那一份快照的归属要以 DB 为准，前端不重推导，
@@ -222,13 +250,19 @@ export function TitleResourcePanel({ tmdbId }: ResourcePanelProps) {
               const rowBusy = submitting && importState.kind === "submitting" && importState.candidateId === candidate.candidateId;
               return (
                 <li key={candidate.candidateId} className="title-resources-item">
-                  <span className="title-resources-item-title">{candidate.title}</span>
-                  <span className="title-resources-item-meta">
-                    {candidate.source}
-                    {candidate.sizeBytes !== undefined && ` · ${formatSize(candidate.sizeBytes)}`}
-                    {candidate.postedAt !== undefined && ` · ${formatPostedAt(candidate.postedAt)}`}
-                    {candidate.seeders !== undefined && ` · ${candidate.seeders} 做种`}
-                  </span>
+                  <div className="title-resources-item-main">
+                    {/* 候选标题是网盘里的原始文件名，可以很长：单行截断，
+                        全名留 title 属性，鼠标悬停能看到。 */}
+                    <span className="title-resources-item-title" title={candidate.title}>
+                      {candidate.title}
+                    </span>
+                    <span className="title-resources-item-meta">
+                      <span className="resource-type-chip">{resourceTypeLabel(candidate.type)}</span>
+                      {candidate.sizeBytes !== undefined && ` · ${formatSize(candidate.sizeBytes)}`}
+                      {candidate.postedAt !== undefined && ` · ${formatPostedAt(candidate.postedAt)}`}
+                      {candidate.seeders !== undefined && ` · ${candidate.seeders} 做种`}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     className="title-resources-import"
