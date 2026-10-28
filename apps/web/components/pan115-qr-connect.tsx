@@ -61,11 +61,14 @@ export function Pan115QrConnect() {
           status = data.status;
         }
       } catch {
-        // transient network issue: keep polling
+        // transient network issue: wait briefly before retrying
+        await new Promise((r) => setTimeout(r, 2000));
       }
       if (generation.current !== myGeneration) return;
       if (status === "scanned") {
         setPhase("scanned");
+        // 115 的 status===1 (scanned) 端点立即返回不挂起，需延时避免狂发请求造成风控/拥塞
+        await new Promise((r) => setTimeout(r, 1500));
       } else if (status === "confirmed") {
         setPhase("confirming");
         await confirm(currentSession, myGeneration);

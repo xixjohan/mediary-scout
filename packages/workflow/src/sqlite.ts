@@ -1473,7 +1473,12 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     if (value === null || !isSecretSettingKey(key)) {
       return value;
     }
-    return decryptSecret(value);
+    try {
+      return decryptSecret(value);
+    } catch (error) {
+      console.error(`[media-track] setting ${key} undecryptable, fallback to null: ${String(error)}`);
+      return null;
+    }
   }
 
   async setSetting(key: string, value: string): Promise<void> {
@@ -1489,7 +1494,14 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     if (value === null || !isSecretSettingKey(key)) {
       return value;
     }
-    return decryptSecret(value);
+    try {
+      return decryptSecret(value);
+    } catch (error) {
+      console.error(
+        `[media-track] account setting ${key} for ${accountId} undecryptable, fallback to null: ${String(error)}`,
+      );
+      return null;
+    }
   }
 
   async setAccountSetting(accountId: string, key: string, value: string): Promise<void> {
@@ -1558,14 +1570,25 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   private connectedStorageFromRow(row: Record<string, unknown>): ConnectedStorage {
+    let payload: unknown = {};
+    try {
+      // payload 里是网盘凭据（cookie）：落盘加密，出库解密（任务单 S1.5）。
+      payload = JSON.parse(decryptSecret(String(row.payload)));
+    } catch (error) {
+      // 密钥更换 / 丢失时，findConnectedStorageByUid / tryUnbind 仍需返回网盘身份元数据（id,
+      // accountId, provider, providerUid 等），以便重新扫码覆盖（refresh）或正常解绑。
+      // 绝不外抛，否则会直接让整个扫码/解绑接口 502。
+      console.error(
+        `[media-track] connected storage ${String(row.id)} payload undecryptable: ${String(error)}`,
+      );
+    }
     return {
       id: String(row.id),
       accountId: String(row.account_id),
       provider: String(row.provider),
       providerUid: String(row.provider_uid),
       label: (row.label as string | null | undefined) ?? null,
-      // payload 里是网盘凭据（cookie）：落盘加密，出库解密（任务单 S1.5）。
-      payload: JSON.parse(decryptSecret(String(row.payload))),
+      payload,
       rootCid: (row.root_cid as string | null | undefined) ?? null,
       moviesCid: (row.movies_cid as string | null | undefined) ?? null,
       tvCid: (row.tv_cid as string | null | undefined) ?? null,
