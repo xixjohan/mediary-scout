@@ -7,13 +7,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml"><img src="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/fancydirty/mediary-scout/releases/latest"><img src="https://img.shields.io/github/v/release/fancydirty/mediary-scout?display_name=tag" alt="Latest release"></a>
+  <a href="https://github.com/xixjohan/mediary-scout/actions/workflows/ci.yml"><img src="https://github.com/xixjohan/mediary-scout/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/xixjohan/mediary-scout/releases/latest"><img src="https://img.shields.io/github/v/release/xixjohan/mediary-scout?display_name=tag" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-0BSD-blue" alt="license"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 Download</a> ·
+  <a href="https://github.com/xixjohan/mediary-scout/releases/latest">📥 Download</a> ·
   <a href="https://mediaryscout.app">🌐 Website</a> ·
   <a href="https://demo.mediaryscout.app">🔭 Live demo</a> ·
   <a href="README.md">中文</a>
@@ -21,7 +21,7 @@
 
 Ask for a movie, show or anime; an agent searches for it, transfers the best match into your own drive (Quark / 115 / GuangYaPan / 123 / Tianyi), reads the drive back to confirm it landed, and keeps filling in episodes that are still missing.
 
-Download: [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases/latest) (macOS / Windows desktop app)
+Download: [GitHub Releases](https://github.com/xixjohan/mediary-scout/releases/latest) (macOS / Windows desktop app)
 
 Want to help? [An Issue or a docs fix beats a donation](docs/support/README.md)
 
@@ -35,15 +35,15 @@ Community: this project takes part in and endorses the [LINUX DO community](http
 
 | Platform | Download | Notes |
 |---|---|---|
-| macOS (Apple Silicon) | [.dmg](https://github.com/fancydirty/mediary-scout/releases/latest) | Signed and notarized |
-| Windows (x64) | [.exe](https://github.com/fancydirty/mediary-scout/releases/latest) | Unsigned: when SmartScreen prompts, click "Run anyway" |
+| macOS (Apple Silicon) | [.dmg](https://github.com/xixjohan/mediary-scout/releases/latest) | Signed and notarized |
+| Windows (x64) | [.exe](https://github.com/xixjohan/mediary-scout/releases/latest) | Unsigned: when SmartScreen prompts, click "Run anyway" |
 
 Install, open it, connect a drive and add an AI model in Settings, then search a title and hit 获取. The app tells you when a new version is out.
 
 ### Docker (NAS / router / server)
 
 ```bash
-git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout
+git clone https://github.com/xixjohan/mediary-scout && cd mediary-scout
 docker compose up -d
 ```
 
@@ -90,10 +90,10 @@ Mediary Scout is open-source, self-hosted software. It is not offered, and never
 - [TMDB](https://www.themoviedb.org/): metadata (this product is not endorsed or certified by TMDB)
 
 ## Star History
-<a href="https://www.star-history.com/?repos=fancydirty%2Fmediary-scout&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=xixjohan%2Fmediary-scout&type=date&legend=top-left">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=fancydirty/mediary-scout&type=date&theme=dark&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=fancydirty/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=fancydirty/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&theme=dark&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
   </picture>
 </a>

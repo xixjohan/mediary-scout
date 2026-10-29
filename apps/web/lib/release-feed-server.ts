@@ -1,14 +1,12 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { compareReleaseTags, parseReleaseNotes, parseReleaseTag, type ReleaseNote } from "./release-version";
 import { normalizeCommit } from "./deployment-update";
 
 /**
- * 在线更新源（S5.6，需求 #5）：默认指向**当前仓库** `xixjohan/mediary-scout`
- * ——源码直跑的实例要能检查自己的发布，而不是永远盯着上游（此前默认上游，
- * 只有 Release Docker 写入 `MEDIA_TRACK_UPDATE_REPO=github.repository` 的镜像
- * 才指得对，源码运行与本地 dev 全部指向别处）。需要指回上游或别的 fork 时用
- * `MEDIA_TRACK_UPDATE_REPO=<owner>/<name>` 覆盖。
- * 空值/空白按未设处理；畸形值直接抛错——拼出一个坏 URL 会让更新检查静默失败，
- * 而那正是「更新源指错了」最难发现的形式。
+ * 在线更新源（S5.6，需求 #5）：完全独立指向**当前仓库** `xixjohan/mediary-scout`。
+ * 与原仓库完全解耦，不再依赖或回退到原仓库地址。
+ * 如需配置其他镜像源，使用 `MEDIA_TRACK_UPDATE_REPO=<owner>/<name>` 显式指定。
  */
 export const DEFAULT_UPDATE_REPO = "xixjohan/mediary-scout";
 
@@ -23,18 +21,9 @@ export function updateRepoSlug(): string {
   return raw;
 }
 
-/** Every `v…` tag in one response (the tags list API pages at 30, which would lose the
- *  running release once 30 newer ones exist). Old semver tags come back too and are
- *  dropped by parseReleaseTag. Release tags must be lightweight: an annotated tag's
- *  ref points at a tag object, not a commit. */
-const TAGS_URL = () => `https://api.github.com/repos/${updateRepoSlug()}/git/matching-refs/tags/v`;
 const OK_TTL_MS = 60 * 60 * 1000;
 const FAIL_TTL_MS = 5 * 60 * 1000;
-/** Notes fetched for the newest N releases only (the tab shows 3, "更早" expands to 10). */
 const NOTES_LIMIT = 10;
-const LATEST_RELEASE_URL = () => `https://api.github.com/repos/${updateRepoSlug()}/releases/latest`;
-/** Installers are only trusted from this repo's own release downloads. */
-const DOWNLOAD_PREFIX = () => `https://github.com/${updateRepoSlug()}/releases/download/`;
 
 export interface ReleaseEntry {
   tag: string;
@@ -54,12 +43,10 @@ export interface DesktopRelease {
 let cache: { at: number; ttl: number; feed: ReleaseEntry[] } | null = null;
 let desktopCache: { at: number; ttl: number; release: DesktopRelease | null } | null = null;
 const relationCache = new Map<string, { at: number; relation: CommitRelation | null }>();
-/** The fetch under way, shared by every caller that arrives meanwhile: the settings badge
- *  polls every 8 s per open tab, and a cold feed is up to 11 GitHub requests. */
+
 let feedInFlight: Promise<ReleaseEntry[]> | null = null;
 let desktopInFlight: Promise<DesktopRelease | null> | null = null;
 const relationInFlight = new Map<string, Promise<CommitRelation | null>>();
-/** Bumped by 「检查更新」: a fetch that started before it must not refill the cache. */
 let generation = 0;
 
 export function invalidateReleaseFeedCache(): void {
@@ -76,7 +63,6 @@ export function invalidateReleaseFeedCache(): void {
 export type CommitRelation = "ahead" | "behind" | "identical" | "diverged";
 const RELATIONS = new Set<CommitRelation>(["ahead", "behind", "identical", "diverged"]);
 
-/** Null = unknown (offline, rate-limited, unknown commit). Callers must treat unknown as "don't offer an update". */
 export async function fetchCommitRelation(
   base: string,
   head: string,
@@ -95,15 +81,26 @@ export async function fetchCommitRelation(
   return pending;
 }
 
-async function loadCommitRelation(key: string, fetchImpl: typeof fetch, started: number): Promise<CommitRelation | null> {
-  let relation: CommitRelation | null = null;
+async function fetchRelationFromRepo(
+  fetchImpl: typeof fetch,
+  slug: string,
+  key: string,
+): Promise<{ networkOk: boolean; found: boolean; relation: CommitRelation | null }> {
   try {
-    const raw = await getText(fetchImpl, `https://api.github.com/repos/${updateRepoSlug()}/compare/${key}`);
-    const status = raw ? (JSON.parse(raw) as { status?: unknown }).status : null;
-    relation = typeof status === "string" && RELATIONS.has(status as CommitRelation) ? (status as CommitRelation) : null;
+    const raw = await getText(fetchImpl, `https://api.github.com/repos/${slug}/compare/${key}`);
+    if (raw === null) return { networkOk: true, found: false, relation: null };
+    const status = (JSON.parse(raw) as { status?: unknown }).status;
+    const relation = typeof status === "string" && RELATIONS.has(status as CommitRelation) ? (status as CommitRelation) : null;
+    return { networkOk: true, found: Boolean(relation), relation };
   } catch {
-    relation = null;
+    return { networkOk: false, found: false, relation: null };
   }
+}
+
+async function loadCommitRelation(key: string, fetchImpl: typeof fetch, started: number): Promise<CommitRelation | null> {
+  const repo = updateRepoSlug();
+  const repoRes = await fetchRelationFromRepo(fetchImpl, repo, key);
+  const relation = repoRes.relation;
   if (started === generation) relationCache.set(key, { at: Date.now(), relation });
   return relation;
 }
@@ -121,7 +118,6 @@ async function getText(
   return response.ok ? await response.text() : null;
 }
 
-/** Newest first. Failure-tolerant: an offline instance gets [] (and does not retry for 5 minutes). */
 export async function fetchReleaseFeed(fetchImpl: typeof fetch = fetch): Promise<ReleaseEntry[]> {
   if (cache && Date.now() - cache.at < cache.ttl) return cache.feed;
   if (feedInFlight) return feedInFlight;
@@ -133,12 +129,42 @@ export async function fetchReleaseFeed(fetchImpl: typeof fetch = fetch): Promise
   return pending;
 }
 
-async function loadReleaseFeed(fetchImpl: typeof fetch, started: number): Promise<ReleaseEntry[]> {
-  let feed: ReleaseEntry[] = [];
-  let ttl = FAIL_TTL_MS;
+export function readLocalReleaseNotes(tag: string): string | null {
   try {
-    const raw = await getText(fetchImpl, TAGS_URL());
-    const list = raw ? (JSON.parse(raw) as Array<{ ref?: unknown; object?: { sha?: unknown; type?: unknown } }>) : [];
+    const candidates = [
+      join(process.cwd(), "release-notes", `${tag}.md`),
+      join(/*turbopackIgnore: true*/ process.cwd(), "..", "..", "release-notes", `${tag}.md`),
+    ];
+    for (const p of candidates) {
+      if (existsSync(p)) return readFileSync(p, "utf-8");
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+async function fetchFeedFromRepo(
+  fetchImpl: typeof fetch,
+  slug: string,
+): Promise<{ networkOk: boolean; emptyOrNotFound: boolean; feed: ReleaseEntry[] }> {
+  let raw: string | null = null;
+  try {
+    raw = await getText(fetchImpl, `https://api.github.com/repos/${slug}/git/matching-refs/tags/v`);
+  } catch {
+    return { networkOk: false, emptyOrNotFound: false, feed: [] };
+  }
+
+  if (raw === null) {
+    return { networkOk: true, emptyOrNotFound: true, feed: [] };
+  }
+
+  try {
+    const list = JSON.parse(raw) as Array<{ ref?: unknown; object?: { sha?: unknown; type?: unknown } }>;
+    if (!Array.isArray(list) || list.length === 0) {
+      return { networkOk: true, emptyOrNotFound: true, feed: [] };
+    }
+
     const releases = list
       .map((item) => {
         const name = typeof item.ref === "string" ? item.ref.replace(/^refs\/tags\//, "") : "";
@@ -149,30 +175,46 @@ async function loadReleaseFeed(fetchImpl: typeof fetch, started: number): Promis
       })
       .filter((item): item is { tag: string; date: string; commit: string } => item !== null)
       .sort((a, b) => compareReleaseTags(b.tag, a.tag));
-    feed = await Promise.all(
+
+    if (releases.length === 0) {
+      return { networkOk: true, emptyOrNotFound: true, feed: [] };
+    }
+
+    const feed = await Promise.all(
       releases.map(async (release, index) => {
         if (index >= NOTES_LIMIT) return { ...release, notes: [] };
-        const md = await getText(
+        let md = await getText(
           fetchImpl,
-          `https://api.github.com/repos/${updateRepoSlug()}/contents/release-notes/${release.tag}.md?ref=${release.tag}`,
+          `https://api.github.com/repos/${slug}/contents/release-notes/${release.tag}.md?ref=${release.tag}`,
           "application/vnd.github.raw",
         ).catch(() => null);
+        if (!md && fetchImpl === fetch) {
+          md = readLocalReleaseNotes(release.tag);
+        }
         return { ...release, notes: md ? parseReleaseNotes(md) : [] };
       }),
     );
-    if (raw) ttl = OK_TTL_MS;
+    return { networkOk: true, emptyOrNotFound: false, feed };
   } catch {
-    feed = [];
+    return { networkOk: true, emptyOrNotFound: true, feed: [] };
   }
+}
+
+async function loadReleaseFeed(fetchImpl: typeof fetch, started: number): Promise<ReleaseEntry[]> {
+  let feed: ReleaseEntry[] = [];
+  let ttl = FAIL_TTL_MS;
+  const repo = updateRepoSlug();
+  const res = await fetchFeedFromRepo(fetchImpl, repo);
+
+  if (res.networkOk && res.feed.length > 0) {
+    feed = res.feed;
+    ttl = OK_TTL_MS;
+  }
+
   if (started === generation) cache = { at: Date.now(), ttl, feed };
   return feed;
 }
 
-/** Null when GitHub is unreachable, the latest release is not a date release (e.g. v1.4.1),
- *  or it does not yet include both a .dmg and an .exe from this repo. The release is created
- *  before the assets finish uploading.
- *  An hour only when both installers came back; five minutes otherwise, so the upload window
- *  is not hidden for an hour. */
 export async function fetchLatestDesktopRelease(fetchImpl: typeof fetch = fetch): Promise<DesktopRelease | null> {
   if (desktopCache && Date.now() - desktopCache.at < desktopCache.ttl) return desktopCache.release;
   if (desktopInFlight) return desktopInFlight;
@@ -184,30 +226,55 @@ export async function fetchLatestDesktopRelease(fetchImpl: typeof fetch = fetch)
   return pending;
 }
 
+async function fetchDesktopReleaseFromRepo(
+  fetchImpl: typeof fetch,
+  slug: string,
+): Promise<{ networkOk: boolean; repoHasRelease: boolean; release: DesktopRelease | null }> {
+  let raw: string | null = null;
+  try {
+    raw = await getText(fetchImpl, `https://api.github.com/repos/${slug}/releases/latest`);
+  } catch {
+    return { networkOk: false, repoHasRelease: false, release: null };
+  }
+
+  if (raw === null) {
+    return { networkOk: true, repoHasRelease: false, release: null };
+  }
+
+  try {
+    const release = desktopReleaseFrom(JSON.parse(raw), slug);
+    return { networkOk: true, repoHasRelease: true, release };
+  } catch {
+    return { networkOk: true, repoHasRelease: false, release: null };
+  }
+}
+
 async function loadLatestDesktopRelease(fetchImpl: typeof fetch, started: number): Promise<DesktopRelease | null> {
   let release: DesktopRelease | null = null;
   let ttl = FAIL_TTL_MS;
-  try {
-    const raw = await getText(fetchImpl, LATEST_RELEASE_URL());
-    if (raw) release = desktopReleaseFrom(JSON.parse(raw));
-    if (release) ttl = OK_TTL_MS;
-  } catch {
-    release = null;
+  const repo = updateRepoSlug();
+  const res = await fetchDesktopReleaseFromRepo(fetchImpl, repo);
+
+  if (res.networkOk && res.release) {
+    release = res.release;
+    ttl = OK_TTL_MS;
   }
+
   if (started === generation) desktopCache = { at: Date.now(), ttl, release };
   return release;
 }
 
-function desktopReleaseFrom(body: unknown): DesktopRelease | null {
+function desktopReleaseFrom(body: unknown, slug: string): DesktopRelease | null {
   const data = (body ?? {}) as { tag_name?: unknown; assets?: unknown };
   if (typeof data.tag_name !== "string" || !parseReleaseTag(data.tag_name)) return null;
   const assets = Array.isArray(data.assets)
     ? (data.assets as Array<{ name?: unknown; browser_download_url?: unknown } | null>)
     : [];
+  const downloadPrefix = `https://github.com/${slug}/releases/download/`;
   const installer = (extension: string): string | null => {
     for (const asset of assets) {
       const url = asset?.browser_download_url;
-      if (typeof asset?.name === "string" && asset.name.endsWith(extension) && typeof url === "string" && url.startsWith(DOWNLOAD_PREFIX())) {
+      if (typeof asset?.name === "string" && asset.name.endsWith(extension) && typeof url === "string" && url.startsWith(downloadPrefix)) {
         return url;
       }
     }
@@ -215,11 +282,10 @@ function desktopReleaseFrom(body: unknown): DesktopRelease | null {
   };
   const dmgUrl = installer(".dmg");
   const exeUrl = installer(".exe");
-  // One asset can be missing for a minute while the upload finishes, or for good if it failed.
   if (!dmgUrl || !exeUrl) return null;
   return {
     tag: data.tag_name,
-    pageUrl: `https://github.com/${updateRepoSlug()}/releases/tag/${data.tag_name}`,
+    pageUrl: `https://github.com/${slug}/releases/tag/${data.tag_name}`,
     dmgUrl,
     exeUrl,
   };

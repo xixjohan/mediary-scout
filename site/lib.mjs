@@ -6,7 +6,7 @@ export function detectPlatform(ua) {
   return "other";
 }
 
-const RELEASES_PAGE = "https://github.com/fancydirty/mediary-scout/releases/latest";
+const RELEASES_PAGE = "https://github.com/xixjohan/mediary-scout/releases/latest";
 
 export function orderDownloads(release, platform) {
   const assets = release?.assets ?? [];

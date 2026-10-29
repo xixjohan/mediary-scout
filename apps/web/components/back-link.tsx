@@ -20,6 +20,7 @@ export function BackLink({
     <button
       className="back-link"
       type="button"
+      suppressHydrationWarning
       onClick={() => {
         if (window.history.length > 1) {
           router.back();
@@ -29,7 +30,7 @@ export function BackLink({
       }}
     >
       <ArrowLeft size={16} aria-hidden />
-      {label}
+      <span suppressHydrationWarning>{label}</span>
     </button>
   );
 }

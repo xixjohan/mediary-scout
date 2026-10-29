@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Activity, Aperture, Bell, HardDrive, Library, Settings } from "lucide-react";
+import { Activity, Aperture, Bell, Bot, HardDrive, Library, Settings } from "lucide-react";
 import { resolveIsDesktop } from "../lib/workflow-runtime";
 import { globalNavHref } from "@media-track/workflow";
 import { SearchNavLink } from "./search-memory";
@@ -16,7 +16,7 @@ export function AppSidebar({
   basePath = "/",
   activeStorageId,
 }: {
-  active: "search" | "library" | "notifications" | "activity" | "settings" | "storage" | "none";
+  active: "search" | "library" | "notifications" | "activity" | "settings" | "storage" | "chat" | "none";
   searchQuery?: string;
   /** Tree model: the active workspace path ("/w/<id>" or "/") so the search/library
    *  tabs keep you in the workspace you're viewing. */
@@ -63,6 +63,15 @@ export function AppSidebar({
             >
               <Library size={16} aria-hidden />
               订阅
+            </Link>
+          </li>
+          <li>
+            <Link
+              className={`nav-item ${active === "chat" ? "is-active" : ""}`}
+              href={globalNavHref("/chat", activeStorageId)}
+            >
+              <Bot size={16} aria-hidden />
+              助理
             </Link>
           </li>
           <li>

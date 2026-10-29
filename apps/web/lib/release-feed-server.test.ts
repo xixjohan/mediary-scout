@@ -336,3 +336,88 @@ describe("updateRepoSlug（S5.6：在线更新源可配置）", () => {
     expect(feed.map((entry) => entry.tag)).toEqual(["v2026.10.26"]);
   });
 });
+
+describe("Decoupled Repository Independence (独立仓库解耦规范)", () => {
+  afterEach(() => {
+    delete process.env.MEDIA_TRACK_UPDATE_REPO;
+    invalidateReleaseFeedCache();
+  });
+
+  it("完全独立请求当前仓库，绝不依赖或回退到原上游仓库", async () => {
+    delete process.env.MEDIA_TRACK_UPDATE_REPO;
+    invalidateReleaseFeedCache();
+    const currentTags = "https://api.github.com/repos/xixjohan/mediary-scout/git/matching-refs/tags/v";
+    const currentNotes = "https://api.github.com/repos/xixjohan/mediary-scout/contents/release-notes/v2026.10.29.md?ref=v2026.10.29";
+
+    const fetchImpl = fakeFetch({
+      [currentTags]: { status: 200, body: JSON.stringify([ref("v2026.10.29", "a".repeat(40))]) },
+      [currentNotes]: { status: 200, body: "- 新增 独立部署与解耦版本" },
+    });
+
+    const feed = await fetchReleaseFeed(fetchImpl);
+    expect(feed).toHaveLength(1);
+    expect(feed[0]?.tag).toBe("v2026.10.29");
+    expect(feed[0]?.notes).toEqual([{ kind: "add", text: "独立部署与解耦版本" }]);
+
+    // 确保任何请求 URL 都不含原仓库 fancydirty
+    for (const call of vi.mocked(fetchImpl).mock.calls) {
+      expect(String(call[0])).not.toContain("fancydirty");
+    }
+  });
+
+  it("当当前仓库返回 404 或空 tags 时，安全返回空数组，不进行任何向外回退", async () => {
+    delete process.env.MEDIA_TRACK_UPDATE_REPO;
+    invalidateReleaseFeedCache();
+    const currentTags = "https://api.github.com/repos/xixjohan/mediary-scout/git/matching-refs/tags/v";
+
+    const fetchImpl = fakeFetch({
+      [currentTags]: { status: 404, body: '{"message":"Not Found"}' },
+    });
+
+    const feed = await fetchReleaseFeed(fetchImpl);
+    expect(feed).toEqual([]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(fetchImpl).mock.calls[0]?.[0])).toBe(currentTags);
+  });
+
+  it("桌面发布信息完全独立从当前仓库获取，不产生原仓库回退", async () => {
+    delete process.env.MEDIA_TRACK_UPDATE_REPO;
+    invalidateReleaseFeedCache();
+    const currentLatest = "https://api.github.com/repos/xixjohan/mediary-scout/releases/latest";
+
+    const currentBody = JSON.stringify({
+      tag_name: "v2026.10.29",
+      assets: [
+        {
+          name: "Mediary.Scout-2026.1029.0-arm64.dmg",
+          browser_download_url: "https://github.com/xixjohan/mediary-scout/releases/download/v2026.10.29/Mediary.Scout-2026.1029.0-arm64.dmg",
+        },
+        {
+          name: "Mediary.Scout.Setup.2026.1029.0.exe",
+          browser_download_url: "https://github.com/xixjohan/mediary-scout/releases/download/v2026.10.29/Mediary.Scout.Setup.2026.1029.0.exe",
+        },
+      ],
+    });
+
+    const fetchImpl = fakeFetch({
+      [currentLatest]: { status: 200, body: currentBody },
+    });
+
+    const desktop = await fetchLatestDesktopRelease(fetchImpl);
+    expect(desktop).not.toBeNull();
+    expect(desktop?.tag).toBe("v2026.10.29");
+    expect(desktop?.dmgUrl).toContain("xixjohan/mediary-scout");
+    expect(desktop?.pageUrl).toContain("xixjohan/mediary-scout");
+
+    for (const call of vi.mocked(fetchImpl).mock.calls) {
+      expect(String(call[0])).not.toContain("fancydirty");
+    }
+  });
+
+  it("支持本地发布日志优先/降级读取", async () => {
+    const { readLocalReleaseNotes } = await import("./release-feed-server");
+    const notes = readLocalReleaseNotes("v2026.10.29");
+    expect(notes).not.toBeNull();
+    expect(notes).toContain("设计令牌");
+  });
+});

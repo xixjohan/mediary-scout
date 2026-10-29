@@ -27,6 +27,12 @@ vi.mock("../../../../lib/auth-chain", () => ({
 
 vi.mock("../../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: () => repo,
+  resolveGlobalWorkspace: vi.fn().mockResolvedValue({
+    accountId: "acct_default",
+    connectedStorageId: null,
+    basePath: "/",
+    activeStorageId: undefined,
+  }),
 }));
 
 const URL_SHAPE = /(?:https?|magnet):\/\/|ed2k:\/\//i;

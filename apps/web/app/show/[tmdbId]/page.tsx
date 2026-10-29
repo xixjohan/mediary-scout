@@ -124,6 +124,8 @@ async function ShowContent({
   const wParam = params0["w"];
   const w = Array.isArray(wParam) ? wParam[0] : wParam;
   const workspace = await resolveGlobalWorkspace(w);
+  const qParam = params0["q"];
+  const searchQuery = Array.isArray(qParam) ? qParam[0] : qParam;
   // `t` (the card's media type) disambiguates TMDB's movie/tv id namespaces for an
   // untracked title — without it a movie id can resolve to an unrelated tv show.
   const tParam = params0["t"];
@@ -153,6 +155,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
+            searchQuery={searchQuery}
           />
         ) : (
           <TvHub
@@ -161,6 +164,7 @@ async function ShowContent({
             basePath={workspace.basePath}
             backLabel={backLabel}
             backHref={backHref}
+            searchQuery={searchQuery}
           />
         )
       ) : (
@@ -182,12 +186,14 @@ function TvHub({
   basePath,
   backLabel,
   backHref,
+  searchQuery,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
+  searchQuery?: string | undefined;
 }) {
   const badge = aggregateBadge[view.aggregate];
   // The message card's episode picker: every episode of a tracked season in the library.
@@ -288,17 +294,25 @@ function TvHub({
         {view.overview ? <MovieSynopsis overview={view.overview} /> : null}
       </div>
 
-      <TitleResourcePanel tmdbId={view.tmdbId} mediaType="tv" seasonNumbers={view.seasons.map((s) => s.seasonNumber)} />
-
-      <OrganizePanel tmdbId={view.tmdbId} seasonNumber={view.seasons[0]?.seasonNumber} />
-
-      <SubscriptionPolicyPanel tmdbId={view.tmdbId} />
-
       <section className="hub-seasons" aria-label="季列表">
         <ul className="hub-season-list">
           <SeasonRowsWithSwap view={view} storageId={storageId} basePath={basePath} />
         </ul>
       </section>
+
+      <TitleResourcePanel
+        tmdbId={view.tmdbId}
+        mediaType="tv"
+        seasonNumbers={view.seasons.map((s) => s.seasonNumber)}
+        defaultKeyword={searchQuery?.trim() || view.title}
+        title={view.title}
+        year={view.year}
+        storageId={storageId}
+      />
+
+      <OrganizePanel tmdbId={view.tmdbId} seasonNumber={view.seasons[0]?.seasonNumber} />
+
+      <SubscriptionPolicyPanel tmdbId={view.tmdbId} />
       {view.aggregate !== "untracked" ? (
         <TitleMessageSection
           tmdbId={view.tmdbId}
@@ -330,12 +344,14 @@ function MovieHub({
   basePath,
   backLabel,
   backHref,
+  searchQuery,
 }: {
   view: MovieHubView;
   storageId: string | undefined;
   basePath: string;
   backLabel: string;
   backHref: string;
+  searchQuery?: string | undefined;
 }) {
   const meta = movieStateMeta[view.state];
   const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
@@ -434,7 +450,14 @@ function MovieHub({
             </div>
           ) : null}
         </div>
-        <TitleResourcePanel tmdbId={view.tmdbId} mediaType="movie" />
+        <TitleResourcePanel
+          tmdbId={view.tmdbId}
+          mediaType="movie"
+          defaultKeyword={searchQuery?.trim() || view.title}
+          title={view.title}
+          year={view.year}
+          storageId={storageId}
+        />
         {view.state !== "untracked" ? (
           <>
             <OrganizePanel tmdbId={view.tmdbId} seasonNumber={undefined} />
@@ -570,8 +593,19 @@ function SeasonRow({
             const stateClass = episode.displayState.replace("_", "-");
             const stateLabel = EPISODE_STATE_LABEL[episode.displayState];
             // A 待换 cell is a client piece: 「不换了」 on the message card restores it at once.
+            const isMissing = episode.displayState === "missing_aired";
             return swap.has(episode.episodeCode) ? (
               <SwapEpisodeCell key={episode.episodeCode} code={episode.episodeCode} stateClass={stateClass} stateLabel={stateLabel} />
+            ) : isMissing ? (
+              <a
+                href="#title-resources"
+                className={`episode-cell ${stateClass} episode-cell-link`}
+                key={episode.episodeCode}
+                title={`${episode.episodeCode} 缺集 · 点击前往下方检索资源`}
+              >
+                <strong>{episode.episodeCode.replace(/^S\d+/, "")}</strong>
+                <span>{stateLabel}</span>
+              </a>
             ) : (
               <div className={`episode-cell ${stateClass}`} key={episode.episodeCode}>
                 <strong>{episode.episodeCode.replace(/^S\d+/, "")}</strong>

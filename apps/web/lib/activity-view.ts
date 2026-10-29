@@ -100,6 +100,65 @@ async function stepsFor(
   return tailAgentStepViews(await repository.listAgentSteps(workflowRunId, scope));
 }
 
+async function fetchActiveRunsWithUnscopedFallback(
+  repository: Pick<WorkflowRepository, "listActiveWorkflowRuns">,
+  accountId?: string,
+  connectedStorageId?: string | null,
+): Promise<Array<Awaited<ReturnType<WorkflowRepository["listActiveWorkflowRuns"]>>[number]>> {
+  const scope =
+    accountId === undefined
+      ? undefined
+      : { accountId, connectedStorageId: connectedStorageId ?? null };
+  const scopedRuns = await repository.listActiveWorkflowRuns(scope);
+
+  // If a specific drive was targeted, also include account-level unscoped runs (connectedStorageId: null)
+  // so untracked title imports or legacy runs aren't hidden from the activity view.
+  // Cross-drive runs (connectedStorageId belonging to another drive) stay strictly isolated.
+  if (connectedStorageId != null && accountId != null) {
+    const allAccountRuns = await repository.listActiveWorkflowRuns({
+      accountId,
+      connectedStorageId: null,
+    });
+    const seenIds = new Set(scopedRuns.map((r) => r.workflowRun.id));
+    for (const run of allAccountRuns) {
+      if (run.connectedStorageId == null && !seenIds.has(run.workflowRun.id)) {
+        scopedRuns.push(run);
+        seenIds.add(run.workflowRun.id);
+      }
+    }
+  }
+
+  return scopedRuns.filter((snapshot) => isUserVisibleWorkflowKind(snapshot.workflowRun.kind));
+}
+
+async function fetchNotificationsWithUnscopedFallback(
+  repository: Pick<WorkflowRepository, "listNotifications">,
+  accountId?: string,
+  connectedStorageId?: string | null,
+): Promise<Array<Awaited<ReturnType<WorkflowRepository["listNotifications"]>>[number]>> {
+  const notifications = await repository.listNotifications({
+    limit: 30,
+    ...(accountId ? { accountId, connectedStorageId: connectedStorageId ?? null } : {}),
+  });
+
+  if (connectedStorageId != null && accountId != null) {
+    const allNotifs = await repository.listNotifications({
+      limit: 30,
+      accountId,
+      connectedStorageId: null,
+    });
+    const seenIds = new Set(notifications.map((n) => n.workflowRunId));
+    for (const notif of allNotifs) {
+      if (!seenIds.has(notif.workflowRunId)) {
+        notifications.push(notif);
+        seenIds.add(notif.workflowRunId);
+      }
+    }
+  }
+
+  return notifications;
+}
+
 export async function getActivityView(input: {
   repository: Pick<
     WorkflowRepository,
@@ -114,8 +173,11 @@ export async function getActivityView(input: {
     input.accountId === undefined
       ? undefined
       : { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null };
-  const activeRuns = (await input.repository.listActiveWorkflowRuns(scope)).filter((snapshot) =>
-    isUserVisibleWorkflowKind(snapshot.workflowRun.kind),
+
+  const activeRuns = await fetchActiveRunsWithUnscopedFallback(
+    input.repository,
+    input.accountId,
+    input.connectedStorageId,
   );
 
   // Poster backfill source: older notifications predate report.posterPath, so a
@@ -184,12 +246,11 @@ export async function getActivityView(input: {
   // no-op patrol checks. NO time filter — the client session-scopes by matching
   // against the runIds it observed active (notification createdAt ≈ run-start, so
   // a server-side since filter wrongly drops runs the user opened the page after).
-  const notifications = await input.repository.listNotifications({
-    limit: 30,
-    ...(input.accountId
-      ? { accountId: input.accountId, connectedStorageId: input.connectedStorageId ?? null }
-      : {}),
-  });
+  const notifications = await fetchNotificationsWithUnscopedFallback(
+    input.repository,
+    input.accountId,
+    input.connectedStorageId,
+  );
   const recentCompleted: ActivityCompletedItem[] = notifications
     .filter((notification) => notification.kind !== "already_current" && notification.report !== undefined)
     .map((notification) => {

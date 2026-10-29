@@ -45,7 +45,7 @@ export function homePage(): string {
 <!-- 结构化数据:让搜索引擎把 Connect 识别成「Mediary Scout 的增值服务」而不是
      一个孤立域名(品牌实体串联),并声明真实价格。三档必须与定价区可见档位逐一对应
      —— 结构化数据与可见内容不符是明确违规,有测试守着。 -->
-<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Product","@id":"https://mediaryconnect.app/#product","name":"Mediary Connect","url":"https://mediaryconnect.app/","description":"为自托管的 Mediary Scout 实例提供远程访问:一条 Cloudflare 加密隧道 + 专属域名,无需公网 IP、端口转发或自备域名。","brand":{"@type":"Brand","name":"Mediary"},"isRelatedTo":{"@type":"SoftwareApplication","name":"Mediary Scout","url":"https://mediaryscout.app/"},"offers":[{"@type":"Offer","name":"季度(3 个月)","price":"45","priceCurrency":"CNY","url":"https://mediaryconnect.app/pricing","availability":"https://schema.org/InStock"},{"@type":"Offer","name":"年度(12 个月)","price":"108","priceCurrency":"CNY","url":"https://mediaryconnect.app/pricing","availability":"https://schema.org/InStock"},{"@type":"Offer","name":"两年(24 个月)","price":"188","priceCurrency":"CNY","url":"https://mediaryconnect.app/pricing","availability":"https://schema.org/InStock"}]},{"@type":"Organization","@id":"https://mediaryconnect.app/#org","name":"DF Digital","url":"https://mediaryconnect.app/","sameAs":["https://github.com/fancydirty/mediary-scout","https://mediaryscout.app/"]}]}</script>
+<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Product","@id":"https://mediaryconnect.app/#product","name":"Mediary Connect","url":"https://mediaryconnect.app/","description":"为自托管的 Mediary Scout 实例提供远程访问:一条 Cloudflare 加密隧道 + 专属域名,无需公网 IP、端口转发或自备域名。","brand":{"@type":"Brand","name":"Mediary"},"isRelatedTo":{"@type":"SoftwareApplication","name":"Mediary Scout","url":"https://mediaryscout.app/"},"offers":[{"@type":"Offer","name":"季度(3 个月)","price":"45","priceCurrency":"CNY","url":"https://mediaryconnect.app/pricing","availability":"https://schema.org/InStock"},{"@type":"Offer","name":"年度(12 个月)","price":"108","priceCurrency":"CNY","url":"https://mediaryconnect.app/pricing","availability":"https://schema.org/InStock"},{"@type":"Offer","name":"两年(24 个月)","price":"188","priceCurrency":"CNY","url":"https://mediaryconnect.app/pricing","availability":"https://schema.org/InStock"}]},{"@type":"Organization","@id":"https://mediaryconnect.app/#org","name":"DF Digital","url":"https://mediaryconnect.app/","sameAs":["https://github.com/xixjohan/mediary-scout","https://mediaryscout.app/"]}]}</script>
 <meta property="og:site_name" content="Mediary Connect">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://mediaryconnect.app/">
@@ -408,7 +408,7 @@ ${BRAND_CSS}
     <div class="nv">
       <a href="#boundary" class="hm">边界</a>
       <a href="#pricing" class="hm">定价</a>
-      <a href="https://github.com/fancydirty/mediary-scout" class="gh" target="_blank" rel="noopener">${GH_ICON}<span class="st num">GitHub</span></a>
+      <a href="https://github.com/xixjohan/mediary-scout" class="gh" target="_blank" rel="noopener">${GH_ICON}<span class="st num">GitHub</span></a>
       <a href="/login" class="lg">登录</a>
     </div>
   </nav>
@@ -492,12 +492,12 @@ ${BRAND_CSS}
     </div>
     <div class="gopen" id="g2" hidden>
       <p><b>顺序是:先把 Scout 跑起来</b>(开源、免费,和付不付钱无关),确认它在局域网里能用,再回来买通道。</p>
-      <p>一台常开的小机器就够:群晖/威联通、软路由、迷你主机、旧笔记本都行。<a href="https://github.com/fancydirty/mediary-scout">部署文档 →</a></p>
+      <p>一台常开的小机器就够:群晖/威联通、软路由、迷你主机、旧笔记本都行。<a href="https://github.com/xixjohan/mediary-scout">部署文档 →</a></p>
       <p>买了但发现装不起来?<b>14 天内无理由全额退款</b>,不问原因,用过也退。</p>
     </div>
     <div class="gopen" id="g3" hidden>
       <p><b>那 Connect 帮不上你。</b>它不托管实例、不替你下载,付款之后也不会出现一个能直接登录的网站 —— 你拿到的是一条通往你自己机器的隧道;如果那台机器上什么都没有,域名就指向空气。</p>
-      <p>想要的是「注册就能用」的服务,Connect 不是它,别花这个钱。想自己搭一台?<a href="https://github.com/fancydirty/mediary-scout">部署文档在这儿</a>,那部分完全免费。</p>
+      <p>想要的是「注册就能用」的服务,Connect 不是它,别花这个钱。想自己搭一台?<a href="https://github.com/xixjohan/mediary-scout">部署文档在这儿</a>,那部分完全免费。</p>
     </div>
   </section>
 
@@ -543,7 +543,7 @@ ${BRAND_CSS}
 1. 确认 docker 与 docker compose 可用:\`docker version &amp;&amp; docker compose version\`。
    缺就先装(问我操作系统,不要自作主张换包管理器)。
 2. 选一个<b>数据盘</b>目录(不要装在系统盘的临时目录),
-   \`git clone https://github.com/fancydirty/mediary-scout\` 并 cd 进去。
+   \`git clone https://github.com/xixjohan/mediary-scout\` 并 cd 进去。
 3. 大陆网络下 Docker Hub 常年拉不动:首次启动<b>之前</b>在这个目录的 .env 里加一行
    \`DOCKER_MIRROR=docker.1ms.run\`(拉不动再换 dockerproxy.net 或 docker.m.daocloud.io)。
    境外网络不用设。除此之外不需要往 .env 里写任何东西。
@@ -605,7 +605,7 @@ ${BRAND_CSS}
 ── A 段:装 Scout ──
 0. 先问我:本机还是远程?远程要 SSH 目标。连不上停下问我,绝不猜。
 1. \`docker version &amp;&amp; docker compose version\`,缺就先装(问我操作系统)。
-2. 选数据盘目录,\`git clone https://github.com/fancydirty/mediary-scout\`,cd 进去。
+2. 选数据盘目录,\`git clone https://github.com/xixjohan/mediary-scout\`,cd 进去。
 3. 大陆网络:首次启动前在 .env 里加一行 \`DOCKER_MIRROR=docker.1ms.run\`
    (拉不动再换别的镜像源);境外网络不用设。
 4. \`docker compose up -d\`。
@@ -693,14 +693,14 @@ ${BRAND_CSS}
     <p>Cloudflare Tunnel 本身免费。如果你有自己的 CF 账号和一个域名,完全可以自己搭出一条一样的通道 —— 我们的开源文档里就写了怎么做。</p>
     <p>这里卖的是省事:不用买域名(约 ¥70/年)、不用配 DNS、不用维护证书轮换,以及一个稳定运营、不跑路的承诺。<b>能自己搞定的人,建议自己搞。</b></p>
     <p>剩下的人 —— 不想再多养一个要操心的东西的人 —— 这 ¥45 一季买的就是「这件事从此不用你想」。</p>
-    <p class="sign">Mediary Scout 与 Connect 由我一个人开发维护,Connect 的收入用来养 Scout 的持续开发。代码在 <a href="https://github.com/fancydirty/mediary-scout">GitHub</a> 上,你可以自己看它是不是真的只把数据留在本地。</p>
+    <p class="sign">Mediary Scout 与 Connect 由我一个人开发维护,Connect 的收入用来养 Scout 的持续开发。代码在 <a href="https://github.com/xixjohan/mediary-scout">GitHub</a> 上,你可以自己看它是不是真的只把数据留在本地。</p>
   </section>
 
   </main>
 
   <footer class="ft">
     Mediary Connect · 自托管 <a href="https://mediaryscout.app">Mediary Scout</a> 的远程访问服务<br>
-    <a href="/pricing">定价</a> · <a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a> · <a href="https://github.com/fancydirty/mediary-scout">GitHub</a><br>
+    <a href="/pricing">定价</a> · <a href="/terms">服务条款</a> · <a href="/privacy">隐私政策</a> · <a href="/refund">退款政策</a> · <a href="/contact">联系我们</a> · <a href="https://github.com/xixjohan/mediary-scout">GitHub</a><br>
     运营主体 DF Digital · Waffo.com Limited 是记录商户
   </footer>
 

@@ -51,7 +51,7 @@ describe("isZhBlock", () => {
     // 这两个是真实翻车案例:按数量判会被当成英文
     expect(isZhBlock("支持与商务:**support@mediaryconnect.app**")).toBe(true);
     expect(
-      isZhBlock("Mediary Scout 是开源项目:[github.com/fancydirty/mediary-scout](https://github.com/fancydirty/mediary-scout)"),
+      isZhBlock("Mediary Scout 是开源项目:[github.com/xixjohan/mediary-scout](https://github.com/xixjohan/mediary-scout)"),
     ).toBe(true);
     // 纯英文仍是英文
     expect(isZhBlock("Your slug is kept forever and nobody can take it")).toBe(false);

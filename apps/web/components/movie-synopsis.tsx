@@ -29,11 +29,11 @@ export function MovieSynopsis({ overview }: { overview: string }) {
   // Desktop: static full text — no interactive control to focus.
   if (!mobile) {
     return (
-      <section className="movie-synopsis is-expanded" aria-labelledby="movie-synopsis-title">
-        <h2 className="movie-synopsis-label" id="movie-synopsis-title">
+      <section className="movie-synopsis is-expanded" aria-labelledby="movie-synopsis-title" suppressHydrationWarning>
+        <h2 className="movie-synopsis-label" id="movie-synopsis-title" suppressHydrationWarning>
           简介
         </h2>
-        <div className="movie-synopsis-body">{text}</div>
+        <div className="movie-synopsis-body" suppressHydrationWarning>{text}</div>
       </section>
     );
   }
@@ -42,8 +42,9 @@ export function MovieSynopsis({ overview }: { overview: string }) {
     <section
       className={`movie-synopsis${expanded ? " is-expanded" : " is-collapsed"}`}
       aria-labelledby="movie-synopsis-title"
+      suppressHydrationWarning
     >
-      <h2 className="movie-synopsis-label" id="movie-synopsis-title">
+      <h2 className="movie-synopsis-label" id="movie-synopsis-title" suppressHydrationWarning>
         简介
       </h2>
       <button
@@ -52,7 +53,7 @@ export function MovieSynopsis({ overview }: { overview: string }) {
         aria-expanded={expanded}
         onClick={() => setExpanded((value) => !value)}
       >
-        <span className="movie-synopsis-body">{text}</span>
+        <span className="movie-synopsis-body" suppressHydrationWarning>{text}</span>
         <span className="movie-synopsis-hint">{expanded ? "收起" : "轻触展开全文"}</span>
       </button>
     </section>

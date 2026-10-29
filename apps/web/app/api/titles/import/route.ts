@@ -5,7 +5,7 @@ import {
   type ResourceSnapshot,
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
-import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
+import { getWorkflowRepository, resolveGlobalWorkspace } from "../../../../lib/workflow-runtime";
 
 /**
  * POST /api/titles/import — 手动入库 (batch 3, ①).
@@ -105,6 +105,11 @@ export async function POST(request: NextRequest) {
   }
 
   // 4) The command re-validates membership + TTL and reserves the run.
+  let targetStorageId = record.connectedStorageId;
+  if (!targetStorageId) {
+    const ws = await resolveGlobalWorkspace(undefined);
+    targetStorageId = ws.connectedStorageId;
+  }
   const result = await queueManualImport({
     request: {
       snapshot,
@@ -112,7 +117,7 @@ export async function POST(request: NextRequest) {
       title: record.title,
       season: record.season,
       accountId,
-      connectedStorageId: record.connectedStorageId,
+      connectedStorageId: targetStorageId,
     },
     repository: getWorkflowRepository(),
   });

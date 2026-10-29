@@ -8,13 +8,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml"><img src="https://github.com/fancydirty/mediary-scout/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/fancydirty/mediary-scout/releases/latest"><img src="https://img.shields.io/github/v/release/fancydirty/mediary-scout?display_name=tag" alt="最新版本"></a>
+  <a href="https://github.com/xixjohan/mediary-scout/actions/workflows/ci.yml"><img src="https://github.com/xixjohan/mediary-scout/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/xixjohan/mediary-scout/releases/latest"><img src="https://img.shields.io/github/v/release/xixjohan/mediary-scout?display_name=tag" alt="最新版本"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-0BSD-blue" alt="license"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/fancydirty/mediary-scout/releases/latest">📥 下载</a> ·
+  <a href="https://github.com/xixjohan/mediary-scout/releases/latest">📥 下载</a> ·
   <a href="https://mediaryscout.app">🌐 官网</a> ·
   <a href="https://demo.mediaryscout.app">🔭 在线 Demo</a> ·
   <a href="README.en.md">English</a>
@@ -22,7 +22,7 @@
 
 你说要哪部电影、剧或番，agent 自己去搜资源，挑最合适的转存进你自己的网盘（夸克 / 115 / 光鸭 / 123 / 天翼），转完读回来确认真的到了，之后缺哪集还会接着补。
 
-点击前往下载：[GitHub Releases](https://github.com/fancydirty/mediary-scout/releases/latest)（macOS / Windows 桌面版）
+点击前往下载：[GitHub Releases](https://github.com/xixjohan/mediary-scout/releases/latest)（macOS / Windows 桌面版）
 
 想帮忙？[提 Issue 或改文档，比捐款管用](docs/support/README.md)
 
@@ -36,8 +36,8 @@
 
 | 平台 | 下载 | 说明 |
 |---|---|---|
-| macOS（Apple 芯片） | [.dmg](https://github.com/fancydirty/mediary-scout/releases/latest) | 已签名公证，直接打开 |
-| Windows（x64） | [.exe](https://github.com/fancydirty/mediary-scout/releases/latest) | 未签名，SmartScreen 弹窗时点「仍要运行」 |
+| macOS（Apple 芯片） | [.dmg](https://github.com/xixjohan/mediary-scout/releases/latest) | 已签名公证，直接打开 |
+| Windows（x64） | [.exe](https://github.com/xixjohan/mediary-scout/releases/latest) | 未签名，SmartScreen 弹窗时点「仍要运行」 |
 
 安装后打开 → 在设置里连网盘、填 AI 模型 → 搜片点「获取」。有新版本时应用会提示你下载。
 
@@ -46,7 +46,7 @@
 **方式一：发布镜像（推荐）**——每个发布版本都会自动构建并推送到 GHCR，不用本地编译：
 
 ```bash
-git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout
+git clone https://github.com/xixjohan/mediary-scout && cd mediary-scout
 cp .env.example .env        # 按需修改；镜像版本在 .env 里用 MEDIARY_IMAGE 指定
 docker compose pull web worker
 docker compose up -d
@@ -55,7 +55,7 @@ docker compose up -d
 **方式二：本地构建**（要改构建参数，比如跨域访问的 `MEDIA_TRACK_ALLOWED_ORIGINS`）：
 
 ```bash
-git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout
+git clone https://github.com/xixjohan/mediary-scout && cd mediary-scout
 docker build -t mediary-scout:local .
 MEDIARY_IMAGE=mediary-scout:local docker compose up -d
 ```
@@ -78,7 +78,7 @@ docker run -d --name mediary-scout -p 3000:3000 -v mediary-data:/app/data \
 
 两种形态下，自带 OpenAI 兼容的 AI 模型接口都是可选升级（key 只存在你自己的实例里）。未配置 AI 模型时，默认使用 Kilo Code 的公共免费模型池（无需注册；获取任务的对话上下文——搜索查询、任务与留言内容、候选结果、文件名等——会发送给 Kilo 及其上游模型提供商）。影视信息开箱即用。资源搜索用 PanSou：Docker 版自带一个，桌面版默认用公共实例，可以在设置里换成你自己的；可选再接 Prowlarr 找磁力。
 
-**关于 Docker 镜像**：`ghcr.io/fancydirty/mediary-scout:<版本标签>` 随每个发布版本自动构建（GitHub Actions 的 `Release Docker`，同时更新 `:latest`）。web 与 worker 是同一个镜像的不同启动命令，版本永远一致；镜像基址默认由更新源 `MEDIA_TRACK_UPDATE_REPO` 推导（默认当前仓库），**发布自己镜像的 fork 无需任何配置**，不发布自己镜像的 fork 把 `MEDIA_TRACK_UPDATE_REPO`（或 `MEDIARY_IMAGE`）指回有发布的仓库即可。镜像只含程序，凭据密钥 `credential.key` 只在你的数据卷里、不随镜像分发（`.env`、数据库、备份也都被 `.dockerignore` 排除，镜像里没有任何秘密）。首次推送时 GHCR 自动建的包默认私有，要让大家免登录拉取，去 Package settings 把它改成公开即可——步骤见[部署指南](docs/deploy.md#把镜像包改为公开免登录拉取)。镜像里**不含**跨域访问域名（构建时烘焙）——需要跨域访问就用方式二自建，或走反向代理透传 `x-forwarded-host`。
+**关于 Docker 镜像**：`ghcr.io/xixjohan/mediary-scout:<版本标签>` 随每个发布版本自动构建（GitHub Actions 的 `Release Docker`，同时更新 `:latest`）。web 与 worker 是同一个镜像的不同启动命令，版本永远一致；镜像基址默认由更新源 `MEDIA_TRACK_UPDATE_REPO` 推导（默认当前仓库），**发布自己镜像的 fork 无需任何配置**，不发布自己镜像的 fork 把 `MEDIA_TRACK_UPDATE_REPO`（或 `MEDIARY_IMAGE`）指回有发布的仓库即可。镜像只含程序，凭据密钥 `credential.key` 只在你的数据卷里、不随镜像分发（`.env`、数据库、备份也都被 `.dockerignore` 排除，镜像里没有任何秘密）。首次推送时 GHCR 自动建的包默认私有，要让大家免登录拉取，去 Package settings 把它改成公开即可——步骤见[部署指南](docs/deploy.md#把镜像包改为公开免登录拉取)。镜像里**不含**跨域访问域名（构建时烘焙）——需要跨域访问就用方式二自建，或走反向代理透传 `x-forwarded-host`。
 
 ## 支持的网盘
 
@@ -112,10 +112,10 @@ docker run -d --name mediary-scout -p 3000:3000 -v mediary-data:/app/data \
 - [TMDB](https://www.themoviedb.org/)：影视元数据（本产品未获 TMDB 认证或背书）
 
 ## Star History
-<a href="https://www.star-history.com/?repos=fancydirty%2Fmediary-scout&type=date&legend=top-left">
+<a href="https://www.star-history.com/?repos=xixjohan%2Fmediary-scout&type=date&legend=top-left">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=fancydirty/mediary-scout&type=date&theme=dark&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=fancydirty/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=fancydirty/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&theme=dark&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
+    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
+    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
   </picture>
 </a>

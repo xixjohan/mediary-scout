@@ -6,8 +6,8 @@ import {
   UPDATE_CHECK_INTERVAL_MS,
 } from "../src/update-check.js";
 
-const PAGE = "https://github.com/fancydirty/mediary-scout/releases/tag/v2026.10.02";
-const DOWNLOAD = "https://github.com/fancydirty/mediary-scout/releases/download/v2026.10.02";
+const PAGE = "https://github.com/xixjohan/mediary-scout/releases/tag/v2026.10.02";
+const DOWNLOAD = "https://github.com/xixjohan/mediary-scout/releases/download/v2026.10.02";
 const asset = (name: string, url = `${DOWNLOAD}/${name}`) => ({ name, browser_download_url: url });
 
 describe("parseLatestRelease", () => {
@@ -97,11 +97,11 @@ describe("update-check — 更新源可覆盖（L4）", () => {
     else process.env.MEDIA_TRACK_UPDATE_REPO = prev;
   });
 
-  it("默认指上游安装包渠道", async () => {
+  it("默认指当前独立仓库", async () => {
     delete process.env.MEDIA_TRACK_UPDATE_REPO;
     const mod = await import("../src/update-check.js");
-    expect(mod.getReleasesLatestUrl()).toBe("https://api.github.com/repos/fancydirty/mediary-scout/releases/latest");
-    expect(mod.getUpdateRepo()).toBe("fancydirty/mediary-scout");
+    expect(mod.getReleasesLatestUrl()).toBe("https://api.github.com/repos/xixjohan/mediary-scout/releases/latest");
+    expect(mod.getUpdateRepo()).toBe("xixjohan/mediary-scout");
   });
 
   it("MEDIA_TRACK_UPDATE_REPO 覆盖：feed / pageUrl / 安装包前缀全部跟着改", async () => {

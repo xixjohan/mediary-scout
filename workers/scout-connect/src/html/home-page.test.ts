@@ -56,7 +56,7 @@ describe("home page(apex 落地页)", () => {
     expect(html).toContain("自建网盘的媒体获取 agent");
     expect(html).toContain("https://mediaryscout.app");
     expect(html).toContain("demo.mediaryscout.app");
-    expect(html).toContain("github.com/fancydirty/mediary-scout");
+    expect(html).toContain("github.com/xixjohan/mediary-scout");
   });
 
   it("三类部署提示词都在(用户处境不同,不能只给一份)", () => {

@@ -10,8 +10,8 @@ describe("linkTarget", () => {
   });
 
   it("sends http and https links elsewhere to the system browser", () => {
-    expect(linkTarget("https://github.com/fancydirty/mediary-scout", ORIGIN)).toBe("external");
-    expect(linkTarget("https://github.com/fancydirty/mediary-scout/releases/download/v2026.10.02/a.dmg", ORIGIN)).toBe(
+    expect(linkTarget("https://github.com/xixjohan/mediary-scout", ORIGIN)).toBe("external");
+    expect(linkTarget("https://github.com/xixjohan/mediary-scout/releases/download/v2026.10.02/a.dmg", ORIGIN)).toBe(
       "external",
     );
     expect(linkTarget("http://127.0.0.1:9999/", ORIGIN)).toBe("external");
