@@ -43,7 +43,7 @@ const view = (overrides: Partial<UpdateView>): UpdateView => ({
   ...overrides,
 });
 const newer = { tag: "v2026.10.02", date: "2026-10-02", commit: "c".repeat(40), notes: [] };
-const DMG = "https://github.com/fancydirty/mediary-scout/releases/download/v2026.10.02/a.dmg";
+const DMG = "https://github.com/xixjohan/mediary-scout/releases/download/v2026.10.02/a.dmg";
 const render = (props: { view: UpdateView; desktop: boolean; autoUpdate?: { enabled: boolean; time: string } }) =>
   renderToStaticMarkup(createElement(UpdateTab, { autoUpdate: { enabled: false, time: "04:00" }, ...props }));
 

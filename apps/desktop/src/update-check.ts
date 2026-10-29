@@ -13,7 +13,7 @@ import { appVersionFromTag, isNewerAppVersion } from "./release-version.js";
  */
 export function getUpdateRepo(): string {
   const fromEnv = process.env.MEDIA_TRACK_UPDATE_REPO?.trim();
-  return fromEnv && fromEnv.length > 0 ? fromEnv : "fancydirty/mediary-scout";
+  return fromEnv && fromEnv.length > 0 ? fromEnv : "xixjohan/mediary-scout";
 }
 
 export function getReleasesLatestUrl(): string {

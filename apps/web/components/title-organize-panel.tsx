@@ -129,7 +129,12 @@ export function OrganizePanel({ tmdbId, seasonNumber }: OrganizePanelProps) {
   return (
     <section className="hub-panel title-organize" aria-label="自动整理">
       <div className="title-organize-head">
-        <h2>整理</h2>
+        <div className="title-organize-head-info">
+          <h2>整理</h2>
+          <p className="title-organize-intro">
+            扫描网盘影视目录，按标准季集规范重命名归档，同步点亮集数状态。无歧义文件自动归档，有冲突文件提示人工复核。
+          </p>
+        </div>
         <button
           type="button"
           className="title-organize-run"

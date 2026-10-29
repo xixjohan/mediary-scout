@@ -35,6 +35,12 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: () => repo,
   getWorkerResourceProvider: async () => provider,
   movieTargetFromTmdbId: (tmdbId: number) => movieTargetFromTmdbId(tmdbId),
+  resolveGlobalWorkspace: vi.fn().mockResolvedValue({
+    accountId: "acct_default",
+    connectedStorageId: null,
+    basePath: "/",
+    activeStorageId: undefined,
+  }),
 }));
 
 vi.mock("../../../../lib/title-hub", () => ({

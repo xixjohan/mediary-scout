@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { X, Loader2, AlertTriangle, Clock3 } from "lucide-react";
 import type { InProgressTitle } from "../lib/title-hub";
@@ -261,11 +262,16 @@ export function AcquiringDetailModal({
   onClose,
   onCancelled,
 }: AcquiringDetailModalProps) {
+  const [mounted, setMounted] = useState(false);
   const live = useAcquiringLiveStatus(title, storageId, onCancelled);
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const router = useRouter();
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -306,7 +312,9 @@ export function AcquiringDetailModal({
 
   const { currentStatus, currentPercent, currentActivity, currentQueuePosition } = resolveDisplayMetrics(live, title);
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div className="acquiring-modal-backdrop" onClick={onClose} role="dialog" aria-modal="true">
       <div className="acquiring-modal" onClick={(e) => e.stopPropagation()}>
         <div className="acquiring-modal-header">
@@ -350,6 +358,7 @@ export function AcquiringDetailModal({
           />
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

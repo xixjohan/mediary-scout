@@ -254,6 +254,7 @@ async function SearchResults({
                     (state) => state.season.seasonNumber,
                   )}
                   storageId={storageId}
+                  searchQuery={searchView.query}
                   key={`${candidate.mediaType}_${candidate.tmdbId}`}
                 />
               ))}
@@ -319,6 +320,7 @@ function CandidateCard({
   trackedLabel,
   trackedSeasonNumbers,
   storageId,
+  searchQuery,
 }: {
   candidate: SearchCandidateCard;
   /** This title has a queued/running acquisition — show 获取中, not its
@@ -328,6 +330,7 @@ function CandidateCard({
   trackedSeasonNumbers: number[];
   /** Tree model: the active workspace drive — acquisition lands HERE. */
   storageId?: string | undefined;
+  searchQuery?: string | undefined;
 }) {
   const isTv = candidate.mediaType === "tv";
   const trackedSet = new Set(trackedSeasonNumbers);
@@ -337,7 +340,7 @@ function CandidateCard({
   );
   return (
     <article className="candidate-card">
-      <Link className="candidate-poster" href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType)} aria-hidden tabIndex={-1}>
+      <Link className="candidate-poster" href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType, searchQuery)} aria-hidden tabIndex={-1}>
         {candidate.posterPath ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img src={`https://image.tmdb.org/t/p/w342${candidate.posterPath}`} alt="" loading="lazy" />
@@ -349,7 +352,7 @@ function CandidateCard({
         <div className="candidate-title-row">
           <div>
             <h3>
-              <Link href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType)}>{candidate.title}</Link>
+              <Link href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType, searchQuery)}>{candidate.title}</Link>
             </h3>
             <p>
               {candidate.year} · {isTv ? "剧集" : "电影"}
@@ -392,7 +395,7 @@ function CandidateCard({
                 explicit 查看详情 when the show is FULLY tracked (no 获取 action
                 left) — never crammed next to a 获取 button. */}
             {!acquiring && isTv && trackedLabel !== null && untrackedSeasons.length === 0 ? (
-              <Link className="primary-button" href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType)}>
+              <Link className="primary-button" href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType, searchQuery)}>
                 查看详情
               </Link>
             ) : null}

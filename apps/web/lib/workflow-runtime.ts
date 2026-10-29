@@ -3135,7 +3135,7 @@ export async function acquireLlmPreflightError(
   return llmConfigError(resolved);
 }
 
-async function getAgentModel(repository: {
+export async function getAgentModel(repository: {
   getSetting(key: string): Promise<string | null>;
 }): Promise<{
   model: ReturnType<typeof createAgentModelFromEnv>;

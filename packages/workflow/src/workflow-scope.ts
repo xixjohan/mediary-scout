@@ -265,6 +265,7 @@ export function showHref(
   from: "search" | "library",
   activeStorageId: string | undefined,
   type?: "movie" | "tv" | "anime",
+  q?: string,
 ): string {
   let href = `/show/${tmdbId}?from=${from}`;
   if (activeStorageId) {
@@ -275,6 +276,9 @@ export function showHref(
   // titles resolve by DB type and ignore this.
   if (type) {
     href += `&t=${type}`;
+  }
+  if (q && q.trim()) {
+    href += `&q=${encodeURIComponent(q.trim())}`;
   }
   return href;
 }

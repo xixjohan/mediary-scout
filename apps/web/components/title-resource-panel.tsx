@@ -19,6 +19,10 @@ export interface ResourcePanelProps {
   tmdbId: number;
   mediaType?: "movie" | "tv" | "anime" | undefined;
   seasonNumbers?: number[] | undefined;
+  defaultKeyword?: string | undefined;
+  title?: string | undefined;
+  year?: number | undefined;
+  storageId?: string | undefined;
 }
 
 export type PanelState =
@@ -140,6 +144,73 @@ export function resourceTypeLabel(type: ResourceType): string {
   }
 }
 
+export function appendKeywordChip(current: string, chip: string): string {
+  const trimmed = current.trim();
+  const token = chip.trim();
+  if (!token) return current;
+  if (!trimmed) return token;
+  const tokens = trimmed.split(/\s+/);
+  if (tokens.some((t) => t.toLowerCase() === token.toLowerCase())) {
+    return trimmed;
+  }
+  return `${trimmed} ${token}`;
+}
+
+const MODIFIER_CHIPS = ["4K", "1080p", "简日内嵌", "原盘"] as const;
+
+interface QuickChipsProps {
+  customKeyword: string;
+  setCustomKeyword: (v: string) => void;
+  title?: string | undefined;
+  year?: number | undefined;
+}
+
+function ResourceQuickChips({
+  customKeyword,
+  setCustomKeyword,
+  title,
+  year,
+}: QuickChipsProps) {
+  const cleanTitle = title?.trim();
+
+  return (
+    <div className="title-resources-quick-chips">
+      <span className="title-resources-quick-label">快捷词：</span>
+      {cleanTitle ? (
+        <button
+          type="button"
+          className="title-resources-chip"
+          onClick={() => setCustomKeyword(cleanTitle)}
+          title="以原片名检索"
+        >
+          {cleanTitle}
+        </button>
+      ) : null}
+      {cleanTitle && year && Number.isInteger(year) ? (
+        <button
+          type="button"
+          className="title-resources-chip"
+          onClick={() => setCustomKeyword(`${cleanTitle} ${year}`)}
+          title="以片名+年份检索"
+        >
+          {cleanTitle} {year}
+        </button>
+      ) : null}
+      {MODIFIER_CHIPS.map((mod) => (
+        <button
+          key={mod}
+          type="button"
+          className="title-resources-chip"
+          onClick={() => setCustomKeyword(appendKeywordChip(customKeyword, mod))}
+          title={`追加 ${mod} 过滤词`}
+        >
+          + {mod}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 interface SearchBarProps {
   customKeyword: string;
   setCustomKeyword: (v: string) => void;
@@ -149,6 +220,8 @@ interface SearchBarProps {
   setSelectedEpisode: (v: string) => void;
   mediaType?: "movie" | "tv" | "anime" | undefined;
   seasonNumbers?: readonly number[] | undefined;
+  title?: string | undefined;
+  year?: number | undefined;
   busy: boolean;
   throttled: boolean;
   retryAfterMs?: number | undefined;
@@ -165,6 +238,8 @@ function ResourceSearchBar({
   setSelectedEpisode,
   mediaType,
   seasonNumbers,
+  title,
+  year,
   busy,
   throttled,
   retryAfterMs,
@@ -232,6 +307,13 @@ function ResourceSearchBar({
       >
         {busy ? "查询中…" : throttled ? `请稍候 ${Math.ceil((retryAfterMs ?? 0) / 1000)}s` : "查询资源"}
       </button>
+
+      <ResourceQuickChips
+        customKeyword={customKeyword}
+        setCustomKeyword={setCustomKeyword}
+        title={title}
+        year={year}
+      />
     </div>
   );
 }
@@ -312,10 +394,16 @@ export function TitleResourcePanel({
   tmdbId,
   mediaType,
   seasonNumbers,
+  defaultKeyword,
+  title,
+  year,
+  storageId,
 }: ResourcePanelProps) {
   const [state, setState] = useState<PanelState>({ kind: "idle" });
   const [importState, setImportState] = useState<ImportState>({ kind: "idle" });
-  const [customKeyword, setCustomKeyword] = useState("");
+  const [customKeyword, setCustomKeyword] = useState<string>(
+    () => defaultKeyword?.trim() || title?.trim() || "",
+  );
   const [selectedSeason, setSelectedSeason] = useState<number | undefined>(undefined);
   const [selectedEpisode, setSelectedEpisode] = useState<string>("");
   const router = useRouter();
@@ -333,6 +421,7 @@ export function TitleResourcePanel({
           customKeyword: customKeyword.trim() || undefined,
           seasonNumber: selectedSeason,
           episodeNumber: Number.isInteger(epNum) && epNum! > 0 ? epNum : undefined,
+          storageId,
         }),
       });
       const body = await response.json().catch(() => ({}));
@@ -341,7 +430,7 @@ export function TitleResourcePanel({
       // 网络层失败也降级为空态，不把异常抛给页面
       setState({ kind: "error", message: error instanceof Error ? error.message : String(error) });
     }
-  }, [tmdbId, mediaType, customKeyword, selectedSeason, selectedEpisode]);
+  }, [tmdbId, mediaType, customKeyword, selectedSeason, selectedEpisode, storageId]);
 
   /**
    * 手动入库。只递不透明句柄；分享链从头到尾没到过前端。
@@ -389,7 +478,7 @@ export function TitleResourcePanel({
   };
 
   return (
-    <section className="hub-panel title-resources" aria-label="资源">
+    <section className="hub-panel title-resources" id="title-resources" aria-label="资源">
       <header className="title-resources-head">
         <h2>资源检索</h2>
       </header>
@@ -403,6 +492,8 @@ export function TitleResourcePanel({
         setSelectedEpisode={setSelectedEpisode}
         mediaType={mediaType}
         seasonNumbers={seasonNumbers}
+        title={title}
+        year={year}
         busy={busy}
         throttled={throttled}
         retryAfterMs={throttled ? state.retryAfterMs : undefined}

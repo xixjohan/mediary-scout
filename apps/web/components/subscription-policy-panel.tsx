@@ -34,6 +34,21 @@ export interface SubscriptionPolicyPanelProps {
   tmdbId: number;
 }
 
+function appendFilterChip(current: string, chip: string): string {
+  const trimmed = current.trim();
+  const token = chip.trim();
+  if (!token) return current;
+  if (!trimmed) return token;
+  const tokens = trimmed.split(/[,，\s]+/);
+  if (tokens.some((t) => t.toLowerCase() === token.toLowerCase())) {
+    return trimmed;
+  }
+  return `${trimmed}, ${token}`;
+}
+
+const CONTAIN_PRESETS = ["2160p", "1080p", "简日内嵌", "简中字幕"] as const;
+const EXCLUDE_PRESETS = ["CAM/枪版", "预告片", "国语配音"] as const;
+
 export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps) {
   const [draft, setDraft] = useState<PolicyDraft>({
     mustContain: "",
@@ -45,6 +60,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
   });
   const [state, setState] = useState<PolicyPanelState>({ kind: "idle" });
   const [saved, setSaved] = useState<PolicyDraft | null>(null);
+  const [isExpanded, setIsExpanded] = useState(false);
   const router = useRouter();
 
   /**
@@ -122,6 +138,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
       const body: unknown = await response.json().catch(() => null);
       if (response.ok) {
         setSaved(draft);
+        setIsExpanded(false);
         setState({ kind: "saved", copy: "已保存" });
         router.refresh();
         return;
@@ -143,105 +160,48 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
     <section className="hub-panel sub-policy" aria-label="订阅策略">
       <div className="sub-policy-head">
         <h2>订阅策略</h2>
-        {saved === null ? (
-          <span className="sub-policy-unset">还没配规则</span>
-        ) : (
-          <span className="sub-policy-set">已配规则</span>
-        )}
-      </div>
-
-      <div className="sub-policy-fields">
-        <label>
-          必须包含
-          <input
-            value={draft.mustContain}
-            onChange={(event) => update({ mustContain: event.target.value })}
-            placeholder="2160p, 简中"
-          />
-        </label>
-        <label>
-          自定义搜索词
-          <input
-            value={draft.customKeywords ?? ""}
-            onChange={(event) => update({ customKeywords: event.target.value })}
-            placeholder="4K, 喵萌奶茶屋"
-          />
-        </label>
-        <label>
-          必须排除
-          <input
-            value={draft.mustNotContain}
-            onChange={(event) => update({ mustNotContain: event.target.value })}
-            placeholder="CAM, 枪版"
-          />
-        </label>
-        <label>
-          集数范围
-          <input
-            value={draft.episodeFilter}
-            onChange={(event) => update({ episodeFilter: event.target.value })}
-            placeholder="S01-S03;E01-E10"
-          />
-        </label>
-        <label>
-          冷却天数
-          <input
-            type="number"
-            min={0}
-            value={draft.cooldownDays}
-            onChange={(event) => update({ cooldownDays: Number(event.target.value) })}
-          />
-        </label>
-        <label className="sub-policy-regex">
-          <input
-            type="checkbox"
-            checked={draft.useRegex}
-            onChange={(event) => update({ useRegex: event.target.checked })}
-          />
-          用正则
-        </label>
-      </div>
-
-      <div className="sub-policy-actions">
-        <button type="button" onClick={preview} disabled={state.kind === "previewing"}>
-          {state.kind === "previewing" ? "预览中…" : "预览效果"}
-        </button>
-        <button type="button" onClick={save} disabled={state.kind === "saving"}>
-          {state.kind === "saving" ? "保存中…" : "保存"}
-        </button>
-      </div>
-
-      {state.kind === "previewed" ? (
-        <div className="sub-policy-preview">
-          <p className="sub-policy-headline">{previewHeadlineCopy(state.outcome)}</p>
-          {nothingMatches ? (
-            // The one case where the numbers mean the user's rule, not the search.
-            <p className="sub-policy-warn">这条规则排除了全部候选——检查一下是不是写得太严</p>
-          ) : null}
-          {state.outcome.matched.length > 0 ? (
-            <>
-              <p className="sub-policy-sublist-label">命中 {state.outcome.matched.length} 个</p>
-              <ul className="sub-policy-matched">
-                {state.outcome.matched.map((name) => (
-                  <li key={name}>{name}</li>
-                ))}
-              </ul>
-            </>
-          ) : null}
-          {state.outcome.excluded.length > 0 ? (
-            <>
-              <p className="sub-policy-sublist-label">排除 {state.outcome.excluded.length} 个</p>
-              <ul className="sub-policy-excluded">
-                {state.outcome.excluded.map((entry) => (
-                  <li key={entry.name}>
-                    {entry.name}
-                    <span className="sub-policy-reason">{previewReasonCopy(entry.reason)}</span>
-                  </li>
-                ))}
-              </ul>
-            </>
+        <div className="sub-policy-head-side">
+          {saved === null ? (
+            <span className="sub-policy-unset">还没配规则</span>
+          ) : (
+            <span className="sub-policy-set">已配规则</span>
+          )}
+          {saved !== null ? (
+            <button
+              type="button"
+              className="sub-policy-toggle-btn"
+              onClick={() => setIsExpanded(!isExpanded)}
+            >
+              {isExpanded ? "收起" : "修改规则"}
+            </button>
           ) : null}
         </div>
+      </div>
+
+      {saved !== null && !isExpanded ? (
+        <PolicyCollapsedSummary saved={saved} onExpand={() => setIsExpanded(true)} />
+      ) : (
+        <>
+          <PolicyFields draft={draft} update={update} />
+
+          <div className="sub-policy-actions">
+            <button type="button" onClick={preview} disabled={state.kind === "previewing"}>
+              {state.kind === "previewing" ? "预览中…" : "预览效果"}
+            </button>
+            <button type="button" onClick={save} disabled={state.kind === "saving"}>
+              {state.kind === "saving" ? "保存中…" : "保存"}
+            </button>
+            {saved !== null ? (
+              <button type="button" onClick={() => setIsExpanded(false)}>
+                收起
+              </button>
+            ) : null}
+          </div>
+        </>
+      )}
+
+      {state.kind === "previewed" ? (
+        <PolicyPreviewSection state={state} nothingMatches={nothingMatches} />
       ) : null}
 
       {/* 三态分色：保存是绿，拒绝/失败是红——被 API 拒绝的保存绝不能看起来像成功。 */}
@@ -249,6 +209,156 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
       {state.kind === "rejected" ? <p className="sub-policy-copy is-bad">{state.copy}</p> : null}
       {state.kind === "failed" ? <p className="sub-policy-copy is-bad">{state.copy}</p> : null}
     </section>
+  );
+}
+
+function PolicyCollapsedSummary({
+  saved,
+  onExpand,
+}: {
+  saved: PolicyDraft;
+  onExpand: () => void;
+}) {
+  return (
+    <div className="sub-policy-collapsed-summary">
+      <div className="sub-policy-summary-tags">
+        <span className="sub-policy-summary-tag">包含：{saved.mustContain || "未限"}</span>
+        <span className="sub-policy-summary-tag">排除：{saved.mustNotContain || "未限"}</span>
+        <span className="sub-policy-summary-tag">集数：{saved.episodeFilter || "全部"}</span>
+        <span className="sub-policy-summary-tag">冷却：{saved.cooldownDays}天</span>
+      </div>
+      <button type="button" className="sub-policy-toggle-btn" onClick={onExpand}>
+        修改规则
+      </button>
+    </div>
+  );
+}
+
+function PolicyFields({
+  draft,
+  update,
+}: {
+  draft: PolicyDraft;
+  update: (patch: Partial<PolicyDraft>) => void;
+}) {
+  return (
+    <div className="sub-policy-fields">
+      <label>
+        必须包含
+        <input
+          value={draft.mustContain}
+          onChange={(event) => update({ mustContain: event.target.value })}
+          placeholder="2160p, 简中"
+        />
+        <span className="sub-policy-chips">
+          {CONTAIN_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              className="sub-policy-chip"
+              onClick={() => update({ mustContain: appendFilterChip(draft.mustContain, preset) })}
+            >
+              + {preset}
+            </button>
+          ))}
+        </span>
+      </label>
+      <label>
+        自定义搜索词
+        <input
+          value={draft.customKeywords ?? ""}
+          onChange={(event) => update({ customKeywords: event.target.value })}
+          placeholder="4K, 喵萌奶茶屋"
+        />
+      </label>
+      <label>
+        必须排除
+        <input
+          value={draft.mustNotContain}
+          onChange={(event) => update({ mustNotContain: event.target.value })}
+          placeholder="CAM, 枪版"
+        />
+        <span className="sub-policy-chips">
+          {EXCLUDE_PRESETS.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              className="sub-policy-chip"
+              onClick={() => update({ mustNotContain: appendFilterChip(draft.mustNotContain, preset) })}
+            >
+              + {preset}
+            </button>
+          ))}
+        </span>
+      </label>
+      <label>
+        集数范围
+        <input
+          value={draft.episodeFilter}
+          onChange={(event) => update({ episodeFilter: event.target.value })}
+          placeholder="S01-S03;E01-E10"
+        />
+      </label>
+      <label>
+        <span>
+          冷却天数 <span className="sub-policy-field-help">（失败后暂缓重试天数）</span>
+        </span>
+        <input
+          type="number"
+          min={0}
+          value={draft.cooldownDays}
+          onChange={(event) => update({ cooldownDays: Number(event.target.value) })}
+        />
+      </label>
+      <label className="sub-policy-regex">
+        <input
+          type="checkbox"
+          checked={draft.useRegex}
+          onChange={(event) => update({ useRegex: event.target.checked })}
+        />
+        用正则
+      </label>
+    </div>
+  );
+}
+
+function PolicyPreviewSection({
+  state,
+  nothingMatches,
+}: {
+  state: Extract<PolicyPanelState, { kind: "previewed" }>;
+  nothingMatches: boolean;
+}) {
+  return (
+    <div className="sub-policy-preview">
+      <p className="sub-policy-headline">{previewHeadlineCopy(state.outcome)}</p>
+      {nothingMatches ? (
+        <p className="sub-policy-warn">这条规则排除了全部候选——检查一下是不是写得太严</p>
+      ) : null}
+      {state.outcome.matched.length > 0 ? (
+        <>
+          <p className="sub-policy-sublist-label">命中 {state.outcome.matched.length} 个</p>
+          <ul className="sub-policy-matched">
+            {state.outcome.matched.map((name) => (
+              <li key={name}>{name}</li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {state.outcome.excluded.length > 0 ? (
+        <>
+          <p className="sub-policy-sublist-label">排除 {state.outcome.excluded.length} 个</p>
+          <ul className="sub-policy-excluded">
+            {state.outcome.excluded.map((entry) => (
+              <li key={entry.name}>
+                {entry.name}
+                <span className="sub-policy-reason">{previewReasonCopy(entry.reason)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </div>
   );
 }
 

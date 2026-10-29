@@ -21,7 +21,7 @@ function view(overrides: Partial<ResourceCandidateView> = {}): ResourceCandidate
   };
 }
 
-import { mapImportResponse, mapResourceResponse, resourceTypeLabel } from "./title-resource-panel";
+import { appendKeywordChip, mapImportResponse, mapResourceResponse, resourceTypeLabel } from "./title-resource-panel";
 
 describe("mapResourceResponse — 降级契约", () => {
   it("200 ⇒ ready，带上 cached 标记", () => {
@@ -166,3 +166,26 @@ describe("resourceTypeLabel — 候选行的资源类型标签", () => {
     }
   });
 });
+
+describe("appendKeywordChip — 快捷词标签行为", () => {
+  it("空白输入追加词时直接作为首个词", () => {
+    expect(appendKeywordChip("", "4K")).toBe("4K");
+    expect(appendKeywordChip("   ", "1080p")).toBe("1080p");
+  });
+
+  it("已有关键词追加新修饰词用空格隔开", () => {
+    expect(appendKeywordChip("孤独摇滚", "4K")).toBe("孤独摇滚 4K");
+    expect(appendKeywordChip("孤独摇滚 2024", "简日内嵌")).toBe("孤独摇滚 2024 简日内嵌");
+  });
+
+  it("已存在相同修饰词时不重复添加（大小写不敏感）", () => {
+    expect(appendKeywordChip("孤独摇滚 4K", "4K")).toBe("孤独摇滚 4K");
+    expect(appendKeywordChip("孤独摇滚 4k", "4K")).toBe("孤独摇滚 4k");
+  });
+
+  it("空修饰词时不修改原有关键词", () => {
+    expect(appendKeywordChip("孤独摇滚", "")).toBe("孤独摇滚");
+    expect(appendKeywordChip("孤独摇滚", "   ")).toBe("孤独摇滚");
+  });
+});
+

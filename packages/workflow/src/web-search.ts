@@ -22,7 +22,7 @@
  */
 
 const PARALLEL_MCP_ENDPOINT = "https://search.parallel.ai/mcp";
-const USER_AGENT = "mediary-scout (+https://github.com/fancydirty/mediary-scout)";
+const USER_AGENT = "mediary-scout (+https://github.com/xixjohan/mediary-scout)";
 const DEFAULT_TIMEOUT_MS = 20_000;
 
 export interface WebSearchHit {

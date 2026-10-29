@@ -350,4 +350,56 @@ describe("getActivityView — L1 agent 时间线", () => {
     const view = await getActivityView({ repository: repo, accountId: "acct_default" });
     expect(view.active.map((r) => r.runId)).not.toContain("r_foreign");
   });
+
+  it("当指定 connectedStorageId 时，自动合并账号下未绑盘（unscoped）的活跃任务，防止视界盲区", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    // 1. 明确绑定在 drive_1 的任务
+    const scopedRun = run({
+      id: "r_scoped",
+      tmdbId: 101,
+      name: "Scoped Run",
+      status: "running",
+      startedAt: "2026-06-17T00:00:00Z",
+    });
+    scopedRun.accountId = "acct_user";
+    scopedRun.connectedStorageId = "drive_1";
+    await repo.saveWorkflowRunSnapshot(scopedRun);
+
+    // 2. 未绑盘（unscoped）的任务（如未追踪电影手动入库）
+    const unscopedRun = run({
+      id: "r_unscoped",
+      tmdbId: 102,
+      name: "Wildwood",
+      status: "running",
+      startedAt: "2026-06-17T00:00:01Z",
+      kind: "manual_import",
+    });
+    unscopedRun.accountId = "acct_user";
+    unscopedRun.connectedStorageId = null;
+    await repo.saveWorkflowRunSnapshot(unscopedRun);
+
+    // 3. 属于 drive_2 的隔离任务
+    const otherDriveRun = run({
+      id: "r_other",
+      tmdbId: 103,
+      name: "Other Drive",
+      status: "running",
+      startedAt: "2026-06-17T00:00:02Z",
+    });
+    otherDriveRun.accountId = "acct_user";
+    otherDriveRun.connectedStorageId = "drive_2";
+    await repo.saveWorkflowRunSnapshot(otherDriveRun);
+
+    // 在 drive_1 视图下请求
+    const view = await getActivityView({
+      repository: repo,
+      accountId: "acct_user",
+      connectedStorageId: "drive_1",
+    });
+
+    const activeIds = view.active.map((r) => r.runId);
+    expect(activeIds).toContain("r_scoped");
+    expect(activeIds).toContain("r_unscoped"); // 成功级联展示通用任务
+    expect(activeIds).not.toContain("r_other"); // 跨盘任务维持隔离
+  });
 });

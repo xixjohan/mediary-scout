@@ -7,9 +7,9 @@ Mediary Scout 有两种部署方式:
 | 适合 | 自己用,不想折腾 Docker | NAS / 软路由 / VPS / 闲置 PC |
 | 数据层 | SQLite(本地文件) | SQLite(同一套代码,卷持久化) |
 | 部署 | 下载 DMG / EXE 安装 | `docker compose up -d` |
-| 下载 | [GitHub Releases](https://github.com/fancydirty/mediary-scout/releases) | 本指南下方 |
+| 下载 | [GitHub Releases](https://github.com/xixjohan/mediary-scout/releases) | 本指南下方 |
 
-**桌面版**:去 [Releases](https://github.com/fancydirty/mediary-scout/releases) 下载 `.dmg` 或 `.exe`,打开安装,启动后在设置里配网盘和 AI 模型即可,有新版本时应用会提示你下载。详见 [README → 安装](../README.md#安装)。
+**桌面版**:去 [Releases](https://github.com/xixjohan/mediary-scout/releases) 下载 `.dmg` 或 `.exe`,打开安装,启动后在设置里配网盘和 AI 模型即可,有新版本时应用会提示你下载。详见 [README → 安装](../README.md#安装)。
 
 **Docker 版**:继续往下看。
 
@@ -64,7 +64,7 @@ Mediary Scout 有两种部署方式:
    - 国内构建加速(registry mirror + npm 镜像)
 
 ## 然后执行
-- `git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout`
+- `git clone https://github.com/xixjohan/mediary-scout && cd mediary-scout`
 - 国内构建加速(首次 `up` **之前**):按本文「国内构建加速」一节配镜像加速——Linux(软路由 / NAS 上直接装的 Docker)改 `/etc/docker/daemon.json`,Docker Desktop(macOS / Windows)在它自己的设置里改;npm 镜像用 `docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com`
 - `docker compose up -d`(首次构建要几分钟)
 - 多账号:在 `.env` 加 `MEDIA_TRACK_MULTI_USER=1`,再 `docker compose up -d web`
@@ -87,7 +87,7 @@ Mediary Scout 有两种部署方式:
 ## Compose 快速开始
 
 ```bash
-git clone https://github.com/fancydirty/mediary-scout && cd mediary-scout
+git clone https://github.com/xixjohan/mediary-scout && cd mediary-scout
 cp .env.example .env
 docker compose pull web worker   # 拉发布镜像(单镜像模式,不本地构建)
 docker compose up -d
@@ -534,11 +534,11 @@ docker compose build --build-arg NPM_REGISTRY=https://registry.npmmirror.com
 | `docker compose pull web worker` 拉取失败 | `ghcr.io/<fork>/mediary-scout` 从未推送过镜像 |
 
 解法：把 `MEDIA_TRACK_UPDATE_REPO`（或 `MEDIARY_IMAGE` / `MEDIA_IMAGE_BASE`）
-指向一个**真有发布**的仓库，例如上游 `fancydirty/mediary-scout`。
+指向有发布的仓库（默认 `xixjohan/mediary-scout`）。
 
 另有一处隐含耦合：一键更新执行 `git fetch --tags origin` 取的是**部署目录自己的
-origin**，与 `MEDIA_TRACK_UPDATE_REPO` 无关。若 feed 显示的是 fancydirty 的发布、
-而部署目录的 origin 是 0 tag 的 fork，点「立即更新」会 `FETCH_FAILED` 退出
+origin**，与 `MEDIA_TRACK_UPDATE_REPO` 无关。若 feed 显示的是发布、
+而部署目录的 origin 是 0 tag，点「立即更新」会 `FETCH_FAILED` 退出
 （不碰正在运行的版本，属安全失败）。让两者对上的办法是给部署目录的 origin 配上
 同一个仓库的 tag。
 
@@ -615,8 +615,7 @@ docker run -d --name mediary-worker \
 gh api -X PATCH users/xixjohan/packages/container/mediary-scout -f visibility=public
 ```
 
-上游 `fancydirty/mediary-scout` 的包是否公开取决于上游维护者；fork 用户请把自己
-namespace 的包设为公开，并让使用者把 `.env` 的 `MEDIARY_IMAGE` 指向它。
+包是否公开取决于包维护设置；请确保自己 namespace 的包设为公开，并让使用者把 `.env` 的 `MEDIARY_IMAGE` 指向它。
 
 ## 备份与恢复（mediary-data 卷）
 

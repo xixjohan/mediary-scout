@@ -25,7 +25,7 @@ chmod 600 ~/.mediary/agent.json
 skill 在本仓库的 `skills/mediary-scout` 里。桌面版用户手上没有仓库，先拉一份：
 
 ```bash
-git clone --depth 1 https://github.com/fancydirty/mediary-scout /tmp/mediary-scout
+git clone --depth 1 https://github.com/xixjohan/mediary-scout /tmp/mediary-scout
 mkdir -p ~/.claude/skills/ && cp -r /tmp/mediary-scout/skills/mediary-scout ~/.claude/skills/      # 或 ~/.codex/skills/、~/.config/opencode/skills/
 ```
 

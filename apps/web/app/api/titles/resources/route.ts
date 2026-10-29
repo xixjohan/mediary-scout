@@ -13,6 +13,7 @@ import {
   getWorkflowRepository,
   getWorkerResourceProvider,
   movieTargetFromTmdbId,
+  resolveGlobalWorkspace,
 } from "../../../../lib/workflow-runtime";
 import { seriesTargetFor } from "../../../../lib/title-hub";
 import { resourceCache, resourceLimiter } from "./cache";
@@ -38,6 +39,7 @@ interface ParsedResourceRequest {
   seasonNumber?: number | undefined;
   episodeNumber?: number | undefined;
   typeHint?: "movie" | "tv" | "anime" | undefined;
+  storageId?: string | undefined;
 }
 
 function parsePositiveInt(val: unknown): number | undefined {
@@ -74,6 +76,7 @@ async function parseRequestBody(request: NextRequest): Promise<ParsedResourceReq
     seasonNumber: parsePositiveInt(body["seasonNumber"]),
     episodeNumber: parsePositiveInt(body["episodeNumber"]),
     typeHint: parseTypeHint(body["type"]),
+    storageId: parseOptionalString(body["storageId"]),
   };
 }
 
@@ -118,6 +121,7 @@ async function resolveTitleContext(
   tmdbId: number,
   typeHint?: "movie" | "tv" | "anime",
   seasonNumber?: number,
+  storageId?: string,
 ): Promise<ResolvedTitleContext | null> {
   const states = await getWorkflowRepository().listTrackedSeasonStates(accountId);
   const tracked = states.find((state) => state.title.tmdbId === tmdbId);
@@ -129,13 +133,16 @@ async function resolveTitleContext(
     };
   }
 
+  const defaultStorageId =
+    storageId ?? (await resolveGlobalWorkspace(undefined)).connectedStorageId;
+
   if (typeHint === "movie") {
     const movieTarget = await movieTargetFromTmdbId(tmdbId);
     if (!movieTarget) return null;
     return {
       title: movieTarget.title,
       season: buildSyntheticSeason(movieTarget.title),
-      connectedStorageId: null,
+      connectedStorageId: defaultStorageId,
     };
   }
 
@@ -144,7 +151,7 @@ async function resolveTitleContext(
   return {
     title: target.title,
     season: buildSyntheticSeason(target.title, seasonNumber, target),
-    connectedStorageId: null,
+    connectedStorageId: defaultStorageId,
   };
 }
 
@@ -212,7 +219,7 @@ export async function POST(request: NextRequest) {
   const { tmdbId, customKeyword, seasonNumber, episodeNumber, typeHint } = parsed;
 
   // 2) Resolve title and season
-  const resolved = await resolveTitleContext(accountId, tmdbId, typeHint, seasonNumber);
+  const resolved = await resolveTitleContext(accountId, tmdbId, typeHint, seasonNumber, parsed.storageId);
   if (!resolved) {
     return NextResponse.json({ error: "title not found" }, { status: 404, headers: NO_STORE });
   }

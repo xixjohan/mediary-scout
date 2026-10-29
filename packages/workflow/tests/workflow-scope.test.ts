@@ -138,4 +138,9 @@ describe("showHref", () => {
     expect(showHref(1399, "search", undefined, "tv")).toBe("/show/1399?from=search&t=tv");
     expect(showHref(123, "library", undefined, "anime")).toBe("/show/123?from=library&t=anime");
   });
+  it("carries &q=query when search query is passed", () => {
+    expect(showHref(278, "search", undefined, "movie", "肖申克的救赎")).toBe(
+      "/show/278?from=search&t=movie&q=%E8%82%96%E7%94%B3%E5%85%8B%E7%9A%84%E6%95%91%E8%B5%8E",
+    );
+  });
 });

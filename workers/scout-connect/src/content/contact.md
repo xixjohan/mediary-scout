@@ -24,9 +24,9 @@ Support and business: **support@mediaryconnect.app**
 
 ## GitHub
 
-Mediary Scout is open source: [github.com/fancydirty/mediary-scout](https://github.com/fancydirty/mediary-scout)
+Mediary Scout is open source: [github.com/xixjohan/mediary-scout](https://github.com/xixjohan/mediary-scout)
 
-Mediary Scout 是开源项目:[github.com/fancydirty/mediary-scout](https://github.com/fancydirty/mediary-scout)
+Mediary Scout 是开源项目:[github.com/xixjohan/mediary-scout](https://github.com/xixjohan/mediary-scout)
 
 - Product bugs and feature requests: open an Issue;
 - Deployment questions: check `docs/deploy.md` in the repo first, then open an Issue if unresolved.
