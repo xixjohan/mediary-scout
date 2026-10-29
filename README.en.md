@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <b>An agent-driven media library for your own cloud drives.</b>
+  <b>Mediary Scout</b><br>
+  <b>An AI agent-driven media library for your own cloud drives.</b>
 </p>
 
 <p align="center">
@@ -13,87 +14,151 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xixjohan/mediary-scout/releases/latest">📥 Download</a> ·
-  <a href="https://mediaryscout.app">🌐 Website</a> ·
-  <a href="https://demo.mediaryscout.app">🔭 Live demo</a> ·
+  <a href="https://github.com/xixjohan/mediary-scout/releases/latest">📥 Download Desktop App</a> ·
+  <a href="#-docker-deployment-recommended">🐳 Docker Deployment</a> ·
+  <a href="#-core-features--latest-optimizations">✨ Core Features</a> ·
+  <a href="docs/deploy.md">📖 Detailed Deploy Guide</a> ·
   <a href="README.md">中文</a>
 </p>
 
-Ask for a movie, show or anime; an agent searches for it, transfers the best match into your own drive (Quark / 115 / GuangYaPan / 123 / Tianyi), reads the drive back to confirm it landed, and keeps filling in episodes that are still missing.
+---
 
-Download: [GitHub Releases](https://github.com/xixjohan/mediary-scout/releases/latest) (macOS / Windows desktop app)
+## 💡 What is Mediary Scout?
 
-Want to help? [An Issue or a docs fix beats a donation](docs/support/README.md)
+Simply ask for a movie, TV show, anime, or even a plot description; the AI Agent automatically searches for the best resource match across the internet, transfers it straight into your own cloud drives, reads back to verify successful delivery, and continuously patrols to backfill newly released episodes.
 
-Community: this project takes part in and endorses the [LINUX DO community](https://linux.do), where many users self-host, share drive tips, and get deployment questions answered fast. [![认可 LINUX DO](https://img.shields.io/badge/LINUX%20DO-认可-2ecc71?style=flat&labelColor=1f1f1f)](https://linux.do)
+> [!NOTE]
+> This project actively participates in and endorses the [LINUX DO Community](https://linux.do), where many users self-host, share cloud drive experiences, and get fast deployment support. [![LINUX DO](https://img.shields.io/badge/LINUX%20DO-Endorsed-2ecc71?style=flat&labelColor=1f1f1f)](https://linux.do)
 
-![Mediary Scout: search a title, hit 获取, and the agent searches, transfers, and verifies it into your drive](docs/images/demo.gif)
+![Mediary Scout: Search a title, click 获取, and the agent searches, transfers, and verifies it into your drive](docs/images/demo.gif)
 
-## Install
+---
 
-### Desktop app (easiest)
+## ✨ Core Features & Latest Optimizations
 
-| Platform | Download | Notes |
-|---|---|---|
-| macOS (Apple Silicon) | [.dmg](https://github.com/xixjohan/mediary-scout/releases/latest) | Signed and notarized |
-| Windows (x64) | [.exe](https://github.com/xixjohan/mediary-scout/releases/latest) | Unsigned: when SmartScreen prompts, click "Run anyway" |
+### 1. 🗂️ Broad Multi-Drive Ecosystem
+- **Quark (夸克)**: QR code scan login, Cookie connection, share-link batch transfer & verification;
+- **115 Drive**: QR code scan login, share-link transfer, offline torrent/magnet downloads;
+- **123 Pan**: QR code scan login, share links & magnet downloads, free accounts supported;
+- **Tianyi Cloud (天翼云盘)**: QR scan login, Personal & Cloud Family transfer support;
+- **GuangYaPan (光鸭云盘)**: Device code QR & token login, share link & magnet transfer;
+- **UC Drive**: Mobile QR scan login and cookie support;
+- **Enterprise-grade Credential Security**: Credentials and tokens encrypted with **AES-256-GCM** hardware-level encryption.
 
-Install, open it, connect a drive and add an AI model in Settings, then search a title and hit 获取. The app tells you when a new version is out.
+### 2. 🔍 High-Availability Search & Metadata
+- **TMDB + Douban Dual Engine**: TMDB metadata integrated with **Douban Frodo WeChat API Fallback Provider** (transparent failover ensures 100% coverage for Chinese titles and niche content);
+- **Douban Ratings Integration**: Batch asynchronous rating badges (e.g. `⭐ 8.5`) seamlessly embedded in discovery feeds and search cards;
+- **Progressive Streaming Search**: Built on React Suspense + PPR (Partial Prerendering) for millisecond skeleton rendering and real-time streaming results;
+- **Multi-Category & Tag Filter Bar**: One-click switching across Movies, TV Series, Anime, Variety, and Documentaries with dynamic genres, release year slicing, and popularity/rating sorting;
+- **Windowed Pagination with Dynamic Switcher**: Freely switch between **20, 30, and 50 items per page** (default upgraded to **30 items**), backed by concurrent window slicing adapters.
 
-### Docker (NAS / router / server)
+### 3. 🤖 Resilient AI Acquisition Agent
+- **OpenAI-Compatible LLM Protocol**: Works with DeepSeek, GPT-4o, Claude 3.5, Qwen 2.5, Kimi, Ollama, vLLM, etc., with a complimentary public model pool out of the box;
+- **AI 503 & Filter Interception Resilience**:
+  - `PromptSanitizer`: Filters sensitive keywords to prevent model safety blocking;
+  - `AgentReflection`: Auto-detects 503 overloads or safety triggers and applies exponential backoff prompt self-healing;
+- **Multi-Source Aggregation**: Integrated PanSou resource engine, Haisou provider, and optional Prowlarr indexers.
+
+### 4. 💬 Interactive Chat Assistant with Multi-Session Persistence
+- **Parallel Sessions & History**: Create new chats, switch between historical conversations, rename, and clear sessions;
+- **Interactive Media Cards**: Automatically identifies media entities in chat and embeds clickable cards with posters, Douban ratings, and 1-click acquisition buttons.
+
+### 5. 🛡️ Zero-Downtime Deployment & Asset Resilience
+- **Asset Integrity Gate (`check-build-assets`)**: Verifies 100% of HTML and Manifest chunk references physically exist on disk before release;
+- **Client `ChunkLoadError` Auto-Recovery**: Global ErrorBoundary catches deployment chunk drift and safely auto-reloads once via sessionStorage debounce.
+
+---
+
+## 🐳 Docker Deployment (Recommended)
+
+Mediary Scout runs as a **single-image, multi-service architecture** on Docker Compose:
+- **`web`**: Next.js SSR + Client application;
+- **`worker`**: Dedicated background patrol & acquisition queue host (sharing the same image);
+- **`pansou`**: Bundled resource search service;
+- **SQLite Single Engine**: Zero external database containers required. All data resides in a single `/app/data/mediary.db` volume.
+
+### Method 1: Docker Compose (Official Recommendation)
 
 ```bash
-git clone https://github.com/xixjohan/mediary-scout && cd mediary-scout
+# 1. Clone repository
+git clone https://github.com/xixjohan/mediary-scout.git && cd mediary-scout
+
+# 2. Copy environment template
+cp .env.example .env
+
+# 3. Pull published images and launch
+docker compose pull web worker
 docker compose up -d
 ```
 
-Open `http://<host>:3000` and configure it in Settings. Later updates are one click in **Settings → 更新**, or daily on a schedule you set. Build mirrors for mainland China, remote access via Tailscale / Cloudflare Tunnel, multi-user, backups, and a prompt that lets an AI agent deploy it for you are all in the **[deploy guide](docs/deploy.md)** (Chinese).
+Open `http://<host-ip>:3000` in your browser. Go to **Settings**, scan your drive QR code, and you are ready to go!
 
-| | Desktop app | Docker |
-|---|---|---|
-| Best for | Personal use on Mac / Windows | NAS or server, always on |
-| Scheduled gap-fill | While the app is open | 24/7 |
-| Multi-user | No | Yes |
-| Phone / remote access | This machine only | Tailscale / Cloudflare Tunnel |
+---
 
-Either way, bringing your own OpenAI-compatible AI model endpoint is an optional upgrade (the key stays in your own instance). Without a configured AI model, the app defaults to Kilo Code's free public model pool (no signup needed; the acquisition conversation context - search queries, task and message content, candidate results, file names - is sent to Kilo and its upstream model providers). Metadata works out of the box. Resource search uses PanSou: Docker bundles one, the desktop app defaults to a public instance you can swap for your own in Settings; Prowlarr can be added for magnets.
+### Method 2: Docker CLI Single Container
 
-## Supported drives
+```bash
+docker run -d \
+  --name mediary-scout \
+  -p 3000:3000 \
+  -v mediary-data:/app/data \
+  --restart unless-stopped \
+  ghcr.io/xixjohan/mediary-scout:latest
+```
 
-- **Quark**: share-link transfer; the largest pool on PanSou.
-- **115**: share links + magnets.
-- **123**: share links + magnets; free accounts can transfer; QR login. [Setup](docs/deploy.md#123网盘连接)
-- **GuangYaPan (光鸭)**: share links + magnets; paste a token to log in. [Setup](docs/deploy.md#光鸭云盘guangyapan连接)
-- **Tianyi (天翼)**: share-link transfer; QR login; few movies. [Setup](docs/deploy.md#天翼云盘连接)
+---
 
-Per-drive resource counts, and why only these five: [drive evaluations](docs/drive-brand-evaluations.md) (Chinese).
+### Method 3: Remote Access & Network Accelerations
 
-## More docs
+#### 1. Outbound Proxy for Mainland China (TMDB Access)
+If TMDB API is restricted in your region, configure your outbound proxy in `.env`:
+```env
+HTTP_PROXY=http://172.17.0.1:7890
+HTTPS_PROXY=http://172.17.0.1:7890
+NO_PROXY=localhost,127.0.0.1,web,worker,pansou
+```
 
-- [Deploy guide](docs/deploy.md)
-- [Agent API](docs/agent-api.md): let coding agents such as Claude Code or Codex drive Mediary Scout
-- [Search and web research](docs/web-research.md) (Chinese): describe a plot, or how shows without official seasons map to episode numbers
-- [Architecture overview](docs/architecture.md)
+#### 2. Remote Access via Cloudflare Tunnel
+Set your tunnel token in `.env`:
+```env
+TUNNEL_TOKEN=your_cloudflare_tunnel_token
+```
+Launch with the tunnel profile:
+```bash
+docker compose --profile tunnel up -d
+```
+> [!CAUTION]
+> Always set a login password or protect your domain with Cloudflare Access before exposing it to the public internet.
 
-## Disclaimer
+---
 
-Mediary Scout is open-source, self-hosted software. It is not offered, and never will be offered, as a hosted service: you run your own instance and bring your own drive and AI model credentials. It performs the same file operations you could do by hand in your own cloud drive. See [project positioning](docs/distribution-and-legal-positioning.md). Not affiliated with 115, Quark, GuangYaPan, 123, Tianyi, TMDB, or any indexer.
+## 💻 Desktop App (macOS & Windows)
 
-## Credits
+| Platform | Download | Note |
+| :--- | :--- | :--- |
+| **macOS (Apple Silicon)** | [Download .dmg](https://github.com/xixjohan/mediary-scout/releases/latest) | Signed & notarized |
+| **Windows (x64)** | [Download .exe](https://github.com/xixjohan/mediary-scout/releases/latest) | Click "More info" → "Run anyway" if SmartScreen prompts |
 
-- [PanSou](https://github.com/fish2018/pansou-web): resource search backend
-- [Prowlarr](https://github.com/Prowlarr/Prowlarr): indexer manager (optional)
-- [p115client](https://github.com/ChenyangGao/p115client): 115 API reference
-- [p123client](https://github.com/ChenyangGao/p123client): 123 API reference
-- [AList](https://github.com/AlistGo/alist): GuangYaPan API reference (`drivers/guangyapan`)
-- [cloud189-auto-save](https://github.com/1307super/cloud189-auto-save) / [cloudpan189-api](https://github.com/tickstep/cloudpan189-api): Tianyi API references
-- [TMDB](https://www.themoviedb.org/): metadata (this product is not endorsed or certified by TMDB)
+---
 
-## Star History
-<a href="https://www.star-history.com/?repos=xixjohan%2Fmediary-scout&type=date&legend=top-left">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&theme=dark&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
-    <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=xixjohan/mediary-scout&type=date&legend=top-left&sealed_token=SyhZxdVgoG8rffU_0ypYi7eroHlPNo9kj1V0_4F2L1vJ_C_Yw_DBBmDqGADi7kl916TTZJ8nmCCIK6osu_tfo__vf8AfSlwqk176hnpqc_oIg_PcmKuulA" />
-  </picture>
-</a>
+## 📚 More Documentation
+
+- [📖 Full Deployment Guide (NAS, Routers, Tunnels)](docs/deploy.md)
+- [🧩 Architecture Overview](docs/architecture.md)
+- [🤖 Agent API Specification](docs/agent-api.md)
+- [🛡️ Zero-Downtime & ChunkLoadError Architecture](docs/nextjs-chunk-load-and-zero-downtime-deployment-architecture.md)
+- [⚖️ Cloud Drive Evaluations](docs/drive-brand-evaluations.md)
+
+---
+
+## ⚖️ Disclaimer
+
+Mediary Scout is open-source, self-hosted software. It is not, and never will be, offered as a hosted cloud service. Users provide their own cloud drive credentials and AI model endpoints.
+
+Not affiliated with 115, Quark, Alibaba, Baidu, 123, Tianyi, GuangYaPan, TMDB, Douban, or any indexer.
+
+---
+
+<p align="center">
+  <b>If Mediary Scout helps you, please consider giving it a ⭐️ Star on GitHub!</b>
+</p>
