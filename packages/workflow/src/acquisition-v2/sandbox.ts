@@ -895,6 +895,11 @@ export class TaskSandbox {
     return this.observedSnapshots.has(snapshotId);
   }
 
+  /** All observed snapshots in this task (used by deterministic fallback). */
+  getObservedSnapshots(): readonly ResourceSnapshotV2[] {
+    return [...this.observedSnapshots.values()];
+  }
+
   /** Read-only full raw tree of THIS task's staging handle — the agent's
    *  "看现场" surface. Returns everything (no top-N slicing, §11) so the agent
    *  judges identity/dupes/extras from real files, not a summary. */

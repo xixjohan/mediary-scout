@@ -64,6 +64,11 @@
   --color-success: var(--accent);
   --color-success-subtle: var(--accent-subtle);
 
+  /* 豆瓣电影评分徽标与主题色彩 */
+  --douban: #23b95f;
+  --douban-subtle: rgba(35, 185, 95, 0.14);
+  --douban-border: rgba(35, 185, 95, 0.32);
+
   /* Tier 1 & 2: Typography */
   --text: #ffffff;
   --text-muted: #b3b3b3;
@@ -4248,6 +4253,243 @@ select.setting-control {
 .update-auto-row .service-toggle { font-size: 13.5px; color: var(--text); }
 .update-auto-row .setting-control { width: auto; }
 
+/* 搜索页多类型多标签复合筛选栏 */
+.media-filter-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+  margin-bottom: 20px;
+  padding: 12px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-card);
+}
+
+.media-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.media-filter-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  min-width: 52px;
+  flex-shrink: 0;
+}
+
+.media-filter-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.media-filter-split-row {
+  justify-content: space-between;
+}
+
+.media-filter-subgroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+/* 豆瓣评分与评分徽章 */
+.douban-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--douban-subtle);
+  color: var(--douban);
+  border: 1px solid var(--douban-border);
+  border-radius: var(--radius-pill);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+.douban-dot {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.douban-fallback-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  background: var(--douban-subtle);
+  border: 1px solid var(--douban-border);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  color: var(--douban);
+  margin-bottom: 20px;
+}
+
+.candidate-source-badge {
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--douban-subtle);
+  color: var(--douban);
+  border: 1px solid var(--douban-border);
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+/* 搜索与发现流通用分页条 */
+.pagination-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 32px;
+  padding: 16px 0 8px;
+  border-top: 1px solid var(--border-soft);
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.pagination-info {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.pagination-btn:hover:not(.disabled) {
+  background: var(--bg-card);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.pagination-btn.disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+.pagination-pages {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pagination-page-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: none;
+  background: transparent;
+  transition: all 0.15s ease;
+}
+
+.pagination-page-btn:hover:not(.active) {
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+.pagination-page-btn.active {
+  background: var(--accent);
+  color: #000;
+  font-weight: 700;
+}
+
+.pagination-ellipsis {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 32px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pagination-size-switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.pagination-size-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.pagination-size-pills {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+
+.pagination-size-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-decoration: none;
+  background: transparent;
+  transition: all 0.15s ease;
+}
+
+.pagination-size-pill:hover:not(.active) {
+  background: var(--bg-card);
+  color: var(--text);
+}
+
+.pagination-size-pill.active {
+  background: var(--accent);
+  color: #000;
+  font-weight: 700;
+}
+
 /* 搜索页空态「近期热门」发现区(#95)。Tab 药丸复用 .filter-pill。 */
 .trending {
   margin-top: 8px;
@@ -7542,6 +7784,260 @@ select.setting-control {
   height: calc(100vh - 32px);
   padding: 0 1.5rem 1rem;
   box-sizing: border-box;
+}
+
+.chat-workspace-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: 0.75rem;
+}
+
+.chat-sidebar {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.chat-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.85rem 0.85rem 0.65rem;
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--divider);
+}
+
+.chat-sidebar-new-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.chat-sidebar-new-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-soft);
+}
+
+.chat-sidebar-collapse-btn,
+.chat-sidebar-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.chat-sidebar-collapse-btn:hover,
+.chat-sidebar-toggle-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.chat-sidebar-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0.5rem 0.4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.chat-sidebar-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.chat-sidebar-empty-icon {
+  color: var(--text-faint);
+  margin-bottom: 0.5rem;
+}
+
+.chat-sidebar-empty-text {
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin: 0 0 0.25rem 0;
+  color: var(--text-soft);
+}
+
+.chat-sidebar-empty-hint {
+  font-size: 0.72rem;
+  margin: 0;
+  color: var(--text-faint);
+}
+
+.chat-sidebar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.chat-sidebar-group-title {
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.35rem 0.5rem 0.2rem;
+}
+
+.chat-sidebar-group-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.chat-sidebar-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  color: var(--text-soft);
+  font-size: 0.85rem;
+  transition: var(--transition-fast);
+  user-select: none;
+  border-left: 2px solid transparent;
+}
+
+.chat-sidebar-item:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.chat-sidebar-item.is-active {
+  background: var(--bg-card);
+  color: var(--text);
+  border-left-color: var(--accent);
+  font-weight: 500;
+}
+
+.chat-sidebar-item-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.chat-sidebar-item-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.83rem;
+}
+
+.chat-sidebar-item-actions {
+  display: none;
+  align-items: center;
+  gap: 0.2rem;
+  margin-left: 0.25rem;
+  flex-shrink: 0;
+}
+
+.chat-sidebar-item:hover .chat-sidebar-item-actions,
+.chat-sidebar-item.is-active .chat-sidebar-item-actions {
+  display: flex;
+}
+
+.chat-sidebar-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: var(--transition-fast);
+}
+
+.chat-sidebar-action-btn:hover {
+  background: var(--bg-active);
+  color: var(--text);
+}
+
+.chat-sidebar-action-btn.is-danger:hover {
+  color: var(--negative);
+  background: var(--negative-subtle);
+}
+
+.chat-sidebar-rename-form {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  width: 100%;
+}
+
+.chat-sidebar-rename-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-base);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 0.8rem;
+  padding: 0.2rem 0.4rem;
+  outline: none;
+}
+
+.chat-sidebar-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.chat-sidebar-icon-btn:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.chat-loading-history {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  gap: 0.35rem;
 }
 
 .chat-container {

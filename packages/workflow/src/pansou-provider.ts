@@ -1,4 +1,7 @@
 import { parseGuangYaShareUrl } from "./guangya-client.js";
+import { parseQuarkShareUrl, parseUcShareUrl } from "./quark-storage-executor.js";
+import { parsePan123ShareUrl } from "./pan123-storage-executor.js";
+import { parseTianyiShareUrl } from "./tianyi-storage-executor.js";
 import { createHash } from "node:crypto";
 import type {
   ResourceCandidate,
@@ -459,37 +462,48 @@ function collectLinkFacts(results: unknown[]): PanSouLinkFact[] {
   return facts;
 }
 
-function normalizeResourceType(rawType: string, url: string): ResourceType | null {
-  if (rawType === "115") {
-    return "115";
-  }
-  if (rawType === "quark" || url.includes("pan.quark.cn/s/")) {
-    return "quark";
-  }
-  // 123 share shapes mirror parsePan123ShareUrl (pan123-storage-executor):
-  // multi-mirror domains 123pan/123684/123865/123912 · com/cn, path /s/<key>.
-  if (rawType === "123" || /123(?:684|865|912|pan)\.(?:com|cn)\/s\//.test(url)) {
-    return "123";
-  }
-  // 天翼 share shapes mirror parseTianyiShareUrl (tianyi-storage-executor):
-  // cloud.189.cn/t/<code> (the probe-confirmed PanSou link shape) and
-  // cloud.189.cn/web/share?…code=<code> (the ?code= is required — the executor
-  // can't parse a code-less share URL). Deliberately NOT bare "cloud.189.cn/",
-  // which would misclassify non-share 189 URLs (e.g. the web portal).
-  if (
-    rawType === "tianyi" ||
-    url.includes("cloud.189.cn/t/") ||
-    /cloud\.189\.cn\/web\/share\?[^#]*\bcode=/.test(url)
-  ) {
-    return "tianyi";
-  }
-  // 光鸭 share: the SAME parser the executor transfers with, so a lookalike host
-  // (evilguangyapan.com) can never become a candidate that then fails as unsupported.
-  if (parseGuangYaShareUrl(url) !== null) {
-    return "guangya";
-  }
+/** Classify one upstream link by its URL SHAPE.
+ *
+ *  The declared `rawType` is deliberately ignored. Every branch here validates the
+ *  URL through the same parser its executor transfers with, so `rawType` would add
+ *  no information — but it used to be able to SUBTRACT: a link tagged `"115"` whose
+ *  url was a quark share hit the 115 branch, failed the shape check, and returned
+ *  null before the quark parser ever ran. Checking shapes in order is both simpler
+ *  and strictly more forgiving of a mislabelled upstream.
+ *
+ *  `_rawType` is kept in the signature so both providers call it the same way. */
+export function normalizeResourceType(_rawType: string, url: string): ResourceType | null {
+  // Magnets first, regardless of any declared brand: a magnet is transferable by
+  // whichever drive has 秒传, and every executor routes on candidate.type ===
+  // "magnet". Checking brands first would drop every 115-sourced torrent.
   if (url.startsWith("magnet:")) {
     return "magnet";
+  }
+  // 115 shares live on 115.com/s/<code> or 115cdn.com/s/<code> — the exact
+  // prefixes storage-115-executor will transfer.
+  if (/^https?:\/\/(?:www\.)?115(?:cdn)?\.com\/s\/[A-Za-z0-9]+/.test(url)) {
+    return "115";
+  }
+  // Each of these is the SAME parser the executor transfers with, so a lookalike
+  // host (evilpan.quark.cn, evil.example.com/pan.quark.cn/s/x) can never become a
+  // candidate that then fails as unparseable at transfer time.
+  if (parseQuarkShareUrl(url) !== null) {
+    return "quark";
+  }
+  if (parseUcShareUrl(url) !== null) {
+    return "uc";
+  }
+  // 123 share shapes: multi-mirror domains 123pan/123684/123865/123912 · com/cn,
+  // path /s/<key>.
+  if (parsePan123ShareUrl(url) !== null) {
+    return "123";
+  }
+  // 天翼: cloud.189.cn/t/<code> and cloud.189.cn/web/share?…code=<code>.
+  if (parseTianyiShareUrl(url) !== null) {
+    return "tianyi";
+  }
+  if (parseGuangYaShareUrl(url) !== null) {
+    return "guangya";
   }
   return null;
 }

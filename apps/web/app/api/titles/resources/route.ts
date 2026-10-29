@@ -246,6 +246,105 @@ export async function POST(request: NextRequest) {
   const cacheKeySuffix = cacheKeyParts.length > 0 ? cacheKeyParts.join(":") : undefined;
 
   const provider = await getWorkerResourceProvider();
+
+  const wantsStream =
+    request.nextUrl.searchParams.get("stream") === "1" ||
+    request.headers.get("accept")?.includes("application/x-ndjson") === true;
+
+  if (wantsStream) {
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          const result = await resolveTitleResources({
+            accountId,
+            titleId: String(tmdbId),
+            keywords,
+            search: ({ keyword }) => provider.search({ keyword }),
+            cache: resourceCache,
+            limiter: resourceLimiter,
+            loadCachedCandidates: async () => [],
+            ...(cacheKeySuffix ? { cacheKeySuffix } : {}),
+            onChunk: (event) => {
+              controller.enqueue(
+                encoder.encode(
+                  JSON.stringify({
+                    type: "chunk",
+                    newCandidates: event.newCandidates,
+                    allCandidates: event.allCandidates,
+                    progress: event.progress,
+                  }) + "\n",
+                ),
+              );
+            },
+          });
+
+          if (result.kind === "ok") {
+            let snapshotId: string | undefined;
+            if (result.snapshot !== null) {
+              try {
+                await getWorkflowRepository().saveWorkflowRunSnapshot(
+                  buildResourceSearchRun({
+                    snapshot: result.snapshot,
+                    title,
+                    season,
+                    accountId,
+                    connectedStorageId,
+                    now: result.snapshot.createdAt,
+                  }),
+                );
+                snapshotId = result.snapshot.id;
+              } catch (error) {
+                console.error("[titles/resources] snapshot persist failed", error);
+              }
+            }
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: "done",
+                  tmdbId,
+                  cached: result.cached,
+                  count: result.candidates.length,
+                  candidates: result.candidates,
+                  ...(snapshotId ? { snapshotId } : {}),
+                }) + "\n",
+              ),
+            );
+          } else {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: "error",
+                  kind: result.kind,
+                  ...(result.kind === "throttled" ? { retryAfterMs: result.retryAfterMs } : {}),
+                  ...(result.kind === "error" ? { detail: result.message } : {}),
+                }) + "\n",
+              ),
+            );
+          }
+          controller.close();
+        } catch (error) {
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({
+                type: "error",
+                detail: error instanceof Error ? error.message : String(error),
+              }) + "\n",
+            ),
+          );
+          controller.close();
+        }
+      },
+    });
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-store, no-cache, must-revalidate",
+      },
+    });
+  }
+
   const result = await resolveTitleResources({
     accountId,
     titleId: String(tmdbId),

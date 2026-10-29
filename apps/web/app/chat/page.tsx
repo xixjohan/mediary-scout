@@ -1,14 +1,14 @@
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
 import { AppSidebar } from "../../components/app-sidebar";
-import { ChatPanel } from "../../components/chat-panel";
+import { ChatWorkspace } from "../../components/chat-workspace";
 import { GitHubNameplate } from "../../components/github-nameplate";
 import { resolveGlobalWorkspace } from "../../lib/workflow-runtime";
 
 function ChatPageInner({
   searchParams,
 }: {
-  searchParams: Promise<{ w?: string }>;
+  searchParams: Promise<{ w?: string; c?: string }>;
 }) {
   return (
     <Suspense fallback={<ChatShell />}>
@@ -26,8 +26,12 @@ function ChatShell() {
   );
 }
 
-async function ChatSurface({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
-  const { w } = await searchParams;
+async function ChatSurface({
+  searchParams,
+}: {
+  searchParams: Promise<{ w?: string; c?: string }>;
+}) {
+  const { w, c } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return (
     <div className="app-shell">
@@ -37,7 +41,10 @@ async function ChatSurface({ searchParams }: { searchParams: Promise<{ w?: strin
         activeStorageId={workspace.activeStorageId}
       />
       <main className="main product-main product-main-chat">
-        <ChatPanel storageId={workspace.activeStorageId} />
+        <ChatWorkspace
+          storageId={workspace.activeStorageId}
+          initialConversationId={c}
+        />
         <GitHubNameplate />
       </main>
     </div>

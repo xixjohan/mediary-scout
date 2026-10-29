@@ -5,15 +5,16 @@ import { Suspense } from "react";
 import { Library, TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../components/acquiring-poller";
 import { AppSidebar } from "../components/app-sidebar";
-import { RequestTrackButton } from "../components/request-track-button";
-import { AcquireProgressBadge } from "../components/acquire-progress-badge";
+import { CandidateCard } from "../components/candidate-card";
 import { DemoSessionLibrary } from "../components/demo-session-library";
 import { LibraryQuickFind } from "../components/library-quick-find";
 import { SubscriptionTodo } from "../components/subscription-todo";
 import { RememberQuery } from "../components/search-memory";
 import { SearchForm } from "../components/search-form";
-import { SeasonRequestMenu } from "../components/season-request-menu";
 import { TrendingRow } from "../components/trending-row";
+import { PaginationBar } from "../components/pagination-bar";
+import { MediaFilterBar, applyCandidateFilters } from "../components/media-filter-bar";
+import { getDoubanRatings, type DoubanRating } from "../lib/douban-rating";
 import { GitHubNameplate } from "../components/github-nameplate";
 import type { TrendingKind } from "../lib/trending";
 import { getSearchView } from "../lib/search-page";
@@ -81,6 +82,50 @@ function HomeShell() {
   );
 }
 
+function parseMediaType(typeParam?: string, trendingParam?: string): string {
+  if (typeParam) return typeParam;
+  if (trendingParam) return trendingParam;
+  return "all";
+}
+
+function parsePageNumber(pageParam?: string): number {
+  const parsed = parseInt(pageParam || "1", 10);
+  return Number.isNaN(parsed) || parsed < 1 ? 1 : parsed;
+}
+
+function parsePageSizeParam(sizeParam?: string): number {
+  const parsed = parseInt(sizeParam || "30", 10);
+  return [20, 30, 50].includes(parsed) ? parsed : 30;
+}
+
+function parseStatus(statusParam?: string): "active" | "completed" | "all" {
+  if (statusParam === "completed" || statusParam === "all") return statusParam;
+  return "active";
+}
+
+function resolveActiveTrending(mediaType: string): TrendingKind {
+  if (mediaType === "tv") return "tv";
+  if (mediaType === "anime") return "anime";
+  return "movie";
+}
+
+function parseHomeSearchParams(params: Record<string, string | string[] | undefined>) {
+  const query = stringParam(params.q);
+  const activeTab: "library" | "search" =
+    stringParam(params.tab) === "library" ? "library" : "search";
+  const mediaType = parseMediaType(stringParam(params.type), stringParam(params.trending));
+  const genre = stringParam(params.genre) || "all";
+  const year = stringParam(params.year) || "all";
+  const sort = stringParam(params.sort) || "popularity";
+  const filter = stringParam(params.filter) || "all";
+  const page = parsePageNumber(stringParam(params.page));
+  const pageSize = parsePageSizeParam(stringParam(params.pageSize));
+  const status = parseStatus(stringParam(params.status));
+  const activeTrending = resolveActiveTrending(mediaType);
+
+  return { query, activeTab, mediaType, genre, year, sort, filter, page, pageSize, status, activeTrending };
+}
+
 async function HomeSurface({
   searchParams,
   storageId,
@@ -89,16 +134,20 @@ async function HomeSurface({
   storageId?: string | undefined;
 }) {
   const params = (await searchParams) ?? {};
-  const query = stringParam(params.q);
-  const activeTab = stringParam(params.tab) === "library" ? "library" : "search";
-  const mediaType = stringParam(params.type) || "all";
-  const filter = stringParam(params.filter) || "all";
-  const statusParam = stringParam(params.status);
-  const status: "active" | "completed" | "all" =
-    statusParam === "completed" || statusParam === "all" ? statusParam : "active";
-  const trendingParam = stringParam(params.trending);
-  const activeTrending: TrendingKind =
-    trendingParam === "tv" ? "tv" : trendingParam === "anime" ? "anime" : "movie";
+  const {
+    query,
+    activeTab,
+    mediaType,
+    genre,
+    year,
+    sort,
+    filter,
+    page,
+    pageSize,
+    status,
+    activeTrending,
+  } = parseHomeSearchParams(params);
+
   // Tree model: keep searches inside the ACTIVE workspace so an acquisition lands
   // on the drive you're viewing — not silently on the primary drive. Root route
   // (no storageId) posts to "/" as before.
@@ -126,12 +175,22 @@ async function HomeSurface({
                 搜索与获取按网盘隔离 —— 想为某块盘获取资源，请切到该盘后在它的搜索页操作。
               </p>
             ) : null}
-            <Suspense key={`search-${query}`} fallback={<SearchResultsSkeleton />}>
+            <MediaFilterBar
+              basePath={basePath}
+              query={query}
+              activeType={mediaType}
+              activeGenre={genre}
+              activeYear={year}
+              activeSort={sort}
+              activeTrending={activeTrending}
+            />
+            <Suspense key={`search-${query}-${mediaType}-${genre}-${year}-${sort}-${page}-${pageSize}`} fallback={<SearchResultsSkeleton />}>
               <SearchResults
                 query={query}
                 storageId={storageId}
                 activeTrending={activeTrending}
                 basePath={basePath}
+                filterParams={{ type: mediaType, genre, year, sort, page, pageSize }}
               />
             </Suspense>
           </section>
@@ -149,128 +208,218 @@ async function HomeSurface({
   );
 }
 
+function buildTrackedByTmdbId(states: TrackedSeasonState[]): Map<number, TrackedSeasonState[]> {
+  const map = new Map<number, TrackedSeasonState[]>();
+  for (const state of states) {
+    if (state.title.type === "movie") continue;
+    const list = map.get(state.title.tmdbId) ?? [];
+    list.push(state);
+    map.set(state.title.tmdbId, list);
+  }
+  return map;
+}
+
+function SearchProviderErrorView({
+  searchView,
+  basePath,
+}: {
+  searchView: Awaited<ReturnType<typeof getSearchView>>;
+  basePath: string;
+}) {
+  return (
+    <section className="search-results" aria-label="搜索结果">
+      <div className="quiet-state compact" role="alert">
+        <TriangleAlert size={22} aria-hidden />
+        <strong>搜索暂时不可用：连不上元数据服务（TMDB）</strong>
+        <span>
+          当前部署环境连不上 TMDB，内置代理也不通。国内网络未配置代理时常见——
+          给部署主机（或容器）配置可访问外网的代理后重试。
+        </span>
+        <a className="primary-button" href={`${basePath}?q=${encodeURIComponent(searchView.query)}`}>
+          重试
+        </a>
+        {searchView.providerError ? <span className="panel-note">{searchView.providerError}</span> : null}
+      </div>
+    </section>
+  );
+}
+
+function SearchEmptyQuietState({ query }: { query: string }) {
+  return (
+    <div className="quiet-state compact">
+      <TriangleAlert size={22} aria-hidden />
+      <strong>没有匹配结果</strong>
+      <span>{query}</span>
+      <span className="panel-note">
+        可以试试剧情描述（如「男主带着小绿瓶修仙的国漫」），或去掉「第几季／篇章名」只搜作品名。
+      </span>
+    </div>
+  );
+}
+
+function SearchResultsHeading({
+  count,
+  searchView,
+}: {
+  count: number;
+  searchView: Awaited<ReturnType<typeof getSearchView>>;
+}) {
+  return (
+    <div className="section-heading">
+      <div>
+        <h2>结果</h2>
+        <p>
+          {count} 个候选
+          {searchView.cacheStatus === "hit" ? "，来自缓存" : ""}
+          {searchView.source === "douban" ? " · 豆瓣兜底源" : ""}
+        </p>
+        {searchView.interpretedQuery ? (
+          <p className="panel-note">
+            「{searchView.query}」像是描述而不是片名 —— 已按「{searchView.interpretedQuery}」搜索。
+          </p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function setQueryParamIf(
+  params: Record<string, string | undefined>,
+  key: string,
+  value?: string,
+  defaultVal = "all",
+) {
+  if (value && value !== defaultVal) {
+    params[key] = value;
+  }
+}
+
+function buildSearchPaginationQuery(
+  query: string,
+  filterParams?: { type?: string; genre?: string; year?: string; sort?: string; pageSize?: number } | undefined,
+) {
+  const params: Record<string, string | undefined> = { q: query };
+  if (!filterParams) return params;
+  setQueryParamIf(params, "type", filterParams.type);
+  setQueryParamIf(params, "genre", filterParams.genre);
+  setQueryParamIf(params, "year", filterParams.year);
+  setQueryParamIf(params, "sort", filterParams.sort, "popularity");
+  if (filterParams.pageSize && filterParams.pageSize !== 30) {
+    params.pageSize = String(filterParams.pageSize);
+  }
+  return params;
+}
+
+function CandidateGridList({
+  candidates,
+  inProgressIds,
+  trackedByTmdbId,
+  storageId,
+  searchQuery,
+  doubanMap,
+}: {
+  candidates: SearchCandidateCard[];
+  inProgressIds: Set<number>;
+  trackedByTmdbId: Map<number, TrackedSeasonState[]>;
+  storageId?: string | undefined;
+  searchQuery: string;
+  doubanMap: Map<string, DoubanRating>;
+}) {
+  return (
+    <div className="candidate-grid">
+      {candidates.map((candidate) => {
+        const trackedStates = trackedByTmdbId.get(candidate.tmdbId) ?? [];
+        const trackedLabel =
+          candidate.mediaType === "tv"
+            ? trackedSummaryLabel(trackedStates, candidate.seasonNumbers.length)
+            : null;
+
+        return (
+          <CandidateCard
+            candidate={candidate}
+            acquiring={inProgressIds.has(candidate.tmdbId)}
+            trackedLabel={trackedLabel}
+            trackedSeasonNumbers={trackedStates.map((s) => s.season.seasonNumber)}
+            storageId={storageId}
+            searchQuery={searchQuery}
+            doubanRating={doubanMap.get(`${candidate.title}_${candidate.year ?? ""}`)}
+            key={`${candidate.mediaType}_${candidate.tmdbId}`}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
 async function SearchResults({
   query,
   storageId,
   activeTrending,
   basePath,
+  filterParams,
 }: {
   query: string;
   storageId?: string | undefined;
   activeTrending: TrendingKind;
   basePath: string;
+  filterParams?: { type?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
 }) {
-  const searchView = await getSearchView(query, storageId);
-  // Library awareness on results: a tracked title shows WHICH seasons are
-  // obtained and routes to the same title page as the library — search must
-  // anticipate re-searching something already obtained. Scoped to the active
-  // workspace (drive), so "已获取" reflects THIS drive.
+  const pageSize = filterParams?.pageSize ?? 30;
+  const searchView = await getSearchView(query, storageId, filterParams?.page, pageSize);
+  if (searchView.state === "empty") {
+    return <TrendingRow activeKind={activeTrending} basePath={basePath} filterParams={filterParams} />;
+  }
+  if (searchView.state === "provider_error") {
+    return <SearchProviderErrorView searchView={searchView} basePath={basePath} />;
+  }
+
   const repository = getWorkflowRepository();
   await ensureDemoSeeded(repository);
   const scope = await getActiveWorkspaceScope(storageId);
-  const trackedByTmdbId = new Map<number, TrackedSeasonState[]>();
-  for (const state of await repository.listTrackedSeasonStates(scope)) {
-    // Season-awareness covers anything tracked with seasons — TV AND anime
-    // (anime is a TV-shaped title routed to its own library). Only movies, which
-    // have no season menu, are excluded. (Was `!== "tv"`, which wrongly hid every
-    // acquired anime's tracked state on the search card.)
-    if (state.title.type === "movie") {
-      continue;
-    }
-    const list = trackedByTmdbId.get(state.title.tmdbId) ?? [];
-    list.push(state);
-    trackedByTmdbId.set(state.title.tmdbId, list);
-  }
+  const trackedByTmdbId = buildTrackedByTmdbId(await repository.listTrackedSeasonStates(scope));
 
-  // Search results auto-update like the library: while ANY acquisition is in
-  // flight, mount the poller so the card flips 已请求 → 已获取 the moment the run
-  // finishes, with no manual refresh. (Previously only the library mounted it,
-  // so a result acquired from search stayed stuck on 已请求.)
   const inProgress = await getInProgressTitles(storageId);
   const inProgressIds = new Set(inProgress.map((title) => title.tmdbId));
+
+  const doubanMap = await getDoubanRatings(
+    searchView.candidates.slice(0, pageSize).map((c) => ({ title: c.title, year: c.year })),
+  );
+  const filteredCandidates = applyCandidateFilters(searchView.candidates, filterParams, doubanMap);
+  const page = searchView.page ?? filterParams?.page ?? 1;
 
   return (
     <>
       {inProgress.length > 0 ? <AcquiringPoller /> : null}
-      {searchView.state === "empty" ? (
-        <TrendingRow activeKind={activeTrending} basePath={basePath} />
-      ) : searchView.state === "provider_error" ? (
-        // Every TMDB access (direct + proxy) is unreachable from this deployment —
-        // a GFW-blocked network without a proxy (issue #134). Degrade with
-        // actionable guidance instead of letting the server component 500.
-        <section className="search-results" aria-label="搜索结果">
-          <div className="quiet-state compact" role="alert">
-            <TriangleAlert size={22} aria-hidden />
-            <strong>搜索暂时不可用：连不上元数据服务（TMDB）</strong>
-            <span>
-              当前部署环境连不上 TMDB，内置代理也不通。国内网络未配置代理时常见——
-              给部署主机（或容器）配置可访问外网的代理后重试。
-            </span>
-            {/* Deliberately a full-reload <a>, not <Link>: retry must re-run the
-                server render (re-probe TMDB). A client-side navigation to the
-                SAME URL can be served from the router cache as a no-op. */}
-            <a className="primary-button" href={`${basePath}?q=${encodeURIComponent(searchView.query)}`}>
-              重试
-            </a>
-            {searchView.providerError ? (
-              <span className="panel-note">{searchView.providerError}</span>
-            ) : null}
+      <section className="search-results" aria-label="搜索结果">
+        {searchView.source === "douban" ? (
+          <div className="douban-fallback-notice" role="status">
+            <span>💡 TMDB 暂未收录该关键词，已为您自动触发「豆瓣搜索兜底」展示相关条目。</span>
           </div>
-        </section>
-      ) : (
-        <section className="search-results" aria-label="搜索结果">
-          <div className="section-heading">
-            <div>
-              <h2>结果</h2>
-              <p>
-                {searchView.candidates.length} 个候选
-                {searchView.cacheStatus === "hit" ? "，来自缓存" : ""}
-              </p>
-              {searchView.interpretedQuery ? (
-                <p className="panel-note">
-                  「{searchView.query}」像是描述而不是片名 —— 已按「{searchView.interpretedQuery}」搜索。
-                </p>
-              ) : null}
-            </div>
-          </div>
-          {searchView.candidates.length > 0 ? (
-            <div className="candidate-grid">
-              {searchView.candidates.map((candidate) => (
-                <CandidateCard
-                  candidate={candidate}
-                  acquiring={inProgressIds.has(candidate.tmdbId)}
-                  trackedLabel={
-                    // The per-season summary ("第 N 季已获取/追更中") is a TV concept.
-                    // A movie has no seasons — let it fall through to its own
-                    // 已获取/已追踪 action label instead of an invented "第 1 季".
-                    candidate.mediaType === "tv"
-                      ? trackedSummaryLabel(
-                          trackedByTmdbId.get(candidate.tmdbId) ?? [],
-                          candidate.seasonNumbers.length,
-                        )
-                      : null
-                  }
-                  trackedSeasonNumbers={(trackedByTmdbId.get(candidate.tmdbId) ?? []).map(
-                    (state) => state.season.seasonNumber,
-                  )}
-                  storageId={storageId}
-                  searchQuery={searchView.query}
-                  key={`${candidate.mediaType}_${candidate.tmdbId}`}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="quiet-state compact">
-              <TriangleAlert size={22} aria-hidden />
-              <strong>没有匹配结果</strong>
-              <span>{searchView.query}</span>
-              <span className="panel-note">
-                可以试试剧情描述（如「男主带着小绿瓶修仙的国漫」），或去掉「第几季／篇章名」只搜作品名。
-              </span>
-            </div>
-          )}
-        </section>
-      )}
+        ) : null}
+        <SearchResultsHeading count={filteredCandidates.length} searchView={searchView} />
+        {filteredCandidates.length > 0 ? (
+          <>
+            <CandidateGridList
+              candidates={filteredCandidates}
+              inProgressIds={inProgressIds}
+              trackedByTmdbId={trackedByTmdbId}
+              storageId={storageId}
+              searchQuery={searchView.query}
+              doubanMap={doubanMap}
+            />
+            <PaginationBar
+              currentPage={page}
+              totalPages={searchView.totalPages ?? 1}
+              totalResults={searchView.totalResults}
+              pageSize={pageSize}
+              basePath={basePath}
+              queryParams={buildSearchPaginationQuery(searchView.query, filterParams)}
+            />
+          </>
+        ) : (
+          <SearchEmptyQuietState query={searchView.query} />
+        )}
+      </section>
     </>
   );
 }
@@ -314,125 +463,7 @@ function trackedSummaryLabel(states: TrackedSeasonState[], totalSeasonCount: num
   return parts.join(" · ") || "已追踪";
 }
 
-function CandidateCard({
-  candidate,
-  acquiring,
-  trackedLabel,
-  trackedSeasonNumbers,
-  storageId,
-  searchQuery,
-}: {
-  candidate: SearchCandidateCard;
-  /** This title has a queued/running acquisition — show 获取中, not its
-   *  (possibly "有缺集") tracked snapshot, which is misleading mid-acquisition. */
-  acquiring: boolean;
-  trackedLabel: string | null;
-  trackedSeasonNumbers: number[];
-  /** Tree model: the active workspace drive — acquisition lands HERE. */
-  storageId?: string | undefined;
-  searchQuery?: string | undefined;
-}) {
-  const isTv = candidate.mediaType === "tv";
-  const trackedSet = new Set(trackedSeasonNumbers);
-  // Only seasons NOT yet tracked are offered as acquisition scopes.
-  const untrackedSeasons = candidate.seasonNumbers.filter(
-    (seasonNumber) => !trackedSet.has(seasonNumber),
-  );
-  return (
-    <article className="candidate-card">
-      <Link className="candidate-poster" href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType, searchQuery)} aria-hidden tabIndex={-1}>
-        {candidate.posterPath ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={`https://image.tmdb.org/t/p/w342${candidate.posterPath}`} alt="" loading="lazy" />
-        ) : (
-          <span>{candidate.title.slice(0, 4)}</span>
-        )}
-      </Link>
-      <div className="candidate-body">
-        <div className="candidate-title-row">
-          <div>
-            <h3>
-              <Link href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType, searchQuery)}>{candidate.title}</Link>
-            </h3>
-            <p>
-              {candidate.year} · {isTv ? "剧集" : "电影"}
-            </p>
-          </div>
-          <div className="candidate-actions">
-            {acquiring ? (
-              // #3a: while the run is RUNNING, show an inline live progress bar in
-              // place (real /api/activity data) — the demo-style elegance the author
-              // wanted instead of a bare spinner. When queued/just-finished it falls
-              // back to the static 已请求 pill, which still links to the live 活动 page
-              // (#6: "真实情况要去活动里看"). seasonNumber null = match this title's
-              // running season; storageId scopes the 活动 link with ?w.
-              <AcquireProgressBadge
-                tmdbId={candidate.tmdbId}
-                seasonNumber={null}
-                storageId={storageId}
-                title="后台正在获取——点查看进度（活动）"
-              />
-            ) : null}
-            {!acquiring && isTv && untrackedSeasons.length > 0 ? (
-              <SeasonRequestMenu
-                tmdbId={candidate.tmdbId}
-                seasonNumbers={untrackedSeasons}
-                totalSeasonCount={candidate.seasonNumbers.length}
-                allLabel={
-                  trackedLabel !== null ? `获取剩余 ${untrackedSeasons.length} 季` : "获取所有季"
-                }
-                storageId={storageId}
-                demoEntry={{
-                  tmdbId: candidate.tmdbId,
-                  title: candidate.title,
-                  year: candidate.year,
-                  type: candidate.mediaType,
-                  posterPath: candidate.posterPath,
-                }}
-              />
-            ) : null}
-            {/* The clickable title is the detail entry already. Only surface an
-                explicit 查看详情 when the show is FULLY tracked (no 获取 action
-                left) — never crammed next to a 获取 button. */}
-            {!acquiring && isTv && trackedLabel !== null && untrackedSeasons.length === 0 ? (
-              <Link className="primary-button" href={showHref(candidate.tmdbId, "search", storageId, candidate.mediaType, searchQuery)}>
-                查看详情
-              </Link>
-            ) : null}
-            {!acquiring && !isTv && trackedLabel === null ? (
-              <RequestTrackButton
-                candidateId={candidate.id}
-                tmdbId={candidate.tmdbId}
-                actionState={candidate.action.state}
-                disabled={candidate.action.disabled}
-                label={candidate.action.label}
-                storageId={storageId}
-                demoEntry={{
-                  tmdbId: candidate.tmdbId,
-                  title: candidate.title,
-                  year: candidate.year,
-                  type: candidate.mediaType,
-                  posterPath: candidate.posterPath,
-                }}
-              />
-            ) : null}
-          </div>
-        </div>
-        {candidate.overview ? (
-          <p className="candidate-overview">{candidate.overview}</p>
-        ) : null}
-        <div className="candidate-meta">
-          {isTv && candidate.seasonNumbers.length > 0 ? (
-            <span>共 {candidate.seasonNumbers.length} 季</span>
-          ) : null}
-          {!acquiring && trackedLabel !== null ? (
-            <span className="hub-badge tone-green">{trackedLabel}</span>
-          ) : null}
-        </div>
-      </div>
-    </article>
-  );
-}
+
 
 async function LibrarySurface({
   mediaType,

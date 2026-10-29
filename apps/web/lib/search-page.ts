@@ -1,6 +1,7 @@
 import { isLiveSearch } from "./search-provider";
 import {
   createTmdbSearchProvider,
+  DoubanSearchProvider,
   getSearchPageView,
   InMemoryMediaSearchCache,
   resolveTitles,
@@ -27,7 +28,19 @@ let demoSearchCache: InMemoryMediaSearchCache | null = null;
 // re-renders every 5s while an acquisition runs, so this must outlive one render.
 let interpretationCache: SearchInterpretationCache | null = null;
 
-export async function getSearchView(query: string, storageId?: string): Promise<SearchPageView> {
+let doubanFallbackProvider: MediaSearchProvider | null = null;
+
+function getDoubanFallbackProvider(): MediaSearchProvider {
+  doubanFallbackProvider ??= new DoubanSearchProvider();
+  return doubanFallbackProvider;
+}
+
+export async function getSearchView(
+  query: string,
+  storageId?: string,
+  page = 1,
+  pageSize = 30,
+): Promise<SearchPageView> {
   const repository = getWorkflowRepository();
   await ensureDemoSeeded(repository);
   // Tree model: scope a movie's 已获取/获取 state to the active drive — obtained on
@@ -38,7 +51,10 @@ export async function getSearchView(query: string, storageId?: string): Promise<
   const searchModel = settings ? await getAgentModelForSearch(settings) : null;
   return getSearchPageView({
     query,
+    page,
+    pageSize,
     provider: await getMediaSearchProvider(),
+    fallbackProvider: getDoubanFallbackProvider(),
     cache: getSearchCache(),
     repository,
     scope,

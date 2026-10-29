@@ -20,6 +20,7 @@
 // r6 M 起 nodeCarriesHttpStatusShape 也从这里来：门控（isLlmHttpStatusError）
 // 与被门控的 transient 状态类判定共用同一形态实现，不再各写一份。
 import { extractHttpStatus, nodeCarriesHttpStatusShape } from "./acquisition-v2/transient-error.js";
+import { isContentBlockedError } from "./acquisition-v2/prompt-sanitizer.js";
 
 /**
  * The model's own content moderation cut the reply before anything was transferred.
@@ -60,6 +61,9 @@ export const LLM_AUTH_GUIDANCE =
  */
 export const LLM_RATE_LIMIT_GUIDANCE =
   "AI 模型被限流(429):你配置的模型渠道正在限流或额度已用尽 —— 与网盘和本程序无关。请稍后重试,或到 设置 → AI 模型 换一个额度充足的渠道(免费额度的模型很容易触发)。";
+
+export const LLM_CONTENT_FILTER_GUIDANCE =
+  "AI 模型内容审查拦截(Blocked): 上游模型判定提示词或生成内容敏感并阻断(The content you provided or machine outputted is blocked) —— 这不是没有资源，已尝试提示词安全净化。建议稍后重试，或到 设置 → AI 模型 切换审查较宽松的模型渠道。";
 
 // LLM-SPECIFIC auth markers (case-insensitive). Deliberately NOT the bare numeric
 // "401"/"403" substrings — those over-match netdisk (brand) auth errors whose
@@ -116,11 +120,20 @@ const BRAND_RATE_LIMIT_MARKERS = [
 const BRAND_AUTH_MARKERS = [
   "guangya",
   "quark",
+  // NOT a bare "uc": that is a substring of "no such model" ("no s-uc-h"), which
+  // would misclassify an LLM 404 as a netdisk auth failure — caught by the full
+  // suite 2026-10-23. The "uc_" ERROR-CODE PREFIX is the right granularity: it
+  // covers every UC_* code (UC_AUTH_FAILED, UC_LIST_ITEMS_FAILED,
+  // UC_CREATE_FOLDER_FAILED, UC_SHARE_TOKEN_FAILED, UC_MOVE_FAILED, …) so a UC
+  // 429/5xx short-circuits as a brand error instead of looking like an LLM one,
+  // while "no such model" (no underscore) still falls through to the LLM paths.
+  "uc_",
   "pan115",
   "tianyi",
   "pan123",
   "pan115autherror",
   "quarkautherror",
+  "clouddriveautherror",
   "guangyaautherror",
   "tianyiautherror",
   "pan123autherror",
@@ -331,6 +344,9 @@ export function describeAgentRunError(error: unknown): string {
   }
   if (isLlmRateLimitError(error)) {
     return LLM_RATE_LIMIT_GUIDANCE;
+  }
+  if (isContentBlockedError(error)) {
+    return LLM_CONTENT_FILTER_GUIDANCE;
   }
   if (error instanceof Error) {
     return error.message;

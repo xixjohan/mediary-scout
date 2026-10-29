@@ -25,6 +25,7 @@ import {
   createBootstrapPan115CookieStorageExecutor,
   CompositeResourceProvider,
   ProwlarrResourceProvider,
+  HaisouResourceProvider,
   createJevJudge,
   DEFAULT_JEV_BASE_URL,
   type JevJudge,
@@ -77,7 +78,9 @@ import {
   buildBootstrapExecutorForBrand,
   isRegisteredStorageProvider,
   allowedResourceTypesForKinds,
+  parseCloudDriveUid,
   parseQuarkUid,
+  UC_PROFILE,
   parseTianyiUid,
   parsePan123Uid,
   generateGuangYaDeviceId,
@@ -1501,6 +1504,24 @@ export async function getProwlarrConfig(
   };
 }
 
+export const HAISOU_API_KEY_SETTING_KEY = "haisou_api_key";
+
+/** 海搜 (haisou) 的官方 API key —— idatariver 项目 b9d1，站方页脚「开放接口」
+ *  指向的就是它。每日前 100 次免费，之后阶梯计费，所以它只做补充源。
+ *
+ *  为什么不走 haisou.cc 自己的 /api/v2：那条路要用户的登录 cookie
+ *  (`hs_web_session`)，匿名配额耗尽后连续 429，而且站方页面明写不要用脚本
+ *  调用。官方 API 只要一个 apikey，是站方给出的程序化入口。 */
+export async function getHaisouApiKey(
+  repository: { getSetting(key: string): Promise<string | null> },
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string | undefined> {
+  const dbValue = (await repository.getSetting(HAISOU_API_KEY_SETTING_KEY))?.trim();
+  if (dbValue) return dbValue;
+  const envValue = env["HAISOU_API_KEY"]?.trim();
+  return envValue ? envValue : undefined;
+}
+
 export const JEV_API_KEY_SETTING_KEY = "jev_api_key";
 export const JEV_BASE_URL_SETTING_KEY = "jev_base_url";
 export const JEV_PREFILTER_ENABLED_SETTING_KEY = "jev_prefilter_enabled";
@@ -2481,6 +2502,13 @@ export async function getWorkerResourceProvider(
         });
       }
     }
+    const haisouApiKey = await getHaisouApiKey(settings);
+    if (haisouApiKey) {
+      providers.push({
+        name: "haisou",
+        provider: new HaisouResourceProvider({ apiKey: haisouApiKey, allowedTypes }),
+      });
+    }
     return providers.length > 1
       ? new CompositeResourceProvider({ providers })
       : providers[0]!.provider;
@@ -2881,6 +2909,9 @@ export const STORAGE_PROBES: Record<
   },
   quark: async ({ cookie, rootCid }) => {
     await new QuarkCookieClient({ cookie }).listItems({ directoryId: rootCid ?? "0" });
+  },
+  uc: async ({ cookie, rootCid }) => {
+    await new QuarkCookieClient({ cookie, profile: UC_PROFILE }).listItems({ directoryId: rootCid ?? "0" });
   },
   guangya: async ({ credential, rootCid: _rootCid, onCredentialRefresh }) => {
     const blob = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
@@ -3677,28 +3708,44 @@ export async function completePan115QrLogin(input: {
 }
 
 /**
- * Tree model: bind a pasted 夸克 cookie to the current account as a new drive
- * (brand "quark"). 夸克 QR-login is not cleanly automatable and the browser
- * automation skill forbids auto-reading cookies, so v1 takes the cookie the user
- * copies from their Network request header (Copy as cURL). Enforces instance-wide
- * ownership (same uid can't belong to two accounts) and provisions the
- * media-track/{Movies,TV,Anime} tree on a genuinely new connection (best-effort).
+ * Settings "添加网盘 → 夸克网盘": bind a pasted 夸克 cookie.
  */
 export async function connectQuarkCookie(rawCookie: string): Promise<{ providerUid: string }> {
+  return connectCloudFamilyCookie(rawCookie, "quark");
+}
+
+/**
+ * Settings "添加网盘 → UC网盘": bind a pasted UC cookie. Same family protocol as 夸克.
+ */
+export async function connectUcCookie(rawCookie: string): Promise<{ providerUid: string }> {
+  return connectCloudFamilyCookie(rawCookie, "uc");
+}
+
+/**
+ * Bind a pasted cookie for a 阿里云盘族 brand (夸克 / UC). Enforces instance-wide
+ * ownership, live-probes BEFORE binding, and provisions the media tree on a
+ * genuinely new connection.
+ */
+async function connectCloudFamilyCookie(
+  rawCookie: string,
+  provider: "quark" | "uc",
+): Promise<{ providerUid: string }> {
+  const label = getStorageBrand(provider).label;
   const cookie = rawCookie.trim();
   if (!cookie) {
-    throw new Error("请粘贴夸克 cookie。");
+    throw new Error(`请粘贴${label} cookie。`);
   }
-  const providerUid = parseQuarkUid(cookie);
+  // Identical cookie key names across the family (verified live on UC).
+  const providerUid = parseCloudDriveUid(cookie);
   if (!providerUid) {
     throw new Error(
-      "无法从该 cookie 解析夸克账号（需包含 __uid 或 __kps）；请从浏览器 Network 请求头复制完整 Cookie（Copy as cURL 最省事）。",
+      `无法从该 cookie 解析${label}账号（需包含 __uid 或 __kps）；请从浏览器 Network 请求头复制完整 Cookie（Copy as cURL 最省事）。`,
     );
   }
   const accountId = await requireAuthenticatedAccountId();
   const repository = getWorkflowRepository();
-  const existing = await repository.findConnectedStorageByUid("quark", providerUid);
-  const decision = resolveStorageBinding({ provider: "quark", providerUid, accountId, existing });
+  const existing = await repository.findConnectedStorageByUid(provider, providerUid);
+  const decision = resolveStorageBinding({ provider, providerUid, accountId, existing });
   if (decision.action === "reject") {
     throw new StorageOwnedByOtherAccountError();
   }
@@ -3707,10 +3754,10 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
   // existing.rootCid (that is the mediary category tree — user may have deleted
   // it; a missing layout dir must not block cookie refresh).
   try {
-    await probeStorageConnection("quark", cookie, "0", null);
+    await probeStorageConnection(provider, cookie, "0", null);
   } catch (error) {
     throw new Error(
-      `无法用该 cookie 连接夸克：${error instanceof Error ? error.message : String(error)}`,
+      `无法用该 cookie 连接${label}：${error instanceof Error ? error.message : String(error)}`,
       { cause: error },
     );
   }
@@ -3720,7 +3767,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
     await refreshConnectedStorage(repository, existing, {
       id: existing.id,
       accountId,
-      provider: "quark",
+      provider,
       providerUid,
       label: existing.label,
       payload,
@@ -3732,7 +3779,7 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
     });
     return { providerUid };
   }
-  // insert: provision the category tree under the 夸克 root ("0"). Best-effort —
+  // insert: provision the category tree under the family root ("0"). Best-effort —
   // a failure still stores the connection (worker falls back to env CIDs / none).
   // Auth already proved live above; provision errors are non-fatal layout issues.
   let cids: { rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null } = {
@@ -3742,9 +3789,9 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
     animeCid: null,
   };
   try {
-    const executor = createExecutorForBrand({ provider: "quark", cookie, scopeCids: [] });
+    const executor = createExecutorForBrand({ provider, cookie, scopeCids: [] });
     cids = await provisionCategoryDirs({
-      baseParentId: getStorageBrand("quark").provisionRootId, // 夸克 account root ("0")
+      baseParentId: getStorageBrand(provider).provisionRootId, // family account root ("0")
       ...customDirNamesFromEnv(process.env),
       storage: {
         listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
@@ -3752,13 +3799,13 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
       },
     });
   } catch (error) {
-    console.error(`[media-track] 夸克 directory provision failed (will store without CIDs): ${String(error)}`);
+    console.error(`[media-track] ${label} directory provision failed (will store without CIDs): ${String(error)}`);
   }
   const idSuffix = providerUid.replace(/[^A-Za-z0-9]/g, "").slice(0, 48);
   await repository.upsertConnectedStorage({
-    id: `cs_quark_${idSuffix}`,
+    id: `cs_${provider}_${idSuffix}`,
     accountId,
-    provider: "quark",
+    provider,
     providerUid,
     label: null,
     payload,
@@ -3773,13 +3820,30 @@ export async function connectQuarkCookie(rawCookie: string): Promise<{ providerU
 
 /**
  * 夸克扫码登录:用 CAS service_ticket 兑换 drive cookie,再走与 cookie 粘贴**完全
- * 相同**的绑定/provision(connectQuarkCookie 即那条核心,接收 cookie 串)。最终凭证
- * 有效性由用户真机扫码确认;兑换失败时设置页折叠的 cookie 粘贴是回退。
+ * 相同**的绑定/provision。
  */
 export async function completeQuarkQrLogin(serviceTicket: string): Promise<{ providerUid: string }> {
-  const { QuarkQrLoginClient } = await import("@media-track/workflow");
-  const { cookie } = await new QuarkQrLoginClient().exchangeCookie(serviceTicket);
-  return connectQuarkCookie(cookie);
+  return completeCloudFamilyQrLogin(serviceTicket, "quark");
+}
+
+/**
+ * UC 扫码登录:与夸克同一套 CAS 扫码流程。
+ */
+export async function completeUcQrLogin(serviceTicket: string): Promise<{ providerUid: string }> {
+  return completeCloudFamilyQrLogin(serviceTicket, "uc");
+}
+
+/**
+ * Redeem a CAS service_ticket into a drive cookie and bind it, for a 阿里云盘族 brand.
+ */
+async function completeCloudFamilyQrLogin(
+  serviceTicket: string,
+  provider: "quark" | "uc",
+): Promise<{ providerUid: string }> {
+  const { QuarkQrLoginClient, QUARK_QR_PROFILE, UC_QR_PROFILE } = await import("@media-track/workflow");
+  const profile = provider === "uc" ? UC_QR_PROFILE : QUARK_QR_PROFILE;
+  const { cookie } = await new QuarkQrLoginClient({ profile }).exchangeCookie(serviceTicket);
+  return provider === "uc" ? connectUcCookie(cookie) : connectQuarkCookie(cookie);
 }
 
 /**

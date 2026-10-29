@@ -48,6 +48,13 @@ import type {
 } from "./account-credentials.js";
 import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "./workflow-scope.js";
 import type { StoredSubscriptionPolicy, SubscriptionPolicyWrite } from "./subscription-policy-store.js";
+import type {
+  ChatConversationStore,
+  ChatConversationSummary,
+  CreateConversationInput,
+  PersistedChatMessage,
+  SaveChatMessageInput,
+} from "./chat-conversations.js";
 
 /**
  * Tree model: the value stored in `connected_storage_id` for the degenerate
@@ -253,7 +260,7 @@ export type WorkflowRunReservationResult =
       status: "not_tracked";
     };
 
-export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore {
+export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore, ChatConversationStore {
   saveWorkflowRunSnapshot(
     input: PersistWorkflowRunSnapshotInput & {
       /** Write the run only. The season's episode bucket stays as stored.
@@ -487,6 +494,8 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
    *  subscriptionPolicyRowKey。 */
   private readonly subscriptionPolicies = new Map<string, StoredSubscriptionPolicy>();
   private readonly episodeSources = new Map<string, EpisodeSource>();
+  private readonly chatConversations = new Map<string, ChatConversationSummary>();
+  private readonly chatMessages = new Map<string, PersistedChatMessage>();
 
   async getSetting(key: string): Promise<string | null> {
     return this.settings.get(key) ?? null;
@@ -1813,6 +1822,88 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       this.workflowRuns.set(expired.workflowRun.id, expired);
       this.episodesBySeason.set(seasonScopeKey(expired.season.id, expired.connectedStorageId), []);
     }
+  }
+
+  async listConversations(input: { accountId: string }): Promise<ChatConversationSummary[]> {
+    return [...this.chatConversations.values()]
+      .filter((c) => c.accountId === input.accountId)
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((c) => structuredClone(c));
+  }
+
+  async getConversation(input: { accountId: string; id: string }): Promise<ChatConversationSummary | null> {
+    const c = this.chatConversations.get(input.id);
+    if (!c || c.accountId !== input.accountId) return null;
+    return structuredClone(c);
+  }
+
+  async createConversation(input: CreateConversationInput): Promise<ChatConversationSummary> {
+    const id = input.id || `conv_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`;
+    const row: ChatConversationSummary = {
+      id,
+      accountId: input.accountId,
+      title: input.title,
+      storageId: input.storageId ?? null,
+      messageCount: 0,
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+    this.chatConversations.set(id, row);
+    return structuredClone(row);
+  }
+
+  async updateConversation(input: {
+    accountId: string;
+    id: string;
+    title?: string;
+    updatedAt?: string;
+  }): Promise<ChatConversationSummary | null> {
+    const c = this.chatConversations.get(input.id);
+    if (!c || c.accountId !== input.accountId) return null;
+    if (input.title !== undefined) c.title = input.title;
+    if (input.updatedAt !== undefined) c.updatedAt = input.updatedAt;
+    return structuredClone(c);
+  }
+
+  async deleteConversation(input: { accountId: string; id: string }): Promise<boolean> {
+    const c = this.chatConversations.get(input.id);
+    if (!c || c.accountId !== input.accountId) return false;
+    this.chatConversations.delete(input.id);
+    for (const [msgId, msg] of this.chatMessages.entries()) {
+      if (msg.conversationId === input.id && msg.accountId === input.accountId) {
+        this.chatMessages.delete(msgId);
+      }
+    }
+    return true;
+  }
+
+  async listMessages(input: { accountId: string; conversationId: string }): Promise<PersistedChatMessage[]> {
+    return [...this.chatMessages.values()]
+      .filter((m) => m.accountId === input.accountId && m.conversationId === input.conversationId)
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map((m) => structuredClone(m));
+  }
+
+  async saveMessage(input: SaveChatMessageInput): Promise<PersistedChatMessage> {
+    const row: PersistedChatMessage = {
+      id: input.id,
+      conversationId: input.conversationId,
+      accountId: input.accountId,
+      role: input.role,
+      content: input.content,
+      thinking: input.thinking ?? null,
+      toolsUsed: input.toolsUsed ? structuredClone(input.toolsUsed) : null,
+      actionCard: input.actionCard ? structuredClone(input.actionCard) : null,
+      createdAt: input.createdAt,
+    };
+    this.chatMessages.set(row.id, row);
+
+    const conv = this.chatConversations.get(input.conversationId);
+    if (conv && conv.accountId === input.accountId) {
+      conv.messageCount += 1;
+      conv.updatedAt = input.createdAt;
+    }
+    return structuredClone(row);
   }
 }
 

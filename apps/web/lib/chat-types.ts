@@ -79,3 +79,80 @@ export interface ChatTurnResult {
   actionCard?: ActionCardPayload | undefined;
   suggestedPrompts: string[];
 }
+
+export interface ChatConversationSummary {
+  id: string;
+  accountId: string;
+  title: string;
+  storageId?: string | null;
+  messageCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PersistedChatMessage {
+  id: string;
+  conversationId: string;
+  accountId: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  thinking?: string | null;
+  toolsUsed?: unknown[] | null;
+  actionCard?: unknown | null;
+  createdAt: string;
+}
+
+export type ConversationDateBucket = "today" | "yesterday" | "past7Days" | "older";
+
+export interface ConversationGroup {
+  key: ConversationDateBucket;
+  label: string;
+  items: ChatConversationSummary[];
+}
+
+export function groupConversationsByDate(
+  conversations: ChatConversationSummary[],
+  referenceDate = new Date(),
+): ConversationGroup[] {
+  const groups: Record<ConversationDateBucket, ChatConversationSummary[]> = {
+    today: [],
+    yesterday: [],
+    past7Days: [],
+    older: [],
+  };
+
+  const startOfToday = new Date(
+    referenceDate.getFullYear(),
+    referenceDate.getMonth(),
+    referenceDate.getDate(),
+  ).getTime();
+  const startOfYesterday = startOfToday - 24 * 60 * 60 * 1000;
+  const startOfPast7Days = startOfToday - 7 * 24 * 60 * 60 * 1000;
+
+  for (const conv of conversations) {
+    const time = new Date(conv.updatedAt || conv.createdAt).getTime();
+    if (isNaN(time)) {
+      groups.older.push(conv);
+      continue;
+    }
+
+    if (time >= startOfToday) {
+      groups.today.push(conv);
+    } else if (time >= startOfYesterday) {
+      groups.yesterday.push(conv);
+    } else if (time >= startOfPast7Days) {
+      groups.past7Days.push(conv);
+    } else {
+      groups.older.push(conv);
+    }
+  }
+
+  const result: ConversationGroup[] = [
+    { key: "today", label: "今天", items: groups.today },
+    { key: "yesterday", label: "昨天", items: groups.yesterday },
+    { key: "past7Days", label: "过去 7 天", items: groups.past7Days },
+    { key: "older", label: "更早", items: groups.older },
+  ];
+
+  return result.filter((g) => g.items.length > 0);
+}
