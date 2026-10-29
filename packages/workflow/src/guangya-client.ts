@@ -228,6 +228,10 @@ export class GuangYaClient {
     await this.postAPI("/nd.bizuserres.s/v1/file/move_file", { fileIds, parentId });
   }
 
+  async copyFiles(fileIds: string[], parentId: string): Promise<void> {
+    await this.postAPI("/nd.bizuserres.s/v1/file/copy_file", { fileIds, parentId });
+  }
+
   /** Resolve a share/magnet URL to its resType + (for bt) subfile listing. */
   async resolveRes(url: string): Promise<GuangYaResolvedRes> {
     const data = await this.postAPI("/cloudcollection/v1/resolve_res", { url });

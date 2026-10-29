@@ -142,3 +142,4 @@ export * from "./acquisition-v2/stub-model.js";
 export * from "./runner-v2.js";
 export * from "./staging-janitor.js";
 export * from "./staging-recovery.js";
+export * from "./drive-file-manager.js";

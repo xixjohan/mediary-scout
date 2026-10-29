@@ -278,6 +278,16 @@ export class Pan115CookieClient implements Pan115StorageApi {
     return actionResultFromResponse(response);
   }
 
+  async copyItems(input: { fileIds: string[]; targetDirectoryId: string }): Promise<Pan115ActionResult> {
+    const fields: Array<[string, string]> = [["pid", input.targetDirectoryId]];
+    input.fileIds.forEach((fileId, index) => {
+      fields.push([`file_id[${index}]`, fileId]);
+      fields.push([`fid[${index}]`, fileId]);
+    });
+    const response = await this.postForm(`${PAN115_WEBAPI_BASE_URL}/files/copy`, fields);
+    return actionResultFromResponse(response);
+  }
+
   async deleteItems(input: { fileIds: string[] }): Promise<Pan115ActionResult> {
     const fields = input.fileIds.map((fileId, index) => [`fid[${index}]`, fileId] as [string, string]);
     const response = await this.postForm(`${PAN115_WEBAPI_BASE_URL}/rb/delete`, fields);
