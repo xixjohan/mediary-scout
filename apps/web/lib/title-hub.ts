@@ -11,6 +11,8 @@ import {
   type EpisodeStatusCell,
   type MediaTitle,
   type PreparedSeriesTarget,
+  type WorkflowKind,
+  type WorkflowRunProgress,
 } from "@media-track/workflow";
 import { findDemoCandidateByTmdbId } from "./demo-candidates";
 import {
@@ -544,15 +546,37 @@ export interface InProgressTitle {
   year: number;
   type: "movie" | "tv" | "anime";
   posterPath: string | null;
+  runId?: string | undefined;
+  status?: ("queued" | "running") | undefined;
+  queuePosition?: number | null | undefined;
+  progress?: WorkflowRunProgress | null | undefined;
+  kind?: WorkflowKind | undefined;
+  startedAt?: string | undefined;
+  seasonNumber?: number | null | undefined;
+  activityText?: string | undefined;
+}
+
+export function inferActivityText(
+  status: "queued" | "running",
+  progress: WorkflowRunProgress | undefined | null,
+  queuePosition: number | null | undefined,
+): string {
+  if (progress?.activity) return progress.activity;
+  if (status === "queued") {
+    return typeof queuePosition === "number" && queuePosition > 0
+      ? `排队中（第 ${queuePosition} 位）`
+      : "排队等待中";
+  }
+  return "正在获取资源并转存中...";
 }
 
 /**
  * Titles with an acquisition run still queued/running — they surface in the
- * library as non-clickable "获取中" poster placeholders until the run finishes
- * and the title materializes as a real card. A replace_request run is not one:
- * its title is already in the library, and those runs queue last and pile up
- * after each sweep — the card must still open the page, where the user edits or
- * withdraws the message (design §1 G2).
+ * library as interactive "获取中" posters with status inspection and cancellation
+ * capability until the run finishes and the title materializes as a real card.
+ * A replace_request run is not one: its title is already in the library, and those
+ * runs queue last and pile up after each sweep — the card must still open the page,
+ * where the user edits or withdraws the message (design §1 G2).
  */
 export async function getInProgressTitles(storageId?: string): Promise<InProgressTitle[]> {
   const repository = getWorkflowRepository();
@@ -560,6 +584,12 @@ export async function getInProgressTitles(storageId?: string): Promise<InProgres
   const active = (await repository.listActiveWorkflowRuns(scope)).filter(
     (snapshot) => snapshot.workflowRun.kind !== "replace_request" && isUserVisibleWorkflowKind(snapshot.workflowRun.kind),
   );
+
+  const queuedOrder = active
+    .filter((s) => s.workflowRun.status === "queued")
+    .sort((a, b) => a.workflowRun.startedAt.localeCompare(b.workflowRun.startedAt))
+    .map((s) => s.workflowRun.id);
+
   const byTmdb = new Map<number, InProgressTitle>();
   for (const snapshot of active) {
     const title = snapshot.title;
@@ -573,12 +603,27 @@ export async function getInProgressTitles(storageId?: string): Promise<InProgres
           ? (await movieTargetFromTmdbId(title.tmdbId))?.title.posterPath ?? null
           : (await seriesTargetFor(title.tmdbId))?.title.posterPath ?? null;
     }
+
+    const status = snapshot.workflowRun.status === "running" ? "running" : "queued";
+    const queueIndex = queuedOrder.indexOf(snapshot.workflowRun.id);
+    const queuePosition = status === "queued" && queueIndex >= 0 ? queueIndex + 1 : null;
+    const progress = snapshot.workflowRun.progress ?? null;
+    const activityText = inferActivityText(status, progress, queuePosition);
+
     byTmdb.set(title.tmdbId, {
       tmdbId: title.tmdbId,
       title: title.title,
       year: title.year,
       type: title.type,
       posterPath,
+      runId: snapshot.workflowRun.id,
+      status,
+      queuePosition,
+      progress,
+      kind: snapshot.workflowRun.kind,
+      startedAt: snapshot.workflowRun.startedAt,
+      seasonNumber: snapshot.season.seasonNumber ?? null,
+      activityText,
     });
   }
   return [...byTmdb.values()];

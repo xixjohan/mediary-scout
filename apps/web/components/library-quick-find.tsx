@@ -8,6 +8,7 @@ import { CalendarClock, CheckCircle2, Clock3, LoaderCircle, Search, TriangleAler
 // drags server-only code into the client bundle (see request-state.tsx).
 import { showHref } from "@media-track/workflow/scope";
 import type { InProgressTitle, LibraryWallEntry } from "../lib/title-hub";
+import { AcquiringDetailModal } from "./acquiring-detail-modal";
 
 /** Mirror of page.tsx's workspaceBasePath: "/" is the account's primary drive,
  *  "/w/<id>" a specific drive. Library links must route within the workspace. */
@@ -45,6 +46,7 @@ export function LibraryQuickFind({
 }): JSX.Element {
   const router = useRouter();
   const [query, setQuery] = useState("");
+  const [selectedAcquiring, setSelectedAcquiring] = useState<InProgressTitle | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   // 清空统一入口：清完把焦点还给搜索框（✕/0 匹配清空按钮随后会 unmount，
@@ -230,13 +232,14 @@ export function LibraryQuickFind({
         </div>
       ) : mode === "home" ? (
         <>
-          <InProgressRow titles={matchedInProgress} />
+          <InProgressRow titles={matchedInProgress} onSelect={setSelectedAcquiring} />
           <CategoryRow
             label="电影"
             type="movie"
             inProgressTitles={matchedInProgress.filter((title) => title.type === "movie")}
             wallEntries={matchedWall.filter((entry) => entry.type === "movie")}
             storageId={storageId}
+            onSelect={setSelectedAcquiring}
           />
           <CategoryRow
             label="电视剧"
@@ -244,6 +247,7 @@ export function LibraryQuickFind({
             inProgressTitles={matchedInProgress.filter((title) => title.type === "tv")}
             wallEntries={matchedWall.filter((entry) => entry.type === "tv")}
             storageId={storageId}
+            onSelect={setSelectedAcquiring}
           />
           <CategoryRow
             label="动漫"
@@ -251,11 +255,12 @@ export function LibraryQuickFind({
             inProgressTitles={matchedInProgress.filter((title) => title.type === "anime")}
             wallEntries={matchedWall.filter((entry) => entry.type === "anime")}
             storageId={storageId}
+            onSelect={setSelectedAcquiring}
           />
         </>
       ) : (
         <>
-          <InProgressRow titles={matchedInProgress} />
+          <InProgressRow titles={matchedInProgress} onSelect={setSelectedAcquiring} />
           <div className="poster-wall">
             {matchedWall.map((entry) => (
               <PosterCard entry={entry} activeStorageId={storageId} key={entry.tmdbId} />
@@ -263,6 +268,18 @@ export function LibraryQuickFind({
           </div>
         </>
       )}
+
+      {selectedAcquiring ? (
+        <AcquiringDetailModal
+          title={selectedAcquiring}
+          storageId={storageId}
+          onClose={() => setSelectedAcquiring(null)}
+          onCancelled={() => {
+            setSelectedAcquiring(null);
+            router.refresh();
+          }}
+        />
+      ) : null}
     </>
   );
 }
@@ -273,12 +290,14 @@ function CategoryRow({
   inProgressTitles,
   wallEntries,
   storageId,
+  onSelect,
 }: {
   label: string;
   type: string;
   inProgressTitles: InProgressTitle[];
   wallEntries: LibraryWallEntry[];
   storageId?: string | undefined;
+  onSelect?: ((title: InProgressTitle) => void) | undefined;
 }) {
   const count = inProgressTitles.length + wallEntries.length;
   if (count === 0) {
@@ -294,7 +313,7 @@ function CategoryRow({
       </Link>
       <div className="poster-row">
         {inProgressTitles.map((title) => (
-          <InProgressCard title={title} key={`ip_${title.tmdbId}`} />
+          <InProgressCard title={title} onSelect={onSelect} key={`ip_${title.tmdbId}`} />
         ))}
         {wallEntries.map((entry) => (
           <PosterCard entry={entry} activeStorageId={storageId} key={entry.tmdbId} />
@@ -304,7 +323,13 @@ function CategoryRow({
   );
 }
 
-function InProgressRow({ titles }: { titles: InProgressTitle[] }) {
+function InProgressRow({
+  titles,
+  onSelect,
+}: {
+  titles: InProgressTitle[];
+  onSelect?: ((title: InProgressTitle) => void) | undefined;
+}) {
   if (titles.length === 0) {
     return null;
   }
@@ -315,16 +340,47 @@ function InProgressRow({ titles }: { titles: InProgressTitle[] }) {
       </div>
       <div className="poster-row">
         {titles.map((title) => (
-          <InProgressCard title={title} key={title.tmdbId} />
+          <InProgressCard title={title} onSelect={onSelect} key={title.tmdbId} />
         ))}
       </div>
     </div>
   );
 }
 
-function InProgressCard({ title }: { title: InProgressTitle }) {
+function InProgressCard({
+  title,
+  onSelect,
+}: {
+  title: InProgressTitle;
+  onSelect?: ((title: InProgressTitle) => void) | undefined;
+}) {
+  const isQueued = title.status === "queued";
+  const statusLabel = isQueued
+    ? typeof title.queuePosition === "number" && title.queuePosition > 0
+      ? `排队中 #${title.queuePosition}`
+      : "排队中"
+    : title.progress?.percent
+      ? `获取中 ${title.progress.percent}%`
+      : "获取中";
+
+  const subtitle = title.activityText
+    ? `${title.year} · ${title.activityText}`
+    : `${title.year} · 正在获取`;
+
   return (
-    <div className="wall-card is-loading" aria-disabled title="获取中，完成后可进入">
+    <div
+      className="wall-card is-loading is-interactive-loading"
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect?.(title)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onSelect?.(title);
+        }
+      }}
+      title="点击查看获取进度与操作取消"
+    >
       <span className="wall-poster">
         {title.posterPath ? (
           // eslint-disable-next-line @next/next/no-img-element
@@ -334,12 +390,12 @@ function InProgressCard({ title }: { title: InProgressTitle }) {
         )}
         <span className="wall-loading-overlay">
           <LoaderCircle size={20} className="spin" aria-hidden />
-          <span>获取中</span>
+          <span className="wall-loading-pill">{statusLabel}</span>
         </span>
       </span>
       <span className="wall-copy">
         <strong>{title.title}</strong>
-        <span>{title.year} · 正在获取</span>
+        <span>{subtitle}</span>
       </span>
     </div>
   );

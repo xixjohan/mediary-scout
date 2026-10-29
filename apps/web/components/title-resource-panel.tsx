@@ -17,8 +17,8 @@ import { useRouter } from "../lib/use-router";
 
 export interface ResourcePanelProps {
   tmdbId: number;
-  mediaType?: "movie" | "tv" | "anime";
-  seasonNumbers?: number[];
+  mediaType?: "movie" | "tv" | "anime" | undefined;
+  seasonNumbers?: number[] | undefined;
 }
 
 export type PanelState =
@@ -147,11 +147,11 @@ interface SearchBarProps {
   setSelectedSeason: (v: number | undefined) => void;
   selectedEpisode: string;
   setSelectedEpisode: (v: string) => void;
-  mediaType?: "movie" | "tv" | "anime";
-  seasonNumbers?: readonly number[];
+  mediaType?: "movie" | "tv" | "anime" | undefined;
+  seasonNumbers?: readonly number[] | undefined;
   busy: boolean;
   throttled: boolean;
-  retryAfterMs?: number;
+  retryAfterMs?: number | undefined;
   onSearch: () => void;
   onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
 }
