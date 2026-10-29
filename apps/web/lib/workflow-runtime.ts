@@ -70,6 +70,8 @@ import {
   resolveStorageBinding,
   provisionCategoryDirs,
   parsePan115Uid,
+  createDriveFileManager,
+  type DriveFileManager,
   createExecutorForBrand,
   getStorageBrand,
   buildBootstrapExecutorForBrand,
@@ -2735,6 +2737,26 @@ async function getAccountStorageCredentials(
     console.error(`[media-track] failed to load storage credentials for ${accountId}: ${String(error)}`);
     return null;
   }
+}
+
+export async function getAccountDriveFileManager(
+  accountId: string,
+  connectedStorageId?: string | null,
+): Promise<DriveFileManager | null> {
+  const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
+  if (!creds) {
+    return null;
+  }
+  return createDriveFileManager({
+    storageId: creds.id,
+    provider: creds.provider,
+    cookie: creds.cookie,
+    credential: creds.credential,
+    rootCid: creds.rootCid,
+    moviesCid: creds.moviesCid,
+    tvCid: creds.tvCid,
+    animeCid: creds.animeCid,
+  });
 }
 
 /**

@@ -459,6 +459,23 @@ export class Pan123Client {
     });
   }
 
+  async copyFiles(input: { fileIds: string[]; targetParentId: string }): Promise<void> {
+    if (input.fileIds.length === 0) {
+      return;
+    }
+    await this.signed("/file/copy/async", {
+      method: "POST",
+      body: {
+        event: "fileCopy",
+        file_list: input.fileIds.map((id) => ({
+          file_id: id,
+          parent_file_id: input.targetParentId,
+          drive_id: 0,
+        })),
+      },
+    });
+  }
+
   async renameFile(input: { fileId: string; name: string }): Promise<void> {
     await this.signed("/file/rename", {
       method: "POST",

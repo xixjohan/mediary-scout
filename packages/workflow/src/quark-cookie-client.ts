@@ -246,6 +246,16 @@ export class QuarkCookieClient {
     await this.awaitTaskFrom(response, "QUARK_MOVE_FAILED");
   }
 
+  async copyFiles(input: { fids: string[]; to: string }): Promise<void> {
+    const response = await this.postJson("/1/clouddrive/file/copy", {
+      filelist: input.fids,
+      to_pdir_fid: input.to,
+      exclude_fids: [],
+      action_type: 1,
+    });
+    await this.awaitTaskFrom(response, "QUARK_COPY_FAILED");
+  }
+
   /** Unwrap a task-returning response and poll its task_id to completion (if any). */
   private async awaitTaskFrom(response: unknown, genericPrefix: string): Promise<void> {
     const data = unwrap(response, genericPrefix);

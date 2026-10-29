@@ -569,6 +569,19 @@ export class TianyiClient {
     await this.pollGenericTask(strId(d["taskId"]), "MOVE");
   }
 
+  async copyFiles(input: { entries: TianyiBatchEntry[]; targetFolderId: string }): Promise<void> {
+    if (input.entries.length === 0) {
+      return;
+    }
+    const taskInfos = TianyiClient.batchTaskInfos(input.entries);
+    const d = await this.webPost("/api/open/batch/createBatchTask.action", {
+      type: "COPY",
+      taskInfos,
+      targetFolderId: input.targetFolderId,
+    });
+    await this.pollGenericTask(strId(d["taskId"]), "COPY");
+  }
+
   /** Fail LOUD, mirroring pollBatchTask: a DELETE/MOVE that never started
    *  (no taskId), completed with failedCount>0, or never reached status 4 within
    *  the poll window must NOT look like success — silent-success here left the
