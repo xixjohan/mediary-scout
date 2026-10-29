@@ -13,6 +13,13 @@
 export { parseReleaseTag, type ReleaseTag } from "./release-tag.js";
 
 export {
+  DESIGN_TOKENS,
+  tokenVar,
+  camelToKebab,
+  type DesignTokenSystem,
+} from "./design-tokens.js";
+
+export {
   API_KEY_SETTING_KEY,
   generateApiKey,
   maskApiKey,

@@ -17,9 +17,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "gate:layout": "node scripts/check-layout.mjs",
+    "gate:style": "node scripts/check-style-tokens.mjs",
     "drill:restore": "node scripts/sqlite-restore-drill.mjs",
     "gate:deps": "depcruise --config .dependency-cruiser.cjs --ignore-known=.dependency-cruiser-known-violations.json apps packages workers",
-    "gate": "npm run gate:layout && npm run gate:deps && npm run lint && npm run typecheck",
+    "gate": "npm run gate:layout && npm run gate:deps && npm run gate:style && npm run lint && npm run typecheck",
     "e2e:server": "next start apps/web -p 3100",
     "e2e": "playwright test --config e2e/playwright.config.ts",
     "e2e:ci": "npm run build:web && npm run e2e"
