@@ -415,9 +415,14 @@ describe("Decoupled Repository Independence (独立仓库解耦规范)", () => {
   });
 
   it("支持本地发布日志优先/降级读取", async () => {
-    const { readLocalReleaseNotes } = await import("./release-feed-server");
+    const { readLocalReleaseNotes, loadLocalReleaseFeed } = await import("./release-feed-server");
     const notes = readLocalReleaseNotes("v2026.10.29");
     expect(notes).not.toBeNull();
     expect(notes).toContain("设计令牌");
+
+    const localFeed = loadLocalReleaseFeed();
+    expect(localFeed.length).toBeGreaterThan(0);
+    expect(localFeed[0]?.tag).toBe("v2026.10.29");
+    expect(localFeed[0]?.notes.some((n) => n.text.includes("设计令牌"))).toBe(true);
   });
 });

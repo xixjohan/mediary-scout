@@ -1,4 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { compareReleaseTags, parseReleaseNotes, parseReleaseTag, type ReleaseNote } from "./release-version";
 import { normalizeCommit } from "./deployment-update";
@@ -200,6 +201,49 @@ async function fetchFeedFromRepo(
   }
 }
 
+export function loadLocalReleaseFeed(): ReleaseEntry[] {
+  try {
+    const candidates = [
+      join(/*turbopackIgnore: true*/ process.cwd(), "release-notes"),
+      join(/*turbopackIgnore: true*/ process.cwd(), "..", "..", "release-notes"),
+    ];
+    const notesDir = candidates.find((dir) => existsSync(dir));
+    if (!notesDir) return [];
+
+    const files = readdirSync(notesDir).filter((f) => f.startsWith("v") && f.endsWith(".md"));
+    const entries: ReleaseEntry[] = [];
+    for (const f of files) {
+      const tag = f.replace(/\.md$/, "");
+      const parsed = parseReleaseTag(tag);
+      if (!parsed) continue;
+
+      let commit = "";
+      try {
+        commit = execFileSync("git", ["rev-parse", tag], {
+          encoding: "utf-8",
+          timeout: 1500,
+          stdio: ["ignore", "pipe", "ignore"],
+        }).trim();
+      } catch {
+        commit = "";
+      }
+
+      const filePath = join(/*turbopackIgnore: true*/ notesDir, f);
+      const content = readFileSync(filePath, "utf-8");
+      entries.push({
+        tag: parsed.tag,
+        date: parsed.date,
+        commit: normalizeCommit(commit) ?? commit,
+        notes: parseReleaseNotes(content),
+      });
+    }
+
+    return entries.sort((a, b) => compareReleaseTags(b.tag, a.tag));
+  } catch {
+    return [];
+  }
+}
+
 async function loadReleaseFeed(fetchImpl: typeof fetch, started: number): Promise<ReleaseEntry[]> {
   let feed: ReleaseEntry[] = [];
   let ttl = FAIL_TTL_MS;
@@ -209,6 +253,12 @@ async function loadReleaseFeed(fetchImpl: typeof fetch, started: number): Promis
   if (res.networkOk && res.feed.length > 0) {
     feed = res.feed;
     ttl = OK_TTL_MS;
+  } else if (fetchImpl === fetch) {
+    const local = loadLocalReleaseFeed();
+    if (local.length > 0) {
+      feed = local;
+      ttl = FAIL_TTL_MS;
+    }
   }
 
   if (started === generation) cache = { at: Date.now(), ttl, feed };
