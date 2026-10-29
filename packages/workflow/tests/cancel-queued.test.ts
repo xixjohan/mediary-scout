@@ -62,7 +62,7 @@ describe("cancelQueuedWorkflowRun", () => {
     expect(await repo.listActiveWorkflowRuns()).toEqual([]);
   });
 
-  it("refuses to cancel a run the worker already claimed (running)", async () => {
+  it("refuses to cancel a run the worker already claimed (running) by default", async () => {
     const repo = new InMemoryWorkflowRepository();
     await repo.saveWorkflowRunSnapshot(snapshot("run_r", "running"));
 
@@ -70,6 +70,17 @@ describe("cancelQueuedWorkflowRun", () => {
 
     expect(result.status).toBe("not_cancellable");
     expect(await repo.getWorkflowRunSnapshot("run_r")).not.toBeNull();
+  });
+
+  it("cancels a running run when allowRunning option is true", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.saveWorkflowRunSnapshot(snapshot("run_r", "running"));
+
+    const result = await repo.cancelQueuedWorkflowRun("run_r", undefined, { allowRunning: true });
+
+    expect(result.status).toBe("cancelled");
+    expect(await repo.getWorkflowRunSnapshot("run_r")).toBeNull();
+    expect(await repo.listTrackedSeasonStates()).toEqual([]);
   });
 
   it("is not_cancellable for an unknown run id", async () => {

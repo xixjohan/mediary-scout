@@ -2511,6 +2511,16 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         ).toBe("not_cancellable");
       });
 
+      it("cancelQueuedWorkflowRun cancels a running run when allowRunning: true", async () => {
+        const repo = await fresh();
+        const scope = { accountId: "acct_default", connectedStorageId: "cs_run" };
+        await repo.saveWorkflowRunSnapshot(
+          queuedRun({ id: "running_run", status: "running", connectedStorageId: "cs_run" }),
+        );
+        expect((await repo.cancelQueuedWorkflowRun("running_run", scope, { allowRunning: true })).status).toBe("cancelled");
+        expect(await repo.getWorkflowRunSnapshot("running_run", scope)).toBeNull();
+      });
+
       it("untrackTitle removes a tracked tv season by tmdbId + mediaKind", async () => {
         const repo = await fresh();
         await repo.saveWorkflowRunSnapshot(

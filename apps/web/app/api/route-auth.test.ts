@@ -147,6 +147,16 @@ const CASES: Array<{
     },
   },
   {
+    name: "GET /api/activity/status",
+    load: () => import("./activity/status/route") as Promise<never>,
+    request: (headers) =>
+      new NextRequest("http://localhost/api/activity/status?tmdbId=123", { headers: headers ?? {} }),
+    assertPassed: async (res) => {
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ active: false });
+    },
+  },
+  {
     name: "GET /api/settings/attention",
     load: () => import("./settings/attention/route") as Promise<never>,
     request: (headers) =>
@@ -182,7 +192,11 @@ describe("S5.4 路由登录认证（行为层）", () => {
   beforeEach(() => {
     state.multiUser = true;
     state.sessionAccount = null;
-    state.repository = { cancelQueuedWorkflowRun: vi.fn(async () => ({ status: "cancelled" })) };
+    state.repository = {
+      cancelQueuedWorkflowRun: vi.fn(async () => ({ status: "cancelled" })),
+      listActiveWorkflowRuns: vi.fn(async () => []),
+      listAgentSteps: vi.fn(async () => []),
+    };
     vi.stubGlobal(
       "fetch",
       vi.fn(async () =>

@@ -342,6 +342,7 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   cancelQueuedWorkflowRun(
     workflowRunId: string,
     scope?: ScopeArg,
+    options?: { allowRunning?: boolean },
   ): Promise<{ status: "cancelled" | "not_cancellable" }>;
   /** Tree-model 取消追踪:删本盘(scope)下该 (tmdbId, mediaKind) 的追踪记录(级联
    *  runs/子表/episodes/season,条件删全局 title)。`mediaKind` 区分 TMDB 的
@@ -1456,13 +1457,18 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   async cancelQueuedWorkflowRun(
     workflowRunId: string,
     scopeArg: ScopeArg = undefined,
+    options?: { allowRunning?: boolean },
   ): Promise<{ status: "cancelled" | "not_cancellable" }> {
     const scope = normalizeScope(scopeArg);
     const stored = this.workflowRuns.get(workflowRunId);
+    const allowRunning = options?.allowRunning === true;
+    const isCancellable =
+      stored !== undefined &&
+      (stored.workflowRun.status === "queued" || (allowRunning && stored.workflowRun.status === "running"));
     if (
       !stored ||
       !scopeMatches(scope, stored.accountId, stored.connectedStorageId) ||
-      stored.workflowRun.status !== "queued"
+      !isCancellable
     ) {
       return { status: "not_cancellable" };
     }

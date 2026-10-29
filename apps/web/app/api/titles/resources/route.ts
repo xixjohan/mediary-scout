@@ -6,6 +6,7 @@ import {
   movieAnchorSeason,
   type MediaTitle,
   type TrackedSeason,
+  type TitleResourceResult,
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import {
@@ -33,10 +34,10 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 interface ParsedResourceRequest {
   tmdbId: number;
-  customKeyword?: string;
-  seasonNumber?: number;
-  episodeNumber?: number;
-  typeHint?: "movie" | "tv" | "anime";
+  customKeyword?: string | undefined;
+  seasonNumber?: number | undefined;
+  episodeNumber?: number | undefined;
+  typeHint?: "movie" | "tv" | "anime" | undefined;
 }
 
 function parsePositiveInt(val: unknown): number | undefined {

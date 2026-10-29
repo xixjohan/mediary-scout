@@ -15,11 +15,20 @@ export async function POST(request: NextRequest) {
   const gate = await requireApiAccount(request);
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return Response.json({ error: "演示站只读" }, { status: 403 });
-  const body = (await request.json().catch(() => ({}))) as { runId?: unknown };
+  const body = (await request.json().catch(() => ({}))) as {
+    runId?: unknown;
+    allowRunning?: unknown;
+    force?: unknown;
+  };
   const runId = typeof body.runId === "string" ? body.runId : null;
   if (!runId) {
     return NextResponse.json({ error: "runId required" }, { status: 400 });
   }
-  const result = await getWorkflowRepository().cancelQueuedWorkflowRun(runId, await getCurrentAccountId());
+  const allowRunning = body.allowRunning === true || body.force === true;
+  const result = await getWorkflowRepository().cancelQueuedWorkflowRun(
+    runId,
+    await getCurrentAccountId(),
+    allowRunning ? { allowRunning: true } : undefined,
+  );
   return NextResponse.json(result);
 }

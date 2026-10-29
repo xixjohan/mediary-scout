@@ -16,6 +16,8 @@ const h = vi.hoisted(() => {
   const focus = vi.fn();
   return {
     query: "" as string,
+    slot1: null as unknown,
+    slotIndex: 0,
     push: vi.fn(),
     focus,
     inputRef: { current: { focus } },
@@ -26,12 +28,24 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return {
     ...actual,
-    useState: () => [
-      h.query,
-      (next: string | ((prev: string) => string)) => {
-        h.query = typeof next === "function" ? next(h.query) : next;
-      },
-    ],
+    useState: (initial: unknown) => {
+      const idx = h.slotIndex;
+      h.slotIndex = (h.slotIndex + 1) % 2;
+      if (idx === 0) {
+        return [
+          h.query,
+          (next: string | ((prev: string) => string)) => {
+            h.query = typeof next === "function" ? next(h.query) : next;
+          },
+        ];
+      }
+      return [
+        h.slot1 ?? initial,
+        (next: unknown) => {
+          h.slot1 = typeof next === "function" ? (next as (prev: unknown) => unknown)(h.slot1) : next;
+        },
+      ];
+    },
     useRef: () => h.inputRef,
   };
 });
@@ -168,6 +182,8 @@ describe("LibraryQuickFind — home 模式", () => {
 
   beforeEach(() => {
     h.query = "";
+    h.slot1 = null;
+    h.slotIndex = 0;
     h.push.mockClear();
     h.focus.mockClear();
   });
@@ -353,6 +369,8 @@ describe("LibraryQuickFind — category 模式与 filter 叠加", () => {
 
   beforeEach(() => {
     h.query = "";
+    h.slot1 = null;
+    h.slotIndex = 0;
     h.push.mockClear();
   });
 

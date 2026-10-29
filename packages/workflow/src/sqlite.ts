@@ -1044,11 +1044,65 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?").run(workflowRunId);
   }
 
+  private deleteWorkflowRunRecords(workflowRunId: string): void {
+    this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(workflowRunId);
+    this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(workflowRunId);
+    this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(workflowRunId);
+    this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?").run(workflowRunId);
+    this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(workflowRunId);
+    this.db.prepare("DELETE FROM workflow_runs WHERE id = ?").run(workflowRunId);
+  }
+
+  private handleCancelledReplaceRequest(
+    workflowRunId: string,
+    seasonId: string,
+    storageValue: string,
+    owner: string,
+    ownerStorage: string | null,
+  ): void {
+    const now = new Date().toISOString();
+    this.releaseUserMessagesSync(workflowRunId, now, false);
+    const season = this.db
+      .prepare("SELECT media_title_id FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
+      .get(seasonId, storageValue) as { media_title_id: string } | undefined;
+    if (season) {
+      this.clearUserMessagesUrgentSync(
+        { accountId: owner, drive: userMessageDrive(ownerStorage), titleKey: season.media_title_id },
+        now,
+      );
+    }
+  }
+
+  private isRunCancellable(
+    run: WorkflowRun | null,
+    scope: WorkflowScope,
+    owner: string,
+    ownerStorage: string | null,
+    allowRunning: boolean,
+  ): boolean {
+    if (!run) return false;
+    if (!scopeMatches(scope, owner, ownerStorage)) return false;
+    return run.status === "queued" || (allowRunning && run.status === "running");
+  }
+
+  private teardownSeasonIfUnreferenced(seasonId: string, storageValue: string): void {
+    const others = this.db
+      .prepare(
+        "SELECT 1 FROM workflow_runs WHERE tracked_season_id = ? AND connected_storage_id = ? LIMIT 1",
+      )
+      .get(seasonId, storageValue);
+    if (!others) {
+      this.teardownSeasonScoped(seasonId, storageValue);
+    }
+  }
+
   async cancelQueuedWorkflowRun(
     workflowRunId: string,
     scopeArg: ScopeArg = undefined,
+    options?: { allowRunning?: boolean },
   ): Promise<{ status: "cancelled" | "not_cancellable" }> {
     const scope = normalizeScope(scopeArg);
+    const allowRunning = options?.allowRunning === true;
     return this.db.transaction((): { status: "cancelled" | "not_cancellable" } => {
       const row = this.db
         .prepare("SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE id = ?")
@@ -1059,50 +1113,22 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       const owner = row?.account_id ?? DEFAULT_ACCOUNT_ID;
       const rawStorage = row?.connected_storage_id ?? null;
       const ownerStorage = rawStorage === UNSCOPED_STORAGE ? null : rawStorage;
-      if (!run || !scopeMatches(scope, owner, ownerStorage) || run.status !== "queued") {
+
+      if (!this.isRunCancellable(run, scope, owner, ownerStorage, allowRunning) || run === null) {
         return { status: "not_cancellable" as const };
       }
       const seasonId = run.trackedSeasonId;
-      // Tree model: the (season, drive) being torn down — never touch another drive.
       const storageValue = rawStorage ?? UNSCOPED_STORAGE;
-      // The run's own children (a queued run created no 网盘 dirs — pure DB delete).
-      this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(workflowRunId);
-      this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(workflowRunId);
-      this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(workflowRunId);
-      this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?").run(workflowRunId);
-      this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(workflowRunId);
-      this.db.prepare("DELETE FROM workflow_runs WHERE id = ?").run(workflowRunId);
+      this.deleteWorkflowRunRecords(workflowRunId);
 
-      // Only an init run owns its season's tracking; a cancelled replace_request is
-      // just removed, and any messages it held go back to pending.
       if (!tearsDownTrackingOnCancel(run.kind)) {
         if (run.kind === "replace_request") {
-          // The user cancelled: nothing of this work stays urgent, or the idle scan would
-          // queue it again within seconds. It waits for the patrol (or 现在处理).
-          const now = new Date().toISOString();
-          this.releaseUserMessagesSync(workflowRunId, now, false);
-          const season = this.db
-            .prepare("SELECT media_title_id FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
-            .get(seasonId, storageValue) as { media_title_id: string } | undefined;
-          if (season) {
-            this.clearUserMessagesUrgentSync(
-              { accountId: owner, drive: userMessageDrive(ownerStorage), titleKey: season.media_title_id },
-              now,
-            );
-          }
+          this.handleCancelledReplaceRequest(workflowRunId, seasonId, storageValue, owner, ownerStorage);
         }
         return { status: "cancelled" as const };
       }
-      // Only tear down the tracking when no OTHER run on the SAME (season, drive)
-      // still references it. Scoped to this drive so another drive's tracking survives.
-      const others = this.db
-        .prepare(
-          "SELECT 1 FROM workflow_runs WHERE tracked_season_id = ? AND connected_storage_id = ? LIMIT 1",
-        )
-        .get(seasonId, storageValue);
-      if (!others) {
-        this.teardownSeasonScoped(seasonId, storageValue);
-      }
+
+      this.teardownSeasonIfUnreferenced(seasonId, storageValue);
       return { status: "cancelled" as const };
     })();
   }

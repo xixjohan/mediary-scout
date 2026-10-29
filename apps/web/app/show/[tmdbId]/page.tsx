@@ -23,6 +23,7 @@ import {
   RequestSeasonButton,
 } from "../../../components/title-action-buttons";
 import { UntrackButton } from "../../../components/untrack-button";
+import { AcquiringStatusTrigger } from "../../../components/acquiring-status-trigger";
 import { AgentMemoryNotes } from "../../../components/agent-memory-panel";
 import { UserMessageThread } from "../../../components/user-message-thread";
 import { isDemoMode } from "../../../lib/demo-mode";
@@ -243,6 +244,18 @@ function TvHub({
               : ""}
           </p>
           <div className="hub-actions">
+            {view.acquiring ? (
+              <AcquiringStatusTrigger
+                title={{
+                  tmdbId: view.tmdbId,
+                  title: view.title,
+                  year: view.year,
+                  type: "tv",
+                  posterPath: view.posterPath,
+                }}
+                storageId={storageId}
+              />
+            ) : null}
             {/* Single-season titles get their button on the season row. */}
             {view.untrackedSeasonNumbers.length > 0 && view.seasons.length > 1 ? (
               <RequestRemainingButton
@@ -383,9 +396,21 @@ function MovieHub({
                   />
                 ) : null}
                 {view.state === "acquiring" ? (
-                  <Link className="primary-button" href={activityHref}>
-                    查看活动
-                  </Link>
+                  <>
+                    <AcquiringStatusTrigger
+                      title={{
+                        tmdbId: view.tmdbId,
+                        title: view.title,
+                        year: view.year,
+                        type: "movie",
+                        posterPath: view.posterPath,
+                      }}
+                      storageId={storageId}
+                    />
+                    <Link className="primary-button" href={activityHref}>
+                      查看活动
+                    </Link>
+                  </>
                 ) : null}
                 {view.state !== "untracked" ? (
                   <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />

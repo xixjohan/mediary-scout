@@ -340,11 +340,11 @@ function CancelButton({ runId, title, kind }: { runId: string; title: string; ki
       const res = await fetch("/api/activity/cancel", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ runId }),
+        body: JSON.stringify({ runId, allowRunning: true }),
       });
       const result = (await res.json()) as { status?: string };
       if (result.status !== "cancelled") {
-        window.alert(`「${title}」已开始处理，无法取消。`);
+        window.alert(`未能取消「${title}」，请稍后再试。`);
       }
     } catch {
       window.alert("取消失败，请重试。");
