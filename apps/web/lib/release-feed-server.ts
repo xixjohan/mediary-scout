@@ -132,7 +132,7 @@ export async function fetchReleaseFeed(fetchImpl: typeof fetch = fetch): Promise
 export function readLocalReleaseNotes(tag: string): string | null {
   try {
     const candidates = [
-      join(process.cwd(), "release-notes", `${tag}.md`),
+      join(/*turbopackIgnore: true*/ process.cwd(), "release-notes", `${tag}.md`),
       join(/*turbopackIgnore: true*/ process.cwd(), "..", "..", "release-notes", `${tag}.md`),
     ];
     for (const p of candidates) {
