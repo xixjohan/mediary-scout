@@ -22,11 +22,6 @@
       "count": 1
     }
   },
-  "apps/web/app/page.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "apps/web/app/settings/page.tsx": {
     "complexity": {
       "count": 2
@@ -174,7 +169,7 @@
   },
   "packages/workflow/src/acquisition-v2/agent-loop.ts": {
     "complexity": {
-      "count": 3
+      "count": 2
     }
   },
   "packages/workflow/src/acquisition-v2/directory-lifecycle.ts": {

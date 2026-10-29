@@ -27,6 +27,12 @@ import { buildMergedSearchSnapshot } from "./merged-search-snapshot.js";
 /** How the search is performed. Injected so tests never touch a real indexer. */
 export type TitleSearchFn = (input: { keyword: string }) => Promise<ResourceSnapshot>;
 
+export interface TitleResourceProgressEvent {
+  newCandidates: ResourceCandidateView[];
+  allCandidates: ResourceCandidateView[];
+  progress: { done: number; total: number; currentKeyword: string };
+}
+
 export interface TitleResourceDeps {
   accountId: string | null;
   titleId: string;
@@ -39,6 +45,8 @@ export interface TitleResourceDeps {
   loadCachedCandidates: (candidateIds: readonly string[]) => Promise<ResourceCandidate[]>;
   /** Optional suffix for cache key (e.g. hash of custom keyword) so custom queries don't collide. */
   cacheKeySuffix?: string | undefined;
+  /** Optional streaming chunk callback for progressive candidate emission. */
+  onChunk?: ((event: TitleResourceProgressEvent) => void) | undefined;
 }
 
 export type TitleResourceResult =
@@ -74,17 +82,34 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
   try {
     // Deduped by candidateId across the ladder. Content-hashing providers (PanSou)
     // hand the SAME id to identical results, so a resource found via both the bare
-    // title and the original title would otherwise appear twice — the panel would
-    // show the user the same link three times, which reads as three distinct options.
+    // title and the original title would otherwise appear twice.
+    // Concurrent resolution yields fast progressive chunks without blocking.
     const byId = new Map<string, ResourceCandidateView>();
     const perKeyword: ResourceSnapshot[] = [];
-    for (const keyword of deps.keywords) {
-      const snapshot = await deps.search({ keyword });
-      perKeyword.push(snapshot);
-      for (const view of toCandidateViews(snapshot.candidates)) {
-        if (!byId.has(view.candidateId)) byId.set(view.candidateId, view);
-      }
-    }
+    let done = 0;
+    const total = deps.keywords.length;
+
+    await Promise.all(
+      deps.keywords.map(async (keyword) => {
+        const snapshot = await deps.search({ keyword });
+        perKeyword.push(snapshot);
+        const newCandidates: ResourceCandidateView[] = [];
+        for (const view of toCandidateViews(snapshot.candidates)) {
+          if (!byId.has(view.candidateId)) {
+            byId.set(view.candidateId, view);
+            newCandidates.push(view);
+          }
+        }
+        done += 1;
+        if (deps.onChunk) {
+          deps.onChunk({
+            newCandidates,
+            allCandidates: [...byId.values()],
+            progress: { done, total, currentKeyword: keyword },
+          });
+        }
+      }),
+    );
     const views = [...byId.values()];
     deps.cache.put(scopeKey, views);
     // The ONE snapshot the user actually saw: the ladder produced several, but the

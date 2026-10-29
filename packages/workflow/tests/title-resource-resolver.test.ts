@@ -285,4 +285,28 @@ describe("resolveTitleResources — 合并快照（批次 3：import 的取回�
       password: "abcd",
     });
   });
+
+  it("支持 onChunk 渐进式流式回调输出候选", async () => {
+    const chunks: Array<{ newCount: number; totalCount: number; done: number; total: number }> = [];
+    const d = deps({
+      keywords: ["复联1", "复联2"],
+      search: async ({ keyword }) => {
+        return snapshotOf([`${keyword}_c1`, `${keyword}_c2`]);
+      },
+      onChunk: (event) => {
+        chunks.push({
+          newCount: event.newCandidates.length,
+          totalCount: event.allCandidates.length,
+          done: event.progress.done,
+          total: event.progress.total,
+        });
+      },
+    });
+
+    const result = await resolveTitleResources(d);
+    expect(result.kind).toBe("ok");
+    expect(chunks.length).toBe(2);
+    expect(chunks[chunks.length - 1]?.totalCount).toBe(4);
+    expect(chunks[chunks.length - 1]?.done).toBe(2);
+  });
 });

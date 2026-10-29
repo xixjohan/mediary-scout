@@ -510,6 +510,93 @@ describe("getSearchPageView", () => {
     expect(second.cacheStatus).toBe("hit");
     expect(second.candidates[0]?.title).toBe("翘楚");
   });
+
+  it("当主源返回 0 结果时，自动调用 fallbackProvider 并标记 source 为 douban", async () => {
+    const cache = new InMemoryMediaSearchCache();
+    const primary = countingSearchProvider([]);
+    const fallbackCandidate: MediaSearchCandidate = {
+      tmdbId: 2347485,
+      mediaType: "tv",
+      title: "天道",
+      originalTitle: "天道",
+      year: 2008,
+      overview: "丁元英商战",
+      posterPath: "https://img9.doubanio.com/cover.jpg",
+      backdropPath: null,
+      seasons: [],
+      source: "douban",
+    };
+    const fallback = countingSearchProvider([fallbackCandidate]);
+    const repository = new InMemoryWorkflowRepository();
+
+    const view = await getSearchPageView({
+      query: "天道",
+      provider: primary,
+      fallbackProvider: fallback,
+      cache,
+      repository,
+    });
+
+    expect(primary.calls).toBe(1);
+    expect(fallback.calls).toBe(1);
+    expect(view.source).toBe("douban");
+    expect(view.candidates.length).toBe(1);
+    expect(view.candidates[0]?.source).toBe("douban");
+    expect(view.candidates[0]?.id).toBe("douban_tv_2347485");
+  });
+
+  it("支持分页参数，正确回传 page、totalPages 与 totalResults", async () => {
+    const cache = new InMemoryMediaSearchCache();
+    const primary: MediaSearchProvider = {
+      searchMedia: async ({ page }) => {
+        expect(page).toBe(2);
+        return [qiaochuCandidate()];
+      },
+    };
+    const repository = new InMemoryWorkflowRepository();
+
+    const view = await getSearchPageView({
+      query: "翘楚",
+      page: 2,
+      provider: primary,
+      cache,
+      repository,
+    });
+
+    expect(view.page).toBe(2);
+    expect(view.totalPages).toBe(2);
+    expect(view.pageSize).toBe(30);
+  });
+
+  it("支持自定义 pageSize（20/30/50 部），默认 30 部并正确透传", async () => {
+    const cache = new InMemoryMediaSearchCache();
+    let passedPageSize: number | undefined;
+    const primary: MediaSearchProvider = {
+      searchMedia: async ({ page, pageSize }) => {
+        passedPageSize = pageSize;
+        return [qiaochuCandidate()];
+      },
+    };
+    const repository = new InMemoryWorkflowRepository();
+
+    const defaultView = await getSearchPageView({
+      query: "翘楚",
+      provider: primary,
+      cache,
+      repository,
+    });
+    expect(defaultView.pageSize).toBe(30);
+    expect(passedPageSize).toBe(30);
+
+    const customView = await getSearchPageView({
+      query: "翘楚",
+      pageSize: 50,
+      provider: primary,
+      cache,
+      repository,
+    });
+    expect(customView.pageSize).toBe(50);
+  });
 });
 
 function countingSearchProvider(results: MediaSearchCandidate[]): MediaSearchProvider & { calls: number } {

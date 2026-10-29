@@ -25,12 +25,14 @@ import {
   DEAD_LINKS_BLACK_BOX_PAN123,
   DEAD_LINKS_BLACK_BOX_QUARK,
   DEAD_LINKS_BLACK_BOX_TIANYI,
+  DEAD_LINKS_BLACK_BOX_UC,
 } from "./acquisition-v2/skill-manuals.js";
 import {
   TRANSFER_MODEL_NOTE_GUANGYA,
   TRANSFER_MODEL_NOTE_PAN123,
   TRANSFER_MODEL_NOTE_QUARK,
   TRANSFER_MODEL_NOTE_TIANYI,
+  TRANSFER_MODEL_NOTE_UC,
 } from "./acquisition-v2/transfer-model-notes.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import {
@@ -41,7 +43,7 @@ import { isPan123AuthError, parsePan123Uid } from "./pan123-client.js";
 import type { Pan123Credential } from "./pan123-client.js";
 import { Pan123Client } from "./pan123-client.js";
 import { Pan123StorageExecutor } from "./pan123-storage-executor.js";
-import { isQuarkAuthError, parseQuarkUid } from "./quark-cookie-client.js";
+import { isQuarkAuthError, parseCloudDriveUid, parseQuarkUid, UC_PROFILE } from "./quark-cookie-client.js";
 import { QuarkCookieClient } from "./quark-cookie-client.js";
 import { QuarkStorageExecutor } from "./quark-storage-executor.js";
 import type { StorageExecutor } from "./ports.js";
@@ -50,10 +52,11 @@ import type { TianyiClientOptions, TianyiCredential } from "./tianyi-client.js";
 import { TianyiClient } from "./tianyi-client.js";
 import { TianyiStorageExecutor } from "./tianyi-storage-executor.js";
 
-export type StorageProvider = "pan115" | "quark" | "guangya" | "tianyi" | "pan123";
+export type StorageProvider = "pan115" | "quark" | "uc" | "guangya" | "tianyi" | "pan123";
 export type ResourceProviderKind =
   | "pansou-115"
   | "pansou-quark"
+  | "pansou-uc"
   | "pansou-magnet"
   | "pansou-tianyi"
   | "pansou-123"
@@ -267,6 +270,41 @@ export const STORAGE_BRANDS = [
     },
   },
   {
+    provider: "uc",
+    label: "UC网盘",
+    parseUid: parseCloudDriveUid,
+    isAuthError: isQuarkAuthError, // same error class — one family, one signal
+    resourceProviderKinds: ["pansou-uc"],
+    assumeChineseSubsFromChineseTitle: true,
+    authKind: "cookie",
+    provisionRootId: "0", // UC account root
+    writeScope: "parents", // family protocol: getFileInfo walks pdir_fid up
+    minApiIntervalMs: 0,
+    deadLinksSkill: DEAD_LINKS_BLACK_BOX_UC,
+    transferModelNote: TRANSFER_MODEL_NOTE_UC,
+    supportsSubtitleDirectLink: false,
+    createBootstrap: ({ cookie }) =>
+      new QuarkStorageExecutor({
+        client: new QuarkCookieClient({ cookie, profile: UC_PROFILE }),
+        writeScopeDirectoryIds: [],
+        profile: UC_PROFILE,
+      }),
+    create: (input) => {
+      return new QuarkStorageExecutor({
+        client: withBrandPacing(
+          new QuarkCookieClient({ cookie: input.cookie ?? "", profile: UC_PROFILE }),
+          "uc",
+          {
+            clock: () => Date.now(),
+            sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+          },
+        ),
+        writeScopeDirectoryIds: input.scopeCids,
+        profile: UC_PROFILE,
+      });
+    },
+  },
+  {
     provider: "guangya",
     label: "光鸭云盘",
     parseUid: parseGuangYaUid,
@@ -411,6 +449,9 @@ export const STORAGE_BRANDS = [
 export function allowedResourceTypesForKinds(kinds: readonly string[]): ResourceType[] {
   if (kinds.includes("pansou-quark")) {
     return ["quark"];
+  }
+  if (kinds.includes("pansou-uc")) {
+    return ["uc"];
   }
   if (kinds.includes("pansou-tianyi")) {
     return ["tianyi"];

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { animeFirstAirDateFloor, mapTrendingResults, TRENDING_KINDS, trendingFeedQuery } from "./trending";
+import {
+  animeFirstAirDateFloor,
+  buildDiscoverQuery,
+  mapTrendingResults,
+  TRENDING_KINDS,
+  trendingFeedQuery,
+} from "./trending";
 
 describe("trending feed contract (must match workers/tmdb-proxy getTrendingFeeds)", () => {
   // The Worker Cron warms KV under cacheKeyFor(path + sorted query). The frontend
@@ -73,5 +79,54 @@ describe("mapTrendingResults", () => {
   it("null/empty air date → year null", () => {
     const cards = mapTrendingResults({ results: [{ id: 3, title: "Y" }] }, "movie");
     expect(cards[0]!.year).toBeNull();
+  });
+});
+
+describe("buildDiscoverQuery 动态探索参数构建", () => {
+  it("构建电影 2025 年份查询参数", () => {
+    const q = buildDiscoverQuery("movie", { year: "2025" });
+    expect(q.primary_release_year).toBe("2025");
+    expect(q.sort_by).toBe("popularity.desc");
+    expect(q.language).toBe("zh-CN");
+  });
+
+  it("构建剧集 2020年代 查询参数", () => {
+    const q = buildDiscoverQuery("tv", { year: "2020s" });
+    expect(q["first_air_date.gte"]).toBe("2020-01-01");
+    expect(q["first_air_date.lte"]).toBe("2029-12-31");
+  });
+
+  it("正确映射题材 ID（如科幻 with_genres: 878|10765）", () => {
+    const q = buildDiscoverQuery("movie", { genre: "scifi" });
+    expect(q.with_genres).toBe("878|10765");
+  });
+
+  it("支持分页参数（page > 1 时写入 query.page）", () => {
+    const q1 = buildDiscoverQuery("movie", { year: "2025", page: 1 });
+    expect(q1.page).toBeUndefined();
+
+    const q2 = buildDiscoverQuery("movie", { year: "2025", page: 3 });
+    expect(q2.page).toBe("3");
+  });
+
+  it("纪录片与综艺精准映射 genre id 与参数", () => {
+    const doc = buildDiscoverQuery("movie", { type: "documentary" });
+    expect(doc.with_genres).toBe("99");
+
+    const variety = buildDiscoverQuery("tv", { type: "variety" });
+    expect(variety.with_genres).toBe("10764|10767");
+
+    const anime = buildDiscoverQuery("tv", { type: "anime" });
+    expect(anime.with_genres).toBe("16");
+    expect(anime.with_original_language).toBe("ja");
+  });
+
+  it("排序维度正确映射到 TMDB Discover 参数", () => {
+    const ratingMovie = buildDiscoverQuery("movie", { sort: "rating" });
+    expect(ratingMovie.sort_by).toBe("vote_average.desc");
+    expect(ratingMovie["vote_count.gte"]).toBe("100");
+
+    const releaseTv = buildDiscoverQuery("tv", { sort: "release" });
+    expect(releaseTv.sort_by).toBe("first_air_date.desc");
   });
 });

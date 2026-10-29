@@ -41,8 +41,31 @@ export interface ConnectedStoragesTable {
   created_at: string;
 }
 
+export interface ChatConversationsTable {
+  id: string;
+  account_id: string;
+  title: string;
+  storage_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatMessagesTable {
+  id: string;
+  conversation_id: string;
+  account_id: string;
+  role: string;
+  content: string;
+  thinking: string | null;
+  tools_used: string | null;
+  action_card: string | null;
+  created_at: string;
+}
+
 export interface MediaryDatabase {
   app_settings: AppSettingsTable;
   account_settings: AccountSettingsTable;
   connected_storages: ConnectedStoragesTable;
+  chat_conversations: ChatConversationsTable;
+  chat_messages: ChatMessagesTable;
 }

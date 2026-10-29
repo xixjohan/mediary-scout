@@ -21,7 +21,13 @@ function view(overrides: Partial<ResourceCandidateView> = {}): ResourceCandidate
   };
 }
 
-import { appendKeywordChip, mapImportResponse, mapResourceResponse, resourceTypeLabel } from "./title-resource-panel";
+import {
+  appendKeywordChip,
+  mapImportResponse,
+  mapResourceResponse,
+  mapResourceStreamEvent,
+  resourceTypeLabel,
+} from "./title-resource-panel";
 
 describe("mapResourceResponse — 降级契约", () => {
   it("200 ⇒ ready，带上 cached 标记", () => {
@@ -186,6 +192,60 @@ describe("appendKeywordChip — 快捷词标签行为", () => {
   it("空修饰词时不修改原有关键词", () => {
     expect(appendKeywordChip("孤独摇滚", "")).toBe("孤独摇滚");
     expect(appendKeywordChip("孤独摇滚", "   ")).toBe("孤独摇滚");
+  });
+});
+
+describe("mapResourceStreamEvent — 流式事件映射", () => {
+  it("chunk 事件 ⇒ streaming 态，携带累积候选与进度", () => {
+    const state = mapResourceStreamEvent({
+      type: "chunk",
+      newCandidates: [view({ candidateId: "c2" })],
+      allCandidates: [view({ candidateId: "c1" }), view({ candidateId: "c2" })],
+      progress: { done: 1, total: 3, currentKeyword: "流浪地球" },
+    });
+    expect(state.kind).toBe("streaming");
+    if (state.kind === "streaming") {
+      expect(state.candidates).toHaveLength(2);
+      expect(state.progress.done).toBe(1);
+      expect(state.progress.total).toBe(3);
+    }
+  });
+
+  it("done 事件 ⇒ ready 态，携带快照句柄", () => {
+    const state = mapResourceStreamEvent({
+      type: "done",
+      candidates: [view({ candidateId: "c1" })],
+      cached: false,
+      snapshotId: "snap_123",
+    });
+    expect(state.kind).toBe("ready");
+    if (state.kind === "ready") {
+      expect(state.candidates).toHaveLength(1);
+      expect(state.snapshotId).toBe("snap_123");
+      expect(state.cached).toBe(false);
+    }
+  });
+
+  it("error 事件 ⇒ 429 throttled 态或通用 error 态", () => {
+    const throttled = mapResourceStreamEvent({
+      type: "error",
+      kind: "throttled",
+      retryAfterMs: 45000,
+    });
+    expect(throttled.kind).toBe("throttled");
+    if (throttled.kind === "throttled") {
+      expect(throttled.retryAfterMs).toBe(45000);
+    }
+
+    const err = mapResourceStreamEvent({
+      type: "error",
+      kind: "error",
+      detail: "网关超时",
+    });
+    expect(err.kind).toBe("error");
+    if (err.kind === "error") {
+      expect(err.message).toBe("网关超时");
+    }
   });
 });
 

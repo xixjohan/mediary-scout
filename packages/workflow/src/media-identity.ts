@@ -27,11 +27,11 @@
  * `assertExhaustive` 的调用点会编译报错——是**显式动作**，不是顺手加个字符串。
  */
 
-/** 元数据来源。今天只有 TMDB；加第二个源是显式动作（见 assertExhaustive）。 */
-export type MediaSource = "tmdb";
+/** 元数据来源。包含 TMDB 与 豆瓣（douban）；加新源是显式动作（见 assertExhaustive）。 */
+export type MediaSource = "tmdb" | "douban";
 
 /** 全部来源。用 `satisfies` 而非 `: MediaSource[]`——后者会宽化成 string[]，断言变同义反复。 */
-export const MEDIA_SOURCES = ["tmdb"] satisfies readonly MediaSource[];
+export const MEDIA_SOURCES = ["tmdb", "douban"] satisfies readonly MediaSource[];
 
 /** 媒体种类。title id 用；candidate id 已由格式本身区分 movie/tv。 */
 export type MediaKind = "tv" | "movie";
@@ -93,6 +93,8 @@ export function sourcePrefix(source: MediaSource): string {
   switch (source) {
     case "tmdb":
       return "tmdb";
+    case "douban":
+      return "douban";
     default:
       return assertExhaustive(source);
   }

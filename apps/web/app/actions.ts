@@ -102,12 +102,28 @@ export interface ConnectQuarkActionResult {
 
 /** Settings "添加网盘 → 夸克": bind a pasted 夸克 cookie as a new drive. */
 export async function connectQuarkAction(cookie: string): Promise<ConnectQuarkActionResult> {
+  return connectCloudFamilyCookieAction(cookie, "quark");
+}
+
+/** Settings "添加网盘 → UC网盘": bind a pasted UC cookie as a new drive. Same
+ *  family protocol as 夸克, so it reuses the whole connect/probe/provision path. */
+export async function connectUcAction(cookie: string): Promise<ConnectQuarkActionResult> {
+  return connectCloudFamilyCookieAction(cookie, "uc");
+}
+
+/** Shared body for the 阿里云盘族 (夸克 / UC) cookie actions — the two differ only
+ *  in which runtime function runs and the label in the success message. */
+async function connectCloudFamilyCookieAction(
+  cookie: string,
+  provider: "quark" | "uc",
+): Promise<ConnectQuarkActionResult> {
   assertNotDemo();
+  const label = provider === "uc" ? "UC网盘" : "夸克网盘";
   try {
-    const { connectQuarkCookie } = await import("../lib/workflow-runtime");
-    const { providerUid } = await connectQuarkCookie(cookie);
+    const { connectQuarkCookie, connectUcCookie } = await import("../lib/workflow-runtime");
+    const { providerUid } = await (provider === "uc" ? connectUcCookie(cookie) : connectQuarkCookie(cookie));
     revalidatePath("/settings");
-    return { ok: true, message: `夸克网盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
+    return { ok: true, message: `${label}已连接（账号 ${providerUid.slice(0, 10)}…）。` };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
@@ -901,6 +917,47 @@ export async function clearProwlarrConfigAction(): Promise<PushSettingsActionRes
     const accountId = await getCurrentAccountId();
     await repository.setAccountSetting(accountId, PROWLARR_BASE_URL_SETTING_KEY, "");
     await repository.setAccountSetting(accountId, PROWLARR_API_KEY_SETTING_KEY, "");
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `清除失败：${String(error)}` };
+  }
+}
+
+/** 海搜官方 API（idatariver 项目 b9d1）。保存前先真打一次搜索，把
+ *  「key 无效 / 没余额」在保存这一刻就告诉用户 —— 否则它会一路静默成
+ *  「这个源没结果」，用户永远查不到原因。 */
+export async function saveHaisouConfigAction(input: {
+  apiKey: string;
+}): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  const apiKey = input.apiKey.trim();
+  if (!apiKey) {
+    return { success: false, message: "请填入 API Key" };
+  }
+  try {
+    const { HaisouResourceProvider } = await import("@media-track/workflow");
+    const probe = new HaisouResourceProvider({ apiKey });
+    const snapshot = await probe.search({ keyword: "沙丘" });
+    if (snapshot.sourceHealth && snapshot.sourceHealth.status !== "healthy") {
+      return { success: false, message: "API Key 无效或额度不足（上游返回失败码）" };
+    }
+    const { getWorkflowRepository, getCurrentAccountId, HAISOU_API_KEY_SETTING_KEY } = await import(
+      "../lib/workflow-runtime"
+    );
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), HAISOU_API_KEY_SETTING_KEY, apiKey);
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function clearHaisouConfigAction(): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, HAISOU_API_KEY_SETTING_KEY } = await import(
+      "../lib/workflow-runtime"
+    );
+    await getWorkflowRepository().setAccountSetting(await getCurrentAccountId(), HAISOU_API_KEY_SETTING_KEY, "");
     return { success: true };
   } catch (error) {
     return { success: false, message: `清除失败：${String(error)}` };

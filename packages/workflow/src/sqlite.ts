@@ -78,6 +78,16 @@ import {
 } from "./user-requests.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "./acquisition-v2/dead-links.js";
 import type { DeadLinkKind, DeadLinkStats } from "./acquisition-v2/dead-links.js";
+import {
+  chatConversationSummaryFromRow,
+  persistedChatMessageFromRow,
+  type ChatConversationRow,
+  type ChatConversationSummary,
+  type ChatMessageRow,
+  type CreateConversationInput,
+  type PersistedChatMessage,
+  type SaveChatMessageInput,
+} from "./chat-conversations.js";
 import type {
   Account,
   ConnectedStorage,
@@ -322,6 +332,31 @@ export const SQLITE_SCHEMA = `
     created_at text NOT NULL,
     UNIQUE (provider, provider_uid)
   );
+  CREATE TABLE IF NOT EXISTS chat_conversations (
+    id text PRIMARY KEY,
+    account_id text NOT NULL,
+    title text NOT NULL,
+    storage_id text,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_conversations_account
+    ON chat_conversations (account_id, updated_at DESC);
+  CREATE TABLE IF NOT EXISTS chat_messages (
+    id text PRIMARY KEY,
+    conversation_id text NOT NULL,
+    account_id text NOT NULL,
+    role text NOT NULL,
+    content text NOT NULL,
+    thinking text,
+    tools_used text,
+    action_card text,
+    created_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation
+    ON chat_messages (conversation_id, created_at ASC);
+  CREATE INDEX IF NOT EXISTS idx_chat_messages_account
+    ON chat_messages (account_id);
   INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
     VALUES ('acct_default', 'default', '', 1, '1970-01-01T00:00:00.000Z')
     ON CONFLICT (id) DO NOTHING;
@@ -2372,5 +2407,133 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       softExpired: Number(totals.soft_expired ?? 0),
       byKind,
     };
+  }
+
+  async listConversations(input: { accountId: string }): Promise<ChatConversationSummary[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT c.id, c.account_id, c.title, c.storage_id, c.created_at, c.updated_at,
+                COUNT(m.id) AS message_count
+         FROM chat_conversations c
+         LEFT JOIN chat_messages m ON c.id = m.conversation_id AND m.account_id = c.account_id
+         WHERE c.account_id = ?
+         GROUP BY c.id
+         ORDER BY c.updated_at DESC`,
+      )
+      .all(input.accountId) as ChatConversationRow[];
+    return rows.map(chatConversationSummaryFromRow);
+  }
+
+  async getConversation(input: { accountId: string; id: string }): Promise<ChatConversationSummary | null> {
+    const row = this.db
+      .prepare(
+        `SELECT c.id, c.account_id, c.title, c.storage_id, c.created_at, c.updated_at,
+                COUNT(m.id) AS message_count
+         FROM chat_conversations c
+         LEFT JOIN chat_messages m ON c.id = m.conversation_id AND m.account_id = c.account_id
+         WHERE c.account_id = ? AND c.id = ?
+         GROUP BY c.id`,
+      )
+      .get(input.accountId, input.id) as ChatConversationRow | undefined;
+    return row ? chatConversationSummaryFromRow(row) : null;
+  }
+
+  async createConversation(input: CreateConversationInput): Promise<ChatConversationSummary> {
+    const id = input.id || `conv_${Date.now()}_${globalThis.crypto.randomUUID().slice(0, 8)}`;
+    this.db
+      .prepare(
+        `INSERT INTO chat_conversations (id, account_id, title, storage_id, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(id, input.accountId, input.title, input.storageId ?? null, input.now, input.now);
+
+    return {
+      id,
+      accountId: input.accountId,
+      title: input.title,
+      storageId: input.storageId ?? null,
+      messageCount: 0,
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+  }
+
+  async updateConversation(input: {
+    accountId: string;
+    id: string;
+    title?: string;
+    updatedAt?: string;
+  }): Promise<ChatConversationSummary | null> {
+    const now = input.updatedAt ?? new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE chat_conversations
+         SET title = COALESCE(?, title),
+             updated_at = COALESCE(?, updated_at)
+         WHERE id = ? AND account_id = ?`,
+      )
+      .run(input.title ?? null, now, input.id, input.accountId);
+    if (result.changes === 0) return null;
+    return this.getConversation({ accountId: input.accountId, id: input.id });
+  }
+
+  async deleteConversation(input: { accountId: string; id: string }): Promise<boolean> {
+    return this.db.transaction(() => {
+      this.db
+        .prepare("DELETE FROM chat_messages WHERE conversation_id = ? AND account_id = ?")
+        .run(input.id, input.accountId);
+      const res = this.db
+        .prepare("DELETE FROM chat_conversations WHERE id = ? AND account_id = ?")
+        .run(input.id, input.accountId);
+      return res.changes > 0;
+    })();
+  }
+
+  async listMessages(input: { accountId: string; conversationId: string }): Promise<PersistedChatMessage[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM chat_messages
+         WHERE account_id = ? AND conversation_id = ?
+         ORDER BY created_at ASC`,
+      )
+      .all(input.accountId, input.conversationId) as ChatMessageRow[];
+    return rows.map(persistedChatMessageFromRow);
+  }
+
+  async saveMessage(input: SaveChatMessageInput): Promise<PersistedChatMessage> {
+    return this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO chat_messages (id, conversation_id, account_id, role, content, thinking, tools_used, action_card, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.id,
+          input.conversationId,
+          input.accountId,
+          input.role,
+          input.content,
+          input.thinking ?? null,
+          input.toolsUsed ? JSON.stringify(input.toolsUsed) : null,
+          input.actionCard ? JSON.stringify(input.actionCard) : null,
+          input.createdAt,
+        );
+
+      this.db
+        .prepare("UPDATE chat_conversations SET updated_at = ? WHERE id = ? AND account_id = ?")
+        .run(input.createdAt, input.conversationId, input.accountId);
+
+      return {
+        id: input.id,
+        conversationId: input.conversationId,
+        accountId: input.accountId,
+        role: input.role,
+        content: input.content,
+        thinking: input.thinking ?? null,
+        toolsUsed: input.toolsUsed ?? null,
+        actionCard: input.actionCard ?? null,
+        createdAt: input.createdAt,
+      };
+    })();
   }
 }

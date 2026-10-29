@@ -29,6 +29,11 @@ export type PanelState =
   | { kind: "idle" }
   | { kind: "loading" }
   | {
+      kind: "streaming";
+      candidates: ResourceCandidateView[];
+      progress: { done: number; total: number; currentKeyword?: string };
+    }
+  | {
       kind: "ready";
       candidates: ResourceCandidateView[];
       cached: boolean;
@@ -40,6 +45,37 @@ export type PanelState =
 
 /** 默认冷却：后端没给 retryAfterMs 时按 60s 保守等待（与端点常量一致）。 */
 const DEFAULT_RETRY_AFTER_MS = 60_000;
+
+/**
+ * 流式 NDJSON 事件 ⇒ 面板状态纯函数映射。
+ */
+export function mapResourceStreamEvent(
+  event: { type: string; [key: string]: unknown },
+  prevState?: PanelState,
+): PanelState {
+  if (event.type === "chunk") {
+    return {
+      kind: "streaming",
+      candidates: (event.allCandidates as ResourceCandidateView[]) ?? [],
+      progress: (event.progress as { done: number; total: number; currentKeyword?: string }) ?? { done: 0, total: 1 },
+    };
+  }
+  if (event.type === "done") {
+    return {
+      kind: "ready",
+      candidates: (event.candidates as ResourceCandidateView[]) ?? [],
+      cached: Boolean(event.cached),
+      snapshotId: typeof event.snapshotId === "string" ? event.snapshotId : null,
+    };
+  }
+  if (event.type === "error") {
+    if (event.kind === "throttled") {
+      return { kind: "throttled", retryAfterMs: (event.retryAfterMs as number) ?? DEFAULT_RETRY_AFTER_MS };
+    }
+    return { kind: "error", message: (event.detail as string) ?? "查询失败" };
+  }
+  return prevState ?? { kind: "idle" };
+}
 
 /**
  * HTTP 响应 ⇒ 面板状态。抽成导出纯函数是为了能单测——内联在事件回调里就只能测一个
@@ -131,6 +167,8 @@ export function resourceTypeLabel(type: ResourceType): string {
       return "115";
     case "quark":
       return "夸克";
+    case "uc":
+      return "UC";
     case "tianyi":
       return "天翼";
     case "123":
@@ -319,7 +357,7 @@ function ResourceSearchBar({
 }
 
 interface CandidatesListProps {
-  state: Extract<PanelState, { kind: "ready" }>;
+  state: Extract<PanelState, { kind: "ready" | "streaming" }>;
   importState: ImportState;
   busy: boolean;
   throttled: boolean;
@@ -336,6 +374,14 @@ function ResourceCandidatesList({
   onImportCandidate,
 }: CandidatesListProps) {
   if (state.candidates.length === 0) {
+    if (state.kind === "streaming") {
+      return (
+        <p className="title-resources-empty">
+          正在检索资源（{state.progress.done}/{state.progress.total}
+          {state.progress.currentKeyword ? `·${state.progress.currentKeyword}` : ""}）…
+        </p>
+      );
+    }
     return <p className="title-resources-empty">没有找到可获取的资源。</p>;
   }
 
@@ -343,11 +389,18 @@ function ResourceCandidatesList({
     <>
       <div className="title-resources-summary">
         <span>{state.candidates.length} 个候选</span>
-        {state.cached && <span className="title-resources-cached">30 分钟内的缓存结果</span>}
+        {state.kind === "streaming" ? (
+          <span className="title-resources-cached">
+            正在并发检索（{state.progress.done}/{state.progress.total}
+            {state.progress.currentKeyword ? `·${state.progress.currentKeyword}` : ""}）…
+          </span>
+        ) : state.cached ? (
+          <span className="title-resources-cached">30 分钟内的缓存结果</span>
+        ) : null}
       </div>
       <ul className="title-resources-list">
         {state.candidates.map((candidate) => {
-          const importable = state.snapshotId !== null;
+          const importable = state.kind === "ready" && state.snapshotId !== null;
           const rowBusy =
             submitting && importState.kind === "submitting" && importState.candidateId === candidate.candidateId;
           return (
@@ -368,7 +421,13 @@ function ResourceCandidatesList({
                 className="title-resources-import"
                 onClick={() => void onImportCandidate(candidate.candidateId)}
                 disabled={!importable || rowBusy || busy || throttled}
-                title={importable ? undefined : "这是 30 分钟内的缓存结果，请重新查询后再入库"}
+                title={
+                  state.kind === "streaming"
+                    ? "检索全部完成生成快照后即可入库（首批结果已展示）"
+                    : importable
+                      ? undefined
+                      : "这是 30 分钟内的缓存结果，请重新查询后再入库"
+                }
               >
                 {rowBusy ? "入库中…" : "手动入库"}
               </button>
@@ -388,6 +447,31 @@ function ResourceCandidatesList({
       )}
     </>
   );
+}
+
+async function consumeResourceNdjsonStream(
+  stream: ReadableStream<Uint8Array>,
+  onEvent: (event: { type: string; [key: string]: unknown }) => void,
+): Promise<void> {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() ?? "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      try {
+        onEvent(JSON.parse(trimmed) as { type: string; [key: string]: unknown });
+      } catch {
+        // ignore malformed line
+      }
+    }
+  }
 }
 
 export function TitleResourcePanel({
@@ -412,9 +496,12 @@ export function TitleResourcePanel({
     setState({ kind: "loading" });
     try {
       const epNum = selectedEpisode.trim() ? parseInt(selectedEpisode.trim(), 10) : undefined;
-      const response = await fetch("/api/titles/resources", {
+      const response = await fetch("/api/titles/resources?stream=1", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          accept: "application/x-ndjson, application/json",
+        },
         body: JSON.stringify({
           tmdbId,
           type: mediaType,
@@ -424,8 +511,16 @@ export function TitleResourcePanel({
           storageId,
         }),
       });
-      const body = await response.json().catch(() => ({}));
-      setState(mapResourceResponse(response.status, body));
+
+      const contentType = response.headers.get("content-type") ?? "";
+      if (contentType.includes("application/x-ndjson") && response.body) {
+        await consumeResourceNdjsonStream(response.body, (event) => {
+          setState((prev) => mapResourceStreamEvent(event, prev));
+        });
+      } else {
+        const body = await response.json().catch(() => ({}));
+        setState(mapResourceResponse(response.status, body));
+      }
     } catch (error) {
       // 网络层失败也降级为空态，不把异常抛给页面
       setState({ kind: "error", message: error instanceof Error ? error.message : String(error) });
@@ -466,7 +561,7 @@ export function TitleResourcePanel({
     [state, tmdbId, router],
   );
 
-  const busy = state.kind === "loading";
+  const busy = state.kind === "loading" || state.kind === "streaming";
   const throttled = state.kind === "throttled";
   const submitting = importState.kind === "submitting";
 
@@ -505,7 +600,7 @@ export function TitleResourcePanel({
         <p className="title-resources-hint">手动查询这部片的可获取资源。查询会花真实索引器预算，60 秒内不能重复。</p>
       )}
 
-      {state.kind === "ready" && (
+      {(state.kind === "ready" || state.kind === "streaming") && (
         <ResourceCandidatesList
           state={state}
           importState={importState}

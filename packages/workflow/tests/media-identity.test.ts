@@ -16,19 +16,21 @@ import {
 } from "../src/media-identity.js";
 
 describe("MediaSource", () => {
-  it("**今天只有 tmdb**——加第二个源是显式动作，不是顺手加个字符串", () => {
-    expect(MEDIA_SOURCES).toEqual(["tmdb"]);
+  it("**收敛来源**——支持 tmdb 与 douban", () => {
+    expect(MEDIA_SOURCES).toEqual(["tmdb", "douban"]);
   });
 
-  it("**isMediaSource 拒绝未知来源**（未来 douban_ 开头的旧行不会蒙对）", () => {
+  it("**isMediaSource 校验已知与未知来源**", () => {
     expect(isMediaSource("tmdb")).toBe(true);
-    expect(isMediaSource("douban")).toBe(false);
+    expect(isMediaSource("douban")).toBe(true);
+    expect(isMediaSource("imdb")).toBe(false);
     expect(isMediaSource("")).toBe(false);
     expect(isMediaSource("TMDB")).toBe(false);
   });
 
   it("**联合类型收口在 never**：加第二个成员时编译报错", () => {
     expect(sourceLabel("tmdb")).toBe("tmdb");
+    expect(sourceLabel("douban")).toBe("douban");
   });
 });
 
@@ -47,6 +49,8 @@ function sourceLabel(source: MediaSource): string {
   switch (source) {
     case "tmdb":
       return "tmdb";
+    case "douban":
+      return "douban";
     default:
       return assertExhaustive(source);
   }
@@ -112,7 +116,7 @@ describe("parser：失败必须是显式的判别联合，不是裸 null", () =>
   });
 
   it("**未知来源报 unknown_source**（不是 null，不会被当成「查无此片」）", () => {
-    const r = parseTitleId("douban_1295644" as MediaTitleId);
+    const r = parseTitleId("imdb_1295644" as MediaTitleId);
     expect(r.ok).toBe(false);
     if (r.ok) return;
     expect(r.reason).toBe("unknown_source");
@@ -137,7 +141,7 @@ describe("parser：失败必须是显式的判别联合，不是裸 null", () =>
   it("**每个失败都带原因字符串**（调用方要能记日志）", () => {
     const cases: Array<[string, string]> = [
       ["", "malformed"],
-      ["douban_1", "unknown_source"],
+      ["imdb_1", "unknown_source"],
       ["tmdb_tv_283428_s1", "not_a_title_id"],
     ];
     for (const [input, reason] of cases) {
@@ -146,6 +150,14 @@ describe("parser：失败必须是显式的判别联合，不是裸 null", () =>
       if (r.ok) continue;
       expect(r.reason, input).toBe(reason);
       expect(typeof r.reason).toBe("string");
+    }
+
+    const doubanHit = parseTitleId("douban_tv_2347485" as MediaTitleId);
+    expect(doubanHit.ok).toBe(true);
+    if (doubanHit.ok) {
+      expect(doubanHit.value.source).toBe("douban");
+      expect(doubanHit.value.mediaKind).toBe("tv");
+      expect(doubanHit.value.id).toBe(2347485);
     }
   });
 });

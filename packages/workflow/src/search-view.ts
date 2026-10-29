@@ -1,5 +1,7 @@
+import { normalizePageSize } from "./pagination-window.js";
 import { isMovieUnreleased } from "./domain.js";
 import type { EpisodeState, MediaType, TrackedSeason, WorkflowKind } from "./domain.js";
+import type { MediaSource } from "./media-identity.js";
 import type { WorkflowRepository } from "./repository.js";
 import { normalizeScope, type ScopeArg } from "./workflow-scope.js";
 
@@ -32,10 +34,28 @@ export interface MediaSearchCandidate {
   posterPath: string | null;
   backdropPath: string | null;
   seasons: MediaSearchSeason[];
+  genreIds?: number[];
+  voteAverage?: number;
+  source?: MediaSource | undefined;
 }
 
 export interface MediaSearchProvider {
-  searchMedia(input: { query: string }): Promise<MediaSearchCandidate[]>;
+  searchMedia(input: {
+    query: string;
+    page?: number | undefined;
+    pageSize?: number | undefined;
+  }): Promise<MediaSearchCandidate[]>;
+  searchMediaPage?(input: {
+    query: string;
+    page?: number | undefined;
+    pageSize?: number | undefined;
+  }): Promise<{
+    candidates: MediaSearchCandidate[];
+    page: number;
+    totalPages: number;
+    totalResults: number;
+    source: MediaSource;
+  }>;
 }
 
 export interface MediaSearchCache {
@@ -95,6 +115,9 @@ export interface SearchCandidateCard {
   latestAiredEpisode: number | null;
   /** All known seasons of the title (tv), for per-season request entries. */
   seasonNumbers: number[];
+  genreIds?: number[];
+  voteAverage?: number;
+  source?: MediaSource | undefined;
   action: SearchCandidateAction;
 }
 
@@ -103,6 +126,11 @@ export interface SearchPageView {
   state: SearchPageState;
   cacheStatus: SearchCacheStatus;
   candidates: SearchCandidateCard[];
+  page?: number | undefined;
+  pageSize?: number | undefined;
+  totalPages?: number | undefined;
+  totalResults?: number | undefined;
+  source?: MediaSource | undefined;
   /** Set when the typed query was a description (or carried an unofficial
    *  season/arc name) and a real title was found instead — the UI says which. */
   interpretedQuery?: string;
@@ -190,9 +218,187 @@ async function resolveOnce(
   }
 }
 
+interface CandidatePoolResult {
+  candidates: MediaSearchCandidate[];
+  cached: boolean;
+  totalPages?: number | undefined;
+  totalResults?: number | undefined;
+  source?: MediaSource | undefined;
+  providerError?: string | undefined;
+}
+
+async function loadCandidatePool(
+  input: Parameters<typeof getSearchPageView>[0],
+  query: string,
+  page: number,
+  pageSize: number,
+  cacheKey: string,
+): Promise<CandidatePoolResult> {
+  let cached = await input.cache.get(cacheKey);
+  if (!cached && page === 1) {
+    cached = await input.cache.get(query);
+  }
+  if (cached) return { candidates: cached, cached: true };
+
+  try {
+    if (input.provider.searchMediaPage) {
+      const res = await input.provider.searchMediaPage({ query, page, pageSize });
+      await input.cache.set(cacheKey, res.candidates);
+      return {
+        candidates: res.candidates,
+        cached: false,
+        totalPages: res.totalPages,
+        totalResults: res.totalResults,
+        source: res.source,
+      };
+    }
+    const fresh = await input.provider.searchMedia({ query, page, pageSize });
+    await input.cache.set(cacheKey, fresh);
+    return { candidates: fresh, cached: false };
+  } catch (error) {
+    if (input.fallbackProvider) {
+      try {
+        if (input.fallbackProvider.searchMediaPage) {
+          const fbRes = await input.fallbackProvider.searchMediaPage({ query, page, pageSize });
+          await input.cache.set(cacheKey, fbRes.candidates);
+          return {
+            candidates: fbRes.candidates,
+            cached: false,
+            totalPages: fbRes.totalPages,
+            totalResults: fbRes.totalResults,
+            source: fbRes.source,
+          };
+        }
+        const fallbackRes = await input.fallbackProvider.searchMedia({ query, page, pageSize });
+        await input.cache.set(cacheKey, fallbackRes);
+        return { candidates: fallbackRes, cached: false };
+      } catch {
+        // ignore
+      }
+    }
+    return { candidates: [], cached: false, providerError: describeError(error) };
+  }
+}
+
+async function resolveEmptyCandidates(
+  query: string,
+  page: number,
+  pageSize: number,
+  input: Parameters<typeof getSearchPageView>[0],
+): Promise<{
+  candidates: MediaSearchCandidate[];
+  interpretedQuery?: string | undefined;
+  totalPages?: number | undefined;
+  totalResults?: number | undefined;
+  source?: MediaSource | undefined;
+}> {
+  const interpreted = await interpretUnfoundQuery(query, input);
+  if (interpreted) {
+    const found = await safeSearch(input, interpreted);
+    if (found && found.length > 0) {
+      return { candidates: found, interpretedQuery: interpreted };
+    }
+  }
+
+  if (input.fallbackProvider) {
+    try {
+      if (input.fallbackProvider.searchMediaPage) {
+        const fbRes = await input.fallbackProvider.searchMediaPage({ query, page, pageSize });
+        return {
+          candidates: fbRes.candidates,
+          totalPages: fbRes.totalPages,
+          totalResults: fbRes.totalResults,
+          source: fbRes.source,
+        };
+      }
+      const fb = await input.fallbackProvider.searchMedia({ query, page, pageSize });
+      return { candidates: fb };
+    } catch {
+      // ignore
+    }
+  }
+
+  return { candidates: [] };
+}
+
+async function resolveSearchResults(
+  pool: CandidatePoolResult,
+  query: string,
+  page: number,
+  pageSize: number,
+  input: Parameters<typeof getSearchPageView>[0],
+) {
+  if (pool.candidates.length > 0) {
+    return {
+      candidates: pool.candidates,
+      interpretedQuery: undefined as string | undefined,
+      fallbackMeta: undefined as
+        | { totalPages?: number | undefined; totalResults?: number | undefined; source?: MediaSource | undefined }
+        | undefined,
+    };
+  }
+  const resolved = await resolveEmptyCandidates(query, page, pageSize, input);
+  return {
+    candidates: resolved.candidates,
+    interpretedQuery: resolved.interpretedQuery,
+    fallbackMeta: {
+      totalPages: resolved.totalPages,
+      totalResults: resolved.totalResults,
+      source: resolved.source,
+    },
+  };
+}
+
+function calculateSearchPageMeta(
+  candidates: MediaSearchCandidate[],
+  page: number,
+  pageSize: number,
+  pool: CandidatePoolResult,
+  fallbackMeta?: {
+    totalPages?: number | undefined;
+    totalResults?: number | undefined;
+    source?: MediaSource | undefined;
+  } | undefined,
+): { source: MediaSource; totalPages: number; totalResults: number } {
+  let source: MediaSource = "tmdb";
+  if (fallbackMeta?.source) {
+    source = fallbackMeta.source;
+  } else if (pool.source) {
+    source = pool.source;
+  } else {
+    for (const c of candidates) {
+      if (c.source === "douban") {
+        source = "douban";
+        break;
+      }
+    }
+  }
+
+  let totalResults = (page - 1) * pageSize + candidates.length;
+  if (fallbackMeta?.totalResults !== undefined) {
+    totalResults = fallbackMeta.totalResults;
+  } else if (pool.totalResults !== undefined) {
+    totalResults = pool.totalResults;
+  } else if (candidates.length >= pageSize) {
+    totalResults = page * pageSize + 1;
+  }
+
+  let totalPages = Math.max(1, Math.ceil(totalResults / pageSize));
+  if (fallbackMeta?.totalPages && totalResults === 0) {
+    totalPages = fallbackMeta.totalPages;
+  } else if (pool.totalPages && totalResults === 0) {
+    totalPages = pool.totalPages;
+  }
+
+  return { source, totalPages, totalResults };
+}
+
 export async function getSearchPageView(input: {
   query: string;
+  page?: number | undefined;
+  pageSize?: number | undefined;
   provider: MediaSearchProvider;
+  fallbackProvider?: MediaSearchProvider | undefined;
   cache: MediaSearchCache;
   repository: WorkflowRepository;
   /** Clock for the movie reserve air-time gate (预定 vs 获取). */
@@ -211,56 +417,61 @@ export async function getSearchPageView(input: {
 }): Promise<SearchPageView> {
   const now = input.now ?? (() => new Date().toISOString());
   const query = normalizeSearchQuery(input.query);
+  const page = Math.max(1, input.page ?? 1);
+  const pageSize = normalizePageSize(input.pageSize);
   if (!query) {
     return {
       query,
       state: "empty",
       cacheStatus: "none",
       candidates: [],
+      page,
+      pageSize,
+      totalPages: 1,
+      totalResults: 0,
     };
   }
 
-  const cached = await input.cache.get(query);
-  let candidates = cached;
-  let interpretedQuery: string | undefined;
-  if (!candidates) {
-    // A deployment that cannot reach ANY TMDB access (GFW-blocked network: direct
-    // API and the workers.dev proxy both dead — issue #134) makes the provider
-    // throw. Degrade to a dedicated view state instead of crashing the page, and
-    // do NOT cache the failure so the next search retries.
-    try {
-      candidates = await input.provider.searchMedia({ query });
-    } catch (error) {
-      return {
-        query,
-        state: "provider_error",
-        cacheStatus: "miss",
-        candidates: [],
-        providerError: describeError(error),
-      };
-    }
-    await input.cache.set(query, candidates);
+  const cacheKey = `${query}:p${page}:s${pageSize}`;
+  const pool = await loadCandidatePool(input, query, page, pageSize, cacheKey);
+  if (pool.providerError && pool.candidates.length === 0) {
+    return {
+      query,
+      state: "provider_error",
+      cacheStatus: "miss",
+      candidates: [],
+      page,
+      pageSize,
+      totalPages: 1,
+      totalResults: 0,
+      providerError: pool.providerError,
+    };
   }
 
-  // Nothing found for what the user typed. Two common causes are NOT "the work
-  // does not exist": (a) they appended an unofficial season/arc name
-  // ("咒术回战 第三季" / "死灭回游"), or (b) they described the plot instead of
-  // the title. The suffix strip is free and deterministic; the description
-  // resolution costs one web search plus one model call, so it runs only after —
-  // and its ANSWER is cached, because this page re-renders every five seconds
-  // while an acquisition runs.
-  if (candidates.length === 0) {
-    const interpreted = await interpretUnfoundQuery(query, input);
-    if (interpreted) {
-      interpretedQuery = interpreted;
-      candidates = (await safeSearch(input, interpreted)) ?? [];
-    }
-  }
+  const { candidates, interpretedQuery, fallbackMeta } = await resolveSearchResults(
+    pool,
+    query,
+    page,
+    pageSize,
+    input,
+  );
+  const { source, totalPages, totalResults } = calculateSearchPageMeta(
+    candidates,
+    page,
+    pageSize,
+    pool,
+    fallbackMeta,
+  );
 
   return {
     query,
     state: "ready",
-    cacheStatus: cached ? "hit" : "miss",
+    cacheStatus: pool.cached ? "hit" : "miss",
+    page,
+    pageSize,
+    totalPages,
+    totalResults,
+    source,
     ...(interpretedQuery === undefined ? {} : { interpretedQuery }),
     candidates: await Promise.all(
       candidates.map((candidate) => toCandidateCard(candidate, input.repository, now(), input.scope)),
@@ -368,9 +579,11 @@ async function toCandidateCard(
   // counts, or action (those were vestigial and misleading for multi-season
   // shows). A movie is the only single-anchor case whose card-level action
   // gates its one button.
+  const source = candidate.source ?? "tmdb";
   return {
-    id: mediaTitleId(candidate.mediaType, candidate.tmdbId),
+    id: mediaTitleId(candidate.mediaType, candidate.tmdbId, source),
     tmdbId: candidate.tmdbId,
+    source,
     mediaType: candidate.mediaType,
     title: candidate.title,
     originalTitle: candidate.originalTitle,
@@ -385,6 +598,8 @@ async function toCandidateCard(
       candidate.mediaType === "tv"
         ? candidate.seasons.map((season) => season.seasonNumber).sort((a, b) => a - b)
         : [],
+    ...(candidate.genreIds && candidate.genreIds.length > 0 ? { genreIds: candidate.genreIds } : {}),
+    ...(candidate.voteAverage !== undefined ? { voteAverage: candidate.voteAverage } : {}),
     action:
       candidate.mediaType === "movie"
         ? // A movie tracks as a degenerate one-"episode" anchor season; once it
@@ -392,7 +607,7 @@ async function toCandidateCard(
           // An UNRELEASED film offers 预定 (reserve) instead of 获取 (acquire).
           await actionForTrackedSeason(
             repository,
-            movieTrackedSeasonId(candidate.tmdbId),
+            movieTrackedSeasonId(candidate.tmdbId, source),
             "movie_init",
             { releaseDate: candidate.releaseDate, now },
             scope,
@@ -487,14 +702,18 @@ function reservedAction(): SearchCandidateAction {
   };
 }
 
-function mediaTitleId(mediaType: MediaSearchCandidate["mediaType"], tmdbId: number): string {
-  return `tmdb_${mediaType}_${tmdbId}`;
+function mediaTitleId(
+  mediaType: MediaSearchCandidate["mediaType"],
+  tmdbId: number,
+  source: MediaSource = "tmdb",
+): string {
+  return `${source}_${mediaType}_${tmdbId}`;
 }
 
-function trackedSeasonId(tmdbId: number, seasonNumber: number): string {
-  return `${mediaTitleId("tv", tmdbId)}_s${seasonNumber}`;
+function trackedSeasonId(tmdbId: number, seasonNumber: number, source: MediaSource = "tmdb"): string {
+  return `${mediaTitleId("tv", tmdbId, source)}_s${seasonNumber}`;
 }
 
-function movieTrackedSeasonId(tmdbId: number): string {
-  return `${mediaTitleId("movie", tmdbId)}_movie`;
+function movieTrackedSeasonId(tmdbId: number, source: MediaSource = "tmdb"): string {
+  return `${mediaTitleId("movie", tmdbId, source)}_movie`;
 }
