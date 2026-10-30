@@ -60,5 +60,33 @@ module.exports = {
       // contracts 包内互相引用允许；指向包外的一切才违规。
       to: { path: "^(packages/(?!contracts)|apps|workers)/" },
     },
+    {
+      name: "feature-core-stays-pure",
+      comment: "L1：Feature core 属于纯领域/业务逻辑层，严禁依赖框架、I/O 或上层 application/composition/platform",
+      severity: "error",
+      from: { path: "^apps/web/features/[^/]+/core/" },
+      to: {
+        path: "(^apps/web/features/[^/]+/application/|^apps/web/composition/|^apps/web/platform/|react|next/)",
+      },
+    },
+    {
+      name: "feature-application-framework-free",
+      comment: "L1：Feature application 属于核心用例编排层，严禁直接依赖 WebHost 上下文与 React",
+      severity: "error",
+      from: { path: "^apps/web/features/[^/]+/application/" },
+      to: {
+        path: "(^apps/web/platform/next-context/|react|next/headers|next/server|next/navigation)",
+      },
+    },
+    {
+      name: "ui-no-direct-application-or-composition",
+      comment: "L1：UI 组件层严禁直接依赖 application 或 composition 容器",
+      severity: "error",
+      from: { path: "^apps/web/components/" },
+      to: {
+        path: "(^apps/web/features/[^/]+/application/|^apps/web/composition/)",
+      },
+    },
   ],
 };
+

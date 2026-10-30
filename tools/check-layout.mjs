@@ -99,9 +99,35 @@ for (const group of ["packages", "apps"]) {
   }
 }
 
-// 4) 超大文件行数棘轮门禁（Audit L5：防止 eslint-suppressions.json 的 max-lines: count: 1 漏洞导致巨型文件继续膨胀）
+// 4) 特性切片结构规范门禁（Feature-Driven Architecture 骨架约束）
+const featuresDir = join(root, "apps", "web", "features");
+const ALLOWED_FEATURE_SUBDIRS = new Set([
+  "contracts",
+  "application",
+  "core",
+  "hooks",
+  "state",
+  "api",
+  "components",
+]);
+if (existsSync(featuresDir)) {
+  for (const feat of readdirSync(featuresDir, { withFileTypes: true })) {
+    if (!feat.isDirectory()) continue;
+    const featPath = join(featuresDir, feat.name);
+    for (const sub of readdirSync(featPath, { withFileTypes: true })) {
+      if (sub.isDirectory() && !ALLOWED_FEATURE_SUBDIRS.has(sub.name)) {
+        problems.push(
+          `apps/web/features/${feat.name}/${sub.name}: 不允许的子目录（特性切片仅允许 contracts, application, core, hooks, state, api, components）`,
+        );
+      }
+    }
+  }
+}
+
+// 5) 超大文件行数棘轮门禁（Audit L5：防止 eslint-suppressions.json 的 max-lines: count: 1 漏洞导致巨型文件继续膨胀）
 const LARGE_FILE_LINE_CAPS = {
-  "apps/web/lib/workflow-runtime.ts": 3730,
+  "apps/web/lib/workflow-runtime.ts": 550,
+  "apps/web/app/actions.ts": 120,
   "packages/workflow/src/sqlite.ts": 2600,
   "packages/workflow/src/acquisition-v2/sandbox.ts": 2560,
   "packages/workflow/src/repository.ts": 2410,

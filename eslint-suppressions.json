@@ -1,9 +1,6 @@
 {
-  "apps/web/app/actions.ts": {
+  "apps/web/app/actions/acquisition-actions.ts": {
     "complexity": {
-      "count": 1
-    },
-    "max-lines": {
       "count": 1
     }
   },
@@ -99,17 +96,60 @@
       "count": 1
     }
   },
-  "apps/web/lib/agent-api/config-io.ts": {
+  "apps/web/features/acquisition/application/worker-runner-service.ts": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/application/auto-update-service.ts": {
     "complexity": {
       "count": 1
     }
   },
-  "apps/web/lib/connect-client.ts": {
+  "apps/web/features/settings-system/application/connect-client.ts": {
     "complexity": {
       "count": 2
     }
   },
-  "apps/web/lib/guangya-token-paste.ts": {
+  "apps/web/features/settings-system/application/settings-attention-server.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/application/update-view-server.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/core/update-state.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/storage-drives/application/drive-service.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/features/storage-drives/core/guangya-token-paste.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/storage-drives/core/qr-connect-machine.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/storage-drives/core/tianyi-qr-session.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/lib/agent-api/config-io.ts": {
     "complexity": {
       "count": 1
     }
@@ -119,41 +159,13 @@
       "count": 1
     }
   },
-  "apps/web/lib/settings-attention-server.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/lib/tianyi-qr-session.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "apps/web/lib/title-hub.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/lib/update-state.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/lib/update-view-server.ts": {
     "complexity": {
       "count": 1
     }
   },
   "apps/web/lib/updater-client.ts": {
     "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/lib/workflow-runtime.ts": {
-    "complexity": {
-      "count": 2
-    },
-    "max-lines": {
       "count": 1
     }
   },
