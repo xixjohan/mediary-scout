@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionV2 } from "../../src/acquisition-v2/orchestrator.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import type { JevJudge, JevJudgeInput } from "../../src/jev-judge.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import type { JevJudge, JevJudgeInput } from "../../src/providers/jev-judge.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },

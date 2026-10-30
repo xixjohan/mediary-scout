@@ -4,7 +4,7 @@ import {
   DEFAULT_PAGE_SIZE,
   normalizePageSize,
   SUPPORTED_PAGE_SIZES,
-} from "../../src/pagination-window.js";
+} from "../../src/domain/pagination-window.js";
 
 describe("pagination-window 算法与规格", () => {
   it("默认每页大小为 30 部", () => {

@@ -4,7 +4,7 @@ import {
   FakeStorageExecutor,
   type VerifiedFile,
 } from "../../src/index.js";
-import { runPan115ShareAdapterSmoke } from "../../src/pan115-transfer-smoke.js";
+import { runPan115ShareAdapterSmoke } from "../../src/storage/pan115-transfer-smoke.js";
 
 describe("runPan115ShareAdapterSmoke", () => {
   it("records failed or duplicate 115 transfer surfaces until adapter verification materializes files", async () => {

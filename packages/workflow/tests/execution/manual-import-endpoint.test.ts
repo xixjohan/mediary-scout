@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ResourceCandidate, ResourceSnapshot } from "../../src/domain.js";
-import { MANUAL_IMPORT_TTL_MS, decideManualImport, manualImportRejectionCopy } from "../../src/manual-import-endpoint.js";
+import { MANUAL_IMPORT_TTL_MS, decideManualImport, manualImportRejectionCopy } from "../../src/execution/manual-import-endpoint.js";
 
 /**
  * 批次 3 第一项的端点决策核心。

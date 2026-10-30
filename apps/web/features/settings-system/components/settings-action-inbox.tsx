@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { AlertTriangle, CircleAlert, Rocket } from "lucide-react";
 import type { SettingsAttentionItem, AttentionKind } from "../../../lib/settings-attention";
-import { DismissAttentionButton } from "../../../components/dismiss-attention-button";
+import { DismissAttentionButton } from "../../../components/layout/dismiss-attention-button";
 
 /**
  * Settings-page Action Inbox. Empty => render nothing (quiet is a feature).

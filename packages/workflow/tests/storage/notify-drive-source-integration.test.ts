@@ -6,7 +6,7 @@ import {
   type NotifyChannel,
   type NotifyMessage,
 } from "../../src/index.js";
-import { formatDailyDigestPushText } from "../../src/notification-report.js";
+import { formatDailyDigestPushText } from "../../src/domain/notification-report.js";
 
 // End-to-end through the REAL render + dispatch path: a fake channel captures the
 // actual NotifyMessage delivered. Proves "gate → resolve → render → deliver" composes

@@ -3,7 +3,7 @@ import { MockLanguageModelV3 } from "ai/test";
 import { REFLECTION_SYSTEM, USER_REQUEST_REFLECTION_NOTE, runMemoryReflection, runMemoryReflectionForEval, buildReflectionDigest } from "../../src/acquisition-v2/agent-loop.js";
 import { TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },

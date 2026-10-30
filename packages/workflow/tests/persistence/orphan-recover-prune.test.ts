@@ -4,7 +4,7 @@ import {
   ORPHAN_REQUEUE_MAX,
   recoverOrphanRunningRun,
   retriedWorkflowRun,
-} from "../../src/repository.js";
+} from "../../src/persistence/repository.js";
 import type { WorkflowRun } from "../../src/domain.js";
 
 const baseRun = (over: Partial<WorkflowRun> = {}): WorkflowRun => ({

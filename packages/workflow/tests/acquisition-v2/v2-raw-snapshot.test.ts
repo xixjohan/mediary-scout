@@ -5,13 +5,13 @@ import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.j
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "../../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator } from "../../src/acquisition-v2/storage-115-simulator.js";
 import { buildTvAnimeSystemPrompt, buildMovieSystemPrompt } from "../../src/acquisition-v2/task-agents.js";
-import { JEV_UNCERTAIN_LEGEND } from "../../src/jev-judge.js";
-import type { JevJudgeTarget } from "../../src/jev-judge.js";
-import { JevPrefilterProvider } from "../../src/jev-prefilter-provider.js";
+import { JEV_UNCERTAIN_LEGEND } from "../../src/providers/jev-judge.js";
+import type { JevJudgeTarget } from "../../src/providers/jev-judge.js";
+import { JevPrefilterProvider } from "../../src/providers/jev-prefilter-provider.js";
 import { resourceLinkKey } from "../../src/acquisition-v2/resource-link.js";
 import { RealResourceProviderV2 } from "../../src/acquisition-v2/real-provider-adapter.js";
 import { CandidateRegistry } from "../../src/acquisition-v2/candidate-registry.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
 
 async function createTestSandbox(

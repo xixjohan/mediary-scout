@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { createNativeRequire } from "../../src/native-require.js";
+import { createNativeRequire } from "../../src/domain/native-require.js";
 
 const SRC = join(__dirname, "..", "..", "src");
 

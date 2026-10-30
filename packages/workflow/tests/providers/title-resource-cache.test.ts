@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { TitleResourceCache } from "../../src/title-resource-cache.js";
+import { TitleResourceCache } from "../../src/providers/title-resource-cache.js";
 
 /**
  * 30 分钟 TTL 的两半都要测：命中，以及**旧 candidateId 失效**。

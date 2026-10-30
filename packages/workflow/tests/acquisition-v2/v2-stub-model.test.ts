@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createStubAcquisitionModel } from "../../src/acquisition-v2/stub-model.js";
 import { runTvAcquisitionV2 } from "../../src/acquisition-v2/run-tv-v2.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
 import type { MediaTitle, ResourceSnapshot } from "../../src/domain.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 
 function emptyProvider(): ResourceProvider {
   return {

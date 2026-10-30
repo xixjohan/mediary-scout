@@ -1,4 +1,4 @@
-import type { StorageExecutor } from "../ports.js";
+import type { StorageExecutor } from "../domain/ports.js";
 
 export interface LandedSize {
   fileCount: number;

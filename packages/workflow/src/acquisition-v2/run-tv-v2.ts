@@ -1,7 +1,7 @@
-import type { AgentMemoryStore } from "../agent-memory.js";
+import type { AgentMemoryStore } from "../domain/agent-memory.js";
 import type { LanguageModel } from "ai";
 import type { MediaTitle } from "../domain.js";
-import type { ResourceProvider, StorageExecutor } from "../ports.js";
+import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
 import {
   bridgeV2WorkflowToResult,
   type BridgedV2Result,
@@ -9,7 +9,7 @@ import {
   type V2BridgeSeasonIntent,
 } from "./workflow-v2-bridge.js";
 import type { DeadLinkStore } from "./dead-links.js";
-import type { JevJudge } from "../jev-judge.js";
+import type { JevJudge } from "../providers/jev-judge.js";
 import { runAcquisitionV2Workflow, type RunAcquisitionV2WorkflowRequest } from "./workflow-v2.js";
 import { getQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";

@@ -11,12 +11,12 @@ import {
   stagingKeptUnmovedOf,
   withStagingCleanup,
 } from "../../src/acquisition-v2/directory-lifecycle.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
 import type { MediaTitle, TrackedSeason, WorkflowRun } from "../../src/domain.js";
-import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } from "../../src/repository.js";
-import { handleWorkflowRunFailure } from "../../src/worker.js";
+import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } from "../../src/persistence/repository.js";
+import { handleWorkflowRunFailure } from "../../src/execution/worker.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },

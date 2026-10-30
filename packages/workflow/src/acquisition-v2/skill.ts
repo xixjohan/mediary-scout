@@ -215,7 +215,7 @@ import {
   DEAD_LINKS_BLACK_BOX_QUARK,
   DEAD_LINKS_BLACK_BOX_TIANYI,
 } from "./skill-manuals.js";
-import { getStorageBrand } from "../storage-brands.js";
+import { getStorageBrand } from "../storage/storage-brands.js";
 
 
 export type SkillSectionName = keyof typeof SECTIONS;

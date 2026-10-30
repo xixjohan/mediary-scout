@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ResourceCandidate } from "../../src/domain.js";
-import { toCandidateView, toCandidateViews } from "../../src/resource-candidate-view.js";
+import { toCandidateView, toCandidateViews } from "../../src/providers/resource-candidate-view.js";
 
 /**
  * 「payload 绝不下前端」的守卫。

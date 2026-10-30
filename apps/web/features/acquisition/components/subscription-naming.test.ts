@@ -57,13 +57,13 @@ function read(rel: string): string {
 
 /** A/C 类：追踪列表语义，必须已改成「订阅」、不得再出现「媒体库」。 */
 const TRACKING_LIST_FILES = [
-  "components/app-sidebar.tsx",
-  "components/library-quick-find.tsx",
+  "components/layout/app-sidebar.tsx",
+  "features/catalog/components/library-quick-find.tsx",
   "app/page.tsx",
   "app/show/[tmdbId]/page.tsx",
-  "components/untrack-button.tsx",
+  "features/acquisition/components/untrack-button.tsx",
   "app/not-found.tsx",
-  "components/demo-acquire-playback.tsx",
+  "features/acquisition/components/demo-acquire-playback.tsx",
 ];
 
 /** B 类：用户私有数据范围，必须原样保留「媒体库」。 */
@@ -71,7 +71,7 @@ const DATA_OWNERSHIP_FILES = [
   "app/login/page.tsx",
   "app/settings/page.tsx",
   "lib/settings-attention.ts",
-  "components/settings/remote-access-section.tsx",
+  "features/settings-system/components/settings/remote-access-section.tsx",
   // demo 数据的 overview 文案：「产品化后 Type 1 也会留下媒体库记录」讲的是数据/
   // 记录归属，同属 B 类。原先不在这两张表里，等于没有守卫——本次补上，验收标准
   // 「grep 媒体库 只剩 B 类」才是被完整强制执行的。
@@ -89,11 +89,11 @@ describe("订阅页正名 — A/C 类（追踪列表语义）已改为「订阅�
 
   it("侧边导航标签是「订阅」", () => {
     // JSX 文本带缩进空白，不能按数组精确匹配。
-    expect(userVisibleText(read("components/app-sidebar.tsx")).some((t) => t.trim() === "订阅")).toBe(true);
+    expect(userVisibleText(read("components/layout/app-sidebar.tsx")).some((t) => t.trim() === "订阅")).toBe(true);
   });
 
   it("订阅页主标题是「我的订阅」", () => {
-    expect(userVisibleText(read("components/library-quick-find.tsx"))).toContain("我的订阅");
+    expect(userVisibleText(read("features/catalog/components/library-quick-find.tsx"))).toContain("我的订阅");
   });
 
   it("订阅页空态是「订阅还是空的」", () => {

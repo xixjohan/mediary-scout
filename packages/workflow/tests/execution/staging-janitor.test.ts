@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { InMemoryWorkflowRepository, sweepOrphanStagingDirs, type StagingJanitorDrive } from "../../src/index.js";
 import type { WorkflowRun } from "../../src/domain.js";
-import type { PersistedWorkflowRunSnapshot } from "../../src/repository.js";
+import type { PersistedWorkflowRunSnapshot } from "../../src/persistence/repository.js";
 
 const NOW = "2026-09-27T03:00:00.000Z";
 

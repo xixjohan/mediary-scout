@@ -4,7 +4,7 @@ import {
   planOrganizeMoves,
   seasonNumberFromEpisodeCode,
   type OrganizeInputFile,
-} from "../../src/organize-plan.js";
+} from "../../src/execution/organize-plan.js";
 
 /**
  * Batch 4 的决策半边（plan §3.4 / §3.6）。

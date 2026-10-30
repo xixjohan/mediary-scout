@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PanSouResourceProvider } from "../../src/pansou-provider.js";
+import { PanSouResourceProvider } from "../../src/providers/pansou-provider.js";
 
 // NOTE: PanSou nests links under `result.links[]` (see collectLinkFacts) — a
 // result with a top-level `url` yields ZERO facts. The fixture must use the

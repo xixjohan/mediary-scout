@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentStep } from "../../src/domain.js";
-import { MAX_TIMELINE_STEPS, tailAgentStepViews, toAgentStepViews } from "../../src/agent-step-view.js";
+import { MAX_TIMELINE_STEPS, tailAgentStepViews, toAgentStepViews } from "../../src/domain/agent-step-view.js";
 
 /**
  * L1 时间线的投影层。

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchTmdbList } from "../../src/tmdb-provider.js";
+import { fetchTmdbList } from "../../src/providers/tmdb-provider.js";
 
 describe("fetchTmdbList", () => {
   it("fetches a raw list path via the access chain and returns the parsed body", async () => {

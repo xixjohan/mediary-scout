@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
-import { createSqliteWorkflowRepository } from "../../src/sqlite.js";
+import { createSqliteWorkflowRepository } from "../../src/persistence/sqlite.js";
 import { API_KEY_SETTING_KEY, ENC_PREFIX } from "@media-track/shared";
 
 /** S5.2：API key 落盘必须走 app_settings 的透明加密（与 llm_api_key 同等待遇）。 */

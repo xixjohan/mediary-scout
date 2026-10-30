@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
-import { AGENT_MEMORY_LIMITS } from "../../src/agent-memory.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
+import { AGENT_MEMORY_LIMITS } from "../../src/domain/agent-memory.js";
 
 function sandboxWith(store = new InMemoryWorkflowRepository(), titleKey = "tmdb_tv_1") {
   const sandbox = new TaskSandbox({

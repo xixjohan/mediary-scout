@@ -20,10 +20,10 @@ import {
 } from "lucide-react";
 import type { NotificationEvent, NotificationReportStatus } from "@media-track/workflow";
 import { landedSize } from "@media-track/workflow";
-import { NotificationsSeenMarker } from "../../components/notifications-seen-marker";
-import { DemoSessionNotifications } from "../../components/demo-session-notifications";
-import { AppSidebar } from "../../components/app-sidebar";
-import { GitHubNameplate } from "../../components/github-nameplate";
+import { NotificationsSeenMarker } from "../../components/layout/notifications-seen-marker";
+import { DemoSessionNotifications } from "../../components/demo/demo-session-notifications";
+import { AppSidebar } from "../../components/layout/app-sidebar";
+import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import {
   ensureDemoSeeded,
   getCurrentAccountId,

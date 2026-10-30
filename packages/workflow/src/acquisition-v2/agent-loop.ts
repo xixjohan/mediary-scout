@@ -1,5 +1,5 @@
-import { AGENT_MEMORY_WRITE_KINDS, fenceMemory, stripMemoryFence } from "../agent-memory.js";
-import { AgentContentFilterError } from "../agent-error.js";
+import { AGENT_MEMORY_WRITE_KINDS, fenceMemory, stripMemoryFence } from "../domain/agent-memory.js";
+import { AgentContentFilterError } from "../domain/agent-error.js";
 import { generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
 import type { SearchHistoryEntry, TaskSandbox } from "./sandbox.js";

@@ -1,6 +1,6 @@
 // packages/workflow/tests/jev-client.test.ts
 import { describe, expect, it } from "vitest";
-import { createJevJudge, DEFAULT_JEV_BASE_URL, JEV_CHUNK_SIZE } from "../../src/jev-client.js";
+import { createJevJudge, DEFAULT_JEV_BASE_URL, JEV_CHUNK_SIZE } from "../../src/providers/jev-client.js";
 
 type Captured = { url: string; init: RequestInit; body: any };
 

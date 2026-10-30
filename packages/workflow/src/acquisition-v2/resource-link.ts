@@ -1,6 +1,6 @@
-import { parsePan123ShareUrl } from "../pan123-storage-executor.js";
-import { parseQuarkShareUrl, parseUcShareUrl } from "../quark-storage-executor.js";
-import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
+import { parsePan123ShareUrl } from "../storage/pan123-storage-executor.js";
+import { parseQuarkShareUrl, parseUcShareUrl } from "../storage/quark-storage-executor.js";
+import { parseTianyiShareUrl } from "../storage/tianyi-storage-executor.js";
 import { deadLinkKey } from "./dead-links.js";
 
 /**

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { PersistWorkflowRunSnapshotInput } from "../../src/repository.js";
+import type { PersistWorkflowRunSnapshotInput } from "../../src/persistence/repository.js";
 import {
   ORGANIZE_KIND,
   buildOrganizeRun,
   organizeIsUserVisible,
   organizePlanCopy,
   organizeRunId,
-} from "../../src/organize-run.js";
-import { planOrganizeMoves } from "../../src/organize-plan.js";
-import { tearsDownTrackingOnCancel } from "../../src/repository.js";
+} from "../../src/execution/organize-run.js";
+import { planOrganizeMoves } from "../../src/execution/organize-plan.js";
+import { tearsDownTrackingOnCancel } from "../../src/persistence/repository.js";
 import { isUserVisibleWorkflowKind } from "../../src/domain.js";
 
 /**

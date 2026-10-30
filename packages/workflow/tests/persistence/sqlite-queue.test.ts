@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { SqliteJobQueue } from "../../src/sqlite-queue.js";
+import { SqliteJobQueue } from "../../src/persistence/sqlite-queue.js";
 
 /**
  * SqliteJobQueue 契约测试（任务单 S1.2，设计见

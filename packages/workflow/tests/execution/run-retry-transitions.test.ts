@@ -7,7 +7,7 @@ import {
   failWorkflowRun,
   retriedWorkflowRun,
   claimableQueuedRuns,
-} from "../../src/repository.js";
+} from "../../src/persistence/repository.js";
 
 const baseRun: WorkflowRun = {
   id: "run_1",

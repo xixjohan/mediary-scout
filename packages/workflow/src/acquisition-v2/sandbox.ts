@@ -4,16 +4,16 @@ import {
   MOVIE_SEARCH_SOFT_THRESHOLD,
   decideSearchGate,
   normalizeSearchKeyword,
-} from "../planning-search-gate.js";
-import type { AssrtCandidate, AssrtSubtitleFile, AssrtProviderPort } from "../subtitle-provider.js";
+} from "../providers/planning-search-gate.js";
+import type { AssrtCandidate, AssrtSubtitleFile, AssrtProviderPort } from "../providers/subtitle-provider.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
-import { parseMediaFileName } from "../media-title-parser.js";
+import { parseMediaFileName } from "../providers/media-title-parser.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
 import type { AuditEvent } from "../domain.js";
-import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../resource-source-health.js";
-import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../jev-judge.js";
+import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../domain/resource-source-health.js";
+import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../providers/jev-judge.js";
 import {
   AGENT_MEMORY_LIMITS,
   memoryDriveAllows,
@@ -23,7 +23,7 @@ import {
   type AgentMemoryScope,
   type AgentMemoryStore,
   type AgentMemoryWrite,
-} from "../agent-memory.js";
+} from "../domain/agent-memory.js";
 import { indexSubtitleFiles, selectSubtitleChunk } from "./subtitle-renewal.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,

@@ -5,9 +5,9 @@ import { TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator, type SimTreeFile, type StorageV2 } from "../../src/acquisition-v2/storage-115-simulator.js";
 import { runAcquisitionV2 } from "../../src/acquisition-v2/orchestrator.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { VerifiedFile } from "../../src/domain.js";
 
 const episodes = (n: number) => ({

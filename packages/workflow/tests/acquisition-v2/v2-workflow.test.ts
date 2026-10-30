@@ -3,10 +3,10 @@ import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionV2Workflow, type RunAcquisitionV2WorkflowRequest } from "../../src/acquisition-v2/workflow-v2.js";
 import { runTvAcquisitionV2 } from "../../src/acquisition-v2/run-tv-v2.js";
 import { stagingLeaksOf } from "../../src/acquisition-v2/directory-lifecycle.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { MediaTitle, ResourceSnapshot } from "../../src/domain.js";
-import type { JevJudge, JevJudgeInput } from "../../src/jev-judge.js";
+import type { JevJudge, JevJudgeInput } from "../../src/providers/jev-judge.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },

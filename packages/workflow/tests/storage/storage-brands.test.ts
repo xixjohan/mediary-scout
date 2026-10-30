@@ -13,7 +13,7 @@ import {
   Pan115AuthError,
   QuarkAuthError,
 } from "../../src/index.js";
-import { GuangYaAuthError, parseGuangYaUid } from "../../src/guangya-client.js";
+import { GuangYaAuthError, parseGuangYaUid } from "../../src/storage/guangya-client.js";
 
 /** Build a fake 光鸭 JWT whose payload (2nd segment, base64url) carries `payload`. */
 function makeGuangYaJwt(payload: Record<string, unknown>): string {

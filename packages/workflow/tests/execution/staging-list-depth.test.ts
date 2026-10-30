@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
 import type { SimTreeFile, StorageV2 } from "../../src/acquisition-v2/storage-115-simulator.js";
-import { JANITOR_LIST_DEPTH } from "../../src/staging-depth.js";
+import { JANITOR_LIST_DEPTH } from "../../src/execution/staging-depth.js";
 
 /** A file inside a directory entered at depth 8 (seven path segments). Executors
  *  default listTree to 6, so this file is invisible unless maxDepth is at least 8. */

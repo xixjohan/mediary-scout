@@ -1,12 +1,12 @@
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
-import { AppSidebar } from "../../components/app-sidebar";
-import { GitHubNameplate } from "../../components/github-nameplate";
+import { AppSidebar } from "../../components/layout/app-sidebar";
+import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import {
   getAccountConnectedStorages,
   resolveGlobalWorkspace,
 } from "../../lib/workflow-runtime";
-import { StorageManagerView } from "../../components/storage-manager-view";
+import { StorageManagerView } from "../../features/storage-drives/components/storage-manager-view";
 
 export default function StoragePage({
   searchParams,

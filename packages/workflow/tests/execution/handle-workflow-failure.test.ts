@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MediaTitle, TrackedSeason, WorkflowRun } from "../../src/domain.js";
-import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } from "../../src/repository.js";
-import { QuarkAuthError } from "../../src/quark-cookie-client.js";
+import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } from "../../src/persistence/repository.js";
+import { QuarkAuthError } from "../../src/storage/quark-cookie-client.js";
 import { attachStagingLeaks } from "../../src/acquisition-v2/directory-lifecycle.js";
-import { FREE_LLM_PRESET } from "../../src/agent-model.js";
+import { FREE_LLM_PRESET } from "../../src/domain/agent-model.js";
 import {
   FREE_LLM_MODEL_GONE_LINE,
   FREE_LLM_POOL_FAILURE_LINE,
   handleWorkflowRunFailure,
-} from "../../src/worker.js";
+} from "../../src/execution/worker.js";
 
 const title: MediaTitle = {
   id: "tmdb_movie_1",
@@ -547,7 +547,7 @@ describe("handleWorkflowRunFailure — 免费档失败文案（isFreeLlmPreset �
 
 describe("handleWorkflowRunFailure — model content-filter before any transfer", () => {
   it("terminal failure naming the model, not a retry and not no-coverage (《出入平安》)", async () => {
-    const { AgentContentFilterError } = await import("../../src/agent-error.js");
+    const { AgentContentFilterError } = await import("../../src/domain/agent-error.js");
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const out = await handleWorkflowRunFailure({
       claimed: snapshot(),
@@ -623,7 +623,7 @@ describe("handleWorkflowRunFailure — terminal failure push is redacted", () =>
 
 describe("summarizeErrorForNotification — bare secret names", () => {
   it("redacts token=/cookie= with no name prefix, and keeps a short harmless value", async () => {
-    const { summarizeErrorForNotification } = await import("../../src/agent-error.js");
+    const { summarizeErrorForNotification } = await import("../../src/domain/agent-error.js");
     expect(summarizeErrorForNotification("x token=abcdefghijkl y")).toBe("x token=*** y");
     expect(summarizeErrorForNotification("cookie: UID=12345678_abc")).not.toContain("12345678_abc");
     expect(summarizeErrorForNotification("key=ab")).toBe("key=ab");

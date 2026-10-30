@@ -4,7 +4,7 @@ import {
   MANUAL_IMPORT_TTL_MS,
   manualImportRemainingMs,
   resolveManualImportCandidate,
-} from "../../src/manual-import-resolver.js";
+} from "../../src/execution/manual-import-resolver.js";
 
 /**
  * 批次 3 的核心校验。plan 的验收第一条就是「candidateId 不属于该 snapshot → 拒绝」，

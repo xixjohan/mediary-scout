@@ -7,7 +7,7 @@ import {
   subscriptionPolicyFromRow,
   subscriptionPolicyToColumns,
   type SubscriptionPolicyRow,
-} from "../../src/subscription-policy-store.js";
+} from "../../src/persistence/subscription-policy-store.js";
 
 /**
  * Batch 5：subscription_policies 的持久化形状（plan 四件套 ③）。

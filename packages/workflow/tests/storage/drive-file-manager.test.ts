@@ -6,7 +6,7 @@ import {
   inferFileType,
   resolveCurrentDirectoryName,
   type DriveFileManagerOptions,
-} from "../../src/drive-file-manager.js";
+} from "../../src/storage/drive-file-manager.js";
 
 describe("drive-file-manager", () => {
   describe("file type inference", () => {

@@ -3,8 +3,8 @@ import {
   ensureMediaLibraryDirectory,
   legacyMediaLibraryFolderName,
   mediaLibraryFolderName,
-} from "../../src/media-library-folder.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
+} from "../../src/domain/media-library-folder.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
 
 describe("mediaLibraryFolderName", () => {
   it("formats Title (Year) {tmdb-id}", () => {

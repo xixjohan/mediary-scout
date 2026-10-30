@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
-import { AppSidebar } from "../../components/app-sidebar";
-import { ChatWorkspace } from "../../components/chat-workspace";
-import { GitHubNameplate } from "../../components/github-nameplate";
+import { AppSidebar } from "../../components/layout/app-sidebar";
+import { ChatWorkspace } from "../../features/assistant/components/chat-workspace";
+import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import { resolveGlobalWorkspace } from "../../lib/workflow-runtime";
 
 function ChatPageInner({

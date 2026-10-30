@@ -5,7 +5,7 @@ import {
   isSourceUsable,
   PanSouProtocolError,
   hasRecognisedUnreachableCode,
-} from "../../src/resource-source-health.js";
+} from "../../src/domain/resource-source-health.js";
 
 describe("classifySourceFailure", () => {
   it("classifies connection refused as unreachable", () => {

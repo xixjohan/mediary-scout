@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { runKeyedPool } from "../../src/keyed-pool.js";
+import { runKeyedPool } from "../../src/storage/keyed-pool.js";
 
 /** A task whose finish the test controls, recording what was in flight. */
 function harness() {

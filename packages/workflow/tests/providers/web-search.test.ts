@@ -6,7 +6,7 @@ import {
   resolveWebSearchVendor,
   webFetchPages,
   webSearch,
-} from "../../src/web-search.js";
+} from "../../src/providers/web-search.js";
 
 afterEach(() => {
   vi.restoreAllMocks();

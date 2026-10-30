@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionV2 } from "../../src/acquisition-v2/orchestrator.js";
-import type { ResourceProvider } from "../../src/ports.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },

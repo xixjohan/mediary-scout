@@ -1,10 +1,10 @@
 import Database from "better-sqlite3";
 import { Kysely, SqliteDialect } from "kysely";
 import { describe, expect, it } from "vitest";
-import { CredentialStore } from "../../src/credential-store.js";
-import type { MediaryDatabase } from "../../src/db-schema.js";
-import { SQLITE_SCHEMA } from "../../src/sqlite.js";
-import type { UpsertConnectedStorageText } from "../../src/credential-store.js";
+import { CredentialStore } from "../../src/storage/credential-store.js";
+import type { MediaryDatabase } from "../../src/persistence/db-schema.js";
+import { SQLITE_SCHEMA } from "../../src/persistence/sqlite.js";
+import type { UpsertConnectedStorageText } from "../../src/storage/credential-store.js";
 
 /**
  * CredentialStore（任务单 S1.6）：凭据相关持久化切片整体迁到 Kysely

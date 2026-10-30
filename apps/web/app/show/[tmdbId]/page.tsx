@@ -6,26 +6,26 @@ import { connection } from "next/server";
 import { cache, type ReactNode } from "react";
 import { TriangleAlert } from "lucide-react";
 import { isMovieUnreleased, type EpisodeDisplayState } from "@media-track/workflow";
-import { AcquiringPoller } from "../../../components/acquiring-poller";
-import { AcquisitionLockProvider } from "../../../components/acquisition-lock";
-import { AppSidebar } from "../../../components/app-sidebar";
-import { GitHubNameplate } from "../../../components/github-nameplate";
-import { BackLink } from "../../../components/back-link";
-import { TitleResourcePanel } from "../../../components/title-resource-panel";
-import { OrganizePanel } from "../../../components/title-organize-panel";
-import { SubscriptionPolicyPanel } from "../../../components/subscription-policy-panel";
-import { MovieSynopsis } from "../../../components/movie-synopsis";
-import { RequestTrackButton } from "../../../components/request-track-button";
-import { SeasonDetails } from "../../../components/season-details";
-import { SwapBadgeLive, SwapEpisodeCell, SwapKeepProvider } from "../../../components/swap-keep";
+import { AcquiringPoller } from "../../../features/acquisition/components/acquiring-poller";
+import { AcquisitionLockProvider } from "../../../features/acquisition/components/acquisition-lock";
+import { AppSidebar } from "../../../components/layout/app-sidebar";
+import { GitHubNameplate } from "../../../components/layout/github-nameplate";
+import { BackLink } from "../../../components/layout/back-link";
+import { TitleResourcePanel } from "../../../features/acquisition/components/title-resource-panel";
+import { OrganizePanel } from "../../../features/acquisition/components/title-organize-panel";
+import { SubscriptionPolicyPanel } from "../../../features/acquisition/components/subscription-policy-panel";
+import { MovieSynopsis } from "../../../features/catalog/components/movie-synopsis";
+import { RequestTrackButton } from "../../../features/acquisition/components/request-track-button";
+import { SeasonDetails } from "../../../features/catalog/components/season-details";
+import { SwapBadgeLive, SwapEpisodeCell, SwapKeepProvider } from "../../../features/acquisition/components/swap-keep";
 import {
   RequestRemainingButton,
   RequestSeasonButton,
-} from "../../../components/title-action-buttons";
-import { UntrackButton } from "../../../components/untrack-button";
-import { AcquiringStatusTrigger } from "../../../components/acquiring-status-trigger";
-import { AgentMemoryNotes } from "../../../components/agent-memory-panel";
-import { UserMessageThread } from "../../../components/user-message-thread";
+} from "../../../features/catalog/components/title-action-buttons";
+import { UntrackButton } from "../../../features/acquisition/components/untrack-button";
+import { AcquiringStatusTrigger } from "../../../features/acquisition/components/acquiring-status-trigger";
+import { AgentMemoryNotes } from "../../../features/activity/components/agent-memory-panel";
+import { UserMessageThread } from "../../../features/acquisition/components/user-message-thread";
 import { isDemoMode } from "../../../lib/demo-mode";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import {

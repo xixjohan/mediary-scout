@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { createSqliteWorkflowRepository, SqliteWorkflowRepository } from "../../src/sqlite.js";
+import { createSqliteWorkflowRepository, SqliteWorkflowRepository } from "../../src/persistence/sqlite.js";
 import { runRepositoryContract } from "../fixtures/repository-contract.js";
 import { workflowPersistenceFixture } from "../fixtures/workflow-fixtures.js";
 

@@ -12,7 +12,7 @@
  */
 import { z } from "zod";
 import type { ToolSet } from "ai";
-import { renderWebHits, webFetchPages, webSearch, type WebSearchOptions } from "../web-search.js";
+import { renderWebHits, webFetchPages, webSearch, type WebSearchOptions } from "../providers/web-search.js";
 
 /** Combined search/fetch budget for ONE acquisition run. */
 export const TITLE_RESEARCH_MAX_CALLS = 4;

@@ -1,8 +1,8 @@
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
-import { AppSidebar } from "../../components/app-sidebar";
-import { ActivityFeed } from "../../components/activity-feed";
-import { GitHubNameplate } from "../../components/github-nameplate";
+import { AppSidebar } from "../../components/layout/app-sidebar";
+import { ActivityFeed } from "../../features/activity/components/activity-feed";
+import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import { resolveGlobalWorkspace } from "../../lib/workflow-runtime";
 
 // `searchParams` (the active drive `?w`) is a dynamic input + a DB read. Reading it

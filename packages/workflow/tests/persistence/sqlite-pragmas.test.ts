@@ -1,6 +1,6 @@
 import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
-import { SqliteWorkflowRepository } from "../../src/sqlite.js";
+import { SqliteWorkflowRepository } from "../../src/persistence/sqlite.js";
 
 /**
  * 黄金 PRAGMA 四件套（任务单 S1.3，规约见

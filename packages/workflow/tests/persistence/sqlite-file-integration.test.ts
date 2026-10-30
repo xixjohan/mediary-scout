@@ -6,10 +6,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionV2Workflow } from "../../src/acquisition-v2/workflow-v2.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import { createSqliteWorkflowRepository } from "../../src/sqlite.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import { createSqliteWorkflowRepository } from "../../src/persistence/sqlite.js";
 import { ENC_PREFIX } from "@media-track/shared";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
 
 /**

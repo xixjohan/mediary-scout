@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GuangYaAuthError, Pan115AuthError, Pan115RiskControlError } from "../../src/index.js";
-import { isBrandStorageAuthError } from "../../src/storage-auth-error.js";
+import { isBrandStorageAuthError } from "../../src/storage/storage-auth-error.js";
 
 describe("isBrandStorageAuthError (品牌网盘鉴权错误 ≠ 落盘失败)", () => {
   it("is true for a 115 auth error (dead cookie)", () => {

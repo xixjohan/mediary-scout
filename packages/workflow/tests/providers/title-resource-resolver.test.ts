@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { CooldownLimiter } from "../../src/cooldown-limiter.js";
+import { CooldownLimiter } from "../../src/providers/cooldown-limiter.js";
 import type { ResourceCandidate, ResourceSnapshot } from "../../src/domain.js";
-import { toCandidateViews, type ResourceCandidateView } from "../../src/resource-candidate-view.js";
-import { TitleResourceCache } from "../../src/title-resource-cache.js";
-import { resolveTitleResources, type TitleResourceDeps } from "../../src/title-resource-resolver.js";
+import { toCandidateViews, type ResourceCandidateView } from "../../src/providers/resource-candidate-view.js";
+import { TitleResourceCache } from "../../src/providers/title-resource-cache.js";
+import { resolveTitleResources, type TitleResourceDeps } from "../../src/providers/title-resource-resolver.js";
 
 /**
  * 三个门控各自的失效模式：

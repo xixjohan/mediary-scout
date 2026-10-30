@@ -6,7 +6,7 @@ import {
   parseManualImportJobPayload,
   roundTripManualImportJob,
   type ManualImportJobPayload,
-} from "../../src/manual-import-job.js";
+} from "../../src/execution/manual-import-job.js";
 
 /**
  * 批次 3 第三项：手动入库任务载体。

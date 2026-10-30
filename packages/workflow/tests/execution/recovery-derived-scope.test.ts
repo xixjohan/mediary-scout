@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { bindRecoveryDirectories } from "../../src/acquisition-v2/directory-lifecycle.js";
-import type { Pan123Client, Pan123Item } from "../../src/pan123-client.js";
-import { Pan123StorageExecutor } from "../../src/pan123-storage-executor.js";
+import type { Pan123Client, Pan123Item } from "../../src/storage/pan123-client.js";
+import { Pan123StorageExecutor } from "../../src/storage/pan123-storage-executor.js";
 
 /**
  * 123 / 光鸭 / 天翼 check writes against a DERIVED scope: a directory is a write target

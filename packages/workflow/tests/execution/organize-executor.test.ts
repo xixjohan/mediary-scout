@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AuditEvent, VerifiedFile } from "../../src/domain.js";
-import type { StorageExecutor } from "../../src/ports.js";
+import type { StorageExecutor } from "../../src/domain/ports.js";
 import {
   executeOrganizePlan,
   organizeDriftCopy,
@@ -8,8 +8,8 @@ import {
   plannedMovesFromRun,
   recordOrganizeDrift,
   recordPlannedMoves,
-} from "../../src/organize-executor.js";
-import { planOrganizeMoves, type OrganizeInputFile, type OrganizeMove } from "../../src/organize-plan.js";
+} from "../../src/execution/organize-executor.js";
+import { planOrganizeMoves, type OrganizeInputFile, type OrganizeMove } from "../../src/execution/organize-plan.js";
 
 /**
  * Batch 4 的执行半边 + 护栏的另一面。

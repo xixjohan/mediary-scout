@@ -1584,7 +1584,7 @@ describe("runScheduledType3Monitoring — user requests", () => {
 
 describe("runScheduledType3Monitoring — transient retry & failure logging", () => {
   it("retries once in-patrol when a season patrol hits a transient free-preset LLM 503 error and succeeds on attempt 2", async () => {
-    const { FREE_LLM_PRESET } = await import("../../src/agent-model.js");
+    const { FREE_LLM_PRESET } = await import("../../src/domain/agent-model.js");
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture("retry_tv");
     // E02 is missing so the agent actually runs.
@@ -1699,7 +1699,7 @@ describe("runScheduledType3Monitoring — transient retry & failure logging", ()
   });
 
   it("does NOT replay a patrol run when the first attempt preserved unmoved staging files or already attempted a transfer", async () => {
-    const { FREE_LLM_PRESET } = await import("../../src/agent-model.js");
+    const { FREE_LLM_PRESET } = await import("../../src/domain/agent-model.js");
     const { attachStagingKeptUnmoved } = await import("../../src/acquisition-v2/directory-lifecycle.js");
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture("no_replay_kept");

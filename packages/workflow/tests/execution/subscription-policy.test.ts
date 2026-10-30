@@ -6,7 +6,7 @@ import {
   previewPolicy,
   withinCooldown,
   type SubscriptionPolicy,
-} from "../../src/subscription-policy.js";
+} from "../../src/execution/subscription-policy.js";
 
 /**
  * Batch 5 的策略决策核心（plan §4.1 / 批次 5）。

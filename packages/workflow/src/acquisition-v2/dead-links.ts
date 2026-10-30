@@ -6,7 +6,7 @@
  * a real resource forever, so we only record on deterministic death signals.
  */
 
-import { parseGuangYaShareUrl } from "../guangya-client.js";
+import { parseGuangYaShareUrl } from "../storage/guangya-client.js";
 
 export type DeadLinkKind = "pan115" | "magnet" | "guangya";
 
