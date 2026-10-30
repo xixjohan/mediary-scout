@@ -1,6 +1,6 @@
-import type { AccountRow, EndpointRow, EntitlementRow } from "../db.js";
-import { GRACE_PERIOD_DAYS, daysLeftInGrace } from "../expiry.js";
-import { isEntitlementActive, latestExpiry } from "../entitlement.js";
+import type { AccountRow, EndpointRow, EntitlementRow } from "../infra/db.js";
+import { GRACE_PERIOD_DAYS, daysLeftInGrace } from "../billing/expiry.js";
+import { isEntitlementActive, latestExpiry } from "../billing/entitlement.js";
 import { buildConnectPrompt, CLAIM_CODE_PLACEHOLDER } from "./connect-prompt.js";
 import { SLUG_FORM_CSS, slugFormHtml } from "./slug-form.js";
 import { slugFormScript } from "./slug-form-script.js";

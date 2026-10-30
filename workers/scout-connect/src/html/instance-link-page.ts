@@ -1,5 +1,5 @@
 import { BRAND_BAR, BRAND_CSS, esc, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
-import { formatBeijingTime } from "../instance-link-time.js";
+import { formatBeijingTime } from "../tunnel/instance-link-time.js";
 
 export type InstanceLinkPageState =
   | { kind: "invalid" }

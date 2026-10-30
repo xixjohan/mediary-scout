@@ -1,0 +1,1985 @@
+import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import Database from "better-sqlite3";
+import {
+  createD1ConnectDb,
+  type D1Database,
+  type EndpointRow,
+  type PaymentOrderRow,
+} from "./db.js";
+
+// Why this file exists (CRITICAL-2 / HIGH-3):
+// The rest of the suite exercises `createMemoryConnectDb`, a plain Map with no
+// constraint engine — it accepted a NULL that the committed schema physically
+// rejects, so 125 green tests coexisted with a control plane that 500s on the
+// first provision after deploy. These tests run the REAL `createD1ConnectDb`
+// SQL against a REAL SQLite database created from the REAL schema.sql, which
+// is the only configuration that can catch a constraint/DDL drift.
+
+const SCHEMA_SQL = readFileSync(new URL("../../schema.sql", import.meta.url), "utf8");
+const MIGRATION_SQL = readFileSync(
+  new URL("../../migrations/0001-drop-access-notnull-add-last-seen.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION2_SQL = readFileSync(
+  new URL("../../migrations/0002-waitlist-survey.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION3_SQL = readFileSync(
+  new URL("../../migrations/0003-accounts-entitlements.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION4_SQL = readFileSync(
+  new URL("../../migrations/0004-self-serve-provision.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION5_SQL = readFileSync(
+  new URL("../../migrations/0005-rate-limits.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION6_SQL = readFileSync(
+  new URL("../../migrations/0006-alipay-payment-orders.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION7_SQL = readFileSync(
+  new URL("../../migrations/0007-waffo-payment-orders.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION8_SQL = readFileSync(
+  new URL("../../migrations/0008-instance-links.sql", import.meta.url),
+  "utf8",
+);
+const MIGRATION9_SQL = readFileSync(
+  new URL("../../migrations/0009-endpoint-revoke-reason.sql", import.meta.url),
+  "utf8",
+);
+
+// The production shape BEFORE this Worker version: schema.sql as of 884f4c4.
+// `cf_access_app_id` is NOT NULL and `last_seen_at` does not exist — exactly
+// what an already-deployed D1 instance looks like when the migration runs.
+const LEGACY_SCHEMA_SQL = `
+CREATE TABLE invites (
+  id TEXT PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,
+  invitee_label TEXT,
+  email TEXT NOT NULL,
+  slug TEXT,
+  status TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  provisioned_at TEXT,
+  revoked_at TEXT
+);
+
+CREATE TABLE endpoints (
+  id TEXT PRIMARY KEY,
+  invite_id TEXT NOT NULL UNIQUE,
+  slug TEXT NOT NULL UNIQUE,
+  hostname TEXT NOT NULL UNIQUE,
+  cf_tunnel_id TEXT NOT NULL,
+  cf_access_app_id TEXT NOT NULL,
+  cf_access_policy_id TEXT,
+  cf_dns_record_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  token_sha256 TEXT NOT NULL,
+  token_ciphertext TEXT,
+  token_shown_at TEXT,
+  created_at TEXT NOT NULL,
+  revoked_at TEXT
+);
+
+CREATE TABLE audit_events (
+  id TEXT PRIMARY KEY,
+  at TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  invite_id TEXT,
+  endpoint_id TEXT,
+  detail_json TEXT
+);
+
+CREATE INDEX idx_endpoints_status ON endpoints(status);
+
+CREATE TABLE waitlist (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL,
+  batch INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'waiting',
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX idx_waitlist_email_batch ON waitlist(email, batch);
+`;
+
+type Sqlite = Database.Database;
+
+/**
+ * Minimal D1Database implemented over better-sqlite3 so the production
+ * `createD1ConnectDb` statements execute verbatim against real SQLite.
+ */
+function d1Over(sqlite: Sqlite): D1Database {
+  return {
+    prepare(query: string) {
+      const stmt = sqlite.prepare(query);
+      let bound: unknown[] = [];
+      const api = {
+        bind(...values: unknown[]) {
+          bound = values;
+          return api;
+        },
+        async first<T>(): Promise<T | null> {
+          return (stmt.get(...bound) as T | undefined) ?? null;
+        },
+        async all<T>(): Promise<{ results: T[] }> {
+          return { results: stmt.all(...bound) as T[] };
+        },
+        async run(): Promise<unknown> {
+          const info = stmt.run(...bound);
+          // D1 surfaces affected-row count under meta.changes; markTokenShown
+          // depends on it.
+          return { meta: { changes: info.changes } };
+        },
+      };
+      return api;
+    },
+  };
+}
+
+function freshDb(sql: string): { sqlite: Sqlite; db: ReturnType<typeof createD1ConnectDb> } {
+  const sqlite = new Database(":memory:");
+  sqlite.exec(sql);
+  return { sqlite, db: createD1ConnectDb(d1Over(sqlite)) };
+}
+
+/** The exact row provision.ts writes today: both Access columns are null. */
+function postAccessEndpoint(overrides: Partial<EndpointRow> = {}): EndpointRow {
+  return {
+    id: "ep_1",
+    invite_id: "inv_1",
+    slug: "alice",
+    hostname: "alice.mediaryconnect.app",
+    cf_tunnel_id: "tun_1",
+    cf_access_app_id: null,
+    cf_access_policy_id: null,
+    cf_dns_record_id: "dns_1",
+    status: "active",
+    token_sha256: "sha256hex",
+    token_ciphertext: "ciphertext",
+    token_shown_at: null,
+    last_seen_at: null,
+    created_at: "2026-07-26T00:00:00.000Z",
+    revoked_at: null, account_id: null, grace_until: null, suspended_at: null, purge_after: null, revoke_reason: null,
+    ...overrides,
+  };
+}
+
+function indexNames(sqlite: Sqlite): string[] {
+  return (sqlite.prepare(`SELECT name FROM sqlite_master WHERE type='index'`).all() as {
+    name: string;
+  }[]).map((r) => r.name);
+}
+
+function queryPlan(sqlite: Sqlite, sql: string, ...params: unknown[]): string {
+  const rows = sqlite.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...params) as { detail: string }[];
+  return rows.map((r) => r.detail).join(" | ");
+}
+
+describe("schema.sql — fresh install against real SQLite", () => {
+  it("accepts Waffo payment orders with session and provider order ids", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+    sqlite
+      .prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run("act_waffo", "waffo@example.com", "2026-10-02T00:00:00.000Z");
+    expect(() =>
+      sqlite
+        .prepare(
+          `INSERT INTO payment_orders
+             (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
+              waffo_session_id, waffo_order_id, months, total_amount, status, created_at,
+              expires_at, paid_at, fulfilled_at, closed_at, refunded_at,
+              refund_request_no, last_notify_id, last_queried_at)
+           VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        )
+        .run(
+          "ord_waffo",
+          "sha_waffo",
+          "act_waffo",
+          "waffo",
+          "MCWAFFO",
+          null,
+          "cs_waffo",
+          null,
+          3,
+          "45.00",
+          "created",
+          "2026-10-02T00:00:00.000Z",
+          "2026-10-02T00:30:00.000Z",
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+        ),
+    ).not.toThrow();
+  });
+  it("CRITICAL-2: accepts the endpoint row provision.ts actually writes (Access ids null)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const row = postAccessEndpoint();
+
+    // Before the fix this threw: NOT NULL constraint failed:
+    // endpoints.cf_access_app_id (SQLITE code 19).
+    await expect(db.insertEndpoint(row)).resolves.toMatchObject({ id: "ep_1" });
+
+    const stored = await db.getEndpointById("ep_1");
+    expect(stored?.cf_access_app_id).toBeNull();
+    expect(stored?.cf_access_policy_id).toBeNull();
+  });
+
+  it("CRITICAL-2: the DDL itself declares cf_access_app_id without NOT NULL", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+    const cols = sqlite.prepare(`PRAGMA table_info(endpoints)`).all() as {
+      name: string;
+      notnull: number;
+    }[];
+    expect(cols.find((c) => c.name === "cf_access_app_id")?.notnull).toBe(0);
+  });
+
+  it("HIGH-3: last_seen_at exists and updateEndpointLastSeen persists to it", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertEndpoint(postAccessEndpoint());
+
+    await db.updateEndpointLastSeen("ep_1", "2026-07-26T10:00:00.000Z");
+
+    expect((await db.getEndpointById("ep_1"))?.last_seen_at).toBe("2026-07-26T10:00:00.000Z");
+  });
+
+  it("HIGH-4: waitlist count and token_sha256 lookup are index-backed, not full scans", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+
+    const waitlistPlan = queryPlan(sqlite, `SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ?`, 1);
+    expect(waitlistPlan).toContain("idx_waitlist_batch_created");
+    expect(waitlistPlan).not.toContain("SCAN waitlist");
+
+    // The position query on the /waitlist hot path. The rank predicate is
+    // written as `created_at <= ? AND (created_at < ? OR id <= ?)` rather than
+    // the equivalent `created_at < ? OR (created_at = ? AND id <= ?)` on
+    // purpose: only the former keeps the created_at range bound on the index.
+    // Measured on this schema — the OR-first form degrades the plan to
+    // `SEARCH waitlist USING INDEX idx_waitlist_batch_created (batch=?)`,
+    // i.e. it walks the entire batch instead of stopping at created_at.
+    const positionPlan = queryPlan(
+      sqlite,
+      `SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ? AND created_at <= ? AND (created_at < ? OR id <= ?)`,
+      1,
+      "2026-07-26T00:00:00.000Z",
+      "2026-07-26T00:00:00.000Z",
+      "wl_zzzz",
+    );
+    expect(positionPlan).toContain("idx_waitlist_batch_created");
+    expect(positionPlan).not.toContain("SCAN waitlist");
+    // Pin the range bound itself, not merely "an index was used".
+    expect(positionPlan).toContain("created_at<?");
+
+    const tokenPlan = queryPlan(sqlite, `SELECT * FROM endpoints WHERE token_sha256 = ?`, "x");
+    expect(tokenPlan).toContain("idx_endpoints_token_sha256");
+    expect(tokenPlan).not.toContain("SCAN endpoints");
+  });
+
+  it("listWaitlist's composite ORDER BY is served by the index, with no TEMP B-TREE", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+
+    // listWaitlist orders by (created_at, id) to agree with waitlistRankOf.
+    // Measured: against a (batch, created_at) index that ORDER BY produced
+    //   SEARCH waitlist USING INDEX idx_waitlist_batch_created (batch=?)
+    //     | USE TEMP B-TREE FOR LAST TERM OF ORDER BY
+    // — i.e. SQLite materialised and re-sorted the whole batch to break ties
+    // on `id`. Extending the index to (batch, created_at, id) makes the index
+    // order match the requested order exactly and the sort disappears.
+    const listPlan = queryPlan(
+      sqlite,
+      `SELECT * FROM waitlist WHERE batch = ? ORDER BY created_at ASC, id ASC`,
+      1,
+    );
+    expect(listPlan).toContain("idx_waitlist_batch_created");
+    expect(listPlan).not.toContain("SCAN waitlist");
+    expect(listPlan).not.toContain("TEMP B-TREE");
+  });
+
+  it("MEDIUM-7: waitlist.status default matches the literal the routes INSERT", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+    sqlite
+      .prepare(`INSERT INTO waitlist (id, email, created_at) VALUES (?, ?, ?)`)
+      .run("w_default", "d@example.com", "2026-07-26T00:00:00.000Z");
+    const row = sqlite.prepare(`SELECT status FROM waitlist WHERE id = 'w_default'`).get() as {
+      status: string;
+    };
+    // The schema default and the literal routes.ts writes must agree, or the
+    // column holds two different words for one state and any future consumer
+    // (an admin filter, a batch-invite sweep) silently sees half the rows.
+    //
+    // NB: nothing FILTERS on status today — every waitlist query keys off
+    // `batch` and `created_at` only, and the position math counts rows within
+    // a batch regardless of status. So this is about keeping the column
+    // coherent, not about a query that would currently miss rows.
+    expect(row.status).toBe("pending");
+  });
+
+  it("does not carry a stale hand-migration comment now that a real migration exists", () => {
+    expect(SCHEMA_SQL).not.toContain("部署时由运维脚本执行");
+    expect(SCHEMA_SQL).not.toContain("endpoints_old");
+  });
+
+  it("waitlist.survey_json exists as a nullable TEXT column", () => {
+    const { sqlite } = freshDb(SCHEMA_SQL);
+    const col = (
+      sqlite.prepare(`PRAGMA table_info(waitlist)`).all() as {
+        name: string;
+        type: string;
+        notnull: number;
+      }[]
+    ).find((c) => c.name === "survey_json");
+    // Nullable on purpose: most signups never answer the survey, and the
+    // column must default to NULL for them (and for pre-0002 rows).
+    expect(col).toMatchObject({ type: "TEXT", notnull: 0 });
+  });
+
+  it("D1 insertWaitlist persists survey_json and mapWaitlist returns it (round-trip)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const survey = `{"willing_to_pay":"愿意","use_cases":["查进度"]}`;
+    await db.insertWaitlist({
+      id: "wl_s",
+      email: "s@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-26T00:00:00.000Z",
+      survey_json: survey,
+    });
+
+    expect((await db.getWaitlistByEmail("s@x.com", 1))?.survey_json).toBe(survey);
+  });
+
+  it("a waitlist row inserted without survey data reads back survey_json null", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertWaitlist({
+      id: "wl_n",
+      email: "n@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-26T00:00:00.000Z",
+      survey_json: null,
+    });
+
+    expect((await db.getWaitlistByEmail("n@x.com", 1))?.survey_json).toBeNull();
+  });
+});
+
+describe("waitlist rank against real SQLite — whole-second timestamp ties", () => {
+  // Measured against this schema with three rows sharing one timestamp, the
+  // old `WHERE batch = ? AND created_at <= ?` predicate returned:
+  //   a@x.com -> 3, b@x.com -> 3, c@x.com -> 3
+  // i.e. `<=` only converted "everybody is #1" into "everybody is #N". The
+  // waitlist writes whole-second ISO timestamps, so same-second signups are
+  // the normal case, not an edge case. The rank must therefore be total, which
+  // requires a tiebreaker column — `id` is the PRIMARY KEY, so (created_at, id)
+  // is unique and the resulting rank is distinct and stable across calls.
+  const TS = "2026-07-26T00:00:00.000Z";
+
+  function seedSameSecond(db: ReturnType<typeof createD1ConnectDb>): Promise<unknown> {
+    // Inserted out of id order on purpose: rank must follow (created_at, id),
+    // not physical insertion/rowid order.
+    return Promise.all([
+      db.insertWaitlist({ id: "wl_b", email: "b@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+    ]);
+  }
+
+  it("gives 3 rows sharing one timestamp distinct positions 1,2,3 ordered by id", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await seedSameSecond(db);
+
+    const ranks = await Promise.all(
+      ["wl_a", "wl_b", "wl_c"].map((id) => db.waitlistRankOf(1, TS, id)),
+    );
+
+    expect(ranks).toEqual([1, 2, 3]);
+    expect(new Set(ranks).size).toBe(3);
+  });
+
+  it("is stable: repeated calls return the same rank for the same row", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await seedSameSecond(db);
+
+    const first = await db.waitlistRankOf(1, TS, "wl_b");
+    const second = await db.waitlistRankOf(1, TS, "wl_b");
+    expect(second).toBe(first);
+    expect(first).toBe(2);
+  });
+
+  it("still orders across differing timestamps, and ignores other batches", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertWaitlist({
+      id: "wl_early",
+      email: "early@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
+    });
+    await db.insertWaitlist({
+      id: "wl_late",
+      email: "late@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-27T00:00:00.000Z",
+      survey_json: null,
+    });
+    // A high id in another batch must not inflate batch 1 ranks.
+    await db.insertWaitlist({
+      id: "wl_zzz_other",
+      email: "other@x.com",
+      batch: 2,
+      status: "pending",
+      created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
+    });
+
+    expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_early")).toBe(1);
+    expect(await db.waitlistRankOf(1, "2026-07-27T00:00:00.000Z", "wl_late")).toBe(2);
+    expect(await db.waitlistRankOf(2, "2026-07-25T00:00:00.000Z", "wl_zzz_other")).toBe(1);
+  });
+
+  it("a same-second row with a lower id does not share the later row's rank", async () => {
+    // The precise regression: under `created_at <= ?` both of these returned 2.
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertWaitlist({ id: "wl_1", email: "one@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null });
+    await db.insertWaitlist({ id: "wl_2", email: "two@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null });
+
+    const a = await db.waitlistRankOf(1, TS, "wl_1");
+    const b = await db.waitlistRankOf(1, TS, "wl_2");
+    expect(a).toBe(1);
+    expect(b).toBe(2);
+    expect(a).not.toBe(b);
+  });
+
+  // ---------------------------------------------------------------------
+  // TRIPWIRE — read this if you just added a new waitlist status.
+  //
+  // Ranking is status-agnostic: `waitlistRankOf` counts every row in the
+  // batch, whatever its `status`. That is safe TODAY only because 'pending'
+  // is the sole value that exists — routes.ts writes it and schema.sql
+  // defaults to it, and no query anywhere reads the column.
+  //
+  // If you are here because this test failed after you introduced
+  // 'accepted' / 'removed' / anything else: ranking currently COUNTS your
+  // new status, so those rows will inflate every later signup's position.
+  // Decide deliberately whether that is right, then update all three
+  // together — the D1 `waitlistRankOf` (db.ts), the in-memory
+  // `waitlistRankOf` (db.ts), and this test. Do not just re-point the
+  // assertion; the two implementations must stay semantically identical or
+  // route tests (which run on the mock) stop proving anything about
+  // production.
+  // ---------------------------------------------------------------------
+  it("TRIPWIRE: ranking counts non-pending rows too — status is not filtered (D1)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    // A non-'pending' row deliberately sorts FIRST, so if a status filter is
+    // ever added the rank below drops from 2 to 1 and this test goes red.
+    await db.insertWaitlist({
+      id: "wl_gone",
+      email: "gone@x.com",
+      batch: 1,
+      status: "removed",
+      created_at: "2026-07-25T00:00:00.000Z",
+      survey_json: null,
+    });
+    await db.insertWaitlist({
+      id: "wl_here",
+      email: "here@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: TS,
+      survey_json: null,
+    });
+
+    // Documented current behaviour: the 'removed' row IS counted, so the
+    // pending row that arrived after it ranks 2, not 1.
+    expect(await db.waitlistRankOf(1, TS, "wl_here")).toBe(2);
+    // And a non-pending row is itself rankable rather than invisible.
+    expect(await db.waitlistRankOf(1, "2026-07-25T00:00:00.000Z", "wl_gone")).toBe(1);
+  });
+
+  // -------------------------------------------------------------------
+  // listWaitlist had to agree with waitlistRankOf and did not: it ordered
+  // by created_at ALONE, which is not a total order over whole-second ISO
+  // timestamps. Measured against this schema with three same-second rows
+  // inserted as wl_c, wl_a, wl_b:
+  //   listWaitlist (created_at only) -> wl_c wl_a wl_b
+  //   waitlistRankOf (created_at,id) -> wl_a=1 wl_b=2 wl_c=3
+  // so the row listed FIRST reported position 3. SQLite is free to return
+  // ties in any order (here: physical/rowid order), so this was also
+  // nondeterministic in principle, not merely "wrong but consistent".
+  // -------------------------------------------------------------------
+  function seedOutOfIdOrder(db: ReturnType<typeof createD1ConnectDb>): Promise<unknown> {
+    // Insertion order deliberately != id order != nothing-in-particular, so a
+    // rowid-ordered result is distinguishable from an (created_at, id) one.
+    return Promise.all([
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_b", email: "b@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+    ]);
+  }
+
+  it("listWaitlist orders same-second rows by id, not by insertion order (D1)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await seedOutOfIdOrder(db);
+
+    expect((await db.listWaitlist(1)).map((r) => r.id)).toEqual(["wl_a", "wl_b", "wl_c"]);
+  });
+
+  it("CROSS-CONSISTENCY: listWaitlist[i] ranks exactly i+1 (D1)", async () => {
+    // The real contract, asserted directly: the queue you display and the
+    // position you tell each person must be the same queue.
+    const { db } = freshDb(SCHEMA_SQL);
+    await seedOutOfIdOrder(db);
+
+    const rows = await db.listWaitlist(1);
+    const ranks = await Promise.all(rows.map((r) => db.waitlistRankOf(1, r.created_at, r.id)));
+
+    expect(ranks).toEqual(rows.map((_, i) => i + 1));
+  });
+
+  it("CROSS-CONSISTENCY holds with mixed timestamps and ties (D1)", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    // Two distinct seconds, ties inside each, inserted in scrambled order —
+    // and a decoy in another batch that must not shift batch 1.
+    await Promise.all([
+      db.insertWaitlist({ id: "wl_m", email: "m@x.com", batch: 1, status: "pending", created_at: "2026-07-27T00:00:00.000Z", survey_json: null }),
+      db.insertWaitlist({ id: "wl_c", email: "c@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_z", email: "z@x.com", batch: 1, status: "pending", created_at: "2026-07-27T00:00:00.000Z", survey_json: null }),
+      db.insertWaitlist({ id: "wl_a", email: "a@x.com", batch: 1, status: "pending", created_at: TS, survey_json: null }),
+      db.insertWaitlist({ id: "wl_aaa_other", email: "o@x.com", batch: 2, status: "pending", created_at: TS, survey_json: null }),
+    ]);
+
+    const rows = await db.listWaitlist(1);
+    expect(rows.map((r) => r.id)).toEqual(["wl_a", "wl_c", "wl_m", "wl_z"]);
+
+    const ranks = await Promise.all(rows.map((r) => db.waitlistRankOf(1, r.created_at, r.id)));
+    expect(ranks).toEqual([1, 2, 3, 4]);
+  });
+});
+
+describe("migration 0001 — existing install against real SQLite", () => {
+  it("is not wrapped in BEGIN/COMMIT (D1 rejects explicit transactions)", () => {
+    expect(MIGRATION_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION_SQL).not.toMatch(/^\s*COMMIT\b/im);
+  });
+
+  it("never contains the literal wrangler's splitter string-matches on", () => {
+    // Verified against wrangler 4.114.0: the adjacent words BEGIN + TRANSACTION
+    // anywhere in the file — INCLUDING inside a `--` comment — make
+    // `d1 execute --file` abort with "contains several transactions" before it
+    // parses any SQL. This bit the first draft of migration 0001, whose header
+    // quoted the D1 error message verbatim; better-sqlite3 executed that file
+    // happily, so only the real wrangler run caught it. (A bare SAVEPOINT in a
+    // comment was tested and is NOT rejected, so it is not asserted here; a
+    // SAVEPOINT *statement* is caught by the leading-keyword check above.)
+    for (const sql of [MIGRATION_SQL, SCHEMA_SQL]) {
+      expect(sql).not.toMatch(/BEGIN\s+TRANSACTION/i);
+      expect(sql).not.toMatch(/^\s*SAVEPOINT\b/im);
+    }
+  });
+
+  it("never uses INSERT ... SELECT * (column order must be explicit)", () => {
+    expect(MIGRATION_SQL).not.toMatch(/SELECT\s+\*\s+FROM\s+endpoints_old/i);
+  });
+
+  it("documents how to run it and that it precedes the deploy", () => {
+    expect(MIGRATION_SQL).toContain("wrangler d1 execute");
+    expect(MIGRATION_SQL).toMatch(/BEFORE/i);
+  });
+
+  it("CRITICAL-2 + HIGH-3: legacy table rejects the write; after migration it accepts it", async () => {
+    // Prove the legacy shape really is broken, so the migration test below is
+    // meaningful rather than vacuous. Two independent defects stack here, and
+    // SQLite reports them in statement order: the missing column (HIGH-3)
+    // errors before the NOT NULL (CRITICAL-2) is ever evaluated.
+    const legacy = freshDb(LEGACY_SCHEMA_SQL);
+    await expect(legacy.db.insertEndpoint(postAccessEndpoint())).rejects.toThrow(
+      /no column named/i,
+    );
+
+    // Isolate CRITICAL-2: add the 0001/0003/0004 columns only, and the NOT NULL
+    // on cf_access_app_id is still what kills the insert.
+    const halfMigrated = freshDb(LEGACY_SCHEMA_SQL);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN last_seen_at TEXT`);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN account_id TEXT`);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN grace_until TEXT`);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN suspended_at TEXT`);
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN purge_after TEXT`);
+    // 0009's column is in today's INSERT list; it stays nullable so CRITICAL-2
+    // is still the NOT NULL on cf_access_app_id.
+    halfMigrated.sqlite.exec(`ALTER TABLE endpoints ADD COLUMN revoke_reason TEXT`);
+    await expect(halfMigrated.db.insertEndpoint(postAccessEndpoint())).rejects.toThrow(
+      /NOT NULL constraint failed: endpoints\.cf_access_app_id/i,
+    );
+
+    // "After migration" = the FULL chain: today's insertEndpoint writes the
+    // 0003 columns and needs 0004's nullable invite_id shape.
+    const { sqlite, db } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
+    // payment_orders (0006) is not on this chain; today's INSERT only needs the column.
+    sqlite.exec(`ALTER TABLE endpoints ADD COLUMN revoke_reason TEXT`);
+
+    await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
+    await db.updateEndpointLastSeen("ep_1", "2026-07-26T10:00:00.000Z");
+    const stored = await db.getEndpointById("ep_1");
+    expect(stored?.cf_access_app_id).toBeNull();
+    expect(stored?.last_seen_at).toBe("2026-07-26T10:00:00.000Z");
+  });
+
+  it("preserves every column of pre-existing rows through the table rebuild", () => {
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite
+      .prepare(
+        `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id,
+           cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext,
+           token_shown_at, created_at, revoked_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "ep_legacy",
+        "inv_legacy",
+        "bob",
+        "bob.mediaryconnect.app",
+        "tun_legacy",
+        "app_legacy",
+        "pol_legacy",
+        "dns_legacy",
+        "active",
+        "legacy_sha",
+        "legacy_ct",
+        null,
+        "2026-07-01T00:00:00.000Z",
+        null,
+      );
+
+    sqlite.exec(MIGRATION_SQL);
+
+    const row = sqlite.prepare(`SELECT * FROM endpoints WHERE id = 'ep_legacy'`).get() as Record<
+      string,
+      unknown
+    >;
+    // Column-by-column: a positional `INSERT ... SELECT *` mismatch would
+    // silently shuffle these.
+    expect(row).toMatchObject({
+      id: "ep_legacy",
+      invite_id: "inv_legacy",
+      slug: "bob",
+      hostname: "bob.mediaryconnect.app",
+      cf_tunnel_id: "tun_legacy",
+      cf_access_app_id: "app_legacy",
+      cf_access_policy_id: "pol_legacy",
+      cf_dns_record_id: "dns_legacy",
+      status: "active",
+      token_sha256: "legacy_sha",
+      token_ciphertext: "legacy_ct",
+      token_shown_at: null,
+      created_at: "2026-07-01T00:00:00.000Z",
+      revoked_at: null,
+    });
+    expect(row.last_seen_at).toBeNull();
+    expect(sqlite.prepare(`SELECT COUNT(*) as c FROM endpoints`).get()).toEqual({ c: 1 });
+  });
+
+  it("drops the scratch table and recreates every index", () => {
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+
+    const tables = (sqlite.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as {
+      name: string;
+    }[]).map((r) => r.name);
+    expect(tables).not.toContain("endpoints_old");
+
+    const idx = indexNames(sqlite);
+    // Rebuilding a table silently drops its indexes — the status index must
+    // come back or the revoke_failed sweep degrades to a scan.
+    expect(idx).toContain("idx_endpoints_status");
+    expect(idx).toContain("idx_endpoints_token_sha256");
+    expect(idx).toContain("idx_waitlist_batch_created");
+  });
+
+  it("preserves the endpoints UNIQUE constraints after the rebuild", () => {
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+
+    const insert = (id: string, inviteId: string, slug: string, hostname: string): void => {
+      sqlite
+        .prepare(
+          `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id,
+             cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext,
+             token_shown_at, last_seen_at, created_at, revoked_at)
+           VALUES (?, ?, ?, ?, 't', NULL, NULL, 'd', 'active', 's', NULL, NULL, NULL, '2026-07-26T00:00:00.000Z', NULL)`,
+        )
+        .run(id, inviteId, slug, hostname);
+    };
+    insert("e1", "i1", "s1", "h1");
+    expect(() => insert("e2", "i1", "s2", "h2")).toThrow(/UNIQUE/i);
+    expect(() => insert("e3", "i2", "s1", "h3")).toThrow(/UNIQUE/i);
+    expect(() => insert("e4", "i3", "s4", "h1")).toThrow(/UNIQUE/i);
+  });
+
+  it("migrated shape matches a fresh schema.sql install exactly", () => {
+    const migrated = freshDb(LEGACY_SCHEMA_SQL);
+    migrated.sqlite.exec(MIGRATION_SQL);
+    migrated.sqlite.exec(MIGRATION2_SQL);
+    migrated.sqlite.exec(MIGRATION3_SQL);
+    migrated.sqlite.exec(MIGRATION4_SQL);
+    migrated.sqlite.exec(MIGRATION5_SQL);
+    migrated.sqlite.exec(MIGRATION6_SQL);
+    migrated.sqlite.exec(MIGRATION8_SQL);
+    migrated.sqlite.exec(MIGRATION9_SQL);
+    const fresh = freshDb(SCHEMA_SQL);
+
+    const shapeOf = (sqlite: Sqlite): unknown =>
+      (sqlite.prepare(`PRAGMA table_info(endpoints)`).all() as {
+        name: string;
+        type: string;
+        notnull: number;
+      }[]).map((c) => `${c.name} ${c.type} notnull=${c.notnull}`);
+
+    // Fresh installs and migrated installs must converge, or the next
+    // migration is written against a shape that only exists in one of them.
+    expect(shapeOf(migrated.sqlite)).toEqual(shapeOf(fresh.sqlite));
+    expect(indexNames(migrated.sqlite).sort()).toEqual(indexNames(fresh.sqlite).sort());
+  });
+
+  it("aborts rather than double-rebuilding when applied twice", () => {
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    // SQLite has no `ADD COLUMN IF NOT EXISTS`; the guard is that the additive
+    // step fails first, and `wrangler d1 execute --file` rolls the file back.
+    expect(() => sqlite.exec(MIGRATION_SQL)).toThrow(/duplicate column name/i);
+  });
+});
+
+// Copilot round 2, finding 2: step 8 opened with a bare
+// `ALTER TABLE waitlist RENAME TO waitlist_old`, which throws
+// "no such table: waitlist" on any instance provisioned from a schema.sql that
+// predates the waitlist table. Because the file is applied as one atomic unit,
+// that failure also rolls back the `endpoints` rebuild in steps 1-7 — the
+// critical part. So an older-than-expected D1 instance could not be migrated
+// at all, and the failure mode was a total one, not a partial one.
+describe("migration 0001 — legacy install that predates the waitlist table", () => {
+  /** LEGACY_SCHEMA_SQL minus the waitlist table and its index. */
+  const PRE_WAITLIST_SCHEMA_SQL = LEGACY_SCHEMA_SQL.slice(
+    0,
+    LEGACY_SCHEMA_SQL.indexOf("CREATE TABLE waitlist"),
+  );
+
+  it("the fixture really has no waitlist table (guards against a vacuous test)", () => {
+    const { sqlite } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    const tables = (sqlite.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as {
+      name: string;
+    }[]).map((r) => r.name);
+    expect(tables).not.toContain("waitlist");
+    expect(tables).toContain("endpoints");
+  });
+
+  it("applies cleanly with no waitlist table present", () => {
+    const { sqlite } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    // Before the fix: "no such table: waitlist".
+    expect(() => sqlite.exec(MIGRATION_SQL)).not.toThrow();
+  });
+
+  it("ends with the correct waitlist shape and indexes", () => {
+    const { sqlite } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    // The full pending chain — "the correct waitlist shape" is the shape this
+    // Worker version runs against, which includes 0002's survey_json.
+    sqlite.exec(MIGRATION2_SQL);
+
+    const cols = sqlite.prepare(`PRAGMA table_info(waitlist)`).all() as {
+      name: string;
+      type: string;
+      notnull: number;
+      dflt_value: string | null;
+    }[];
+    expect(cols.map((c) => c.name)).toEqual([
+      "id",
+      "email",
+      "batch",
+      "status",
+      "created_at",
+      "survey_json",
+    ]);
+    // The whole point of step 8: the default must be the literal routes.ts uses.
+    expect(cols.find((c) => c.name === "status")?.dflt_value).toBe("'pending'");
+    // 0002's column: nullable, no default — most rows never answer the survey.
+    expect(cols.find((c) => c.name === "survey_json")).toMatchObject({
+      type: "TEXT",
+      notnull: 0,
+      dflt_value: null,
+    });
+
+    const idx = indexNames(sqlite);
+    expect(idx).toContain("idx_waitlist_email_batch");
+    expect(idx).toContain("idx_waitlist_batch_created");
+    expect(
+      (sqlite.prepare(`SELECT name FROM sqlite_master WHERE type='table'`).all() as {
+        name: string;
+      }[]).map((r) => r.name),
+    ).not.toContain("waitlist_old");
+  });
+
+  it("the endpoints rebuild still lands (the atomic-rollback casualty)", async () => {
+    const { sqlite, db } = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    // 今天的 insertEndpoint 写 0003 的四列并依赖 0004 的可空 invite_id,
+    // 所以「迁移后可写入」要跑完整条链——这正是生产实例的真实路径。
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
+    sqlite.exec(`ALTER TABLE endpoints ADD COLUMN revoke_reason TEXT`);
+
+    // This is what step 8's failure used to take down with it.
+    await expect(db.insertEndpoint(postAccessEndpoint())).resolves.toMatchObject({ id: "ep_1" });
+    expect(indexNames(sqlite)).toContain("idx_endpoints_token_sha256");
+  });
+
+  it("converges on exactly the fresh schema.sql shape", () => {
+    const migrated = freshDb(PRE_WAITLIST_SCHEMA_SQL);
+    migrated.sqlite.exec(MIGRATION_SQL);
+    migrated.sqlite.exec(MIGRATION2_SQL);
+    migrated.sqlite.exec(MIGRATION3_SQL);
+    migrated.sqlite.exec(MIGRATION4_SQL);
+    migrated.sqlite.exec(MIGRATION5_SQL);
+    migrated.sqlite.exec(MIGRATION6_SQL);
+    migrated.sqlite.exec(MIGRATION8_SQL);
+    migrated.sqlite.exec(MIGRATION9_SQL);
+    const fresh = freshDb(SCHEMA_SQL);
+
+    const shapeOf = (sqlite: Sqlite, table: string): unknown =>
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as {
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+      }[]).map((c) => `${c.name} ${c.type} notnull=${c.notnull} default=${c.dflt_value}`);
+
+    expect(shapeOf(migrated.sqlite, "waitlist")).toEqual(shapeOf(fresh.sqlite, "waitlist"));
+    expect(shapeOf(migrated.sqlite, "endpoints")).toEqual(shapeOf(fresh.sqlite, "endpoints"));
+    expect(indexNames(migrated.sqlite).sort()).toEqual(indexNames(fresh.sqlite).sort());
+  });
+
+  it("the resurrection shim does not clobber a real pre-existing waitlist", () => {
+    // The guard must be CREATE TABLE IF NOT EXISTS, not an unconditional
+    // CREATE/DROP — scenario (a) data still has to survive.
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite
+      .prepare(`INSERT INTO waitlist (id, email, created_at) VALUES (?, ?, ?)`)
+      .run("wl_legacy", "legacy@example.com", "2026-07-01T00:00:00.000Z");
+
+    sqlite.exec(MIGRATION_SQL);
+
+    const rows = sqlite.prepare(`SELECT id, email, batch, status FROM waitlist`).all();
+    expect(rows).toEqual([
+      // 'waiting' realigned to 'pending' by step 8's CASE.
+      { id: "wl_legacy", email: "legacy@example.com", batch: 1, status: "pending" },
+    ]);
+  });
+});
+
+// Migration 0002 adds the nullable waitlist.survey_json column that
+// POST /waitlist/survey writes. It is a single additive ALTER — no rebuild —
+// so already-queued signups keep their rows and simply read back NULL.
+describe("migration 0002 — waitlist.survey_json against real SQLite", () => {
+  it("is not wrapped in BEGIN/COMMIT (D1 rejects explicit transactions)", () => {
+    expect(MIGRATION2_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION2_SQL).not.toMatch(/^\s*COMMIT\b/im);
+  });
+
+  it("never contains the adjacent words wrangler's splitter string-matches on", () => {
+    // Same guard as migration 0001 above: the adjacent words anywhere in the
+    // file — INCLUDING inside a `--` comment — make `d1 execute --file` abort
+    // with "contains several transactions" before any SQL is parsed.
+    expect(MIGRATION2_SQL).not.toMatch(/BEGIN\s+TRANSACTION/i);
+    expect(MIGRATION2_SQL).not.toMatch(/^\s*SAVEPOINT\b/im);
+  });
+
+  it("documents how to run it and that it precedes the deploy", () => {
+    expect(MIGRATION2_SQL).toContain("wrangler d1 execute");
+    expect(MIGRATION2_SQL).toMatch(/BEFORE/i);
+  });
+
+  it("adds survey_json on top of 0001; the full chain converges with a fresh install", () => {
+    const migrated = freshDb(LEGACY_SCHEMA_SQL);
+    migrated.sqlite.exec(MIGRATION_SQL);
+    migrated.sqlite.exec(MIGRATION2_SQL);
+    migrated.sqlite.exec(MIGRATION3_SQL);
+    migrated.sqlite.exec(MIGRATION4_SQL);
+    migrated.sqlite.exec(MIGRATION5_SQL);
+    migrated.sqlite.exec(MIGRATION6_SQL);
+    migrated.sqlite.exec(MIGRATION8_SQL);
+    migrated.sqlite.exec(MIGRATION9_SQL);
+    const fresh = freshDb(SCHEMA_SQL);
+
+    const shapeOf = (sqlite: Sqlite, table: string): unknown =>
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as {
+        name: string;
+        type: string;
+        notnull: number;
+        dflt_value: string | null;
+      }[]).map((c) => `${c.name} ${c.type} notnull=${c.notnull} default=${c.dflt_value}`);
+
+    // Fresh installs and fully-migrated installs must converge, or the next
+    // migration is written against a shape that only exists in one of them.
+    expect(shapeOf(migrated.sqlite, "waitlist")).toEqual(shapeOf(fresh.sqlite, "waitlist"));
+    expect(shapeOf(migrated.sqlite, "endpoints")).toEqual(shapeOf(fresh.sqlite, "endpoints"));
+    expect(indexNames(migrated.sqlite).sort()).toEqual(indexNames(fresh.sqlite).sort());
+  });
+
+  it("leaves already-queued rows untouched, survey_json NULL", () => {
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    // A row queued under the post-0001 shape, before 0002 exists.
+    sqlite
+      .prepare(
+        `INSERT INTO waitlist (id, email, batch, status, created_at)
+         VALUES ('wl_pre', 'pre@x.com', 1, 'pending', '2026-07-01T00:00:00.000Z')`,
+      )
+      .run();
+
+    sqlite.exec(MIGRATION2_SQL);
+
+    const row = sqlite
+      .prepare(`SELECT id, email, batch, status, survey_json FROM waitlist WHERE id = 'wl_pre'`)
+      .get() as { survey_json: string | null };
+    expect(row).toMatchObject({ id: "wl_pre", email: "pre@x.com", batch: 1, status: "pending" });
+    expect(row.survey_json).toBeNull();
+  });
+
+  it("aborts rather than double-adding when applied twice", () => {
+    const { sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    // SQLite has no `ADD COLUMN IF NOT EXISTS`; the guard is that the additive
+    // ALTER fails, and `wrangler d1 execute --file` rolls the file back.
+    expect(() => sqlite.exec(MIGRATION2_SQL)).toThrow(/duplicate column name/i);
+  });
+
+  it("updateWaitlistSurvey + getWaitlistById round-trip against real SQLite", async () => {
+    // The HTTP-layer survey tests run on the memory mock; this pins the real
+    // D1 SQL end to end on the migrated shape.
+    const { db, sqlite } = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    await db.insertWaitlist({
+      id: "wl_rt",
+      email: "rt@x.com",
+      batch: 1,
+      status: "pending",
+      created_at: "2026-07-26T00:00:00.000Z",
+      survey_json: null,
+    });
+
+    await db.updateWaitlistSurvey("wl_rt", `{"use_cases":["progress"],"feedback":"好"}`);
+
+    const row = await db.getWaitlistById("wl_rt");
+    expect(JSON.parse(row?.survey_json ?? "")).toEqual({
+      use_cases: ["progress"],
+      feedback: "好",
+    });
+    expect(await db.getWaitlistById("wl_missing")).toBeNull();
+  });
+});
+
+describe("migration 0003: accounts + entitlements + endpoints.account_id", () => {
+  it("runs cleanly on the legacy schema (post-m2), adds accounts/entitlements tables", () => {
+    const sql = new Database(":memory:");
+    sql.exec(LEGACY_SCHEMA_SQL);
+    sql.exec(MIGRATION_SQL);
+    sql.exec(MIGRATION2_SQL);
+    sql.exec(MIGRATION3_SQL);
+    sql.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run(
+      "act_test","user@example.com","2026-07-28T12:00:00Z",
+    );
+    const acct = sql.prepare("SELECT * FROM accounts WHERE email=?").get("user@example.com") as any;
+    expect(acct.id).toBe("act_test");
+    sql.prepare("INSERT INTO entitlements(id,account_id,expires_at,source,months,created_at) VALUES(?,?,?,?,?,?)").run(
+      "ent_1","act_test","2027-07-28T12:00:00Z","founding",12,"2026-07-28T12:00:00Z",
+    );
+    const ent = sql.prepare("SELECT * FROM entitlements WHERE account_id=?").get("act_test") as any;
+    expect(ent.months).toBe(12);
+    // 补齐所有 NOT NULL 列;account_id 是 m3 新增的可空外键。
+    sql.prepare(
+      "INSERT INTO endpoints(id,invite_id,slug,hostname,cf_tunnel_id,cf_dns_record_id,status,token_sha256,account_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+    ).run("ep_1","inv_1","test","test.mediaryconnect.app","tun_x","dns_x","active","abc","act_test","2026-07-28T12:00:00Z");
+    const ep = sql.prepare("SELECT * FROM endpoints WHERE id=?").get("ep_1") as any;
+    expect(ep.account_id).toBe("act_test");
+  });
+
+  it("fresh schema.sql includes accounts/entitlements + endpoints.account_id", () => {
+    const sql = new Database(":memory:");
+    sql.exec(SCHEMA_SQL);
+    sql.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run(
+      "act_new","new@example.com","2026-07-28T12:00:00Z",
+    );
+    expect(sql.prepare("SELECT id FROM accounts WHERE email=?").get("new@example.com")).toBeTruthy();
+    sql.prepare("INSERT INTO entitlements(id,account_id,expires_at,source,months,created_at) VALUES(?,?,?,?,?,?)").run(
+      "ent_new","act_new","2027-07-28T12:00:00Z","paddle",12,"2026-07-28T12:00:00Z",
+    );
+    expect(sql.prepare("SELECT id FROM entitlements WHERE account_id=?").get("act_new")).toBeTruthy();
+    const cols = sql.prepare("PRAGMA table_info(endpoints)").all() as any[];
+    expect(cols.find((c: any) => c.name === "account_id")).toBeTruthy();
+  });
+});
+
+describe("migration 0004 — self-serve rows against real SQLite", () => {
+  const chain = (): Sqlite => {
+    const sql = new Database(":memory:");
+    sql.exec(LEGACY_SCHEMA_SQL);
+    sql.exec(MIGRATION_SQL);
+    sql.exec(MIGRATION2_SQL);
+    sql.exec(MIGRATION3_SQL);
+    sql.exec(MIGRATION4_SQL);
+    return sql;
+  };
+  const seedAccount = (sql: Sqlite, id: string): void => {
+    // endpoints.account_id 是外键;先把被引用的账号行种下(FK 开着)。
+    sql
+      .prepare("INSERT OR IGNORE INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run(id, `${id}@example.com`, "2026-07-28T12:00:00Z");
+  };
+  const insertEp = (
+    sql: Sqlite,
+    id: string,
+    inviteId: string | null,
+    slug: string,
+    accountId: string | null,
+    status = "active",
+  ): void => {
+    if (accountId !== null) seedAccount(sql, accountId);
+    sql
+      .prepare(
+        `INSERT INTO endpoints(id,invite_id,slug,hostname,cf_tunnel_id,cf_dns_record_id,status,token_sha256,account_id,created_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(id, inviteId, slug, `${slug}.mediaryconnect.app`, "tun", "dns", status, "sha", accountId, "2026-07-28T12:00:00Z");
+  };
+
+  it("many self-serve rows (invite_id NULL) coexist; invite rows keep UNIQUE", () => {
+    const sql = chain();
+    insertEp(sql, "ep_a", null, "alice", "act_a");
+    insertEp(sql, "ep_b", null, "bob", "act_b");
+    // 两条 NULL invite_id 共存(SQLite UNIQUE 不判 NULL)
+    expect(sql.prepare("SELECT COUNT(*) c FROM endpoints").get()).toEqual({ c: 2 });
+    // 邀请行的 UNIQUE 仍在
+    insertEp(sql, "ep_c", "inv_1", "carol", null);
+    expect(() => insertEp(sql, "ep_d", "inv_1", "dave", null)).toThrow(/UNIQUE/i);
+  });
+
+  it("one live endpoint per account: second active row for the same account dies on the partial index", () => {
+    const sql = chain();
+    insertEp(sql, "ep_1", null, "alice", "act_1");
+    expect(() => insertEp(sql, "ep_2", null, "alice2", "act_1")).toThrow(
+      /UNIQUE constraint failed.*account_id/i,
+    );
+    // revoked 行不占坑:同账号 revoke 后可以再开
+    sql.prepare("UPDATE endpoints SET status='revoked' WHERE id='ep_1'").run();
+    insertEp(sql, "ep_3", null, "alice3", "act_1");
+    expect(sql.prepare("SELECT COUNT(*) c FROM endpoints WHERE account_id='act_1'").get()).toEqual({ c: 2 });
+  });
+
+  it("re-running 0004 is a safe no-op rebuild", () => {
+    const sql = chain();
+    insertEp(sql, "ep_keep", null, "keeper", "act_k");
+    sql.exec(MIGRATION4_SQL);
+    const row = sql.prepare("SELECT * FROM endpoints WHERE id='ep_keep'").get() as Record<string, unknown>;
+    expect(row.slug).toBe("keeper");
+    expect(row.account_id).toBe("act_k");
+  });
+});
+
+describe("migration 0006 — provider-neutral entitlements and Alipay orders", () => {
+  function preAlipayDb(): Sqlite {
+    const sqlite = new Database(":memory:");
+    sqlite.exec(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
+    return sqlite;
+  }
+
+  it("backfills historical Paddle transactions without deleting their rows", () => {
+    const sqlite = preAlipayDb();
+    sqlite
+      .prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run("act_old", "old@example.com", "2026-08-01T00:00:00.000Z");
+    sqlite
+      .prepare(
+        `INSERT INTO entitlements
+           (id,account_id,expires_at,source,paddle_transaction_id,months,created_at)
+         VALUES(?,?,?,?,?,?,?)`,
+      )
+      .run(
+        "ent_old",
+        "act_old",
+        "2027-08-01T00:00:00.000Z",
+        "paddle",
+        "txn_old",
+        12,
+        "2026-08-01T00:00:00.000Z",
+      );
+
+    sqlite.exec(MIGRATION6_SQL);
+
+    expect(sqlite.prepare("SELECT COUNT(*) AS count FROM entitlements").get()).toEqual({ count: 1 });
+    expect(
+      sqlite
+        .prepare(
+          `SELECT source,paddle_transaction_id,payment_provider,payment_transaction_id,refunded_at
+             FROM entitlements WHERE id='ent_old'`,
+        )
+        .get(),
+    ).toEqual({
+      source: "paddle",
+      paddle_transaction_id: "txn_old",
+      payment_provider: "paddle",
+      payment_transaction_id: "txn_old",
+      refunded_at: null,
+    });
+  });
+
+  it("enforces provider-scoped payment idempotency without colliding with manual grants", () => {
+    const sqlite = preAlipayDb();
+    sqlite.exec(MIGRATION6_SQL);
+    sqlite
+      .prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run("act_1", "one@example.com", "2026-08-16T00:00:00.000Z");
+    const insert = sqlite.prepare(
+      `INSERT INTO entitlements
+        (id,account_id,expires_at,source,paddle_transaction_id,payment_provider,payment_transaction_id,refunded_at,months,created_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?)`,
+    );
+    insert.run(
+      "ent_a",
+      "act_1",
+      "2026-11-16T00:00:00.000Z",
+      "alipay",
+      null,
+      "alipay",
+      "MC1",
+      null,
+      3,
+      "2026-08-16T00:00:00.000Z",
+    );
+    expect(() =>
+      insert.run(
+        "ent_b",
+        "act_1",
+        "2026-11-16T00:00:00.000Z",
+        "alipay",
+        null,
+        "alipay",
+        "MC1",
+        null,
+        3,
+        "2026-08-16T00:00:01.000Z",
+      ),
+    ).toThrow(/UNIQUE/i);
+    expect(() =>
+      insert.run(
+        "ent_manual",
+        "act_1",
+        "2026-12-16T00:00:00.000Z",
+        "manual",
+        null,
+        null,
+        null,
+        null,
+        1,
+        "2026-08-16T00:00:02.000Z",
+      ),
+    ).not.toThrow();
+  });
+
+  it("converges with the fresh schema and creates the order indexes", () => {
+    const migrated = preAlipayDb();
+    migrated.exec(MIGRATION6_SQL);
+    migrated.exec(MIGRATION7_SQL);
+    migrated.exec(MIGRATION8_SQL);
+    const fresh = freshDb(SCHEMA_SQL).sqlite;
+    const columns = (sqlite: Sqlite, table: string): string[] =>
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((row) => row.name);
+
+    expect(columns(migrated, "entitlements")).toEqual(columns(fresh, "entitlements"));
+    expect(columns(migrated, "payment_orders")).toEqual(columns(fresh, "payment_orders"));
+    expect(indexNames(migrated).sort()).toEqual(indexNames(fresh).sort());
+  });
+
+  it("runs the real D1 order and entitlement methods against the migrated shape", async () => {
+    const sqlite = preAlipayDb();
+    sqlite.exec(MIGRATION6_SQL);
+    sqlite.exec(MIGRATION7_SQL);
+    sqlite.exec(MIGRATION8_SQL);
+    sqlite.exec(MIGRATION9_SQL);
+    const db = createD1ConnectDb(d1Over(sqlite));
+    await db.insertAccount({
+      id: "act_rt",
+      email: "rt@example.com",
+      paddle_customer_id: null,
+      created_at: "2026-08-16T00:00:00.000Z",
+      last_login_at: null,
+    });
+    const order: PaymentOrderRow = {
+      id: "ord_rt",
+      checkout_token_sha256: "sha_rt",
+      account_id: "act_rt",
+      provider: "alipay",
+      out_trade_no: "MCRT",
+      trade_no: null,
+      months: 3,
+      total_amount: "45.00",
+      status: "created",
+      created_at: "2026-08-16T00:00:00.000Z",
+      expires_at: "2026-08-16T00:20:00.000Z",
+      paid_at: null,
+      fulfilled_at: null,
+      closed_at: null,
+      refunded_at: null,
+      refund_request_no: null,
+      last_notify_id: null,
+      last_queried_at: null,
+    };
+    await db.insertPaymentOrder(order);
+    await db.updatePaymentOrder(order.id, {
+      status: "paid",
+      trade_no: "trade_rt",
+      paid_at: "2026-08-16T00:03:00.000Z",
+    });
+    expect(await db.getPaymentOrderById("ord_rt")).toMatchObject({
+      id: "ord_rt",
+      status: "paid",
+      trade_no: "trade_rt",
+    });
+    expect(
+      await db.compareAndSetPaymentOrder(
+        order.id,
+        { statuses: ["paid", "fulfilled"], refundRequestNo: null },
+        { refund_request_no: "RF_RT" },
+      ),
+    ).toBe(true);
+    expect(
+      await db.compareAndSetPaymentOrder(
+        order.id,
+        { statuses: ["paid"], refundRequestNo: null },
+        { status: "fulfilled", fulfilled_at: "2026-08-16T00:04:00.000Z" },
+      ),
+    ).toBe(false);
+    await db.insertPaymentOrder({
+      ...order,
+      id: "ord_query_rt",
+      checkout_token_sha256: "sha_query_rt",
+      out_trade_no: "MCQUERYRT",
+      trade_no: null,
+      status: "pending",
+      paid_at: null,
+      refund_request_no: null,
+    });
+    expect(
+      await db.claimPaymentOrderQuery(
+        "ord_query_rt",
+        "2026-08-16T00:04:00.000Z",
+        "2026-08-16T00:03:57.500Z",
+      ),
+    ).toBe(true);
+    expect(
+      await db.claimPaymentOrderQuery(
+        "ord_query_rt",
+        "2026-08-16T00:04:01.000Z",
+        "2026-08-16T00:03:58.500Z",
+      ),
+    ).toBe(false);
+    expect(
+      await db.claimPaymentOrderQuery(
+        "ord_query_rt",
+        "2026-08-16T00:04:03.000Z",
+        "2026-08-16T00:04:00.500Z",
+      ),
+    ).toBe(true);
+
+    const entitlement = {
+      id: "ent_rt",
+      account_id: "act_rt",
+      expires_at: "2026-11-16T00:03:00.000Z",
+      source: "alipay" as const,
+      paddle_transaction_id: null,
+      payment_provider: "alipay" as const,
+      payment_transaction_id: "MCRT",
+      refunded_at: null,
+      months: 3,
+      created_at: "2026-08-16T00:03:00.000Z",
+    };
+    expect(await db.insertEntitlement(entitlement)).toBe(true);
+    expect(await db.insertEntitlement({ ...entitlement, id: "ent_rt_2" })).toBe(false);
+    expect((await db.listEntitlements("act_rt"))[0]).toMatchObject({ id: "ent_rt" });
+    expect(
+      await db.markEntitlementRefunded(
+        "alipay",
+        "MCRT",
+        "2026-08-17T00:00:00.000Z",
+      ),
+    ).toBe(true);
+    expect((await db.listEntitlements("act_rt"))[0]?.refunded_at).toBe(
+      "2026-08-17T00:00:00.000Z",
+    );
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_rt",
+        invite_id: null,
+        account_id: "act_rt",
+        slug: "rt",
+        hostname: "rt.mediaryconnect.app",
+      }),
+    );
+    expect(await db.listActiveEndpointsForSweep()).toMatchObject([{ latestExpiry: null }]);
+  });
+
+  it("is D1-safe and documents migrate-before-deploy", () => {
+    expect(MIGRATION6_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION6_SQL).not.toMatch(/^\s*COMMIT\b/im);
+    expect(MIGRATION6_SQL).not.toMatch(/BEGIN\s+TRANSACTION/i);
+    expect(MIGRATION6_SQL).toContain("wrangler d1 execute");
+    expect(MIGRATION6_SQL).toMatch(/BEFORE/i);
+  });
+});
+
+describe("migration 0007 — Waffo payment orders", () => {
+  function migratedAlipayDb(): Sqlite {
+    const sqlite = new Database(":memory:");
+    sqlite.exec(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
+    sqlite.exec(MIGRATION6_SQL);
+    sqlite
+      .prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)")
+      .run("act_history", "history@example.com", "2026-08-24T00:00:00.000Z");
+    sqlite
+      .prepare(
+        `INSERT INTO payment_orders
+          (id,checkout_token_sha256,account_id,provider,out_trade_no,trade_no,months,total_amount,status,created_at,expires_at)
+         VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        "ord_history",
+        "sha_history",
+        "act_history",
+        "alipay",
+        "MC-HISTORY",
+        "ALI-HISTORY",
+        3,
+        "45.00",
+        "fulfilled",
+        "2026-08-24T00:00:00.000Z",
+        "2026-08-24T00:20:00.000Z",
+      );
+    return sqlite;
+  }
+
+  it("rebuilds the 0006 table, preserves historical rows and named indexes", () => {
+    const sqlite = migratedAlipayDb();
+    sqlite.exec(MIGRATION7_SQL);
+
+    expect(
+      sqlite
+        .prepare("SELECT provider,out_trade_no,trade_no,waffo_session_id,waffo_order_id FROM payment_orders")
+        .get(),
+    ).toEqual({
+      provider: "alipay",
+      out_trade_no: "MC-HISTORY",
+      trade_no: "ALI-HISTORY",
+      waffo_session_id: null,
+      waffo_order_id: null,
+    });
+    expect(indexNames(sqlite)).toEqual(
+      expect.arrayContaining(["idx_payment_orders_account_created", "idx_payment_orders_status"]),
+    );
+    const check = sqlite
+      .prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='payment_orders'")
+      .get() as { sql: string };
+    expect(check.sql).toMatch(/provider\s+TEXT\s+NOT NULL\s+CHECK\s*\(provider IN \('alipay', 'waffo'\)\)/i);
+  });
+
+  it("accepts a Waffo row and returns status-window reconciliation candidates", async () => {
+    const sqlite = migratedAlipayDb();
+    sqlite.exec(MIGRATION7_SQL);
+    const db = createD1ConnectDb(d1Over(sqlite));
+    const base: PaymentOrderRow = {
+      id: "ord_waffo_1",
+      checkout_token_sha256: "sha_waffo_1",
+      account_id: "act_history",
+      provider: "waffo",
+      out_trade_no: "MC-WAFFO-1",
+      trade_no: null,
+      waffo_session_id: "cs_waffo_1",
+      waffo_order_id: null,
+      months: 3,
+      total_amount: "45.00",
+      status: "created",
+      created_at: "2026-10-01T00:00:00.000Z",
+      expires_at: "2026-10-01T00:30:00.000Z",
+      paid_at: null,
+      fulfilled_at: null,
+      closed_at: null,
+      refunded_at: null,
+      refund_request_no: null,
+      last_notify_id: null,
+      last_queried_at: null,
+    };
+    await db.insertPaymentOrder(base);
+    await db.insertPaymentOrder({
+      ...base,
+      id: "ord_waffo_done",
+      checkout_token_sha256: "sha_waffo_done",
+      out_trade_no: "MC-WAFFO-DONE",
+      status: "fulfilled",
+      created_at: "2026-10-01T00:00:01.000Z",
+    });
+    await db.insertPaymentOrder({
+      ...base,
+      id: "ord_waffo_old",
+      checkout_token_sha256: "sha_waffo_old",
+      out_trade_no: "MC-WAFFO-OLD",
+      created_at: "2026-09-01T00:00:00.000Z",
+    });
+
+    expect(await db.getPaymentOrderById(base.id)).toMatchObject({
+      provider: "waffo",
+      waffo_session_id: "cs_waffo_1",
+      waffo_order_id: null,
+    });
+    expect(await db.listPaymentOrdersForReconciliation("waffo", {
+      unpaidSinceIso: "2026-09-15T00:00:00.000Z",
+      settledSinceIso: "2026-09-15T00:00:00.000Z",
+      limit: 10,
+    })).toEqual([
+      expect.objectContaining({ id: "ord_waffo_done", status: "fulfilled" }),
+      expect.objectContaining({ id: base.id, provider: "waffo" }),
+    ]);
+
+    // Rotation: never-queried rows first, then the least recently queried; the limit bounds one run.
+    await db.insertPaymentOrder({
+      ...base,
+      id: "ord_waffo_queried_late",
+      checkout_token_sha256: "sha_waffo_queried_late",
+      out_trade_no: "MC-WAFFO-QUERIED-LATE",
+      created_at: "2026-10-01T00:00:03.000Z",
+      last_queried_at: "2026-10-02T00:00:00.000Z",
+    });
+    await db.insertPaymentOrder({
+      ...base,
+      id: "ord_waffo_queried_early",
+      checkout_token_sha256: "sha_waffo_queried_early",
+      out_trade_no: "MC-WAFFO-QUERIED-EARLY",
+      created_at: "2026-10-01T00:00:02.000Z",
+      last_queried_at: "2026-10-01T12:00:00.000Z",
+    });
+    const window = { unpaidSinceIso: "2026-09-15T00:00:00.000Z", settledSinceIso: "2026-09-15T00:00:00.000Z" };
+    expect((await db.listPaymentOrdersForReconciliation("waffo", { ...window, limit: 10 })).map((row) => row.id)).toEqual([
+      "ord_waffo_done",
+      base.id,
+      "ord_waffo_queried_early",
+      "ord_waffo_queried_late",
+    ]);
+    expect((await db.listPaymentOrdersForReconciliation("waffo", { ...window, limit: 3 })).map((row) => row.id)).toEqual([
+      "ord_waffo_done",
+      base.id,
+      "ord_waffo_queried_early",
+    ]);
+  });
+
+  it("counts only one account at the inclusive checkout window boundary", async () => {
+    const sqlite = migratedAlipayDb();
+    sqlite.exec(MIGRATION7_SQL);
+    const db = createD1ConnectDb(d1Over(sqlite));
+    sqlite.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run("act_limit", "limit@example.com", "2026-10-01T00:00:00.000Z");
+    sqlite.prepare("INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)").run("act_other", "other@example.com", "2026-10-01T00:00:00.000Z");
+    const makeOrder = (id: string, accountId: string, createdAt: string): PaymentOrderRow => ({
+      id, checkout_token_sha256: `sha_${id}`, account_id: accountId, provider: "waffo",
+      out_trade_no: `MC_${id}`, trade_no: null, waffo_session_id: null, waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: createdAt,
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    });
+    for (let i = 0; i < 19; i += 1) {
+      await db.insertPaymentOrder(makeOrder(`ord_count_recent_${i}`, "act_limit", "2026-10-02T09:00:00.000Z"));
+    }
+    await db.insertPaymentOrder(makeOrder("ord_count_old", "act_limit", "2026-10-01T09:59:59.999Z"));
+    await db.insertPaymentOrder(makeOrder("ord_count_other", "act_other", "2026-10-02T09:00:00.000Z"));
+    const candidate: PaymentOrderRow = {
+      id: "ord_count_candidate", checkout_token_sha256: "sha_count_candidate", account_id: "act_limit", provider: "waffo",
+      out_trade_no: "MC_COUNT_CANDIDATE", trade_no: null, waffo_session_id: null, waffo_order_id: null,
+      months: 3, total_amount: "45.00", status: "created", created_at: "2026-10-02T10:00:00.000Z",
+      expires_at: "2026-10-02T10:30:00.000Z", paid_at: null, fulfilled_at: null, closed_at: null,
+      refunded_at: null, refund_request_no: null, last_notify_id: null, last_queried_at: null,
+    };
+    expect(await db.insertPaymentOrderWithinDailyLimit(candidate, { sinceIso: "2026-10-01T10:00:00.000Z", limit: 20 })).toBe(true);
+    const blocked = { ...candidate, id: "ord_count_blocked", checkout_token_sha256: "sha_count_blocked", out_trade_no: "MC_COUNT_BLOCKED" };
+    expect(await db.insertPaymentOrderWithinDailyLimit(blocked, { sinceIso: "2026-10-01T10:00:00.000Z", limit: 20 })).toBe(false);
+  });
+
+  it("is D1-safe and documents migrate-before-deploy", () => {
+    expect(MIGRATION7_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION7_SQL).not.toMatch(/^\s*COMMIT\b/im);
+    expect(MIGRATION7_SQL).not.toMatch(/BEGIN\s+TRANSACTION/i);
+    expect(MIGRATION7_SQL).toContain("ALTER TABLE payment_orders RENAME TO payment_orders_old");
+    expect(MIGRATION7_SQL).toContain("DROP TABLE payment_orders_old");
+  });
+});
+
+describe("migration 0008 — instance links", () => {
+  it("creates both instance-link tables and exactly their two indexes", () => {
+    const sqlite = freshDb(LEGACY_SCHEMA_SQL);
+    sqlite.sqlite.exec(MIGRATION_SQL);
+    sqlite.sqlite.exec(MIGRATION2_SQL);
+    sqlite.sqlite.exec(MIGRATION3_SQL);
+    sqlite.sqlite.exec(MIGRATION4_SQL);
+    sqlite.sqlite.exec(MIGRATION5_SQL);
+    sqlite.sqlite.exec(MIGRATION6_SQL);
+    sqlite.sqlite.exec(MIGRATION7_SQL);
+    sqlite.sqlite.exec(MIGRATION8_SQL);
+
+    const tables = (sqlite.sqlite.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name IN ('instance_link_requests','instance_credentials') ORDER BY name`,
+    ).all() as { name: string }[]).map((row) => row.name);
+    expect(tables).toEqual(["instance_credentials", "instance_link_requests"]);
+    expect(indexNames(sqlite.sqlite)).toEqual(
+      expect.arrayContaining([
+        "idx_instance_link_requests_expires",
+        "idx_instance_credentials_account",
+      ]),
+    );
+    // The daily retention delete walks the expiry index instead of scanning and sorting the table.
+    for (const db of [sqlite.sqlite, freshDb(SCHEMA_SQL).sqlite]) {
+      expect(
+        queryPlan(
+          db,
+          `SELECT id FROM instance_link_requests WHERE expires_at < ? ORDER BY expires_at ASC, id ASC LIMIT ?`,
+          "2026-10-01T00:00:00.000Z",
+          1000,
+        ),
+      ).toMatch(/USING (COVERING )?INDEX idx_instance_link_requests_expires/);
+    }
+    expect(MIGRATION8_SQL).toContain("link_request_id TEXT NOT NULL UNIQUE");
+    const credentialColumns = sqlite.sqlite
+      .prepare("PRAGMA table_info(instance_credentials)")
+      .all() as { name: string; notnull: number }[];
+    expect(credentialColumns.find((column) => column.name === "link_request_id")).toMatchObject({ notnull: 1 });
+    const uniqueCredentialIndexes = sqlite.sqlite
+      .prepare("PRAGMA index_list(instance_credentials)")
+      .all() as { name: string; unique: number }[];
+    expect(uniqueCredentialIndexes.some((index) => index.unique === 1)).toBe(true);
+    expect(MIGRATION8_SQL).not.toMatch(/^\s*BEGIN\b/im);
+    expect(MIGRATION8_SQL).not.toMatch(/^\s*COMMIT\b/im);
+  });
+
+  it("fresh schema.sql and the migration chain have the same instance-link shape", () => {
+    const migrated = freshDb(LEGACY_SCHEMA_SQL);
+    migrated.sqlite.exec(MIGRATION_SQL);
+    migrated.sqlite.exec(MIGRATION2_SQL);
+    migrated.sqlite.exec(MIGRATION3_SQL);
+    migrated.sqlite.exec(MIGRATION4_SQL);
+    migrated.sqlite.exec(MIGRATION5_SQL);
+    migrated.sqlite.exec(MIGRATION6_SQL);
+    migrated.sqlite.exec(MIGRATION7_SQL);
+    migrated.sqlite.exec(MIGRATION8_SQL);
+    const fresh = freshDb(SCHEMA_SQL).sqlite;
+    const columns = (sqlite: Sqlite, table: string): string[] =>
+      (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string; type: string; notnull: number }[])
+        .map((row) => `${row.name} ${row.type} notnull=${row.notnull}`);
+    expect(columns(migrated.sqlite, "instance_link_requests")).toEqual(
+      columns(fresh, "instance_link_requests"),
+    );
+    expect(columns(migrated.sqlite, "instance_credentials")).toEqual(
+      columns(fresh, "instance_credentials"),
+    );
+  });
+});
+
+describe("migration 0009 — endpoint revoke reason", () => {
+  function migratedTo0008(): Sqlite {
+    const sqlite = new Database(":memory:");
+    sqlite.exec(LEGACY_SCHEMA_SQL);
+    sqlite.exec(MIGRATION_SQL);
+    sqlite.exec(MIGRATION2_SQL);
+    sqlite.exec(MIGRATION3_SQL);
+    sqlite.exec(MIGRATION4_SQL);
+    sqlite.exec(MIGRATION5_SQL);
+    sqlite.exec(MIGRATION6_SQL);
+    sqlite.exec(MIGRATION7_SQL);
+    sqlite.exec(MIGRATION8_SQL);
+    return sqlite;
+  }
+
+  function columns(sqlite: Sqlite, table: string): string[] {
+    return (sqlite.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map(
+      (row) => row.name,
+    );
+  }
+
+  it("adds revoke_reason so a migrated database matches a fresh schema.sql", () => {
+    const migrated = migratedTo0008();
+    migrated.exec(MIGRATION9_SQL);
+    const fresh = freshDb(SCHEMA_SQL).sqlite;
+    expect(columns(migrated, "endpoints")).toEqual(columns(fresh, "endpoints"));
+    expect(columns(migrated, "endpoints")).toContain("revoke_reason");
+  });
+
+  it("backfills refunded only when revoked_at falls within 10 minutes after that order's refunded_at", () => {
+    const sqlite = migratedTo0008();
+    const refundedAt = "2026-10-03T05:14:43.963Z";
+    const insertAccount = sqlite.prepare(
+      "INSERT INTO accounts(id,email,created_at) VALUES(?,?,?)",
+    );
+    for (const id of ["act_close", "act_later", "act_before", "act_plain", "act_live", "act_failed"]) {
+      insertAccount.run(id, `${id}@example.com`, "2026-10-01T00:00:00.000Z");
+    }
+    const insertOrder = sqlite.prepare(
+      `INSERT INTO payment_orders
+        (id,checkout_token_sha256,account_id,provider,out_trade_no,trade_no,months,total_amount,status,created_at,expires_at,refunded_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    const order = (
+      id: string,
+      accountId: string,
+      status: string,
+      refunded: string | null,
+    ): void => {
+      insertOrder.run(
+        id, `sha_${id}`, accountId, "waffo", `MC_${id}`, null, 3, "45.00", status,
+        "2026-10-01T00:00:00.000Z", "2026-10-01T00:30:00.000Z", refunded,
+      );
+    };
+    order("ord_close", "act_close", "refunded", refundedAt);
+    order("ord_later", "act_later", "refunded", refundedAt);
+    order("ord_before", "act_before", "refunded", refundedAt);
+    order("ord_plain", "act_plain", "fulfilled", null);
+    order("ord_live", "act_live", "refunded", refundedAt);
+    order("ord_failed", "act_failed", "refunded", refundedAt);
+    const insertEp = sqlite.prepare(
+      `INSERT INTO endpoints(id,invite_id,slug,hostname,cf_tunnel_id,cf_dns_record_id,status,token_sha256,account_id,created_at,revoked_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
+    );
+    const ep = (
+      id: string,
+      accountId: string,
+      status: string,
+      revokedAt: string | null,
+    ): void => {
+      insertEp.run(
+        id, null, id, `${id}.mediaryconnect.app`, "tun", "dns", status, "sha", accountId,
+        "2026-10-01T00:00:00.000Z", revokedAt,
+      );
+    };
+    // 2s after the refund: the same request that recorded it (production gap was ~2s).
+    ep("ep_close", "act_close", "revoked", "2026-10-03T05:14:45.963Z");
+    // 3 days later: an admin/abuse revoke on an account that once had a refund.
+    ep("ep_later", "act_later", "revoked", "2026-10-06T05:14:43.963Z");
+    ep("ep_before", "act_before", "revoked", "2026-10-03T05:14:41.963Z");
+    ep("ep_plain", "act_plain", "revoked", "2026-10-03T05:14:45.963Z");
+    ep("ep_live", "act_live", "active", null);
+    // revoke_failed has no revoked_at, so the window cannot match.
+    ep("ep_failed", "act_failed", "revoke_failed", null);
+
+    sqlite.exec(MIGRATION9_SQL);
+
+    const reason = (id: string): string | null =>
+      (sqlite.prepare("SELECT revoke_reason FROM endpoints WHERE id = ?").get(id) as {
+        revoke_reason: string | null;
+      }).revoke_reason;
+    expect({
+      close: reason("ep_close"),
+      later: reason("ep_later"),
+      before: reason("ep_before"),
+      plain: reason("ep_plain"),
+      live: reason("ep_live"),
+      failed: reason("ep_failed"),
+    }).toEqual({
+      close: "refunded",
+      later: null,
+      before: null,
+      plain: null,
+      live: null,
+      failed: null,
+    });
+  });
+});
+
+describe("D1 revoke_reason — real SQLite", () => {
+  const at = "2026-07-24T03:00:00.000Z";
+
+  it("markEndpointRevoked records the reason, and markEndpointRevokeFailed too", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertEndpoint(postAccessEndpoint({ id: "ep_1", revoke_reason: null }));
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_2",
+        invite_id: "inv_2",
+        slug: "bob",
+        hostname: "bob.mediaryconnect.app",
+        revoke_reason: null,
+      }),
+    );
+    await db.markEndpointRevoked("ep_1", at, "expired");
+    const revoked = await db.getEndpointById("ep_1");
+    expect(revoked?.status).toBe("revoked");
+    expect(revoked?.revoked_at).toBe(at);
+    expect(revoked?.revoke_reason).toBe("expired");
+    await db.markEndpointRevokeFailed("ep_2", "refunded");
+    const failed = await db.getEndpointById("ep_2");
+    expect(failed?.status).toBe("revoke_failed");
+    expect(failed?.revoke_reason).toBe("refunded");
+  });
+
+  it("getRestorableEndpointByAccountId returns the account's newest row only when it was expired or refunded", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const seededAccounts = new Set<string>();
+    const seed = async (
+      id: string,
+      accountId: string,
+      slug: string,
+      status: EndpointRow["status"],
+      revokeReason: EndpointRow["revoke_reason"],
+      createdAt: string,
+    ): Promise<void> => {
+      if (!seededAccounts.has(accountId)) {
+        seededAccounts.add(accountId);
+        await db.insertAccount({
+          id: accountId,
+          email: `${accountId}@example.com`,
+          paddle_customer_id: null,
+          created_at: "2026-01-01T00:00:00.000Z",
+          last_login_at: null,
+        });
+      }
+      await db.insertEndpoint(
+        postAccessEndpoint({
+          id,
+          invite_id: null,
+          slug,
+          hostname: `${slug}.mediaryconnect.app`,
+          account_id: accountId,
+          status,
+          revoke_reason: revokeReason,
+          created_at: createdAt,
+        }),
+      );
+    };
+    await seed("ep_a_old", "act_a", "a-old", "revoked", "expired", "2026-01-01T00:00:00.000Z");
+    await seed("ep_a_new", "act_a", "a-new", "revoked", "admin", "2026-05-01T00:00:00.000Z");
+    await seed("ep_b", "act_b", "b-slug", "revoked", "expired", "2026-03-01T00:00:00.000Z");
+    await seed("ep_c", "act_c", "c-slug", "revoke_failed", "refunded", "2026-04-01T00:00:00.000Z");
+    await seed("ep_d", "act_d", "d-slug", "revoked", null, "2026-02-01T00:00:00.000Z");
+    await seed("ep_e_dead", "act_e", "e-dead", "revoked", "expired", "2026-01-15T00:00:00.000Z");
+    await seed("ep_e_live", "act_e", "e-live", "active", null, "2026-06-01T00:00:00.000Z");
+
+    expect(await db.getRestorableEndpointByAccountId("act_a")).toBeNull();
+    expect((await db.getRestorableEndpointByAccountId("act_b"))?.id).toBe("ep_b");
+    expect((await db.getRestorableEndpointByAccountId("act_c"))?.id).toBe("ep_c");
+    expect(await db.getRestorableEndpointByAccountId("act_d")).toBeNull();
+    expect(await db.getRestorableEndpointByAccountId("act_e")).toBeNull();
+  });
+
+  it("reactivateEndpoint flips only a revoked row of that account and clears the revoke fields", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    await db.insertAccount({
+      id: "act_1",
+      email: "act_1@example.com",
+      paddle_customer_id: null,
+      created_at: createdAt,
+      last_login_at: null,
+    });
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_1",
+        invite_id: null,
+        slug: "fam",
+        hostname: "fam.mediaryconnect.app",
+        account_id: "act_1",
+        status: "revoked",
+        revoke_reason: "expired",
+        revoked_at: "2026-06-01T00:00:00.000Z",
+        last_seen_at: "2026-05-01T00:00:00.000Z",
+        token_ciphertext: "cipher",
+        token_shown_at: "2026-04-01T00:00:00.000Z",
+        cf_access_app_id: "app_old",
+        cf_access_policy_id: "pol_old",
+        created_at: createdAt,
+      }),
+    );
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_1",
+        cfTunnelId: "t2",
+        cfDnsRecordId: "r2",
+        tokenSha256: "s2",
+      }),
+    ).toBe(true);
+    const row = await db.getEndpointById("ep_1");
+    expect(row).toMatchObject({
+      status: "active",
+      cf_tunnel_id: "t2",
+      cf_dns_record_id: "r2",
+      token_sha256: "s2",
+      revoked_at: null,
+      revoke_reason: null,
+      last_seen_at: null,
+      token_ciphertext: null,
+      token_shown_at: null,
+      cf_access_app_id: null,
+      cf_access_policy_id: null,
+      slug: "fam",
+      hostname: "fam.mediaryconnect.app",
+      created_at: createdAt,
+    });
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_1",
+        cfTunnelId: "t3",
+        cfDnsRecordId: "r3",
+        tokenSha256: "s3",
+      }),
+    ).toBe(false);
+    expect((await db.getEndpointById("ep_1"))?.cf_tunnel_id).toBe("t2");
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_1",
+        accountId: "act_other",
+        cfTunnelId: "t4",
+        cfDnsRecordId: "r4",
+        tokenSha256: "s4",
+      }),
+    ).toBe(false);
+    expect(
+      await db.reactivateEndpoint({
+        id: "missing",
+        accountId: "act_1",
+        cfTunnelId: "t5",
+        cfDnsRecordId: "r5",
+        tokenSha256: "s5",
+      }),
+    ).toBe(false);
+  });
+
+  it("reactivateEndpoint cannot create a second live row for the account", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    await db.insertAccount({
+      id: "act_1",
+      email: "act_1@example.com",
+      paddle_customer_id: null,
+      created_at: "2026-01-01T00:00:00.000Z",
+      last_login_at: null,
+    });
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_live",
+        invite_id: null,
+        slug: "live",
+        hostname: "live.mediaryconnect.app",
+        account_id: "act_1",
+        status: "active",
+        revoke_reason: null,
+      }),
+    );
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_dead",
+        invite_id: null,
+        slug: "dead",
+        hostname: "dead.mediaryconnect.app",
+        account_id: "act_1",
+        status: "revoked",
+        revoke_reason: "expired",
+      }),
+    );
+    expect(
+      await db.reactivateEndpoint({
+        id: "ep_dead",
+        accountId: "act_1",
+        cfTunnelId: "t2",
+        cfDnsRecordId: "r2",
+        tokenSha256: "s2",
+      }),
+    ).toBe(false);
+    expect((await db.getEndpointById("ep_dead"))?.status).toBe("revoked");
+  });
+
+  it("finishFailedRevoke flips only the captured revoke_failed row", async () => {
+    const { db } = freshDb(SCHEMA_SQL);
+    const at = "2026-10-04T00:00:00.000Z";
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_fail",
+        invite_id: null,
+        slug: "fail",
+        hostname: "fail.mediaryconnect.app",
+        status: "revoke_failed",
+        revoke_reason: "refunded",
+        revoked_at: null,
+        cf_tunnel_id: "t-old",
+      }),
+    );
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_live",
+        invite_id: null,
+        slug: "live",
+        hostname: "live.mediaryconnect.app",
+        status: "active",
+        revoke_reason: null,
+        cf_tunnel_id: "t-live",
+      }),
+    );
+    await db.insertEndpoint(
+      postAccessEndpoint({
+        id: "ep_dead",
+        invite_id: null,
+        slug: "dead",
+        hostname: "dead.mediaryconnect.app",
+        status: "revoked",
+        revoke_reason: "admin",
+        revoked_at: "2026-09-01T00:00:00.000Z",
+        cf_tunnel_id: "t-dead",
+      }),
+    );
+
+    expect(await db.finishFailedRevoke({ id: "ep_live", cfTunnelId: "t-live", at })).toBe(false);
+    expect((await db.getEndpointById("ep_live"))?.status).toBe("active");
+    expect(await db.finishFailedRevoke({ id: "ep_dead", cfTunnelId: "t-dead", at })).toBe(false);
+    expect((await db.getEndpointById("ep_dead"))?.revoke_reason).toBe("admin");
+    expect(await db.finishFailedRevoke({ id: "missing", cfTunnelId: "t-old", at })).toBe(false);
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-other", at })).toBe(false);
+    expect((await db.getEndpointById("ep_fail"))?.status).toBe("revoke_failed");
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-old", at })).toBe(true);
+    expect(await db.getEndpointById("ep_fail")).toMatchObject({
+      status: "revoked",
+      revoked_at: at,
+      revoke_reason: "refunded",
+      cf_tunnel_id: "t-old",
+    });
+    expect(await db.finishFailedRevoke({ id: "ep_fail", cfTunnelId: "t-old", at })).toBe(false);
+  });
+});

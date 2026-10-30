@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createMemoryConnectDb } from "../db.js";
-import { handleRequest } from "../routes.js";
+import { createMemoryConnectDb } from "../infra/db.js";
+import { handleRequest } from "../routes/routes.js";
 import { buyPage } from "./buy-page.js";
 
 describe("buyPage (Waffo checkout)", () => {

@@ -1,0 +1,2159 @@
+import type { PaymentOrderStatus } from "../billing/payment-order.js";
+
+export interface InviteRow {
+  id: string;
+  code: string;
+  invitee_label: string | null;
+  email: string;
+  slug: string | null;
+  status: "pending" | "provisioned" | "revoked";
+  created_at: string;
+  provisioned_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface EndpointRow {
+  id: string;
+  /** null since 0004:自助开通的行没有 invite;邀请制的行仍非空且 UNIQUE。 */
+  invite_id: string | null;
+  slug: string;
+  hostname: string;
+  cf_tunnel_id: string;
+  cf_access_app_id: string | null;
+  cf_access_policy_id: string | null;
+  cf_dns_record_id: string;
+  status: "active" | "revoked" | "revoke_failed";
+  token_sha256: string;
+  token_ciphertext: string | null;
+  token_shown_at: string | null;
+  last_seen_at: string | null;
+  created_at: string;
+  revoked_at: string | null;
+  // P3 (migration 0003): 付费账号关联 + 到期三阶段(决策 #14)。均可空:
+  // 内测邀请制的行 account_id 为 null;未进入到期流程的行三个时间戳为 null。
+  // 0004 起为必填字段(值仍可 null):读写路径都必须携带,否则 D1 写路径
+  // 静默丢列而内存 mock 整行展开——「内存绿生产坏」(spec 断点 #2)。
+  account_id: string | null;
+  grace_until: string | null;
+  suspended_at: string | null;
+  purge_after: string | null;
+  /** 0009: why it was taken down. Only 'expired' and 'refunded' may be restored by the owner. */
+  revoke_reason: RevokeReason | null;
+}
+
+/** Why an endpoint was taken down. 'admin' is never self-restorable. */
+export type RevokeReason = "expired" | "refunded" | "admin";
+
+/** P3: 付费账号。邮箱即身份;paddle_customer_id 内测手工开的为 null。 */
+export interface AccountRow {
+  id: string;
+  email: string;
+  paddle_customer_id: string | null;
+  created_at: string;
+  last_login_at: string | null;
+}
+
+/** P3: 预付时长账本。每次充值一行,expires_at 由业务层叠加计算后写入。 */
+export interface EntitlementRow {
+  id: string;
+  account_id: string;
+  expires_at: string;
+  source: "alipay" | "paddle" | "waffo" | "founding" | "manual" | "beta";
+  /** Historical Paddle-only field. New grants write null and use the pair below. */
+  paddle_transaction_id: string | null;
+  payment_provider: "alipay" | "paddle" | "waffo" | null;
+  payment_transaction_id: string | null;
+  /** Non-null rows remain auditable but no longer contribute usable time. */
+  refunded_at: string | null;
+  months: number;
+  created_at: string;
+}
+
+export interface PaymentOrderRow {
+  id: string;
+  checkout_token_sha256: string;
+  account_id: string;
+  /** Current checkout provider; historical rows retain their original provider. */
+  provider: "alipay" | "waffo";
+  out_trade_no: string;
+  trade_no: string | null;
+  /** Waffo checkout session and provider order ids; null for historical rows. */
+  waffo_session_id?: string | null;
+  waffo_order_id?: string | null;
+  months: 3 | 12 | 24;
+  total_amount: string;
+  status: PaymentOrderStatus;
+  created_at: string;
+  expires_at: string;
+  paid_at: string | null;
+  fulfilled_at: string | null;
+  closed_at: string | null;
+  refunded_at: string | null;
+  refund_request_no: string | null;
+  last_notify_id: string | null;
+  last_queried_at: string | null;
+}
+
+export type PaymentOrderPatch = Partial<
+  Pick<
+    PaymentOrderRow,
+    | "trade_no"
+    | "expires_at"
+    | "waffo_session_id"
+    | "waffo_order_id"
+    | "status"
+    | "paid_at"
+    | "fulfilled_at"
+    | "closed_at"
+    | "refunded_at"
+    | "refund_request_no"
+    | "last_notify_id"
+  >
+>;
+
+export interface PaymentOrderCondition {
+  /** At least one current status accepted by this compare-and-set. */
+  statuses?: readonly PaymentOrderStatus[];
+  /** undefined = do not compare; null = require no refund claim; string = require exact claim. */
+  refundRequestNo?: string | null;
+}
+
+export interface InstanceLinkRequestRow {
+  id: string;
+  poll_secret_sha256: string;
+  email: string;
+  verify_code: string;
+  status: "pending" | "approved" | "delivered";
+  account_id: string | null;
+  request_ip: string | null;
+  created_at: string;
+  expires_at: string;
+  approved_at: string | null;
+  delivered_at: string | null;
+  last_polled_at: string | null;
+}
+
+export interface InstanceCredentialRow {
+  id: string;
+  account_id: string;
+  credential_sha256: string;
+  link_request_id: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface PaymentOrderReconciliationOptions {
+  unpaidSinceIso: string;
+  settledSinceIso: string;
+  limit: number;
+}
+
+export interface AuditRow {
+  id: string;
+  at: string;
+  actor: string;
+  action: string;
+  invite_id: string | null;
+  endpoint_id: string | null;
+  detail_json: string | null;
+}
+
+export interface WaitlistRow {
+  id: string;
+  email: string;
+  batch: number;
+  status: string;
+  created_at: string;
+  /** Optional post-signup survey answers as a JSON string; null until answered. */
+  survey_json: string | null;
+}
+
+export interface InviteStatusPatch {
+  status: InviteRow["status"];
+  slug?: string | null;
+  provisioned_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface ConnectDb {
+  /** 限流:记一次命中并返回**含本次**在窗口内的命中数(见 rate-limit.ts)。 */
+  hitAndCount(bucket: string, key: string, at: string, windowStart: string): Promise<number>;
+  insertInvite(row: InviteRow): Promise<InviteRow>;
+  getInviteById(id: string): Promise<InviteRow | null>;
+  getInviteByCode(code: string): Promise<InviteRow | null>;
+  listInvites(): Promise<InviteRow[]>;
+  updateInviteStatus(id: string, patch: InviteStatusPatch): Promise<void>;
+  insertEndpoint(row: EndpointRow): Promise<EndpointRow>;
+  getEndpointById(id: string): Promise<EndpointRow | null>;
+  getEndpointByInviteId(inviteId: string): Promise<EndpointRow | null>;
+  /** 账号名下唯一的 active endpoint(P4/P5:取件码签发用)。 */
+  getActiveEndpointByAccountId(accountId: string): Promise<EndpointRow | null>;
+  /** Targeted existence check for the slug/hostname availability precheck. */
+  findEndpointBySlugOrHostname(slug: string, hostname: string): Promise<Pick<EndpointRow, "slug" | "hostname"> | null>;
+  listEndpoints(): Promise<EndpointRow[]>;
+  /** 仍占用 CF 隧道配额的 endpoint 数(容量闸门用)。
+   *
+   *  **计数语义是可卖不可卖的分界,改它前先读 capacity.test.ts:**
+   *  - `active` 计入(含宽限期/已停用但未删隧道——schema 注释明确这两种是
+   *    时间戳态,status 仍 'active',确实还占着隧道)
+   *  - `revoke_failed` **偏保守计入**:CF 侧删除失败,隧道可能还在。宁可少卖
+   *    (可人工核查),不可超卖(撞 CF 上限就是收了钱交不了货)
+   *  - `revoked` 不计入:隧道已删,不占配额 */
+  countLiveEndpoints(): Promise<number>;
+  /** cron 到期巡检的扫描面:status='active' 且挂了账号的 endpoint,
+   *  每行带上账号邮箱与该账号**最新**到期时刻(无付费则为 null)。
+   *  revoke_failed 不在此列 —— 它的隧道处置由 revoke 流程负责,不由到期负责。 */
+  listActiveEndpointsForSweep(): Promise<
+    {
+      endpointId: string;
+      accountId: string;
+      accountEmail: string;
+      hostname: string;
+      cfTunnelId: string;
+      cfDnsRecordId: string;
+      latestExpiry: string | null;
+    }[]
+  >;
+  /**
+   * Atomic burn: sets shown_at + nulls ciphertext only if not already burned.
+   * Returns true when THIS call performed the burn (won the race), false when
+   * the token was already shown/burned — callers use this for once-only reveal.
+   */
+  markEndpointRevoked(endpointId: string, at: string, reason: RevokeReason): Promise<void>;
+  markEndpointRevokeFailed(endpointId: string, reason: RevokeReason): Promise<void>;
+  /** The account's newest endpoint when it was taken down for expiry or a refund and the account
+   *  has no live endpoint now; otherwise null. Rows revoked by an admin are never restorable. */
+  getRestorableEndpointByAccountId(accountId: string): Promise<EndpointRow | null>;
+  /** Brings a revoked row back with a new tunnel. True only when THIS call flipped it. */
+  reactivateEndpoint(input: {
+    id: string;
+    accountId: string;
+    cfTunnelId: string;
+    cfDnsRecordId: string;
+    tokenSha256: string;
+  }): Promise<boolean>;
+  /** Finishes a failed revoke whose old Cloudflare resources were just deleted. Matches only the row
+   *  as captured (still revoke_failed with that old tunnel), so it never touches a row another request
+   *  has meanwhile restored. True when THIS call flipped it. */
+  finishFailedRevoke(input: { id: string; cfTunnelId: string; at: string }): Promise<boolean>;
+  /** Best-effort row removal for orphan compensation (no-op when absent). */
+  deleteEndpoint(endpointId: string): Promise<void>;
+  insertAudit(row: AuditRow): Promise<void>;
+  listAudits(): Promise<AuditRow[]>;
+  insertWaitlist(row: WaitlistRow): Promise<WaitlistRow>;
+  getWaitlistByEmail(email: string, batch: number): Promise<WaitlistRow | null>;
+  getWaitlistById(id: string): Promise<WaitlistRow | null>;
+  /**
+   * Stores the optional post-signup survey (a JSON string) on the row.
+   * UPDATE semantics: a nonexistent id is a silent no-op — the route is
+   * responsible for the 404 precheck.
+   */
+  updateWaitlistSurvey(id: string, surveyJson: string): Promise<void>;
+  countWaitlist(batch: number): Promise<number>;
+  /**
+   * 1-based queue position of the row identified by (`batch`, `createdAt`,
+   * `id`), counting every row that sorts at or before it under the composite
+   * order (created_at, id).
+   *
+   * Why composite: created_at is a whole-second ISO string, so same-second
+   * signups are routine. A `created_at <= ?` count gives every tied row the
+   * SAME position (measured: three rows sharing one timestamp all reported 3).
+   * `id` is the PRIMARY KEY, so (created_at, id) is unique and the rank is
+   * distinct and stable.
+   *
+   * The predicate is deliberately spelled `created_at <= ? AND (created_at < ?
+   * OR id <= ?)` instead of the equivalent `created_at < ? OR (created_at = ?
+   * AND id <= ?)`: only the former keeps the created_at range bound on
+   * idx_waitlist_batch_created. The OR-first form still "uses the index" but
+   * degrades to `(batch=?)`, walking the whole batch on an unauthenticated
+   * path. See the query-plan assertion in schema.test.ts.
+   */
+  waitlistRankOf(batch: number, createdAt: string, id: string): Promise<number>;
+  listWaitlist(batch: number): Promise<WaitlistRow[]>;
+  getEndpointByTokenSha256(sha256: string): Promise<EndpointRow | null>;
+  updateEndpointLastSeen(endpointId: string, lastSeenAt: string): Promise<void>;
+  // P3: accounts + entitlements
+  insertAccount(row: AccountRow): Promise<AccountRow>;
+  getAccountById(id: string): Promise<AccountRow | null>;
+  getAccountByEmail(email: string): Promise<AccountRow | null>;
+  updateAccountLastLogin(id: string, at: string): Promise<void>;
+  insertInstanceLinkRequest(row: InstanceLinkRequestRow): Promise<void>;
+  getInstanceLinkRequestById(id: string): Promise<InstanceLinkRequestRow | null>;
+  getInstanceLinkRequestByPollSecretSha(sha: string): Promise<InstanceLinkRequestRow | null>;
+  deleteInstanceLinkRequestsExpiredBefore(cutoffIso: string, limit: number): Promise<number>;
+  approveInstanceLinkRequest(id: string, accountId: string, nowIso: string): Promise<boolean>;
+  touchInstanceLinkPoll(id: string, nowIso: string): Promise<boolean>;
+  insertInstanceCredential(row: InstanceCredentialRow): Promise<void>;
+  deliverInstanceCredential(input: {
+    requestId: string;
+    credential: InstanceCredentialRow;
+    nowIso: string;
+  }): Promise<boolean>;
+  getActiveInstanceCredentialBySha(sha: string): Promise<InstanceCredentialRow | null>;
+  revokeInstanceCredential(id: string, nowIso: string): Promise<void>;
+  touchInstanceCredential(id: string, nowIso: string): Promise<void>;
+  // Durable payment state (historical Alipay rows and current Waffo rows).
+  insertPaymentOrder(row: PaymentOrderRow): Promise<PaymentOrderRow>;
+  getPaymentOrderById(id: string): Promise<PaymentOrderRow | null>;
+  getPaymentOrderByOutTradeNo(outTradeNo: string): Promise<PaymentOrderRow | null>;
+  insertPaymentOrderWithinDailyLimit(
+    row: PaymentOrderRow,
+    options: { sinceIso: string; limit: number },
+  ): Promise<boolean>;
+  /** Waffo reconciliation scan: recent orders that still need payment/refund compensation. */
+  listPaymentOrdersForReconciliation(
+    provider: PaymentOrderRow["provider"],
+    options: PaymentOrderReconciliationOptions,
+  ): Promise<PaymentOrderRow[]>;
+  updatePaymentOrder(id: string, patch: PaymentOrderPatch): Promise<void>;
+  /** Atomic conditional update used where fulfillment and refunds can race. */
+  compareAndSetPaymentOrder(
+    id: string,
+    expected: PaymentOrderCondition,
+    patch: PaymentOrderPatch,
+  ): Promise<boolean>;
+  /** Claims one short trade-query slot across Worker instances/tabs. */
+  claimPaymentOrderQuery(id: string, queriedAt: string, cutoff: string): Promise<boolean>;
+  /** 幂等插入时长记录。paddle_transaction_id 已存在时返回 false(不重复加时长)。 */
+  insertEntitlement(row: EntitlementRow): Promise<boolean>;
+  /** 修正某笔时长的 expires_at。
+   *
+   *  用于并发下的账本收敛:「读最新到期→加N月→写」在并发时会 lost update
+   *  (两笔都基于同一快照,用户付 24 个月只拿到 12)。写入后从整本账重算,
+   *  与快照不符就用这个方法修正。见 grant.ts 与 entitlement.ts:recomputeExpiry。 */
+  updateEntitlementExpiry(entitlementId: string, expiresAt: string): Promise<void>;
+  /** Tombstones one paid grant exactly once; false means absent/already refunded. */
+  markEntitlementRefunded(
+    provider: NonNullable<EntitlementRow["payment_provider"]>,
+    transactionId: string,
+    refundedAt: string,
+  ): Promise<boolean>;
+  listEntitlements(accountId: string): Promise<EntitlementRow[]>;
+}
+
+// Minimal ambient D1 types (intentionally not @cloudflare/workers-types).
+export interface D1PreparedStatement {
+  bind(...values: unknown[]): D1PreparedStatement;
+  first<T = unknown>(): Promise<T | null>;
+  all<T = unknown>(): Promise<{ results: T[] }>;
+  run(): Promise<unknown>;
+}
+
+export interface D1Database {
+  prepare(query: string): D1PreparedStatement;
+  /**
+   * 一次往返执行多条语句(D1 原生 API)。限流用它把 DELETE+INSERT+COUNT
+   * 合成 1 次往返;逐条 await 要 3 次,即每次发信多付 2 次 D1 RTT。
+   *
+   * **可选**:真实 D1 一定有,但测试里的窄 fake 只 stub `prepare`。
+   * 缺失时 hitAndCount 回退成逐条 await(行为一致,只是慢),
+   * 而不是强迫每个 fake 都实现一个它用不到的方法。
+   */
+  batch?(statements: D1PreparedStatement[]): Promise<Array<{ results?: unknown[]; meta?: { changes?: number } }>>;
+}
+
+type RawRow = Record<string, unknown>;
+
+function mapInvite(row: RawRow): InviteRow {
+  return {
+    id: row.id as string,
+    code: row.code as string,
+    invitee_label: row.invitee_label as string | null,
+    email: row.email as string,
+    slug: row.slug as string | null,
+    status: row.status as InviteRow["status"],
+    created_at: row.created_at as string,
+    provisioned_at: row.provisioned_at as string | null,
+    revoked_at: row.revoked_at as string | null,
+  };
+}
+
+function mapEndpoint(row: RawRow): EndpointRow {
+  return {
+    id: row.id as string,
+    invite_id: row.invite_id as string | null,
+    slug: row.slug as string,
+    hostname: row.hostname as string,
+    cf_tunnel_id: row.cf_tunnel_id as string,
+    cf_access_app_id: row.cf_access_app_id as string | null,
+    cf_access_policy_id: row.cf_access_policy_id as string | null,
+    cf_dns_record_id: row.cf_dns_record_id as string,
+    status: row.status as EndpointRow["status"],
+    token_sha256: row.token_sha256 as string,
+    token_ciphertext: row.token_ciphertext as string | null,
+    token_shown_at: row.token_shown_at as string | null,
+    last_seen_at: row.last_seen_at as string | null,
+    created_at: row.created_at as string,
+    revoked_at: row.revoked_at as string | null,
+    // ?? null:0003 之前建的行 SELECT * 不带这些列(undefined),归一为 null,
+    // 避免上游要区分「没有这列」与「值是 null」两种形态。
+    account_id: (row.account_id as string | null | undefined) ?? null,
+    grace_until: (row.grace_until as string | null | undefined) ?? null,
+    suspended_at: (row.suspended_at as string | null | undefined) ?? null,
+    purge_after: (row.purge_after as string | null | undefined) ?? null,
+    revoke_reason: (row.revoke_reason as EndpointRow["revoke_reason"] | undefined) ?? null,
+  };
+}
+
+function mapAudit(row: RawRow): AuditRow {
+  return {
+    id: row.id as string,
+    at: row.at as string,
+    actor: row.actor as string,
+    action: row.action as string,
+    invite_id: row.invite_id as string | null,
+    endpoint_id: row.endpoint_id as string | null,
+    detail_json: row.detail_json as string | null,
+  };
+}
+
+function mapWaitlist(row: RawRow): WaitlistRow {
+  return {
+    id: row.id as string,
+    email: row.email as string,
+    batch: row.batch as number,
+    status: row.status as string,
+    created_at: row.created_at as string,
+    // Coalesce, don't cast: against a pre-0002 schema (migration not yet run),
+    // SELECT * returns no survey_json column at all → `undefined`, which would
+    // break the `string | null` contract and silently vanish from JSON responses.
+    survey_json: (row.survey_json as string | null | undefined) ?? null,
+  };
+}
+
+function mapEntitlement(row: RawRow): EntitlementRow {
+  const paddleTransactionId = (row.paddle_transaction_id as string | null | undefined) ?? null;
+  return {
+    id: row.id as string,
+    account_id: row.account_id as string,
+    expires_at: row.expires_at as string,
+    source: row.source as EntitlementRow["source"],
+    paddle_transaction_id: paddleTransactionId,
+    payment_provider:
+      (row.payment_provider as EntitlementRow["payment_provider"] | undefined) ??
+      (paddleTransactionId === null ? null : "paddle"),
+    payment_transaction_id:
+      (row.payment_transaction_id as string | null | undefined) ?? paddleTransactionId,
+    refunded_at: (row.refunded_at as string | null | undefined) ?? null,
+    months: row.months as number,
+    created_at: row.created_at as string,
+  };
+}
+
+function mapPaymentOrder(row: RawRow): PaymentOrderRow {
+  return {
+    id: row.id as string,
+    checkout_token_sha256: row.checkout_token_sha256 as string,
+    account_id: row.account_id as string,
+    provider: row.provider as PaymentOrderRow["provider"],
+    out_trade_no: row.out_trade_no as string,
+    trade_no: row.trade_no as string | null,
+    waffo_session_id: (row.waffo_session_id as string | null | undefined) ?? null,
+    waffo_order_id: (row.waffo_order_id as string | null | undefined) ?? null,
+    months: row.months as PaymentOrderRow["months"],
+    total_amount: row.total_amount as string,
+    status: row.status as PaymentOrderStatus,
+    created_at: row.created_at as string,
+    expires_at: row.expires_at as string,
+    paid_at: row.paid_at as string | null,
+    fulfilled_at: row.fulfilled_at as string | null,
+    closed_at: row.closed_at as string | null,
+    refunded_at: row.refunded_at as string | null,
+    refund_request_no: row.refund_request_no as string | null,
+    last_notify_id: row.last_notify_id as string | null,
+    last_queried_at: row.last_queried_at as string | null,
+  };
+}
+
+function mapInstanceLinkRequest(row: RawRow): InstanceLinkRequestRow {
+  return {
+    id: row.id as string,
+    poll_secret_sha256: row.poll_secret_sha256 as string,
+    email: row.email as string,
+    verify_code: row.verify_code as string,
+    status: row.status as InstanceLinkRequestRow["status"],
+    account_id: row.account_id as string | null,
+    request_ip: row.request_ip as string | null,
+    created_at: row.created_at as string,
+    expires_at: row.expires_at as string,
+    approved_at: row.approved_at as string | null,
+    delivered_at: row.delivered_at as string | null,
+    last_polled_at: row.last_polled_at as string | null,
+  };
+}
+
+function mapInstanceCredential(row: RawRow): InstanceCredentialRow {
+  return {
+    id: row.id as string,
+    account_id: row.account_id as string,
+    credential_sha256: row.credential_sha256 as string,
+    link_request_id: row.link_request_id as string,
+    created_at: row.created_at as string,
+    last_used_at: row.last_used_at as string | null,
+    revoked_at: row.revoked_at as string | null,
+  };
+}
+
+export function createD1ConnectDb(d1: D1Database): ConnectDb {
+  return {
+    async insertInvite(row) {
+      await d1
+        .prepare(
+          `INSERT INTO invites (id, code, invitee_label, email, slug, status, created_at, provisioned_at, revoked_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.code,
+          row.invitee_label,
+          row.email,
+          row.slug,
+          row.status,
+          row.created_at,
+          row.provisioned_at,
+          row.revoked_at,
+        )
+        .run();
+      return { ...row };
+    },
+
+    async getInviteById(id) {
+      const row = await d1
+        .prepare(`SELECT * FROM invites WHERE id = ?`)
+        .bind(id)
+        .first<RawRow>();
+      return row === null ? null : mapInvite(row);
+    },
+
+    async getInviteByCode(code) {
+      const row = await d1
+        .prepare(`SELECT * FROM invites WHERE code = ?`)
+        .bind(code)
+        .first<RawRow>();
+      return row === null ? null : mapInvite(row);
+    },
+
+    async listInvites() {
+      const { results } = await d1
+        .prepare(`SELECT * FROM invites ORDER BY created_at DESC, id DESC`)
+        .all<RawRow>();
+      return results.map(mapInvite);
+    },
+
+    async updateInviteStatus(id, patch) {
+      const sets: string[] = ["status = ?"];
+      const values: unknown[] = [patch.status];
+      if (patch.slug !== undefined) {
+        sets.push("slug = ?");
+        values.push(patch.slug);
+      }
+      if (patch.provisioned_at !== undefined) {
+        sets.push("provisioned_at = ?");
+        values.push(patch.provisioned_at);
+      }
+      if (patch.revoked_at !== undefined) {
+        sets.push("revoked_at = ?");
+        values.push(patch.revoked_at);
+      }
+      values.push(id);
+      await d1
+        .prepare(`UPDATE invites SET ${sets.join(", ")} WHERE id = ?`)
+        .bind(...values)
+        .run();
+    },
+
+    async insertEndpoint(row) {
+      // 四个 0003 列必须在列清单里:漏掉的话 D1 静默丢值而内存 mock 整行
+      // 展开,测试绿、生产 account_id 丢失(spec 断点 #2 的「内存绿生产坏」)。
+      await d1
+        .prepare(
+          `INSERT INTO endpoints (id, invite_id, slug, hostname, cf_tunnel_id, cf_access_app_id, cf_access_policy_id, cf_dns_record_id, status, token_sha256, token_ciphertext, token_shown_at, last_seen_at, created_at, revoked_at, account_id, grace_until, suspended_at, purge_after, revoke_reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.invite_id,
+          row.slug,
+          row.hostname,
+          row.cf_tunnel_id,
+          row.cf_access_app_id,
+          row.cf_access_policy_id,
+          row.cf_dns_record_id,
+          row.status,
+          row.token_sha256,
+          row.token_ciphertext,
+          row.token_shown_at,
+          row.last_seen_at,
+          row.created_at,
+          row.revoked_at,
+          row.account_id,
+          row.grace_until,
+          row.suspended_at,
+          row.purge_after,
+          row.revoke_reason,
+        )
+        .run();
+      return { ...row };
+    },
+
+    async getEndpointById(id) {
+      const row = await d1
+        .prepare(`SELECT * FROM endpoints WHERE id = ?`)
+        .bind(id)
+        .first<RawRow>();
+      return row === null ? null : mapEndpoint(row);
+    },
+
+    async getEndpointByInviteId(inviteId) {
+      const row = await d1
+        .prepare(`SELECT * FROM endpoints WHERE invite_id = ?`)
+        .bind(inviteId)
+        .first<RawRow>();
+      return row === null ? null : mapEndpoint(row);
+    },
+
+    async getActiveEndpointByAccountId(accountId) {
+      // ORDER BY 保证多 active 行时确定性(schema 不阻止一账号多 endpoint;
+      // 无 ORDER BY 时 SQLite 返回任意行,取件码签发会不确定)。取最早建的。
+      const row = await d1
+        .prepare(
+          `SELECT * FROM endpoints WHERE account_id = ? AND status = 'active' ORDER BY created_at ASC, id ASC LIMIT 1`,
+        )
+        .bind(accountId)
+        .first<RawRow>();
+      return row === null ? null : mapEndpoint(row);
+    },
+
+    async findEndpointBySlugOrHostname(slug, hostname) {
+      const row = await d1
+        .prepare(`SELECT slug, hostname FROM endpoints WHERE slug = ? OR hostname = ? LIMIT 1`)
+        .bind(slug, hostname)
+        .first<RawRow>();
+      return row === null
+        ? null
+        : { slug: row.slug as string, hostname: row.hostname as string };
+    },
+
+    async listEndpoints() {
+      const { results } = await d1
+        .prepare(`SELECT * FROM endpoints ORDER BY created_at DESC, id DESC`)
+        .all<RawRow>();
+      return results.map(mapEndpoint);
+    },
+
+    async listActiveEndpointsForSweep() {
+      // 子查询取每账号最新到期 —— 而不是 join 出多行再在 JS 里取 max,
+      // 那样会随 entitlement 数量放大行数。
+      const { results } = await d1
+        .prepare(
+          `SELECT e.id AS endpointId, e.account_id AS accountId, a.email AS accountEmail,
+                  e.hostname AS hostname, e.cf_tunnel_id AS cfTunnelId,
+                  e.cf_dns_record_id AS cfDnsRecordId,
+                  (SELECT MAX(en.expires_at) FROM entitlements en
+                    WHERE en.account_id = e.account_id AND en.refunded_at IS NULL) AS latestExpiry
+             FROM endpoints e
+             JOIN accounts a ON a.id = e.account_id
+            WHERE e.status = 'active' AND e.account_id IS NOT NULL`,
+        )
+        .all<{
+          endpointId: string;
+          accountId: string;
+          accountEmail: string;
+          hostname: string;
+          cfTunnelId: string;
+          cfDnsRecordId: string;
+          latestExpiry: string | null;
+        }>();
+      return results;
+    },
+
+    async countLiveEndpoints() {
+      // 只数仍占 CF 配额的状态(见接口注释)。用 IN 而非 != 'revoked':
+      // 将来新增 status 值时,默认**不**计入比默认计入更安全——漏计会超卖,
+      // 而多计只是少卖。显式白名单让新状态必须主动决定归属。
+      const row = await d1
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM endpoints WHERE status IN ('active', 'revoke_failed')`,
+        )
+        .first<{ cnt: number }>();
+      return row?.cnt ?? 0;
+    },
+
+    async markEndpointRevoked(endpointId, at, reason) {
+      await d1
+        .prepare(`UPDATE endpoints SET status = 'revoked', revoked_at = ?, revoke_reason = ? WHERE id = ?`)
+        .bind(at, reason, endpointId)
+        .run();
+    },
+
+    async markEndpointRevokeFailed(endpointId, reason) {
+      await d1
+        .prepare(`UPDATE endpoints SET status = 'revoke_failed', revoke_reason = ? WHERE id = ?`)
+        .bind(reason, endpointId)
+        .run();
+    },
+
+    async getRestorableEndpointByAccountId(accountId) {
+      const live = await d1
+        .prepare(`SELECT 1 AS x FROM endpoints WHERE account_id = ? AND status = 'active' LIMIT 1`)
+        .bind(accountId)
+        .first<RawRow>();
+      if (live !== null) return null;
+      const row = await d1
+        .prepare(`SELECT * FROM endpoints WHERE account_id = ? ORDER BY created_at DESC, id DESC LIMIT 1`)
+        .bind(accountId)
+        .first<RawRow>();
+      if (row === null) return null;
+      const endpoint = mapEndpoint(row);
+      const restorable =
+        (endpoint.status === "revoked" || endpoint.status === "revoke_failed") &&
+        (endpoint.revoke_reason === "expired" || endpoint.revoke_reason === "refunded");
+      return restorable ? endpoint : null;
+    },
+
+    async reactivateEndpoint(input) {
+      try {
+        const result = (await d1
+          .prepare(
+            `UPDATE endpoints
+                SET status = 'active', cf_tunnel_id = ?, cf_dns_record_id = ?, token_sha256 = ?,
+                    cf_access_app_id = NULL, cf_access_policy_id = NULL, token_ciphertext = NULL,
+                    token_shown_at = NULL, last_seen_at = NULL, revoked_at = NULL, revoke_reason = NULL
+              WHERE id = ? AND account_id = ? AND status = 'revoked'`,
+          )
+          .bind(input.cfTunnelId, input.cfDnsRecordId, input.tokenSha256, input.id, input.accountId)
+          .run()) as { meta?: { changes?: number } };
+        return (result.meta?.changes ?? 0) === 1;
+      } catch (e) {
+        // idx_endpoints_account_live: another live row of this account appeared meanwhile.
+        if (e instanceof Error && e.message.includes("UNIQUE constraint failed")) return false;
+        throw e;
+      }
+    },
+
+    async finishFailedRevoke(input) {
+      const result = (await d1
+        .prepare(
+          `UPDATE endpoints SET status = 'revoked', revoked_at = ?
+            WHERE id = ? AND status = 'revoke_failed' AND cf_tunnel_id = ?`,
+        )
+        .bind(input.at, input.id, input.cfTunnelId)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) === 1;
+    },
+
+    async deleteEndpoint(endpointId) {
+      await d1
+        .prepare(`DELETE FROM endpoints WHERE id = ?`)
+        .bind(endpointId)
+        .run();
+    },
+
+    async insertAudit(row) {
+      await d1
+        .prepare(
+          `INSERT INTO audit_events (id, at, actor, action, invite_id, endpoint_id, detail_json)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(row.id, row.at, row.actor, row.action, row.invite_id, row.endpoint_id, row.detail_json)
+        .run();
+    },
+
+    async listAudits() {
+      const { results } = await d1
+        .prepare(`SELECT * FROM audit_events ORDER BY at DESC, id DESC`)
+        .all<RawRow>();
+      return results.map(mapAudit);
+    },
+
+    async insertWaitlist(row) {
+      try {
+        await d1
+          .prepare(
+            `INSERT INTO waitlist (id, email, batch, status, created_at, survey_json)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(row.id, row.email, row.batch, row.status, row.created_at, row.survey_json)
+          .run();
+      } catch (e) {
+        // Migration-window fallback: if the worker got deployed BEFORE
+        // migrations/0002-waitlist-survey.sql ran, the column doesn't exist and
+        // every signup would 500 — a public-funnel outage caused by deploy order.
+        // Degrade to the legacy column list instead (survey silently off until
+        // the migration runs). Match BOTH phrasings of the missing-column error:
+        // "no such column: x" and "no column named x" — the exact wording varies
+        // across SQLite/D1 versions, and a too-narrow match would silently
+        // disable the fallback in exactly the window it exists for.
+        // Only schema-mismatch errors fall back — UNIQUE violations and real
+        // outages must propagate unchanged.
+        const msg = e instanceof Error ? e.message : "";
+        const isMissingColumn =
+          msg.includes("survey_json") &&
+          (msg.includes("no such column") || msg.includes("no column named"));
+        if (!isMissingColumn) {
+          throw e;
+        }
+        await d1
+          .prepare(
+            `INSERT INTO waitlist (id, email, batch, status, created_at)
+             VALUES (?, ?, ?, ?, ?)`,
+          )
+          .bind(row.id, row.email, row.batch, row.status, row.created_at)
+          .run();
+      }
+      return row;
+    },
+
+    async hitAndCount(bucket, key, at, windowStart) {
+      // 三条语句(DELETE 过期 → INSERT 本次 → COUNT)用 batch 合成一次往返
+      // (D1 不接受显式事务)。COUNT 在 INSERT 之后,所以返回值**含本次**。
+      //
+      // 顺手删过期行:限流表只在乎窗口内的数据,不清理会无限增长。
+      // 只删**本 bucket+key** 的过期行 —— 全表清理要扫全表,而这里
+      // 每次请求都会跑,代价必须是常数级(有 idx_rate_limits_lookup 覆盖)。
+      const id = `rl_${crypto.randomUUID()}`;
+      const del = d1
+        .prepare(`DELETE FROM rate_limits WHERE bucket = ? AND key = ? AND at <= ?`)
+        .bind(bucket, key, windowStart);
+      const ins = d1
+        .prepare(`INSERT INTO rate_limits(id,bucket,key,at) VALUES(?,?,?,?)`)
+        .bind(id, bucket, key, at);
+      const cnt = d1
+        .prepare(`SELECT COUNT(*) AS cnt FROM rate_limits WHERE bucket = ? AND key = ? AND at > ?`)
+        .bind(bucket, key, windowStart);
+      if (typeof d1.batch === "function") {
+        const results = await d1.batch([del, ins, cnt]);
+        const last = results[results.length - 1];
+        const row = (last?.results?.[0] ?? null) as { cnt?: number } | null;
+        return typeof row?.cnt === "number" ? row.cnt : 0;
+      }
+      // 回退:逐条执行。顺序与 batch 一致(先删过期、再写、最后数)。
+      await del.run();
+      await ins.run();
+      const row = await cnt.first<{ cnt?: number }>();
+      return typeof row?.cnt === "number" ? row.cnt : 0;
+    },
+
+    async getWaitlistByEmail(email, batch) {
+      const row = await d1
+        .prepare(`SELECT * FROM waitlist WHERE email = ? AND batch = ?`)
+        .bind(email, batch)
+        .first<RawRow>();
+      return row ? mapWaitlist(row) : null;
+    },
+
+    async getWaitlistById(id) {
+      const row = await d1
+        .prepare(`SELECT * FROM waitlist WHERE id = ?`)
+        .bind(id)
+        .first<RawRow>();
+      return row ? mapWaitlist(row) : null;
+    },
+
+    async updateWaitlistSurvey(id, surveyJson) {
+      await d1
+        .prepare(`UPDATE waitlist SET survey_json = ? WHERE id = ?`)
+        .bind(surveyJson, id)
+        .run();
+    },
+
+    async countWaitlist(batch) {
+      const row = await d1
+        .prepare(`SELECT COUNT(*) as cnt FROM waitlist WHERE batch = ?`)
+        .bind(batch)
+        .first<{ cnt: number }>();
+      return row?.cnt ?? 0;
+    },
+
+    async waitlistRankOf(batch, createdAt, id) {
+      // Intentionally status-agnostic: every row in the batch is counted,
+      // whatever its `status`. Safe only because 'pending' is the sole value
+      // that exists today (routes.ts writes it, schema.sql defaults to it,
+      // nothing reads the column). Adding a `status = 'pending'` predicate now
+      // would be a provable no-op. If a second status is ever introduced, this
+      // and the in-memory twin below must change TOGETHER; the TRIPWIRE tests
+      // in schema.test.ts and db.test.ts fail loudly if they do not.
+      const row = await d1
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM waitlist
+             WHERE batch = ? AND created_at <= ? AND (created_at < ? OR id <= ?)`,
+        )
+        .bind(batch, createdAt, createdAt, id)
+        .first<{ cnt: number }>();
+      return row?.cnt ?? 0;
+    },
+
+    async listWaitlist(batch) {
+      // (created_at, id) — the SAME composite order waitlistRankOf counts
+      // under. created_at alone is not a total order (whole-second ISO
+      // strings), so ties came back in arbitrary/physical order and the row
+      // listed first could report a different position: measured wl_c wl_a
+      // wl_b here against wl_a=1 wl_b=2 wl_c=3 from the rank query. `id` is
+      // the PRIMARY KEY, so the composite is unique and the queue is total.
+      const { results } = await d1
+        .prepare(`SELECT * FROM waitlist WHERE batch = ? ORDER BY created_at ASC, id ASC`)
+        .bind(batch)
+        .all<RawRow>();
+      return results.map(mapWaitlist);
+    },
+
+    async getEndpointByTokenSha256(sha256) {
+      const row = await d1
+        .prepare(`SELECT * FROM endpoints WHERE token_sha256 = ?`)
+        .bind(sha256)
+        .first<RawRow>();
+      return row ? mapEndpoint(row) : null;
+    },
+
+    async updateEndpointLastSeen(endpointId, lastSeenAt) {
+      await d1
+        .prepare(`UPDATE endpoints SET last_seen_at = ? WHERE id = ?`)
+        .bind(lastSeenAt, endpointId)
+        .run();
+    },
+
+    async insertAccount(row) {
+      await d1
+        .prepare(
+          `INSERT INTO accounts (id, email, paddle_customer_id, created_at, last_login_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .bind(row.id, row.email, row.paddle_customer_id, row.created_at, row.last_login_at)
+        .run();
+      return { ...row };
+    },
+
+    async getAccountById(id) {
+      const row = await d1.prepare(`SELECT * FROM accounts WHERE id = ?`).bind(id).first<AccountRow>();
+      return row === null ? null : row;
+    },
+
+    async getAccountByEmail(email) {
+      const row = await d1
+        .prepare(`SELECT * FROM accounts WHERE email = ?`)
+        .bind(email)
+        .first<AccountRow>();
+      return row === null ? null : row;
+    },
+
+    async updateAccountLastLogin(id, at) {
+      await d1.prepare(`UPDATE accounts SET last_login_at = ? WHERE id = ?`).bind(at, id).run();
+    },
+
+    async insertInstanceLinkRequest(row) {
+      await d1
+        .prepare(
+          `INSERT INTO instance_link_requests
+             (id, poll_secret_sha256, email, verify_code, status, account_id, request_ip,
+              created_at, expires_at, approved_at, delivered_at, last_polled_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.poll_secret_sha256,
+          row.email,
+          row.verify_code,
+          row.status,
+          row.account_id,
+          row.request_ip,
+          row.created_at,
+          row.expires_at,
+          row.approved_at,
+          row.delivered_at,
+          row.last_polled_at,
+        )
+        .run();
+    },
+
+    async getInstanceLinkRequestById(id) {
+      const row = await d1
+        .prepare(`SELECT * FROM instance_link_requests WHERE id = ?`)
+        .bind(id)
+        .first<RawRow>();
+      return row === null ? null : mapInstanceLinkRequest(row);
+    },
+
+    async getInstanceLinkRequestByPollSecretSha(sha) {
+      const row = await d1
+        .prepare(`SELECT * FROM instance_link_requests WHERE poll_secret_sha256 = ?`)
+        .bind(sha)
+        .first<RawRow>();
+      return row === null ? null : mapInstanceLinkRequest(row);
+    },
+
+    async deleteInstanceLinkRequestsExpiredBefore(cutoffIso, limit) {
+      if (limit <= 0) return 0;
+      const result = (await d1
+        .prepare(
+          `DELETE FROM instance_link_requests
+            WHERE id IN (
+              SELECT id FROM instance_link_requests
+               WHERE expires_at < ?
+               ORDER BY expires_at ASC, id ASC
+               LIMIT ?
+            )`,
+        )
+        .bind(cutoffIso, limit)
+        .run()) as { meta?: { changes?: number } };
+      return result.meta?.changes ?? 0;
+    },
+
+    async approveInstanceLinkRequest(id, accountId, nowIso) {
+      const result = (await d1
+        .prepare(
+          `UPDATE instance_link_requests
+              SET status = 'approved', account_id = ?, approved_at = ?
+            WHERE id = ? AND status = 'pending' AND expires_at > ?`,
+        )
+        .bind(accountId, nowIso, id, nowIso)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
+    },
+
+    async touchInstanceLinkPoll(id, nowIso) {
+      const cutoff = new Date(Date.parse(nowIso) - 2_000).toISOString();
+      const result = (await d1
+        .prepare(
+          `UPDATE instance_link_requests
+              SET last_polled_at = ?
+            WHERE id = ? AND status = 'pending'
+              AND (last_polled_at IS NULL OR last_polled_at <= ?)`,
+        )
+        .bind(nowIso, id, cutoff)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
+    },
+
+    async insertInstanceCredential(row) {
+      await d1
+        .prepare(
+          `INSERT INTO instance_credentials
+             (id, account_id, credential_sha256, link_request_id, created_at, last_used_at, revoked_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.account_id,
+          row.credential_sha256,
+          row.link_request_id,
+          row.created_at,
+          row.last_used_at,
+          row.revoked_at,
+        )
+        .run();
+    },
+
+    async deliverInstanceCredential({ requestId, credential, nowIso }) {
+      if (credential.link_request_id !== requestId) return false;
+      if (typeof d1.batch !== "function") {
+        throw new Error("D1 batch is required for instance credential delivery");
+      }
+      const insert = d1
+        .prepare(
+          `INSERT INTO instance_credentials
+             (id, account_id, credential_sha256, link_request_id, created_at, last_used_at, revoked_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?
+             WHERE EXISTS (
+               SELECT 1 FROM instance_link_requests
+                WHERE id = ? AND account_id = ? AND status = 'approved'
+             )`,
+        )
+        .bind(
+          credential.id,
+          credential.account_id,
+          credential.credential_sha256,
+          credential.link_request_id,
+          credential.created_at,
+          credential.last_used_at,
+          credential.revoked_at,
+          requestId,
+          credential.account_id,
+        );
+      const markDelivered = d1
+        .prepare(
+          `UPDATE instance_link_requests
+              SET status = 'delivered', delivered_at = ?
+            WHERE id = ? AND status = 'approved'`,
+        )
+        .bind(nowIso, requestId);
+      // Keep the credential this batch inserted, not the newest by created_at: a slower poll can
+      // commit after a faster one with an earlier clock read, and must not hand out a credential
+      // its own batch just revoked. The last delivery to commit wins; the instance holding the
+      // other one sees 401 on its next call and links again. Rotate only when this batch's insert
+      // happened (the id is fresh, so the row exists only then): a losing poll of the same request
+      // must not revoke what the winner already handed out.
+      const rotate = d1
+        .prepare(
+          `UPDATE instance_credentials SET revoked_at = ?
+            WHERE account_id = ? AND revoked_at IS NULL
+              AND id <> ?
+              AND EXISTS (
+                SELECT 1 FROM instance_credentials
+                 WHERE id = ? AND link_request_id = ?
+              )`,
+        )
+        .bind(nowIso, credential.account_id, credential.id, credential.id, requestId);
+      try {
+        const results = await d1.batch([insert, markDelivered, rotate]);
+        const marked = (results[1] as { meta?: { changes?: number } } | undefined)?.meta?.changes;
+        return marked === 1;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (/UNIQUE constraint failed/i.test(message) && /link_request_id/i.test(message)) {
+          return false;
+        }
+        throw error;
+      }
+    },
+
+    async getActiveInstanceCredentialBySha(sha) {
+      const row = await d1
+        .prepare(
+          `SELECT * FROM instance_credentials
+            WHERE credential_sha256 = ? AND revoked_at IS NULL`,
+        )
+        .bind(sha)
+        .first<RawRow>();
+      return row === null ? null : mapInstanceCredential(row);
+    },
+
+    async revokeInstanceCredential(id, nowIso) {
+      await d1
+        .prepare(
+          `UPDATE instance_credentials SET revoked_at = ?
+            WHERE id = ? AND revoked_at IS NULL`,
+        )
+        .bind(nowIso, id)
+        .run();
+    },
+
+    async touchInstanceCredential(id, nowIso) {
+      await d1
+        .prepare(`UPDATE instance_credentials SET last_used_at = ? WHERE id = ? AND revoked_at IS NULL`)
+        .bind(nowIso, id)
+        .run();
+    },
+
+    async insertPaymentOrder(row) {
+      await d1
+        .prepare(
+          `INSERT INTO payment_orders
+             (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
+              waffo_session_id, waffo_order_id, months, total_amount, status, created_at, expires_at, paid_at, fulfilled_at,
+              closed_at, refunded_at, refund_request_no, last_notify_id, last_queried_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          row.id,
+          row.checkout_token_sha256,
+          row.account_id,
+          row.provider,
+          row.out_trade_no,
+          row.trade_no,
+          row.waffo_session_id ?? null,
+          row.waffo_order_id ?? null,
+          row.months,
+          row.total_amount,
+          row.status,
+          row.created_at,
+          row.expires_at,
+          row.paid_at,
+          row.fulfilled_at,
+          row.closed_at,
+          row.refunded_at,
+          row.refund_request_no,
+          row.last_notify_id,
+          row.last_queried_at,
+        )
+        .run();
+      return { ...row };
+    },
+
+    async getPaymentOrderById(id) {
+      const row = await d1.prepare(`SELECT * FROM payment_orders WHERE id = ?`).bind(id).first<RawRow>();
+      return row === null ? null : mapPaymentOrder(row);
+    },
+
+    async getPaymentOrderByOutTradeNo(outTradeNo) {
+      const row = await d1
+        .prepare(`SELECT * FROM payment_orders WHERE out_trade_no = ?`)
+        .bind(outTradeNo)
+        .first<RawRow>();
+      return row === null ? null : mapPaymentOrder(row);
+    },
+
+    async insertPaymentOrderWithinDailyLimit(row, options) {
+      const result = (await d1
+        .prepare(
+          `INSERT INTO payment_orders
+             (id, checkout_token_sha256, account_id, provider, out_trade_no, trade_no,
+              waffo_session_id, waffo_order_id, months, total_amount, status, created_at, expires_at, paid_at, fulfilled_at,
+              closed_at, refunded_at, refund_request_no, last_notify_id, last_queried_at)
+           SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            WHERE (SELECT COUNT(*) FROM payment_orders WHERE account_id = ? AND created_at >= ?) < ?`,
+        )
+        .bind(
+          row.id,
+          row.checkout_token_sha256,
+          row.account_id,
+          row.provider,
+          row.out_trade_no,
+          row.trade_no,
+          row.waffo_session_id ?? null,
+          row.waffo_order_id ?? null,
+          row.months,
+          row.total_amount,
+          row.status,
+          row.created_at,
+          row.expires_at,
+          row.paid_at,
+          row.fulfilled_at,
+          row.closed_at,
+          row.refunded_at,
+          row.refund_request_no,
+          row.last_notify_id,
+          row.last_queried_at,
+          row.account_id,
+          options.sinceIso,
+          options.limit,
+        )
+        .run()) as { meta?: { changes?: number } };
+      return result.meta?.changes === 1;
+    },
+
+    async listPaymentOrdersForReconciliation(provider, options) {
+      const rows = await d1
+        .prepare(
+          `SELECT * FROM payment_orders
+             WHERE provider = ?
+               AND status NOT IN ('refunded', 'closed')
+               AND (
+                 (status IN ('created', 'form_issued', 'pending') AND created_at >= ?)
+                 OR (status IN ('paid', 'fulfilled') AND created_at >= ?)
+               )
+             ORDER BY
+               CASE WHEN last_queried_at IS NULL THEN 0 ELSE 1 END ASC,
+               last_queried_at ASC,
+               created_at DESC,
+               id DESC
+             LIMIT ?`,
+        )
+        .bind(provider, options.unpaidSinceIso, options.settledSinceIso, options.limit)
+        .all<RawRow>();
+      return rows.results.map(mapPaymentOrder);
+    },
+
+    async updatePaymentOrder(id, patch) {
+      const columns = [
+        "trade_no",
+        "expires_at",
+        "waffo_session_id",
+        "waffo_order_id",
+        "status",
+        "paid_at",
+        "fulfilled_at",
+        "closed_at",
+        "refunded_at",
+        "refund_request_no",
+        "last_notify_id",
+      ] as const;
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      for (const column of columns) {
+        if (patch[column] === undefined) continue;
+        sets.push(`${column} = ?`);
+        values.push(patch[column]);
+      }
+      if (sets.length === 0) return;
+      values.push(id);
+      const result = (await d1
+        .prepare(`UPDATE payment_orders SET ${sets.join(", ")} WHERE id = ?`)
+        .bind(...values)
+        .run()) as { meta?: { changes?: number } };
+      if (result.meta?.changes === 0) throw new Error(`payment order not found: ${id}`);
+    },
+
+    async compareAndSetPaymentOrder(id, expected, patch) {
+      const columns = [
+        "trade_no",
+        "expires_at",
+        "waffo_session_id",
+        "waffo_order_id",
+        "status",
+        "paid_at",
+        "fulfilled_at",
+        "closed_at",
+        "refunded_at",
+        "refund_request_no",
+        "last_notify_id",
+      ] as const;
+      const sets: string[] = [];
+      const values: unknown[] = [];
+      for (const column of columns) {
+        if (patch[column] === undefined) continue;
+        sets.push(`${column} = ?`);
+        values.push(patch[column]);
+      }
+      if (sets.length === 0) throw new Error("payment order compare-and-set patch is empty");
+
+      const where = ["id = ?"];
+      values.push(id);
+      if (expected.statuses !== undefined) {
+        if (expected.statuses.length === 0) {
+          throw new Error("payment order compare-and-set statuses are empty");
+        }
+        where.push(`status IN (${expected.statuses.map(() => "?").join(", ")})`);
+        values.push(...expected.statuses);
+      }
+      if (expected.refundRequestNo === null) {
+        where.push("refund_request_no IS NULL");
+      } else if (expected.refundRequestNo !== undefined) {
+        where.push("refund_request_no = ?");
+        values.push(expected.refundRequestNo);
+      }
+      if (where.length === 1) {
+        throw new Error("payment order compare-and-set condition is empty");
+      }
+      const result = (await d1
+        .prepare(`UPDATE payment_orders SET ${sets.join(", ")} WHERE ${where.join(" AND ")}`)
+        .bind(...values)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
+    },
+
+    async claimPaymentOrderQuery(id, queriedAt, cutoff) {
+      const result = (await d1
+        .prepare(
+          `UPDATE payment_orders
+              SET last_queried_at = ?
+            WHERE id = ?
+              AND status IN ('created', 'form_issued', 'pending', 'fulfilled')
+              AND (last_queried_at IS NULL OR last_queried_at <= ?)`,
+        )
+        .bind(queriedAt, id, cutoff)
+        .run()) as { meta?: { changes?: number } };
+      return (result.meta?.changes ?? 0) > 0;
+    },
+
+    async insertEntitlement(row) {
+      // 幂等只针对 provider + payment_transaction_id 重投:用普通 INSERT,
+      // 仅当报错确实是支付交易唯一冲突时才返回 false。INSERT OR IGNORE
+      // 会连 id 主键冲突也一起吞掉,把真事故误判成"重复交易"(Copilot round 4)。
+      const paymentProvider =
+        row.payment_provider ?? (row.paddle_transaction_id === null ? null : "paddle");
+      const paymentTransactionId = row.payment_transaction_id ?? row.paddle_transaction_id;
+      if ((paymentProvider === null) !== (paymentTransactionId === null)) {
+        throw new Error("payment provider and transaction id must be supplied together");
+      }
+      try {
+        await d1
+          .prepare(
+            `INSERT INTO entitlements
+               (id, account_id, expires_at, source, paddle_transaction_id, months, created_at,
+                payment_provider, payment_transaction_id, refunded_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            row.id,
+            row.account_id,
+            row.expires_at,
+            row.source,
+            row.paddle_transaction_id,
+            row.months,
+            row.created_at,
+            paymentProvider,
+            paymentTransactionId,
+            row.refunded_at ?? null,
+          )
+          .run();
+        return true;
+      } catch (e) {
+        // 只把支付交易部分唯一索引的冲突当幂等。
+        const msg = e instanceof Error ? e.message : String(e);
+        if (
+          /UNIQUE constraint failed/i.test(msg) &&
+          /payment_provider|payment_transaction_id|idx_ent_payment|paddle_transaction_id|idx_ent_txn/i.test(
+            msg,
+          )
+        ) {
+          return false;
+        }
+        throw e; // id 主键冲突等其它唯一冲突是真事故,原样抛。
+      }
+    },
+
+    async updateEntitlementExpiry(entitlementId, expiresAt) {
+      // **必须检查 meta.changes。** 0 行受影响与"成功"在 D1 里无法从返回值区分,
+      // 而这个 UPDATE 是并发收敛的最后一步:静默失败会让基于陈旧快照的错值
+      // 永久留下(用户永久少拿一个周期),且没有任何后台任务会重算账本。
+      // 抛错则冒泡到 webhook → 503 → Paddle 重投 → 幂等分支自愈。
+      // (注:D1 把受影响行数放在 run() 返回值的 meta.changes 里;
+      //  这里刻意只在**确定为 0** 时抛,拿不到该字段的运行时不误报。)
+      const res = (await d1
+        .prepare(`UPDATE entitlements SET expires_at = ? WHERE id = ?`)
+        .bind(expiresAt, entitlementId)
+        .run()) as { meta?: { changes?: number } };
+      const changes = res?.meta?.changes;
+      if (typeof changes === "number" && changes === 0) {
+        throw new Error(`updateEntitlementExpiry affected 0 rows: ${entitlementId}`);
+      }
+    },
+
+    async markEntitlementRefunded(provider, transactionId, refundedAt) {
+      const result = (await d1
+        .prepare(
+          `UPDATE entitlements SET refunded_at = ?
+            WHERE payment_provider = ? AND payment_transaction_id = ? AND refunded_at IS NULL`,
+        )
+        .bind(refundedAt, provider, transactionId)
+        .run()) as { meta?: { changes?: number } };
+      return result.meta?.changes === undefined ? true : result.meta.changes > 0;
+    },
+
+    async listEntitlements(accountId) {
+      const rows = await d1
+        .prepare(`SELECT * FROM entitlements WHERE account_id = ? ORDER BY created_at ASC, id ASC`)
+        .bind(accountId)
+        .all<RawRow>();
+      return rows.results.map(mapEntitlement);
+    },
+  };
+}
+
+// Deterministic list ordering: timestamp DESC, id DESC as tiebreaker. Mirrors
+// SQL `ORDER BY created_at DESC, id DESC`. localeCompare vs SQLite BINARY
+// collation is equivalent here because callers write fixed-width ISO-8601 UTC.
+function byCreatedAtDesc(a: { created_at: string; id: string }, b: { created_at: string; id: string }): number {
+  return b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id);
+}
+
+// Ascending counterpart for queue order (oldest first). Mirrors SQL
+// `ORDER BY created_at ASC, id ASC`, and must agree with the (created_at, id)
+// composite that waitlistRankOf counts under — same caveat about localeCompare
+// matching BINARY collation for fixed-width ISO-8601 UTC strings.
+function byCreatedAtAsc(a: { created_at: string; id: string }, b: { created_at: string; id: string }): number {
+  return a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id);
+}
+
+export function createMemoryConnectDb(): ConnectDb {
+  const invites = new Map<string, InviteRow>();
+  const endpoints = new Map<string, EndpointRow>();
+  const audits = new Map<string, AuditRow>();
+  const waitlist = new Map<string, WaitlistRow>();
+  // 限流:key 是 `bucket\u0000key`,值是窗口内的时间戳列表(RFC3339)。
+  const rateLimits = new Map<string, string[]>();
+  const accounts = new Map<string, AccountRow>();
+  const entitlements = new Map<string, EntitlementRow>();
+  const paymentOrders = new Map<string, PaymentOrderRow>();
+  const instanceLinkRequests = new Map<string, InstanceLinkRequestRow>();
+  const instanceCredentials = new Map<string, InstanceCredentialRow>();
+
+  return {
+    async insertInvite(row) {
+      if (invites.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: invites.id (${row.id})`);
+      }
+      for (const existing of invites.values()) {
+        if (existing.code === row.code) {
+          throw new Error(`UNIQUE constraint failed: invites.code (${row.code})`);
+        }
+      }
+      invites.set(row.id, { ...row });
+      return { ...row };
+    },
+
+    async getInviteById(id) {
+      const row = invites.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async getInviteByCode(code) {
+      for (const row of invites.values()) {
+        if (row.code === code) {
+          return { ...row };
+        }
+      }
+      return null;
+    },
+
+    async listInvites() {
+      return [...invites.values()].sort(byCreatedAtDesc).map((row) => ({ ...row }));
+    },
+
+    async updateInviteStatus(id, patch) {
+      const row = invites.get(id);
+      if (row === undefined) {
+        return;
+      }
+      row.status = patch.status;
+      if (patch.slug !== undefined) {
+        row.slug = patch.slug;
+      }
+      if (patch.provisioned_at !== undefined) {
+        row.provisioned_at = patch.provisioned_at;
+      }
+      if (patch.revoked_at !== undefined) {
+        row.revoked_at = patch.revoked_at;
+      }
+    },
+
+    async insertEndpoint(row) {
+      if (endpoints.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: endpoints.id (${row.id})`);
+      }
+      for (const existing of endpoints.values()) {
+        // SQLite UNIQUE 对 NULL 不判重(0004):自助行 invite_id 全为 null,
+        // 彼此共存;只有非空 invite_id 才判撞。
+        if (row.invite_id !== null && existing.invite_id === row.invite_id) {
+          throw new Error(`UNIQUE constraint failed: endpoints.invite_id (${row.invite_id})`);
+        }
+        if (existing.slug === row.slug) {
+          throw new Error(`UNIQUE constraint failed: endpoints.slug (${row.slug})`);
+        }
+        if (existing.hostname === row.hostname) {
+          throw new Error(`UNIQUE constraint failed: endpoints.hostname (${row.hostname})`);
+        }
+        // idx_endpoints_account_live(0004):一账号最多一个 live(active)行。
+        // 与 D1 的部分唯一索引同款报错词面,让路由层的错误映射两侧一致。
+        if (
+          row.account_id !== null &&
+          row.status === "active" &&
+          existing.account_id === row.account_id &&
+          existing.status === "active"
+        ) {
+          throw new Error(`UNIQUE constraint failed: endpoints.account_id (${row.account_id})`);
+        }
+      }
+      endpoints.set(row.id, { ...row });
+      return { ...row };
+    },
+
+    async getEndpointById(id) {
+      const row = endpoints.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async getEndpointByInviteId(inviteId) {
+      for (const row of endpoints.values()) {
+        if (row.invite_id === inviteId) {
+          return { ...row };
+        }
+      }
+      return null;
+    },
+
+    async getActiveEndpointByAccountId(accountId) {
+      // 与 D1 实现一致:多 active 行时按 created_at,id 取最早,保证确定性。
+      const matches = [...endpoints.values()].filter(
+        (row) => row.account_id === accountId && row.status === "active",
+      );
+      if (matches.length === 0) return null;
+      matches.sort((a, b) => {
+        const t = Date.parse(a.created_at) - Date.parse(b.created_at);
+        return t !== 0 ? t : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+      });
+      return { ...matches[0]! };
+    },
+
+    async findEndpointBySlugOrHostname(slug, hostname) {
+      for (const row of endpoints.values()) {
+        if (row.slug === slug || row.hostname === hostname) {
+          return { slug: row.slug, hostname: row.hostname };
+        }
+      }
+      return null;
+    },
+
+    async listEndpoints() {
+      return [...endpoints.values()].sort(byCreatedAtDesc).map((row) => ({ ...row }));
+    },
+
+    async listActiveEndpointsForSweep() {
+      // 与 D1 分支同款语义(parity):active + 有账号 + 该账号最新到期。
+      const out: {
+        endpointId: string;
+        accountId: string;
+        accountEmail: string;
+        hostname: string;
+        cfTunnelId: string;
+        cfDnsRecordId: string;
+        latestExpiry: string | null;
+      }[] = [];
+      for (const ep of endpoints.values()) {
+        if (ep.status !== "active" || ep.account_id === null) continue;
+        const acct = accounts.get(ep.account_id);
+        if (acct === undefined) continue;
+        let latest: string | null = null;
+        for (const en of entitlements.values()) {
+          if (en.account_id !== ep.account_id) continue;
+          if (en.refunded_at != null) continue;
+          if (latest === null || en.expires_at > latest) latest = en.expires_at;
+        }
+        out.push({
+          endpointId: ep.id,
+          accountId: ep.account_id,
+          accountEmail: acct.email,
+          hostname: ep.hostname,
+          cfTunnelId: ep.cf_tunnel_id,
+          cfDnsRecordId: ep.cf_dns_record_id,
+          latestExpiry: latest,
+        });
+      }
+      return out;
+    },
+
+    async countLiveEndpoints() {
+      // 与 D1 分支同款白名单(parity)。
+      return [...endpoints.values()].filter(
+        (r) => r.status === "active" || r.status === "revoke_failed",
+      ).length;
+    },
+
+    async markEndpointRevoked(endpointId, at, reason) {
+      const row = endpoints.get(endpointId);
+      if (row === undefined) {
+        return;
+      }
+      row.status = "revoked";
+      row.revoked_at = at;
+      row.revoke_reason = reason;
+    },
+
+    async markEndpointRevokeFailed(endpointId, reason) {
+      const row = endpoints.get(endpointId);
+      if (row === undefined) {
+        return;
+      }
+      row.status = "revoke_failed";
+      row.revoke_reason = reason;
+    },
+
+    async getRestorableEndpointByAccountId(accountId) {
+      for (const row of endpoints.values()) {
+        if (row.account_id === accountId && row.status === "active") return null;
+      }
+      const rows = [...endpoints.values()].filter((row) => row.account_id === accountId);
+      rows.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      const newest = rows[0];
+      if (newest === undefined) return null;
+      const restorable =
+        (newest.status === "revoked" || newest.status === "revoke_failed") &&
+        (newest.revoke_reason === "expired" || newest.revoke_reason === "refunded");
+      return restorable ? { ...newest } : null;
+    },
+
+    async reactivateEndpoint(input) {
+      const row = endpoints.get(input.id);
+      if (row === undefined) return false;
+      if (row.status !== "revoked" || row.account_id !== input.accountId) return false;
+      for (const other of endpoints.values()) {
+        if (other.id !== row.id && other.account_id === input.accountId && other.status === "active") {
+          return false;
+        }
+      }
+      row.status = "active";
+      row.cf_tunnel_id = input.cfTunnelId;
+      row.cf_dns_record_id = input.cfDnsRecordId;
+      row.token_sha256 = input.tokenSha256;
+      row.cf_access_app_id = null;
+      row.cf_access_policy_id = null;
+      row.token_ciphertext = null;
+      row.token_shown_at = null;
+      row.last_seen_at = null;
+      row.revoked_at = null;
+      row.revoke_reason = null;
+      return true;
+    },
+
+    async finishFailedRevoke(input) {
+      const row = endpoints.get(input.id);
+      if (row === undefined) return false;
+      if (row.status !== "revoke_failed" || row.cf_tunnel_id !== input.cfTunnelId) return false;
+      row.status = "revoked";
+      row.revoked_at = input.at;
+      return true;
+    },
+
+    async deleteEndpoint(endpointId) {
+      endpoints.delete(endpointId);
+    },
+
+    async insertAudit(row) {
+      if (audits.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: audit_events.id (${row.id})`);
+      }
+      audits.set(row.id, { ...row });
+    },
+
+    async listAudits() {
+      return [...audits.values()]
+        .sort((a, b) => b.at.localeCompare(a.at) || b.id.localeCompare(a.id))
+        .map((row) => ({ ...row }));
+    },
+
+    async insertWaitlist(row) {
+      if (waitlist.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: waitlist.id (${row.id})`);
+      }
+      for (const existing of waitlist.values()) {
+        if (existing.email === row.email && existing.batch === row.batch) {
+          throw new Error(`UNIQUE constraint failed: waitlist(email, batch) (${row.email}, ${row.batch})`);
+        }
+      }
+      waitlist.set(row.id, { ...row });
+      return { ...row };
+    },
+
+    async hitAndCount(bucket, key, at, windowStart) {
+      const k = `${bucket}\u0000${key}`;
+      const kept = (rateLimits.get(k) ?? []).filter((t) => t > windowStart);
+      kept.push(at);
+      rateLimits.set(k, kept);
+      return kept.length;
+    },
+
+    async getWaitlistByEmail(email, batch) {
+      for (const row of waitlist.values()) {
+        if (row.email === email && row.batch === batch) {
+          return { ...row };
+        }
+      }
+      return null;
+    },
+
+    async getWaitlistById(id) {
+      const row = waitlist.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async updateWaitlistSurvey(id, surveyJson) {
+      const row = waitlist.get(id);
+      if (row !== undefined) {
+        row.survey_json = surveyJson;
+      }
+    },
+
+    async countWaitlist(batch) {
+      let count = 0;
+      for (const row of waitlist.values()) {
+        if (row.batch === batch) count++;
+      }
+      return count;
+    },
+
+    async waitlistRankOf(batch, createdAt, id) {
+      // Must match the D1 predicate exactly, including the (created_at, id)
+      // tiebreaker — route tests run on this backend, so any drift here means
+      // they stop proving anything about production.
+      //
+      // That includes being status-agnostic: like D1, this counts every row in
+      // the batch regardless of `status`, because 'pending' is currently the
+      // only value in existence. If you add a status filter, add it to BOTH
+      // implementations — the TRIPWIRE tests (schema.test.ts for D1,
+      // db.test.ts for this mock) go red on a one-sided change.
+      let count = 0;
+      for (const row of waitlist.values()) {
+        if (row.batch !== batch) continue;
+        if (row.created_at < createdAt || (row.created_at === createdAt && row.id <= id)) {
+          count++;
+        }
+      }
+      return count;
+    },
+
+    async listWaitlist(batch) {
+      // Must match the D1 ORDER BY exactly — `(created_at ASC, id ASC)`, the
+      // same composite waitlistRankOf counts under. Sorting on created_at
+      // alone left Map insertion order to break ties, so listWaitlist[0] could
+      // be the row that reports position 3. See the cross-consistency tests.
+      return [...waitlist.values()]
+        .filter((row) => row.batch === batch)
+        .sort(byCreatedAtAsc)
+        .map((row) => ({ ...row }));
+    },
+
+    async getEndpointByTokenSha256(sha256) {
+      for (const row of endpoints.values()) {
+        if (row.token_sha256 === sha256) {
+          return { ...row };
+        }
+      }
+      return null;
+    },
+
+    async updateEndpointLastSeen(endpointId, lastSeenAt) {
+      const row = endpoints.get(endpointId);
+      if (row !== undefined) {
+        row.last_seen_at = lastSeenAt;
+      }
+    },
+
+    async insertAccount(row) {
+      if (accounts.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: accounts.id (${row.id})`);
+      }
+      for (const existing of accounts.values()) {
+        if (existing.email === row.email) {
+          throw new Error(`UNIQUE constraint failed: accounts.email (${row.email})`);
+        }
+      }
+      accounts.set(row.id, { ...row });
+      return { ...row };
+    },
+
+    async getAccountById(id) {
+      const row = accounts.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async getAccountByEmail(email) {
+      for (const row of accounts.values()) {
+        if (row.email === email) return { ...row };
+      }
+      return null;
+    },
+
+    async updateAccountLastLogin(id, at) {
+      const row = accounts.get(id);
+      if (row !== undefined) row.last_login_at = at;
+    },
+
+    async insertInstanceLinkRequest(row) {
+      if (instanceLinkRequests.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: instance_link_requests.id (${row.id})`);
+      }
+      for (const existing of instanceLinkRequests.values()) {
+        if (existing.poll_secret_sha256 === row.poll_secret_sha256) {
+          throw new Error(
+            `UNIQUE constraint failed: instance_link_requests.poll_secret_sha256 (${row.poll_secret_sha256})`,
+          );
+        }
+      }
+      instanceLinkRequests.set(row.id, { ...row });
+    },
+
+    async getInstanceLinkRequestById(id) {
+      const row = instanceLinkRequests.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async getInstanceLinkRequestByPollSecretSha(sha) {
+      for (const row of instanceLinkRequests.values()) {
+        if (row.poll_secret_sha256 === sha) return { ...row };
+      }
+      return null;
+    },
+
+    async deleteInstanceLinkRequestsExpiredBefore(cutoffIso, limit) {
+      if (limit <= 0) return 0;
+      const expired = [...instanceLinkRequests.values()]
+        .filter((row) => row.expires_at < cutoffIso)
+        .sort((a, b) => a.expires_at.localeCompare(b.expires_at) || a.id.localeCompare(b.id))
+        .slice(0, limit);
+      for (const row of expired) instanceLinkRequests.delete(row.id);
+      return expired.length;
+    },
+
+    async approveInstanceLinkRequest(id, accountId, nowIso) {
+      const row = instanceLinkRequests.get(id);
+      if (row === undefined || row.status !== "pending" || row.expires_at <= nowIso) return false;
+      row.status = "approved";
+      row.account_id = accountId;
+      row.approved_at = nowIso;
+      return true;
+    },
+
+    async touchInstanceLinkPoll(id, nowIso) {
+      const row = instanceLinkRequests.get(id);
+      if (row === undefined || row.status !== "pending") return false;
+      const cutoffMs = Date.parse(nowIso) - 2_000;
+      if (row.last_polled_at !== null && Date.parse(row.last_polled_at) > cutoffMs) return false;
+      row.last_polled_at = nowIso;
+      return true;
+    },
+
+    async insertInstanceCredential(row) {
+      if (instanceCredentials.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: instance_credentials.id (${row.id})`);
+      }
+      for (const existing of instanceCredentials.values()) {
+        if (existing.credential_sha256 === row.credential_sha256) {
+          throw new Error(
+            `UNIQUE constraint failed: instance_credentials.credential_sha256 (${row.credential_sha256})`,
+          );
+        }
+        if (existing.link_request_id === row.link_request_id) {
+          throw new Error(
+            `UNIQUE constraint failed: instance_credentials.link_request_id (${row.link_request_id})`,
+          );
+        }
+      }
+      instanceCredentials.set(row.id, { ...row });
+    },
+
+    async deliverInstanceCredential({ requestId, credential, nowIso }) {
+      const request = instanceLinkRequests.get(requestId);
+      if (credential.link_request_id !== requestId || request === undefined || request.status !== "approved" || request.account_id !== credential.account_id) {
+        return false;
+      }
+      for (const row of instanceCredentials.values()) {
+        if (row.link_request_id === requestId) return false;
+        if (row.id === credential.id || row.credential_sha256 === credential.credential_sha256) {
+          throw new Error(`UNIQUE constraint failed: instance_credentials (${row.id})`);
+        }
+      }
+      instanceCredentials.set(credential.id, { ...credential });
+      request.status = "delivered";
+      request.delivered_at = nowIso;
+      // Same rule as D1: the credential handed out now is the account's only active one.
+      for (const row of instanceCredentials.values()) {
+        if (row.account_id === credential.account_id && row.revoked_at === null && row.id !== credential.id) {
+          row.revoked_at = nowIso;
+        }
+      }
+      return true;
+    },
+
+    async getActiveInstanceCredentialBySha(sha) {
+      for (const row of instanceCredentials.values()) {
+        if (row.credential_sha256 === sha && row.revoked_at === null) return { ...row };
+      }
+      return null;
+    },
+
+    async revokeInstanceCredential(id, nowIso) {
+      const row = instanceCredentials.get(id);
+      if (row !== undefined && row.revoked_at === null) row.revoked_at = nowIso;
+    },
+
+    async touchInstanceCredential(id, nowIso) {
+      const row = instanceCredentials.get(id);
+      if (row !== undefined && row.revoked_at === null) row.last_used_at = nowIso;
+    },
+
+    async insertPaymentOrder(row) {
+      if (paymentOrders.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: payment_orders.id (${row.id})`);
+      }
+      for (const existing of paymentOrders.values()) {
+        if (existing.checkout_token_sha256 === row.checkout_token_sha256) {
+          throw new Error("UNIQUE constraint failed: payment_orders.checkout_token_sha256");
+        }
+        if (existing.out_trade_no === row.out_trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.out_trade_no");
+        }
+        if (row.trade_no !== null && existing.trade_no === row.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (
+          row.refund_request_no !== null &&
+          existing.refund_request_no === row.refund_request_no
+        ) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(row.id, { ...row });
+      return { ...row };
+    },
+
+    async getPaymentOrderById(id) {
+      const row = paymentOrders.get(id);
+      return row === undefined ? null : { ...row };
+    },
+
+    async getPaymentOrderByOutTradeNo(outTradeNo) {
+      for (const row of paymentOrders.values()) {
+        if (row.out_trade_no === outTradeNo) return { ...row };
+      }
+      return null;
+    },
+
+    async insertPaymentOrderWithinDailyLimit(order, options) {
+      let count = 0;
+      for (const existingRow of paymentOrders.values()) {
+        if (existingRow.account_id === order.account_id && existingRow.created_at >= options.sinceIso) count += 1;
+      }
+      if (count >= options.limit) return false;
+      if (paymentOrders.has(order.id)) {
+        throw new Error(`UNIQUE constraint failed: payment_orders.id (${order.id})`);
+      }
+      for (const existing of paymentOrders.values()) {
+        if (existing.checkout_token_sha256 === order.checkout_token_sha256) {
+          throw new Error("UNIQUE constraint failed: payment_orders.checkout_token_sha256");
+        }
+        if (existing.out_trade_no === order.out_trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.out_trade_no");
+        }
+        if (order.trade_no !== null && existing.trade_no === order.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (order.refund_request_no !== null && existing.refund_request_no === order.refund_request_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(order.id, { ...order });
+      return true;
+    },
+
+    async listPaymentOrdersForReconciliation(provider, options) {
+      return [...paymentOrders.values()]
+        .filter(
+          (row) =>
+            row.provider === provider &&
+            row.status !== "refunded" &&
+            row.status !== "closed" &&
+            ((row.status === "created" || row.status === "form_issued" || row.status === "pending")
+              ? row.created_at >= options.unpaidSinceIso
+              : (row.status === "paid" || row.status === "fulfilled") && row.created_at >= options.settledSinceIso),
+        )
+        .sort((a, b) => {
+          const aQueried = a.last_queried_at === null ? 0 : 1;
+          const bQueried = b.last_queried_at === null ? 0 : 1;
+          return aQueried - bQueried
+            || (a.last_queried_at ?? "").localeCompare(b.last_queried_at ?? "")
+            || b.created_at.localeCompare(a.created_at)
+            || b.id.localeCompare(a.id);
+        })
+        .slice(0, options.limit)
+        .map((row) => ({ ...row }));
+    },
+
+    async updatePaymentOrder(id, patch) {
+      const row = paymentOrders.get(id);
+      if (row === undefined) throw new Error(`payment order not found: ${id}`);
+      const updated = { ...row, ...patch };
+      for (const existing of paymentOrders.values()) {
+        if (existing.id === id) continue;
+        if (updated.trade_no !== null && existing.trade_no === updated.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (
+          updated.refund_request_no !== null &&
+          existing.refund_request_no === updated.refund_request_no
+        ) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(id, updated);
+    },
+
+    async compareAndSetPaymentOrder(id, expected, patch) {
+      const row = paymentOrders.get(id);
+      if (row === undefined) return false;
+      if (expected.statuses !== undefined) {
+        if (expected.statuses.length === 0) {
+          throw new Error("payment order compare-and-set statuses are empty");
+        }
+        if (!expected.statuses.includes(row.status)) return false;
+      }
+      if (
+        expected.refundRequestNo !== undefined &&
+        row.refund_request_no !== expected.refundRequestNo
+      ) {
+        return false;
+      }
+      if (expected.statuses === undefined && expected.refundRequestNo === undefined) {
+        throw new Error("payment order compare-and-set condition is empty");
+      }
+      if (Object.values(patch).every((value) => value === undefined)) {
+        throw new Error("payment order compare-and-set patch is empty");
+      }
+      const updated = { ...row, ...patch };
+      for (const existing of paymentOrders.values()) {
+        if (existing.id === id) continue;
+        if (updated.trade_no !== null && existing.trade_no === updated.trade_no) {
+          throw new Error("UNIQUE constraint failed: payment_orders.trade_no");
+        }
+        if (
+          updated.refund_request_no !== null &&
+          existing.refund_request_no === updated.refund_request_no
+        ) {
+          throw new Error("UNIQUE constraint failed: payment_orders.refund_request_no");
+        }
+      }
+      paymentOrders.set(id, updated);
+      return true;
+    },
+
+    async claimPaymentOrderQuery(id, queriedAt, cutoff) {
+      const row = paymentOrders.get(id);
+      const queryable =
+        row?.status === "created" || row?.status === "form_issued" || row?.status === "pending" || row?.status === "fulfilled";
+      if (
+        row === undefined ||
+        !queryable ||
+        (row.last_queried_at !== null && row.last_queried_at > cutoff)
+      ) {
+        return false;
+      }
+      row.last_queried_at = queriedAt;
+      return true;
+    },
+
+    async insertEntitlement(row) {
+      if (entitlements.has(row.id)) {
+        throw new Error(`UNIQUE constraint failed: entitlements.id (${row.id})`);
+      }
+      const stored: EntitlementRow = {
+        ...row,
+        payment_provider:
+          row.payment_provider ?? (row.paddle_transaction_id === null ? null : "paddle"),
+        payment_transaction_id: row.payment_transaction_id ?? row.paddle_transaction_id,
+        refunded_at: row.refunded_at ?? null,
+      };
+      if (
+        (stored.payment_provider === null) !== (stored.payment_transaction_id === null)
+      ) {
+        throw new Error("payment provider and transaction id must be supplied together");
+      }
+      // Provider-scoped payment idempotency mirrors idx_ent_payment. Manual
+      // grants keep both fields null and may be repeated.
+      if (stored.payment_provider !== null && stored.payment_transaction_id !== null) {
+        for (const existing of entitlements.values()) {
+          if (
+            existing.payment_provider === stored.payment_provider &&
+            existing.payment_transaction_id === stored.payment_transaction_id
+          ) {
+            return false;
+          }
+        }
+      }
+      entitlements.set(row.id, stored);
+      return true;
+    },
+
+    async listEntitlements(accountId) {
+      return [...entitlements.values()]
+        .filter((e) => e.account_id === accountId)
+        // 与 D1 分支同款 ORDER BY created_at ASC, id ASC:相等 created_at 时
+        // SQLite 不保证稳定,不带 id 两个实现会给出不同顺序(parity 缺口)。
+        .sort((a, b) => a.created_at.localeCompare(b.created_at) || a.id.localeCompare(b.id))
+        .map((e) => ({ ...e }));
+    },
+
+    async updateEntitlementExpiry(entitlementId, expiresAt) {
+      // parity:D1 分支在 0 行受影响时抛错(那是并发收敛静默失败的信号),
+      // 这里也必须抛,否则 memory 测试会绿而生产会留下错值。
+      const row = entitlements.get(entitlementId);
+      if (row === undefined) {
+        throw new Error(`updateEntitlementExpiry affected 0 rows: ${entitlementId}`);
+      }
+      entitlements.set(entitlementId, { ...row, expires_at: expiresAt });
+    },
+
+    async markEntitlementRefunded(provider, transactionId, refundedAt) {
+      for (const [id, row] of entitlements) {
+        if (
+          row.payment_provider === provider &&
+          row.payment_transaction_id === transactionId
+        ) {
+          if (row.refunded_at !== null) return false;
+          entitlements.set(id, { ...row, refunded_at: refundedAt });
+          return true;
+        }
+      }
+      return false;
+    },
+  };
+}

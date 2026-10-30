@@ -9,7 +9,7 @@ import {
 describe("SLUG_MAX_LENGTH 单一来源(不再三处 hardcode)", () => {
   it("slug-input 与 slug.ts 引的是同一个值", async () => {
     const fromInput = (await import("./slug-input.js")).SLUG_MAX_LENGTH;
-    const fromSlug = (await import("../slug.js")).SLUG_MAX_LENGTH;
+    const fromSlug = (await import("../tunnel/slug.js")).SLUG_MAX_LENGTH;
     expect(fromInput).toBe(fromSlug);
     expect(fromInput).toBe(32);
   });

@@ -352,15 +352,7 @@
       "count": 1
     }
   },
-  "workers/scout-connect/src/db.ts": {
-    "complexity": {
-      "count": 1
-    },
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "workers/scout-connect/src/expiry-sweep.ts": {
+  "workers/scout-connect/src/billing/expiry-sweep.ts": {
     "complexity": {
       "count": 1
     }
@@ -370,26 +362,34 @@
       "count": 1
     }
   },
-  "workers/scout-connect/src/instance-link.ts": {
+  "workers/scout-connect/src/infra/db.ts": {
     "complexity": {
+      "count": 1
+    },
+    "max-lines": {
       "count": 1
     }
   },
-  "workers/scout-connect/src/provision.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "workers/scout-connect/src/restore.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "workers/scout-connect/src/routes.ts": {
+  "workers/scout-connect/src/routes/routes.ts": {
     "complexity": {
       "count": 5
     },
     "max-lines": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/tunnel/instance-link.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/tunnel/provision.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "workers/scout-connect/src/tunnel/restore.ts": {
+    "complexity": {
       "count": 1
     }
   },

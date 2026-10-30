@@ -1,13 +1,13 @@
-import { createCfApi } from "./cf-api.js";
-import { createD1ConnectDb } from "./db.js";
-import { newId, newInviteCode } from "./ids.js";
-import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes.js";
-import { createMagicLinkSender } from "./magic-link-sender.js";
-import { createInstanceLinkSender } from "./instance-link-sender.js";
-import type { Env } from "./env.js";
-import { createWaffoApi, type WaffoApi } from "./waffo-api.js";
-import { sweepExpiredEndpoints } from "./expiry-sweep.js";
-import { createEmailSender } from "./email-sender.js";
+import { createCfApi } from "./tunnel/cf-api.js";
+import { createD1ConnectDb } from "./infra/db.js";
+import { newId, newInviteCode } from "./infra/ids.js";
+import { handleRequest, reconcileWaffoOrders, type RouteDeps } from "./routes/routes.js";
+import { createMagicLinkSender } from "./auth/magic-link-sender.js";
+import { createInstanceLinkSender } from "./tunnel/instance-link-sender.js";
+import type { Env } from "./infra/env.js";
+import { createWaffoApi, type WaffoApi } from "./billing/waffo-api.js";
+import { sweepExpiredEndpoints } from "./billing/expiry-sweep.js";
+import { createEmailSender } from "./infra/email-sender.js";
 
 /** 取值或显式抛错。某些 env(如 RESEND_API_KEY)对**部分**路径可选(到期提醒),
  *  但对其它路径(登录)是必需的 —— 在必需处显式断言,比让 undefined 流到下游

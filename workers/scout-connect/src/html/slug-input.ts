@@ -8,7 +8,7 @@
  */
 
 // 从 slug.ts 引单一来源(assertSlug 的权威值)并再导出,不再 hardcode。
-import { SLUG_MAX_LENGTH } from "../slug.js";
+import { SLUG_MAX_LENGTH } from "../tunnel/slug.js";
 export { SLUG_MAX_LENGTH };
 
 /** 允许的字符:小写字母、数字、连字符。 */
