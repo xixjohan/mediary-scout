@@ -1,9 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { buyPage } from "./html/buy-page.js";
 
-const deployScript = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8");
+const deployScript = readFileSync(new URL("../scripts/deploy.sh", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const shBin =
+  process.platform === "win32" && existsSync("C:\\Program Files\\Git\\bin\\sh.exe")
+    ? "C:\\Program Files\\Git\\bin\\sh.exe"
+    : "sh";
 
 describe("deploy cutover guard", () => {
   it("checks for unexpired payable legacy Alipay orders before deploy", () => {
@@ -50,9 +54,10 @@ describe("post-deploy /buy self-check", () => {
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
     try {
-      execFileSync("sh", ["-c", `set -eu\nBUY=$1\n${deployScript.slice(start, end)}`, "sh", html], { stdio: "pipe" });
+      execFileSync(shBin, ["-c", `set -eu\nBUY=$1\n${deployScript.slice(start, end).replace(/\r\n/g, "\n")}`, "sh", html], { stdio: "pipe" });
       return true;
-    } catch {
+    } catch (e: any) {
+      
       return false;
     }
   }

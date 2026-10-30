@@ -18,7 +18,7 @@ describe("generated content freshness", () => {
     for (const f of files) {
       const key = f.replace(/\.md$/, "");
       expect(COMPLIANCE_MARKDOWN[key], `${f} 与生成文件不一致——跑 node scripts/generate-content.mjs`).toBe(
-        readFileSync(join(contentDir, f), "utf8"),
+        readFileSync(join(contentDir, f), "utf8").replace(/\r\n/g, "\n"),
       );
     }
   });
