@@ -83,7 +83,7 @@ describe("Pan115QrLoginClient", () => {
     );
 
     expect(requests[0]?.url).toBe(
-      "https://passportapi.115.com/app/1.0/tv/1.0/login/qrcode/",
+      "https://qrcodeapi.115.com/app/1.0/tv/1.0/login/qrcode/",
     );
     expect(requests[0]?.body).toBe("account=uid_1&app=tv");
     expect(result).toEqual({
@@ -166,7 +166,7 @@ describe("Pan115QrLoginClient", () => {
     });
 
     const result = await client.exchangeCookie({ uid: "uid_tv", time: 1, sign: "sig", qrcodeContent: "" });
-    expect(requests[0]?.url).toBe("https://passportapi.115.com/app/1.0/tv/1.0/login/qrcode/");
+    expect(requests[0]?.url).toBe("https://qrcodeapi.115.com/app/1.0/tv/1.0/login/qrcode/");
     expect(requests[0]?.body).toBe("account=uid_tv&app=tv");
     expect(result.app).toBe("tv");
   });

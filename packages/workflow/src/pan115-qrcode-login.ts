@@ -9,7 +9,7 @@
 
 export type Pan115QrFetchJson = (
   url: string,
-  init: { method: string; headers?: Record<string, string>; body?: string },
+  init: { method: string; headers?: Record<string, string>; body?: string; timeoutMs?: number },
 ) => Promise<unknown>;
 
 export interface Pan115QrSession {
@@ -144,6 +144,10 @@ export class Pan115QrLoginClient {
     session: Pan115QrSession,
     preferredApp: Pan115QrLoginApp = "tv",
   ): Promise<Pan115QrCookie> {
+    // 115 provides identical passport endpoints on both qrcodeapi.115.com (domestic Aliyun IP 47.113.23.100)
+    // and passportapi.115.com (Anycast 8.25.82.x). Probing qrcodeapi first avoids the 8.0.0.0/8 GeoIP
+    // US misclassification trap that causes transparent proxies to route requests overseas and get RSTed.
+    const apiHosts = [QRCODE_API, PASSPORT_API];
     const candidates = [
       preferredApp,
       ...PAN115_QR_LOGIN_APPS.filter((a) => a !== preferredApp),
@@ -151,44 +155,55 @@ export class Pan115QrLoginClient {
     let firstErrorMessage = "";
     let firstErrorCode: number | undefined;
 
-    for (const app of candidates) {
-      const body = new URLSearchParams({ account: session.uid, app });
-      let response: Record<string, unknown>;
-      try {
-        response = asRecord(
-          await this.fetchJson(`${PASSPORT_API}/app/1.0/${app}/1.0/login/qrcode/`, {
-            method: "POST",
-            headers: {
-              ...this.headers(),
-              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-            },
-            body: body.toString(),
-          }),
-        );
-      } catch (err) {
-        if (!firstErrorMessage) {
-          firstErrorMessage = err instanceof Error ? err.message : String(err);
+    for (const host of apiHosts) {
+      let receivedAuthoritativeResponse = false;
+      for (const app of candidates) {
+        const body = new URLSearchParams({ account: session.uid, app });
+        let response: Record<string, unknown>;
+        try {
+          response = asRecord(
+            await this.fetchJson(`${host}/app/1.0/${app}/1.0/login/qrcode/`, {
+              method: "POST",
+              headers: {
+                ...this.headers(),
+                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+              },
+              body: body.toString(),
+              timeoutMs: 8_000,
+            }),
+          );
+          if (response["state"] !== undefined || response["errno"] !== undefined || response["code"] !== undefined) {
+            receivedAuthoritativeResponse = true;
+          }
+        } catch (err) {
+          if (!firstErrorMessage) {
+            firstErrorMessage = err instanceof Error ? err.message : String(err);
+          }
+          continue;
         }
-        continue;
-      }
-      const data = asRecord(response["data"]);
-      const cookieRecord = asRecord(data["cookie"]);
-      const pairs = (["UID", "CID", "SEID", "KID"] as const)
-        .map((key) => [key, stringValue(cookieRecord[key])] as const)
-        .filter(([, value]) => value !== "");
 
-      if (pairs.some(([key]) => key === "UID")) {
-        return {
-          cookie: pairs.map(([key, value]) => `${key}=${value}`).join("; "),
-          userId: numberValue(data["user_id"]),
-          userName: stringValue(data["user_name"]),
-          app,
-        };
-      }
+        const data = asRecord(response["data"]);
+        const cookieRecord = asRecord(data["cookie"]);
+        const pairs = (["UID", "CID", "SEID", "KID"] as const)
+          .map((key) => [key, stringValue(cookieRecord[key])] as const)
+          .filter(([, value]) => value !== "");
 
-      if (!firstErrorMessage) {
-        firstErrorMessage = stringValue(response["message"]) || stringValue(response["error"]);
-        firstErrorCode = numberValue(response["code"]) || numberValue(response["errno"]) || undefined;
+        if (pairs.some(([key]) => key === "UID")) {
+          return {
+            cookie: pairs.map(([key, value]) => `${key}=${value}`).join("; "),
+            userId: numberValue(data["user_id"]),
+            userName: stringValue(data["user_name"]),
+            app,
+          };
+        }
+
+        if (!firstErrorMessage) {
+          firstErrorMessage = stringValue(response["message"]) || stringValue(response["error"]);
+          firstErrorCode = numberValue(response["code"]) || numberValue(response["errno"]) || undefined;
+        }
+      }
+      if (receivedAuthoritativeResponse) {
+        break;
       }
     }
 
@@ -227,14 +242,14 @@ export function isTransientPan115NetworkError(error: unknown): boolean {
 
 async function defaultFetchJson(
   url: string,
-  init: { method: string; headers?: Record<string, string>; body?: string },
+  init: { method: string; headers?: Record<string, string>; body?: string; timeoutMs?: number },
 ): Promise<unknown> {
-  const maxAttempts = 3;
+  const timeoutMs = init.timeoutMs ?? (url.includes("/get/status/") ? 35_000 : 8_000);
+  const maxAttempts = url.includes("/get/status/") ? 1 : 2;
   let lastError: unknown;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const controller = new AbortController();
-    // Long-poll rounds hold ~30s; cap a bit above that.
-    const timer = setTimeout(() => controller.abort(), 35_000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
       if (!response.ok) {
@@ -244,7 +259,7 @@ async function defaultFetchJson(
     } catch (err) {
       lastError = err;
       if (attempt < maxAttempts - 1 && isTransientPan115NetworkError(err)) {
-        await new Promise((r) => setTimeout(r, (attempt + 1) * 600));
+        await new Promise((r) => setTimeout(r, (attempt + 1) * 500));
         continue;
       }
       throw err;

@@ -110,11 +110,14 @@ export function Pan115QrConnect() {
   }
 
   async function confirm(currentSession: Session, myGeneration: number) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25_000);
     try {
       const response = await fetch("/api/115/qrcode/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session: currentSession, app }),
+        signal: controller.signal,
       });
       const data = (await response.json()) as { ok: boolean; userName?: string; error?: string };
       if (!data.ok) {
@@ -129,11 +132,13 @@ export function Pan115QrConnect() {
       router.refresh();
     } catch (error) {
       // Anything here is NOT a clean API error (those returned in `data` above):
-      // a network failure (fetch threw) OR a JSON decode failure (response.json()
-      // threw on a non-JSON body). Show a generic retry hint, no Error: prefix.
+      // a network failure (fetch threw), timeout, or JSON decode failure.
       if (generation.current !== myGeneration) return;
       setPhase("error");
-      setMessage("网络异常，请重试。");
+      const isTimeout = error instanceof Error && error.name === "AbortError";
+      setMessage(isTimeout ? "登录确认超时，请重试或使用下方手动 Cookie 绑定。" : "网络异常，请重试。");
+    } finally {
+      clearTimeout(timer);
     }
   }
 
