@@ -52,7 +52,10 @@ export function TianyiQrConnect() {
     setPhase("loading");
     setMessage("");
     try {
-      const res = await fetch("/api/tianyi/qrcode", { method: "POST" });
+      const res = await fetch("/api/tianyi/qrcode", {
+        method: "POST",
+        signal: AbortSignal.timeout(15_000),
+      });
       const data = (await res.json()) as { ok: boolean; session?: Session; error?: string };
       if (!data.ok || !data.session) throw new Error(data.error ?? "无法获取二维码");
       if (generation.current !== myGen) return;
@@ -82,6 +85,7 @@ export function TianyiQrConnect() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ session: current }),
+          signal: AbortSignal.timeout(8_000),
         });
         const data = (await res.json()) as {
           ok: boolean;
@@ -122,11 +126,14 @@ export function TianyiQrConnect() {
   }
 
   async function confirm(currentSession: Session, redirectUrl: string, myGen: number) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25_000);
     try {
       const res = await fetch("/api/tianyi/qrcode/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ session: currentSession, redirectUrl }),
+        signal: controller.signal,
       });
       const data = (await res.json()) as { ok: boolean; providerUid?: string; error?: string };
       if (!data.ok) {
@@ -145,7 +152,14 @@ export function TianyiQrConnect() {
       // threw on a non-JSON body). Show a generic retry hint + the SSON fallback.
       if (generation.current !== myGen) return;
       setPhase("error");
-      setMessage("网络异常，请重试。（可改用下方手动粘 SSON cookie）");
+      const isTimeout = error instanceof Error && error.name === "AbortError";
+      setMessage(
+        isTimeout
+          ? "登录确认超时，请重试。（可改用下方手动粘 SSON cookie）"
+          : "网络异常，请重试。（可改用下方手动粘 SSON cookie）",
+      );
+    } finally {
+      clearTimeout(timer);
     }
   }
 
