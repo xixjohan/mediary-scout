@@ -554,7 +554,7 @@ describe("ConnectLoginForm 的异常处理(源码断言)", () => {
       "utf8",
     );
     expect(src).toContain('name="email"');
-    expect(src).toMatch(/\n\s+required\n/);
+    expect(src).toMatch(/\r?\n\s+required\r?\n/);
   });
 });
 

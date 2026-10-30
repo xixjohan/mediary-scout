@@ -20,7 +20,7 @@ function tmpDb(): string {
   return join(d, "mediary.db");
 }
 afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const d of dirs.splice(0)) { try { rmSync(d, { recursive: true, force: true }); } catch {} }
 });
 
 // 限流桶是模块级 Map：不清的话，本文件每个用例都吃前序用例烧出的失败计数，
