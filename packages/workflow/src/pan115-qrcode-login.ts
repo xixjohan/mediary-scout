@@ -156,58 +156,79 @@ export class Pan115QrLoginClient {
     let firstErrorCode: number | undefined;
 
     for (const host of apiHosts) {
-      let receivedAuthoritativeResponse = false;
-      for (const app of candidates) {
-        const body = new URLSearchParams({ account: session.uid, app });
-        let response: Record<string, unknown>;
-        try {
-          response = asRecord(
-            await this.fetchJson(`${host}/app/1.0/${app}/1.0/login/qrcode/`, {
-              method: "POST",
-              headers: {
-                ...this.headers(),
-                "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-              },
-              body: body.toString(),
-              timeoutMs: 8_000,
-            }),
-          );
-          if (response["state"] !== undefined || response["errno"] !== undefined || response["code"] !== undefined) {
-            receivedAuthoritativeResponse = true;
-          }
-        } catch (err) {
-          if (!firstErrorMessage) {
-            firstErrorMessage = err instanceof Error ? err.message : String(err);
-          }
-          continue;
-        }
-
-        const data = asRecord(response["data"]);
-        const cookieRecord = asRecord(data["cookie"]);
-        const pairs = (["UID", "CID", "SEID", "KID"] as const)
-          .map((key) => [key, stringValue(cookieRecord[key])] as const)
-          .filter(([, value]) => value !== "");
-
-        if (pairs.some(([key]) => key === "UID")) {
-          return {
-            cookie: pairs.map(([key, value]) => `${key}=${value}`).join("; "),
-            userId: numberValue(data["user_id"]),
-            userName: stringValue(data["user_name"]),
-            app,
-          };
-        }
-
-        if (!firstErrorMessage) {
-          firstErrorMessage = stringValue(response["message"]) || stringValue(response["error"]);
-          firstErrorCode = numberValue(response["code"]) || numberValue(response["errno"]) || undefined;
-        }
+      const outcome = await this.probeHostForExchange(host, candidates, session.uid);
+      if (outcome.cookie) {
+        return outcome.cookie;
       }
-      if (receivedAuthoritativeResponse) {
+      if (!firstErrorMessage && outcome.errorMsg) {
+        firstErrorMessage = outcome.errorMsg;
+        firstErrorCode = outcome.errorCode;
+      }
+      if (outcome.authoritative) {
         break;
       }
     }
 
     throw new Pan115QrExchangeError(firstErrorMessage || "no cookie in response", firstErrorCode);
+  }
+
+  private async probeHostForExchange(
+    host: string,
+    candidates: readonly Pan115QrLoginApp[],
+    uid: string,
+  ): Promise<{
+    cookie?: Pan115QrCookie;
+    authoritative: boolean;
+    errorMsg?: string;
+    errorCode?: number | undefined;
+  }> {
+    let authoritative = false;
+    let errorMsg = "";
+    let errorCode: number | undefined;
+
+    for (const app of candidates) {
+      const { response, error } = await this.queryExchangeApp(host, app, uid);
+      if (error) {
+        if (!errorMsg) errorMsg = error;
+        continue;
+      }
+      if (!response) continue;
+
+      if (isAuthoritativeResponse(response)) {
+        authoritative = true;
+      }
+
+      const cookie = parseExchangeCookie(response, app);
+      if (cookie) return { cookie, authoritative: true };
+
+      if (!errorMsg) {
+        errorMsg = stringValue(response["message"]) || stringValue(response["error"]);
+        errorCode = numberValue(response["code"]) || numberValue(response["errno"]) || undefined;
+      }
+    }
+    return { authoritative, errorMsg, errorCode };
+  }
+
+  private async queryExchangeApp(
+    host: string,
+    app: Pan115QrLoginApp,
+    uid: string,
+  ): Promise<{ response?: Record<string, unknown>; error?: string }> {
+    const body = new URLSearchParams({ account: uid, app });
+    try {
+      const json = await this.fetchJson(`${host}/app/1.0/${app}/1.0/login/qrcode/`, {
+        method: "POST",
+        headers: {
+          ...this.headers(),
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+        },
+        body: body.toString(),
+        timeoutMs: 8_000,
+      });
+      return { response: asRecord(json) };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   private headers(): Record<string, string> {
@@ -268,6 +289,31 @@ async function defaultFetchJson(
     }
   }
   throw lastError;
+}
+
+function parseExchangeCookie(
+  response: Record<string, unknown>,
+  app: Pan115QrLoginApp,
+): Pan115QrCookie | null {
+  const data = asRecord(response["data"]);
+  const cookieRecord = asRecord(data["cookie"]);
+  const pairs = (["UID", "CID", "SEID", "KID"] as const)
+    .map((key) => [key, stringValue(cookieRecord[key])] as const)
+    .filter(([, value]) => value !== "");
+
+  if (!pairs.some(([key]) => key === "UID")) {
+    return null;
+  }
+  return {
+    cookie: pairs.map(([key, value]) => `${key}=${value}`).join("; "),
+    userId: numberValue(data["user_id"]),
+    userName: stringValue(data["user_name"]),
+    app,
+  };
+}
+
+function isAuthoritativeResponse(response: Record<string, unknown>): boolean {
+  return response["state"] !== undefined || response["errno"] !== undefined || response["code"] !== undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
