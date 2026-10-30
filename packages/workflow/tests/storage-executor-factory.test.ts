@@ -22,8 +22,8 @@ describe("createExecutorForBrand", () => {
   });
 
   it("quark → client 过令牌桶限速（P13 接线不断）", async () => {
-    const { withBrandPacing } = await import("../src/brand-pacing.js");
-    const spy = vi.spyOn(await import("../src/brand-pacing.js"), "withBrandPacing");
+    const { withBrandPacing } = await import("../src/storage/brand-pacing.js");
+    const spy = vi.spyOn(await import("../src/storage/brand-pacing.js"), "withBrandPacing");
     createExecutorForBrand({ provider: "quark", cookie: "__uid=1", scopeCids: ["ROOT"] });
     expect(spy).toHaveBeenCalledWith(expect.anything(), "quark", expect.objectContaining({ clock: expect.any(Function) }));
     expect(withBrandPacing).toBeTypeOf("function");

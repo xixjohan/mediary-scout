@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ResourceCandidate, ResourceType } from "./domain.js";
+import type { ResourceCandidate, ResourceType } from "../domain/domain.js";
 import { GuangYaAuthError } from "./guangya-client.js";
 import type { GuangYaStorageClient, GuangYaStorageItem } from "./guangya-storage-executor.js";
 import { GuangYaStorageExecutor } from "./guangya-storage-executor.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ResourceCandidate, ResourceType } from "./domain.js";
+import type { ResourceCandidate, ResourceType } from "../domain/domain.js";
 import { Pan123AuthError } from "./pan123-client.js";
 import type { Pan123Client, Pan123Item } from "./pan123-client.js";
 import type { Pan123StorageExecutorOptions } from "./pan123-storage-executor.js";

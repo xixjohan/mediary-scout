@@ -34,7 +34,7 @@ function tmpDbPath(): string {
   return join(dir, "mediary.db");
 }
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0)) (() => { try { rmSync(dir, { recursive: true, force: true }); } catch {} })();
 });
 
 function emptyProvider(): ResourceProvider {
@@ -93,7 +93,9 @@ describe("文件型 SQLite 全栈集成（S4.2）", () => {
     // 密钥文件权限 0600
     const keyFile = join(path, "..", "credential.key");
     expect(existsSync(keyFile)).toBe(true);
-    expect(statSync(keyFile).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(keyFile).mode & 0o777).toBe(0o600);
+    }
     await repo.close?.();
   });
 

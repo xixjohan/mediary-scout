@@ -27,15 +27,15 @@
   },
   {
     "type": "cycle",
-    "from": "packages/workflow/src/pan115-cookie-client.ts",
-    "to": "packages/workflow/src/storage-115-executor.ts",
+    "from": "packages/workflow/src/storage/pan115-cookie-client.ts",
+    "to": "packages/workflow/src/storage/storage-115-executor.ts",
     "rule": {
       "severity": "error",
       "name": "no-circular"
     },
     "cycle": [
       {
-        "name": "packages/workflow/src/storage-115-executor.ts",
+        "name": "packages/workflow/src/storage/storage-115-executor.ts",
         "dependencyTypes": [
           "local",
           "type-only",
@@ -43,7 +43,7 @@
         ]
       },
       {
-        "name": "packages/workflow/src/pan115-cookie-client.ts",
+        "name": "packages/workflow/src/storage/pan115-cookie-client.ts",
         "dependencyTypes": [
           "local",
           "import"
@@ -53,22 +53,22 @@
   },
   {
     "type": "cycle",
-    "from": "packages/workflow/src/replace-request.ts",
-    "to": "packages/workflow/src/worker.ts",
+    "from": "packages/workflow/src/execution/replace-request.ts",
+    "to": "packages/workflow/src/execution/worker.ts",
     "rule": {
       "severity": "error",
       "name": "no-circular"
     },
     "cycle": [
       {
-        "name": "packages/workflow/src/worker.ts",
+        "name": "packages/workflow/src/execution/worker.ts",
         "dependencyTypes": [
           "local",
           "import"
         ]
       },
       {
-        "name": "packages/workflow/src/replace-request.ts",
+        "name": "packages/workflow/src/execution/replace-request.ts",
         "dependencyTypes": [
           "local",
           "import"

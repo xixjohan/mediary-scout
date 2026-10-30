@@ -643,7 +643,7 @@ describe("Pan123Client transport errors name the brand and host", () => {
     expect(err.message).toMatch(/^PAN123_REQUEST_FAILED\(yun\.123pan\.com \/b\/api\/file\/list\/new\): TimeoutError/);
     expect(err.message).toContain("aborted due to timeout");
     expect((err as Error & { cause?: unknown }).cause).toBe(timeout);
-    const { isTransientAcquisitionError } = await import("./acquisition-v2/transient-error.js");
+    const { isTransientAcquisitionError } = await import("../acquisition-v2/transient-error.js");
     expect(isTransientAcquisitionError(err)).toBe(true);
   });
 
