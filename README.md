@@ -102,30 +102,30 @@ docker compose up -d
 
 ---
 
-### 方式二：Docker CLI 单容器独立部署
+### 方式二：Docker CLI 单容器独立部署（开箱即用）
 
-若无需 Compose 或在轻量设备上运行，可直接单容器独立启动（容器内自带 Web 与进程内后台调度 Worker）：
+若无需 Compose 或在 NAS / 软路由 / 轻量云主机上运行，可直接通过一条 `docker run` 单容器独立启动。
 
-#### 1. 标准直连运行（推荐）
-适合服务器直连网络良好的环境，国内网盘（115、夸克、123、天翼）与豆瓣评分天然直连：
+> [!TIP]
+> **开箱即用**：镜像已内置生产级真实适配器默认环境变量（`MEDIA_TRACK_SEARCH_PROVIDER=tmdb`、`MEDIA_TRACK_WORKFLOW_ADAPTER=pansou`、`MEDIA_TRACK_STORAGE_ADAPTER=115`、`MEDIA_TRACK_AGENT_ADAPTER=vercel-ai`、`MEDIA_TRACK_DEMO_SEED=0`），**支持全部 6 大网盘（115、夸克、UC、123、天翼、光鸭）扫码绑定与自动创建 `Mediary Scout/{Movies,TV,Anime}` 目录树**。
+
+#### 1. 极简一行启动（网络可直连 TMDB）
 ```bash
 docker run -d \
-  --name mediary-scout \
+  --name mediary \
   --restart unless-stopped \
   -p 3000:3000 \
   -v mediaray-data:/app/data \
   -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db \
-  -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb \
   -e MEDIA_TRACK_WORKER_MODE=inprocess \
-  -e MEDIA_TRACK_DEMO_SEED=0 \
   ghcr.io/xixjohan/mediary-scout:latest
 ```
 
-#### 2. 大陆网络配合宿主机出站代理（加速 TMDB）
-若宿主机运行了 Clash / V2Ray 等代理客户端且需要加速访问 TMDB：
+#### 2. 大陆网络配合出站代理启动（推荐：加速 TMDB，国内网盘直连）
+若宿主机或局域网旁路由运行了 Clash / V2Ray / Sing-box 等代理（如 `http://10.126.1.100:2080` 或 `http://172.17.0.1:7890`）：
 ```bash
 docker run -d \
-  --name mediary-scout \
+  --name mediary \
   --restart unless-stopped \
   -p 3000:3000 \
   -v mediaray-data:/app/data \
@@ -135,13 +135,28 @@ docker run -d \
   -e MEDIA_TRACK_DEMO_SEED=0 \
   -e HTTP_PROXY="http://172.17.0.1:7890" \
   -e HTTPS_PROXY="http://172.17.0.1:7890" \
-  -e NO_PROXY="localhost,127.0.0.1,115.com,*.115.com,quark.cn,*.quark.cn,123pan.com,*.123pan.com,189.cn,*.189.cn,douban.com,*.douban.com" \
+  -e NO_PROXY="localhost,127.0.0.1,host.docker.internal,115.com,.115.com,115cdn.com,.115cdn.com,quark.cn,.quark.cn,uc.cn,.uc.cn,123pan.com,.123pan.com,189.cn,.189.cn,douban.com,.douban.com,doubanio.com,.doubanio.com" \
   ghcr.io/xixjohan/mediary-scout:latest
+```
+
+#### 3. 单容器常用运维命令（更新、日志、重置密码）
+```bash
+# 查看实时运行日志
+docker logs -f mediary
+
+# 升级到最新镜像（数据保存在 mediaray-data 卷中不会丢失）
+docker pull ghcr.io/xixjohan/mediary-scout:latest
+docker stop mediary && docker rm mediary
+# 随后重新执行上方的 docker run 命令即可
+
+# 单容器重置管理员密码
+docker exec -it mediary node scripts/reset-password.mjs <你的用户名>
 ```
 
 > [!IMPORTANT]
 > 1. **存储卷**：强烈推荐使用具名卷 `-v mediaray-data:/app/data`（由 Docker 引擎全托管权限），避免宿主机挂载目录因 UID 权限不足导致 SQLite 读写失败；
-> 2. **网络分流**：115、夸克、天翼、123 等国内网盘与豆瓣服务器均在中国大陆境内，**系统内置了直连白名单**。配置代理时必须确保宿主机代理开启了「允许局域网连接（Allow LAN）」，且不可把境内网盘流量送往不可达的代理端口，否则会导致扫码报 `TypeError: fetch failed`。
+> 2. **NO_PROXY 格式规范**：请使用标准前导点号（如 `.115.com,.quark.cn`）而不是通配符 `*.115.com`，且换行拼接时注意不要产生尾随空格或连续双逗号 `,,`；
+> 3. **内置直连白名单**：系统已在应用层内置国内全网盘（115、夸克、UC、天翼、123）与豆瓣 API 的直连分流保护，确保外网代理抖动时国内网盘扫码与转存依然稳定直连。
 
 ---
 
@@ -244,6 +259,9 @@ docker compose exec web node scripts/reset-password.mjs <你的用户名>
 
 - [📖 完整部署指南（NAS、软路由、代理穿透）](docs/deploy.md)
 - [🧩 架构设计与分层速览](docs/architecture.md)
+- [🔬 全流程审计与设计模式架构优化方案（网盘添加/搜索/入库/整理）](docs/full-pipeline-audit-and-design-pattern-architecture.md)
+- [🗂️ 115 网盘目录自动建树与多网盘原地自愈治理](docs/pan115-directory-provisioning-and-multi-drive-governance.md)
+- [🌐 国内网盘直连分流与出站 HTTP 超时治理](docs/outbound-network-resilience-and-proxy-bypass-governance.md)
 - [🤖 Agent API 开发指南](docs/agent-api.md)
 - [🛡️ 静态资源 500 与零停机部署韧性架构](docs/nextjs-chunk-load-and-zero-downtime-deployment-architecture.md)
 - [📑 豆瓣兜底与滑动窗口分页设计](docs/douban-fallback-and-search-pagination-architecture.md)
