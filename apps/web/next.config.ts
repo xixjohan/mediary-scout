@@ -35,6 +35,7 @@ const nextConfig: NextConfig = {
   // root-hoisted deps (the app is in apps/web; deps hoist to the repo root).
   outputFileTracingRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
   transpilePackages: ["@media-track/workflow"],
+  serverExternalPackages: ["better-sqlite3"],
   // Cache Components: PPR becomes the default rendering model. "use cache"
   // builds the static shell; runtime reads live inside Suspense holes.
   cacheComponents: true,

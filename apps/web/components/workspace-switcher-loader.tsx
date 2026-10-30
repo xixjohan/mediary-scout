@@ -16,23 +16,27 @@ import { WorkspaceSwitcher } from "./workspace-switcher";
  */
 export async function WorkspaceSwitcherLoader() {
   await connection();
-  const storages = (await getAccountConnectedStorages()).filter((storage) =>
-    isRegisteredStorageProvider(storage.provider),
-  );
-  if (storages.length < 2) {
+  try {
+    const storages = (await getAccountConnectedStorages()).filter((storage) =>
+      isRegisteredStorageProvider(storage.provider),
+    );
+    if (storages.length < 2) {
+      return null;
+    }
+    // pathname is client-only; pass "/" here and let the client re-derive active.
+    const tabs = switcherItems(
+      storages.map((storage) => ({
+        id: storage.id,
+        label: storage.label,
+        provider: storage.provider,
+        providerUid: storage.providerUid,
+        createdAt: storage.createdAt,
+        status: storage.status,
+      })),
+      "/",
+    ).map((item) => ({ id: item.id, href: item.href, label: item.label, frozen: item.frozen, provider: item.provider }));
+    return <WorkspaceSwitcher tabs={tabs} />;
+  } catch {
     return null;
   }
-  // pathname is client-only; pass "/" here and let the client re-derive active.
-  const tabs = switcherItems(
-    storages.map((storage) => ({
-      id: storage.id,
-      label: storage.label,
-      provider: storage.provider,
-      providerUid: storage.providerUid,
-      createdAt: storage.createdAt,
-      status: storage.status,
-    })),
-    "/",
-  ).map((item) => ({ id: item.id, href: item.href, label: item.label, frozen: item.frozen, provider: item.provider }));
-  return <WorkspaceSwitcher tabs={tabs} />;
 }

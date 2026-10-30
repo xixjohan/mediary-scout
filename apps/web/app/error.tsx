@@ -82,13 +82,19 @@ export default function AppError({
       <TriangleAlert size={28} aria-hidden />
       <strong>页面渲染失败</strong>
       <span>
-        多半是部署环境连不上某个上游服务（TMDB／资源搜索）——国内网络未配置代理时常见。
-        检查部署主机（或容器）的网络后重试。
+        服务端组件渲染异常。常见原因：
+        <br />
+        1. <strong>网络连接受阻</strong>：未配置外网代理导致无法连接 TMDB 元数据服务（大陆环境常见）。
+        <br />
+        2. <strong>存储卷权限不足</strong>：单 Docker 独立部署时挂载目录无写入权限（导致 SQLite 无法读写或密钥文件无法创建）。
       </span>
       <button className="primary-button" type="button" onClick={reset}>
         重试
       </button>
-      {error.digest ? <span className="panel-note">digest: {error.digest}</span> : null}
+      <span className="panel-note">
+        💡 真实错误堆栈请在服务器运行 <code>docker logs &lt;容器名&gt;</code> 查看
+        {error.digest ? `（匹配 digest: ${error.digest}）` : ""}。
+      </span>
     </div>
   );
 }
