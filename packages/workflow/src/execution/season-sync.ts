@@ -1,0 +1,80 @@
+import { createEpisodeStates, episodeNumberFromCode } from "../domain/domain.js";
+import type { EpisodeState, TrackedSeason } from "../domain/domain.js";
+
+/**
+ * Re-sync a tracked season against fresh TMDB metadata — the GUI equivalent of
+ * the original skill's Type 3 `db.sync_all(tmdb)`. Without this, a season's
+ * `latestAiredEpisode` is frozen at tracking time and the sweep can never
+ * discover episodes that aired AFTER tracking began.
+ *
+ * Rules:
+ * - `totalEpisodes` only ever advances (max). `latestAiredEpisode` follows fresh
+ *   TMDB metadata in both directions so a bad read (including the old future-date
+ *   bug) can heal; the floor keeps obtained episodes aired and is capped by the
+ *   stored count, so it never raises the count and provider-ahead episodes remain
+ *   reported as ahead.
+ * - Newly-aired episodes surface as aired-but-not-obtained (real gaps the
+ *   sweep will then acquire); a higher total grows the episode list.
+ * - Already-obtained episodes keep their obtained flag and verified files.
+ * - `status` is intentionally left untouched: episodes still need acquiring,
+ *   so the season must stay in whatever lifecycle state it was — only the
+ *   finale (all obtained) graduates it to completed.
+ */
+export function syncSeasonAgainstMetadata(input: {
+  season: TrackedSeason;
+  episodes: EpisodeState[];
+  latestAiredEpisode: number;
+  totalEpisodes: number;
+}): { season: TrackedSeason; episodes: EpisodeState[]; changed: boolean } {
+  const newTotal = Math.max(input.season.totalEpisodes, input.totalEpisodes);
+  const highestObtained = Math.max(
+    0,
+    ...input.episodes
+      .filter((episode) => episode.obtained)
+      .map((episode) => episodeNumberFromCode(episode.episodeCode)),
+  );
+  const newLatest = Math.min(
+    newTotal,
+    Math.max(input.latestAiredEpisode, Math.min(input.season.latestAiredEpisode, highestObtained)),
+  );
+  const changed = newTotal !== input.season.totalEpisodes || newLatest !== input.season.latestAiredEpisode;
+  if (!changed) {
+    return { season: input.season, episodes: input.episodes, changed: false };
+  }
+
+  const season: TrackedSeason = { ...input.season, totalEpisodes: newTotal, latestAiredEpisode: newLatest };
+  const baseline = createEpisodeStates({
+    trackedSeasonId: input.season.id,
+    seasonNumber: input.season.seasonNumber,
+    totalEpisodes: newTotal,
+    latestAiredEpisode: newLatest,
+  });
+  const oldByCode = new Map(input.episodes.map((episode) => [episode.episodeCode, episode]));
+  const merged: EpisodeState[] = baseline.map((base) => {
+    const old = oldByCode.get(base.episodeCode);
+    if (old === undefined) {
+      return base;
+    }
+    if (old.obtained) {
+      return {
+        ...base,
+        obtained: true,
+        verifiedFileIds: old.verifiedFileIds,
+        metadataStatus: old.metadataStatus,
+        airDate: old.airDate,
+        title: old.title,
+      };
+    }
+    return { ...base, airDate: old.airDate, title: old.title };
+  });
+
+  // Preserve obtained provider-ahead episodes that sit beyond the (new) total.
+  const mergedCodes = new Set(merged.map((episode) => episode.episodeCode));
+  for (const old of input.episodes) {
+    if (!mergedCodes.has(old.episodeCode) && old.obtained) {
+      merged.push(old);
+    }
+  }
+
+  return { season, episodes: merged, changed: true };
+}

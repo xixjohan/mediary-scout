@@ -227,121 +227,121 @@
       "count": 1
     }
   },
-  "packages/workflow/src/agent-model.ts": {
+  "packages/workflow/src/domain/agent-model.ts": {
     "complexity": {
       "count": 1
     }
   },
-  "packages/workflow/src/fallback-provider.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/guangya-storage-executor.ts": {
-    "complexity": {
-      "count": 2
-    },
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/jev-client.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/jev-prefilter-provider.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/media-title-parser.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/movie-workflow-v2.ts": {
+  "packages/workflow/src/domain/notification-report.ts": {
     "complexity": {
       "count": 2
     }
   },
-  "packages/workflow/src/natural-language-search.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/notification-report.ts": {
+  "packages/workflow/src/domain/notify.ts": {
     "complexity": {
       "count": 2
     }
   },
-  "packages/workflow/src/notify.ts": {
+  "packages/workflow/src/execution/movie-workflow-v2.ts": {
     "complexity": {
       "count": 2
     }
   },
-  "packages/workflow/src/pan123-client.ts": {
+  "packages/workflow/src/execution/replace-request.ts": {
     "complexity": {
       "count": 1
     }
   },
-  "packages/workflow/src/pan123-storage-executor.ts": {
-    "complexity": {
-      "count": 3
-    },
+  "packages/workflow/src/execution/runner-v2.ts": {
     "max-lines": {
       "count": 1
     }
   },
-  "packages/workflow/src/replace-request.ts": {
+  "packages/workflow/src/execution/staging-janitor.ts": {
     "complexity": {
       "count": 1
     }
   },
-  "packages/workflow/src/repository.ts": {
-    "complexity": {
-      "count": 3
-    },
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/runner-v2.ts": {
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/sqlite.ts": {
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/staging-janitor.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/storage-115-executor.ts": {
-    "complexity": {
-      "count": 2
-    },
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/subtitle-provider.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/tmdb-provider.ts": {
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "packages/workflow/src/worker.ts": {
+  "packages/workflow/src/execution/worker.ts": {
     "complexity": {
       "count": 8
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/persistence/repository.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/persistence/sqlite.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/providers/fallback-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/providers/jev-client.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/providers/jev-prefilter-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/providers/media-title-parser.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/providers/natural-language-search.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/providers/subtitle-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/providers/tmdb-provider.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/storage/guangya-storage-executor.ts": {
+    "complexity": {
+      "count": 2
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/storage/pan123-client.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/storage/pan123-storage-executor.ts": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/storage/storage-115-executor.ts": {
+    "complexity": {
+      "count": 2
     },
     "max-lines": {
       "count": 1

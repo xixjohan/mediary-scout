@@ -13,7 +13,7 @@ import {
   type StorageBrand,
   type StorageDriverCreateInput,
   type StorageProvider,
-} from "../src/index.js";
+} from "../index.js";
 
 /**
  * 单一注册表：品牌元数据与 executor 构造必须在同一张表里。

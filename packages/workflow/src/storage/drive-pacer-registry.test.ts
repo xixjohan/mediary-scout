@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { drivePacer, type DriveClock } from "../src/drive-pacer.js";
-import { getStorageBrand, STORAGE_BRANDS, type StorageProvider } from "../src/index.js";
+import { drivePacer, type DriveClock } from "./drive-pacer.js";
+import { getStorageBrand, STORAGE_BRANDS, type StorageProvider } from "../index.js";
 
 /**
  * 网盘调用间隔是注册表数据，不是散落的 `provider === "pan123"` 硬判。

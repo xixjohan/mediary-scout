@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { ResourceCandidate, ResourceType } from "./domain.js";
+import type { ResourceCandidate, ResourceType } from "../domain/domain.js";
 import { TianyiAuthError } from "./tianyi-client.js";
 import type { TianyiClient, TianyiItem } from "./tianyi-client.js";
 import { parseTianyiShareUrl, TianyiStorageExecutor } from "./tianyi-storage-executor.js";

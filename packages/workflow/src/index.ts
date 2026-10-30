@@ -1,122 +1,21 @@
-export * from "./domain.js";
-export * from "./agent-model.js";
-export * from "./agent-error.js";
-export * from "./media-classification.js";
-export * from "./media-identity.js";
-export * from "./media-library-folder.js";
-export * from "./movie-workflow-v2.js";
-export * from "./notification-report.js";
-export * from "./season-sync.js";
-export * from "./ports.js";
-export * from "./fakes.js";
-export * from "./episode-code.js";
-export * from "./account-credentials.js";
-export * from "./workflow-scope.js";
+// Domain & Rule Core
+export * from "./domain/index.js";
+
+// Storage Adapters & Brand Engines
+export * from "./storage/index.js";
+
+// External Providers (Search, Metadata, Judges)
+export * from "./providers/index.js";
+
+// Persistence, Database & Job Queue
+export * from "./persistence/index.js";
+
+// Execution Engine, Workers & Workflows
+export * from "./execution/index.js";
+
+// Auth & Acquisition V2
 export * from "./auth/password.js";
 export * from "./auth/session.js";
-export * from "./repository.js";
-export * from "./resource-source-health.js";
-export { SqliteWorkflowRepository, createSqliteWorkflowRepository, isSecretSettingKey } from "./sqlite.js";
-export { SqliteJobQueue, DEFAULT_STALE_LOCK_MS } from "./sqlite-queue.js";
-// 日志页（W4 L1）的前置件。必须用在读取/展示边界，不能放进 trace sink 的写入侧——
-// 写入侧脱敏会毁掉 args 的法证价值（agent-trace-integration.test.ts 特意断言
-// search.args.keyword 保持可复盘）。写入侧已有的是体积上限 cappedArgs，与脱敏无关。
-export * from "./agent-step-redaction.js";
-// L1 时间线的步骤投影（读取边界脱敏）。
-export * from "./agent-step-view.js";
-// 资源面板（W2）的投影层：候选视图只带「有哪些资源、多大、什么时候发的」，
-// providerPayload（分享 url/提取码/magnet/downloadUrl）绝不散播。
-export * from "./resource-candidate-view.js";
-// 用户态资源搜索（POST /api/titles/resources）的 30 分钟 TTL 缓存。
-export * from "./title-resource-cache.js";
-// 用户态资源搜索的 60s 冷却限流。
-export * from "./cooldown-limiter.js";
-// POST /api/titles/resources 的决策核心（不含 HTTP，门控可单测）。
-export * from "./title-resource-resolver.js";
-// 用户态资源搜索的服务端关键词阶梯（不让用户手打关键词）。
-export * from "./title-search-keywords.js";
-// 手动入库：从已落库快照按 candidateId 取回 payload（不用进程内 CandidateRegistry）。
-export * from "./manual-import-resolver.js";
-// 手动入库任务载体（进 sys_queue_jobs.payload_json，worker 读回时校验）。
-export * from "./manual-import-job.js";
-// 手动入库端点的决策核心（纯函数：快照归属/TTL/装载，与「快照从哪来」解耦）。
-export * from "./manual-import-endpoint.js";
-// 批次 3：CandidateSelector 端口 + agent/human 两实现（两条路径产出结构一致的决策）。
-export * from "./candidate-selector.js";
-// 批次 3：把用户态搜索的快照落成一个不可见的 run（resource_search）。
-export * from "./resource-search-run.js";
-// 批次 3：关键词阶梯的多份快照合并成用户看到的那一份。
-export * from "./merged-search-snapshot.js";
-// 批次 3：手动入库排队命令（reserveWorkflowRun + 新 WorkflowKind）。
-export * from "./manual-import-command.js";
-// 批次 3：手动入库的 worker 半边（认领 + 转存）。没有它，queued 的 manual_import
-// run 会一直算 active，把它 reserved 时带的 blockIfTitleHasActiveRun 变成永久堵死。
-export * from "./manual-import-worker.js";
-// 批次 4：自动整理的决策半边 + planned/actual 护栏。整理是破坏性操作且网盘无回收站，
-// 所以「先算目标再执行、执行后比对、出偏差即停」是 plan 钉死的共同护栏。
-export * from "./organize-plan.js";
-// 批次 4：执行半边。落 planned moves → 逐文件搬 → 从盘上读回比对 → 偏差即停报人工。
-export * from "./organize-executor.js";
-// 批次 4：organize 的 run 形态。它是用户可见的——最有趣的结果是 manual_review，
-// 而用户看不见的复核等于没有复核。
-export * from "./organize-run.js";
-// 批次 5：订阅策略层。字段集抄 qBittorrent（用户不必重新学词汇），且刻意不建
-// subscription.status 状态机——plan §4.1 对此有明确警告。规则预览与巡检共用同一个
-// matchPolicy，所以预览是承诺而非估算。
-export * from "./subscription-policy.js";
-// 批次 5：成本模型护栏。plan 点名「监控季数上限做成配置项并默认保守，超限明确告知
-// 而非默默拖垮巡检」——默默拖垮是本系统最坏的失败模式，因为什么都不报。
-export * from "./monitor-budget.js";
-// 批次 5：策略表的持久化形状。**损坏的策略行抛错而不是降解成「没有策略」**——空
-// mustNotContain 的意思是「不排除任何东西」，那正好把用户排除掉的资源落地。
-export * from "./subscription-policy-store.js";
-export {
-  SqliteJsonCache,
-  openSqliteJsonCache,
-  sqliteDbPathFromEnv,
-  DEFAULT_SQLITE_DB_PATH,
-} from "./sqlite-json-cache.js";
-export * from "./worker.js";
-export * from "./commands.js";
-export * from "./pansou-provider.js";
-export * from "./haisou-provider.js";
-export * from "./prowlarr-provider.js";
-export * from "./composite-provider.js";
-export * from "./fallback-provider.js";
-export * from "./jev-judge.js";
-export * from "./agent-memory.js";
-export * from "./user-requests.js";
-export * from "./replace-request.js";
-export * from "./jev-client.js";
-export * from "./jev-prefilter-provider.js";
-export * from "./tmdb-provider.js";
-export * from "./douban-provider.js";
-export * from "./subtitle-provider.js";
-export * from "./storage-115-executor.js";
-export * from "./pan115-cookie-client.js";
-export * from "./quark-cookie-client.js";
-export * from "./quark-qrcode-login.js";
-export * from "./quark-storage-executor.js";
-export * from "./guangya-client.js";
-export * from "./guangya-device-login.js";
-export * from "./guangya-storage-executor.js";
-export * from "./tianyi-client.js";
-export * from "./tianyi-qrcode-login.js";
-export * from "./tianyi-storage-executor.js";
-export * from "./pan123-client.js";
-export * from "./pan123-qrcode-login.js";
-export * from "./pan123-storage-executor.js";
-export * from "./storage-brands.js";
-export * from "./storage-auth-error.js";
-export * from "./pan115-storage-factory.js";
-export * from "./queries.js";
-export * from "./search-view.js";
-export * from "./pagination-window.js";
-export * from "./web-search.js";
-export * from "./natural-language-search.js";
-export * from "./runtime-policy.js";
-export * from "./notify.js";
-export * from "./pan115-qrcode-login.js";
 export * from "./acquisition-v2/storage-115-simulator.js";
 export * from "./acquisition-v2/fake-provider.js";
 export * from "./acquisition-v2/sandbox.js";
@@ -143,8 +42,3 @@ export * from "./acquisition-v2/search-source-fault.js";
 export * from "./acquisition-v2/workflow-v2-bridge.js";
 export * from "./acquisition-v2/run-tv-v2.js";
 export * from "./acquisition-v2/stub-model.js";
-export * from "./runner-v2.js";
-export * from "./staging-janitor.js";
-export * from "./staging-recovery.js";
-export * from "./drive-file-manager.js";
-export * from "./chat-conversations.js";

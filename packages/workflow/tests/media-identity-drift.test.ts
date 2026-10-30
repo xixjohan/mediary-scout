@@ -4,7 +4,10 @@ import { join, relative } from "node:path";
 
 const ROOT = join(__dirname, "..", "..", "..");
 /** media-identity.ts 自身：正则与格式字面量的合法归宿。 */
-const MODULE = "packages/workflow/src/media-identity.ts";
+const LEGITIMATE_MODULES = new Set([
+  "packages/workflow/src/media-identity.ts",
+  "packages/workflow/src/domain/media-identity.ts",
+]);
 /** 不检查的目录：测试自己、构建产物、文档、站点、worker。 */
 const SKIP_DIRS = new Set(["node_modules", "dist", ".next", ".git", "docs", "site", "workers"]);
 
@@ -42,7 +45,7 @@ function sourceFiles(dir: string, acc: string[] = []): string[] {
 describe("媒体身份格式只存在于 media-identity.ts（生产源码）", () => {
   const offenders = sourceFiles(join(ROOT, "packages"), [])
     .concat(sourceFiles(join(ROOT, "apps", "web"), []))
-    .filter((f) => relative(ROOT, f) !== MODULE)
+    .filter((f) => !LEGITIMATE_MODULES.has(relative(ROOT, f).replace(/\\/g, "/")))
     .filter((f) => !/\.test\.tsx?$/.test(f))
     .flatMap((file) => {
       const text = readFileSync(file, "utf8");
