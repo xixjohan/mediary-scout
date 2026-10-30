@@ -1061,30 +1061,34 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
     // landing CIDs are resolved per (account, storage) so the run lands on the
     // specific drive it was queued onto.
     const scoped = getAccountScopedSettings(accountId);
-    const parents = await getWorkerStorageParents(accountId, connectedStorageId);
-    const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(scoped);
-    // The run's drive brand selects its resource sources (quark→PanSou quark-only;
-    // 115→PanSou+Prowlarr). null when no drive resolves → default 115 fallback.
-    const driveProvider =
-      (await getAccountStorageCredentials(accountId, connectedStorageId))?.provider ?? "pan115";
-    const assrtToken = await getAssrtToken(scoped);
-    // Web reference (alternate titles, fan-season ↔ episode mapping) follows THIS
-    // account's LLM endpoint — DeepSeek's search when that is what they configured.
-    const titleResearch = await resolveTitleResearchOptions(scoped);
-    // Per-account: undefined unless THIS account set a key, enabled the prefilter
-    // and the save-time probe passed. Undefined → the orchestrator keeps the bare
-    // provider, so an unconfigured account costs exactly zero Jev calls.
-    const jevJudge = await resolveJevJudge(scoped);
-    // Agent memory is on unless THIS account switched it off (Settings → AI 模型).
-    // Best-effort like every memory step: a failing read must not fail a runnable job —
-    // fall back to the default (on); the orchestrator swallows later store failures.
-    const agentMemory = await isAgentMemoryEnabled(getWorkflowRepository(), accountId).catch((error: unknown) => {
-      console.log(`[memory] agent_memory_enabled read failed (defaulting on): ${error instanceof Error ? error.message : String(error)}`);
-      return true;
-    });
+    const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
+    const parents = await getWorkerStorageParents(accountId, connectedStorageId, creds);
+    const driveProvider = creds?.provider ?? "pan115";
+    const [
+      { model, llmConfig, preferredLanguage, qualityPreference },
+      assrtToken,
+      titleResearch,
+      jevJudge,
+      agentMemory,
+      storage,
+      resourceProvider,
+    ] = await Promise.all([
+      getAgentModel(scoped),
+      getAssrtToken(scoped),
+      resolveTitleResearchOptions(scoped),
+      resolveJevJudge(scoped),
+      isAgentMemoryEnabled(getWorkflowRepository(), accountId).catch((error: unknown) => {
+        console.log(
+          `[memory] agent_memory_enabled read failed (defaulting on): ${error instanceof Error ? error.message : String(error)}`,
+        );
+        return true;
+      }),
+      getWorkerStorageExecutor(accountId, connectedStorageId, creds),
+      getWorkerResourceProvider(scoped, driveProvider, accountId),
+    ]);
     return {
-      storage: await getWorkerStorageExecutor(accountId, connectedStorageId),
-      resourceProvider: await getWorkerResourceProvider(scoped, driveProvider, accountId),
+      storage,
+      resourceProvider,
       storageProvider: driveProvider,
       model,
       // The worker uses this ONLY to pick the free-preset failure copy for THIS
@@ -1164,8 +1168,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
-  const storage = await getWorkerStorageExecutor(accountId);
-  const parents = await getWorkerStorageParents(accountId);
+  const baseCreds = await getAccountStorageCredentials(accountId);
+  const storage = await getWorkerStorageExecutor(accountId, undefined, baseCreds);
+  const parents = await getWorkerStorageParents(accountId, undefined, baseCreds);
+  const resourceProvider = await getWorkerResourceProvider();
   const resolveAccountContext = buildAccountContextResolver();
   const startedAt = new Date().toISOString();
   const onAuthErrorFreeze = (id: string, reason: string) => freezeConnectedStorage(id, reason);
@@ -1179,7 +1185,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   }
   const type2 = await runQueuedType2Workflow({
     repository,
-    resourceProvider: await getWorkerResourceProvider(),
+    resourceProvider,
     storage,
     model,
     // Free-tier failure copy (Task 5): lets the worker's failure handler run
@@ -1201,7 +1207,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   }
   const series = await runQueuedSeriesInitialization({
     repository,
-    resourceProvider: await getWorkerResourceProvider(),
+    resourceProvider,
     storage,
     model,
     // Free-tier failure copy (Task 5): lets the worker's failure handler run
@@ -1223,7 +1229,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   }
   const movie = await runQueuedMovieAcquisition({
     repository,
-    resourceProvider: await getWorkerResourceProvider(),
+    resourceProvider,
     storage,
     model,
     // Free-tier failure copy (Task 5): lets the worker's failure handler run
@@ -1244,7 +1250,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   }
   const replace = await runQueuedReplaceRequest({
     repository,
-    resourceProvider: await getWorkerResourceProvider(),
+    resourceProvider,
     storage,
     model,
     // Free-tier failure copy (Task 5): lets the worker's failure handler run
@@ -1269,11 +1275,14 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   }
   // Manual import. Placed before the patrol and the staging recovery: the user is
   // waiting on it, and it holds a title lock, so leaving it queued blocks that
-  // title's other work. A movie goes under the movie parent; a season under TV.
+  // title's other work. A movie goes under the movie parent; a season under TV/Anime.
   const manualImport = await runQueuedManualImport({
     repository,
     storage,
-    categoryParentDirectoryId: parents.movies || parents.tv,
+    categoryParentDirectoryId: parents.tv,
+    storageParentDirectoryId: parents.tv,
+    animeStorageParentDirectoryId: parents.anime,
+    moviesParentDirectoryId: parents.movies,
     resolveAccountContext,
     onAuthErrorFreeze,
     ...claimOption,
@@ -1286,7 +1295,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   // instead of terminally failing the recovery run.
   return runQueuedStagingRecovery({
     repository,
-    resourceProvider: await getWorkerResourceProvider(),
+    resourceProvider,
     storage,
     model,
     llmConfig,
@@ -3051,6 +3060,7 @@ export async function workerHasConfiguredDrive(): Promise<boolean> {
 async function getWorkerStorageExecutor(
   accountId: string = DEFAULT_ACCOUNT_ID,
   connectedStorageId?: string | null,
+  preloadedCreds?: AccountStorageCredentials | null,
 ): Promise<StorageExecutor> {
   const adapter = process.env.MEDIA_TRACK_STORAGE_ADAPTER;
   if (adapter === "fake") {
@@ -3059,7 +3069,10 @@ async function getWorkerStorageExecutor(
     });
     return fakeStorageExecutor;
   }
-  const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
+  const creds =
+    preloadedCreds !== undefined
+      ? preloadedCreds
+      : await getAccountStorageCredentials(accountId, connectedStorageId);
   if (creds) {
     // Scope writes to THIS drive's own provisioned dirs — not the global env CIDs
     // (which belong to the default account's drive). Dispatch by the drive's
@@ -3101,21 +3114,24 @@ async function getWorkerStorageExecutor(
 }
 
 /**
- * The 115 landing parent CIDs for a run's account. Sourced from the account's
+ * The landing parent CIDs for a run's account. Sourced from the account's
  * connected_storage (set at connect-time directory provision); falls back to the
- * env CIDs when the account has no 115 connection or the adapter is fake.
+ * env CIDs when the account has no connected drive or the adapter is fake.
  */
 async function getWorkerStorageParents(
   accountId: string = DEFAULT_ACCOUNT_ID,
   connectedStorageId?: string | null,
+  preloadedCreds?: AccountStorageCredentials | null,
 ): Promise<{
   tv: string;
   anime: string;
   movies: string;
 }> {
   const creds =
-    process.env.MEDIA_TRACK_STORAGE_ADAPTER === "115"
-      ? await getAccountStorageCredentials(accountId, connectedStorageId)
+    process.env.MEDIA_TRACK_STORAGE_ADAPTER !== "fake"
+      ? preloadedCreds !== undefined
+        ? preloadedCreds
+        : await getAccountStorageCredentials(accountId, connectedStorageId)
       : null;
   return {
     tv: creds?.tvCid || storageParentDirectoryId(),
@@ -3535,6 +3551,26 @@ async function refreshConnectedStorage(
   }
 }
 
+async function healMissingCidsOnRefresh(
+  existing: ConnectedStorage,
+  provider: string,
+  cookie: string,
+  credential: TokenCredential | null,
+): Promise<{ rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null }> {
+  let { rootCid, moviesCid, tvCid, animeCid } = existing;
+  if (process.env.MEDIA_TRACK_STORAGE_ADAPTER !== "fake" && !(rootCid && moviesCid && tvCid && animeCid)) {
+    try {
+      const p = await provisionDriveCategoryDirs(provider, cookie, credential);
+      if (p.rootCid) {
+        ({ rootCid, moviesCid, tvCid, animeCid } = p);
+      }
+    } catch (error) {
+      console.error(`[media-track] ${provider} refresh directory heal failed: ${String(error)}`);
+    }
+  }
+  return { rootCid, moviesCid, tvCid, animeCid };
+}
+
 /**
  * Shared bind skeleton for the two TOKEN brands (光鸭/天翼): enforce instance-wide
  * ownership, then refresh-or-insert the connected_storage row. The parts that
@@ -3578,7 +3614,8 @@ async function bindTokenConnectedStorage(input: {
   }
   const payload = { ...credentialBlob, meta };
   if (decision.action === "refresh" && existing) {
-    // Same account re-login → refresh the credential blob, keep the resolved CIDs.
+    // Same account re-login → refresh the credential blob, keep/heal the resolved CIDs.
+    const cids = await healMissingCidsOnRefresh(existing, provider, "", credentialBlob);
     await refreshConnectedStorage(repository, existing, {
       id: existing.id,
       accountId,
@@ -3586,10 +3623,10 @@ async function bindTokenConnectedStorage(input: {
       providerUid,
       label: existing.label,
       payload,
-      rootCid: existing.rootCid,
-      moviesCid: existing.moviesCid,
-      tvCid: existing.tvCid,
-      animeCid: existing.animeCid,
+      rootCid: cids.rootCid,
+      moviesCid: cids.moviesCid,
+      tvCid: cids.tvCid,
+      animeCid: cids.animeCid,
       createdAt: existing.createdAt,
     });
     return { providerUid };
@@ -3888,7 +3925,8 @@ async function connectCloudFamilyCookie(
   }
   const payload = { cookie, meta: { connectedAt: new Date().toISOString() } };
   if (decision.action === "refresh" && existing) {
-    // Same account re-bind → refresh the cookie, keep the resolved CIDs.
+    // Same account re-bind → refresh the cookie, keep/heal the resolved CIDs.
+    const cids = await healMissingCidsOnRefresh(existing, provider, cookie, null);
     await refreshConnectedStorage(repository, existing, {
       id: existing.id,
       accountId,
@@ -3896,10 +3934,10 @@ async function connectCloudFamilyCookie(
       providerUid,
       label: existing.label,
       payload,
-      rootCid: existing.rootCid,
-      moviesCid: existing.moviesCid,
-      tvCid: existing.tvCid,
-      animeCid: existing.animeCid,
+      rootCid: cids.rootCid,
+      moviesCid: cids.moviesCid,
+      tvCid: cids.tvCid,
+      animeCid: cids.animeCid,
       createdAt: existing.createdAt,
     });
     return { providerUid };

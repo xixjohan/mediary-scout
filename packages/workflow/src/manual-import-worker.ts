@@ -6,10 +6,10 @@ import type { PersistedWorkflowRunSnapshot } from "./repository.js";
 import { ensureMediaLibraryDirectory } from "./media-library-folder.js";
 import { MANUAL_IMPORT_KIND } from "./manual-import-command.js";
 import { MANUAL_IMPORT_TTL_MS, resolveManualImportCandidate } from "./manual-import-resolver.js";
-import type { ResourceCandidate } from "./domain.js";
+import type { MediaType, ResourceCandidate, TransferAttempt } from "./domain.js";
 import type { StorageExecutor } from "./ports.js";
-import type { TransferAttempt } from "./domain.js";
-import type { ResolveAccountWorkerContext } from "./worker.js";
+import { isBrandStorageAuthError } from "./storage-auth-error.js";
+import type { AccountWorkerContext, ResolveAccountWorkerContext } from "./worker.js";
 
 /**
  * The worker half of manual import (batch 3, ①).
@@ -43,22 +43,55 @@ export interface ManualImportWorkerResult {
   error?: string;
 }
 
+export function resolveManualImportCategoryParent(input: {
+  titleType: MediaType;
+  ctx: AccountWorkerContext;
+  fallbackCategoryParentDirectoryId: string;
+  storageParentDirectoryId?: string | undefined;
+  animeStorageParentDirectoryId?: string | undefined;
+  moviesParentDirectoryId?: string | undefined;
+}): string {
+  const tvParent = input.ctx.storageParentDirectoryId ?? input.storageParentDirectoryId ?? input.fallbackCategoryParentDirectoryId;
+  const animeParent = input.ctx.animeStorageParentDirectoryId ?? input.animeStorageParentDirectoryId ?? tvParent;
+  const moviesParent = input.ctx.moviesParentDirectoryId ?? input.moviesParentDirectoryId ?? input.fallbackCategoryParentDirectoryId;
+  if (input.titleType === "movie") return moviesParent;
+  if (input.titleType === "anime") return animeParent;
+  return tvParent;
+}
+
+async function notifyFreezeIfBrandAuthError(input: {
+  connectedStorageId: string | null | undefined;
+  error: unknown;
+  onAuthErrorFreeze?: ((storageId: string, reason: string) => Promise<void>) | undefined;
+}): Promise<void> {
+  const { connectedStorageId, error, onAuthErrorFreeze } = input;
+  if (!onAuthErrorFreeze || !connectedStorageId || !isBrandStorageAuthError(error)) {
+    return;
+  }
+  const reason = error instanceof Error ? error.message : String(error);
+  try {
+    await onAuthErrorFreeze(connectedStorageId, reason);
+  } catch (freezeError) {
+    console.error(`[media-track] manual-import onAuthErrorFreeze failed for ${connectedStorageId}: ${String(freezeError)}`);
+  }
+}
+
 export async function runQueuedManualImport(input: {
   repository: WorkflowRepository;
   /** The default account's executor; overridden per run when a resolver is given. */
   storage: StorageExecutor;
-  /** The TV/movie category parent on the drive. */
+  /** Legacy fallback TV/movie category parent on the drive. */
   categoryParentDirectoryId: string;
+  /** Optional explicit category parents for the default account. */
+  storageParentDirectoryId?: string;
+  animeStorageParentDirectoryId?: string;
+  moviesParentDirectoryId?: string;
   now?: () => string;
   ttlMs?: number;
   /**
    * §7 form B: the claimed run's account credentials. Manual import writes to a
    * drive, so it may not run on the default account's storage when the run belongs
    * to someone else — bob's import must land in bob's 115.
-   *
-   * Called directly and only `.storage` is read: unlike the acquisition runners this
-   * one needs no LLM and no resource provider, and typing those in would force every
-   * caller to build deps the transfer never touches.
    */
   resolveAccountContext?: ResolveAccountWorkerContext;
   onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
@@ -69,20 +102,24 @@ export async function runQueuedManualImport(input: {
   if (claimed === null) {
     return { status: "idle" };
   }
-  // Per-account drive. Resolved after the claim (claim-first, as everywhere else) so
-  // the credentials describe the run we actually took.
-  const storage =
+  // Per-account drive + category parents. Resolved after the claim (claim-first).
+  const ctx: AccountWorkerContext =
     input.resolveAccountContext === undefined
-      ? input.storage
-      : (await input.resolveAccountContext(claimed.accountId, claimed.connectedStorageId)).storage ??
-        input.storage;
+      ? {}
+      : await input.resolveAccountContext(claimed.accountId, claimed.connectedStorageId);
+  const storage = ctx.storage ?? input.storage;
+  const categoryParentDirectoryId = resolveManualImportCategoryParent({
+    titleType: claimed.title.type,
+    ctx,
+    fallbackCategoryParentDirectoryId: input.categoryParentDirectoryId,
+    storageParentDirectoryId: input.storageParentDirectoryId,
+    animeStorageParentDirectoryId: input.animeStorageParentDirectoryId,
+    moviesParentDirectoryId: input.moviesParentDirectoryId,
+  });
 
   // (1) Re-validate against the DB copy, not the request that queued it.
   const validated = validateClaimedManualImport({
     claimed,
-    // The resolver's clock is epoch-ms; the repository's is ISO. Parsing here keeps
-    // the two from being confused — and a snapshot whose createdAt will not parse
-    // comes back as `invalid_snapshot`, not as a silently-open window.
     nowMs: Date.parse(now()),
     ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
   });
@@ -91,23 +128,26 @@ export async function runQueuedManualImport(input: {
   }
   const candidate: ResourceCandidate = validated.candidate;
 
-  // (3) Canonical target: `Title (Year) {tmdb-N}` [+ `Season NN` for TV].
-  const targetDirectoryId = await manualImportTargetDirectory({
-    storage,
-    title: claimed.title,
-    season: claimed.season,
-    categoryParentDirectoryId: input.categoryParentDirectoryId,
-  });
-
-  // (2) Transfer, reading the link out of the DB-resident candidate.
+  // (3) Canonical target + (2) Transfer inside guarded try/catch so no error ever leaves the run `running`.
   let attempt: TransferAttempt;
   try {
+    const targetDirectoryId = await manualImportTargetDirectory({
+      storage,
+      title: claimed.title,
+      season: claimed.season,
+      categoryParentDirectoryId,
+    });
     attempt = await storage.transfer({
       workflowRunId: claimed.workflowRun.id,
       directoryId: targetDirectoryId,
       candidate,
     });
   } catch (error) {
+    await notifyFreezeIfBrandAuthError({
+      connectedStorageId: claimed.connectedStorageId,
+      error,
+      onAuthErrorFreeze: input.onAuthErrorFreeze,
+    });
     return await failRun(
       input,
       claimed,
@@ -127,6 +167,7 @@ export async function runQueuedManualImport(input: {
 
   await input.repository.saveWorkflowRunSnapshot({
     accountId: claimed.accountId,
+    ...(claimed.connectedStorageId ? { connectedStorageId: claimed.connectedStorageId } : {}),
     title: claimed.title,
     season: claimed.season,
     workflowRun: {
@@ -152,23 +193,34 @@ async function failRun(
 ): Promise<ManualImportWorkerResult> {
   await input.repository.saveWorkflowRunSnapshot({
     accountId: claimed.accountId,
+    ...(claimed.connectedStorageId ? { connectedStorageId: claimed.connectedStorageId } : {}),
     title: claimed.title,
     season: claimed.season,
     workflowRun: {
       ...claimed.workflowRun,
       status: "failed",
       finishedAt: new Date().toISOString(),
+      auditEvents: [
+        ...claimed.workflowRun.auditEvents,
+        {
+          type: "manual_import_failed",
+          message,
+          data: { reason },
+        },
+      ],
     },
-    episodes: [],
+    episodes: claimed.episodes,
     resourceSnapshots: claimed.resourceSnapshots,
     decisions: claimed.decisions,
     transferAttempts: [],
     notifications: [],
   });
-  // The copy the user sees. Deliberately does not blame them for a record that went
-  // stale in our own queue (see manualImportRejectionCopy).
-  void message;
-  return { status: reason === "expired" ? "rejected" : "failed", workflowRunId: claimed.workflowRun.id, reason };
+  return {
+    status: reason === "expired" ? "rejected" : "failed",
+    workflowRunId: claimed.workflowRun.id,
+    reason,
+    error: message,
+  };
 }
 
 function manualImportFailureCopy(reason: string): string {
@@ -204,8 +256,14 @@ async function manualImportTargetDirectory(input: {
   if (input.title.type === "movie" || input.season === undefined) {
     return showDirectoryId;
   }
+  const seasonDirName = `Season ${String(input.season.seasonNumber).padStart(2, "0")}`;
+  const children = await input.storage.listChildDirectories(showDirectoryId);
+  const existing = children.find((child) => child.name === seasonDirName);
+  if (existing) {
+    return existing.id;
+  }
   return input.storage.createDirectory({
-    name: `Season ${String(input.season.seasonNumber).padStart(2, "0")}`,
+    name: seasonDirName,
     parentId: showDirectoryId,
   });
 }

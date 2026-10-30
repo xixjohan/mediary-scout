@@ -195,13 +195,14 @@ async function handleResourceResult(
     }
   }
 
+  const resolvedSnapshotId = result.snapshot?.id ?? result.snapshotId;
   return NextResponse.json(
     {
       tmdbId: context.tmdbId,
       cached: result.cached,
       count: result.candidates.length,
       candidates: result.candidates,
-      ...(result.snapshot === null ? {} : { snapshotId: result.snapshot.id }),
+      ...(resolvedSnapshotId === undefined ? {} : { snapshotId: resolvedSnapshotId }),
     },
     { headers: NO_STORE },
   );
@@ -280,7 +281,7 @@ export async function POST(request: NextRequest) {
           });
 
           if (result.kind === "ok") {
-            let snapshotId: string | undefined;
+            let snapshotId: string | undefined = result.snapshotId;
             if (result.snapshot !== null) {
               try {
                 await getWorkflowRepository().saveWorkflowRunSnapshot(
