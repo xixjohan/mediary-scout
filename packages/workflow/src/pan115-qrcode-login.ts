@@ -153,16 +153,24 @@ export class Pan115QrLoginClient {
 
     for (const app of candidates) {
       const body = new URLSearchParams({ account: session.uid, app });
-      const response = asRecord(
-        await this.fetchJson(`${PASSPORT_API}/app/1.0/${app}/1.0/login/qrcode/`, {
-          method: "POST",
-          headers: {
-            ...this.headers(),
-            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-          },
-          body: body.toString(),
-        }),
-      );
+      let response: Record<string, unknown>;
+      try {
+        response = asRecord(
+          await this.fetchJson(`${PASSPORT_API}/app/1.0/${app}/1.0/login/qrcode/`, {
+            method: "POST",
+            headers: {
+              ...this.headers(),
+              "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            },
+            body: body.toString(),
+          }),
+        );
+      } catch (err) {
+        if (!firstErrorMessage) {
+          firstErrorMessage = err instanceof Error ? err.message : String(err);
+        }
+        continue;
+      }
       const data = asRecord(response["data"]);
       const cookieRecord = asRecord(data["cookie"]);
       const pairs = (["UID", "CID", "SEID", "KID"] as const)
@@ -192,26 +200,59 @@ export class Pan115QrLoginClient {
       "User-Agent": this.userAgent,
       Referer: "https://115.com/",
       Accept: "application/json, text/plain, */*",
+      // Explicitly close the connection after each request so undici does not pool
+      // idle sockets that 115's WAF terminates abruptly with TCP RST (causing read ECONNRESET).
+      Connection: "close",
     };
   }
+}
+
+export function isTransientPan115NetworkError(error: unknown): boolean {
+  if (!error) return false;
+  const msg = error instanceof Error ? error.message : String(error);
+  const cause = (error as { cause?: unknown })?.cause;
+  const causeMsg = cause instanceof Error ? cause.message : String(cause ?? "");
+  const causeCode = (cause as { code?: string })?.code ?? "";
+  const combined = `${msg} ${causeMsg} ${causeCode}`.toLowerCase();
+  return (
+    combined.includes("econnreset") ||
+    combined.includes("socket hang up") ||
+    combined.includes("etimedout") ||
+    combined.includes("econnrefused") ||
+    combined.includes("network socket disconnected") ||
+    combined.includes("und_err_socket") ||
+    combined.includes("fetch failed")
+  );
 }
 
 async function defaultFetchJson(
   url: string,
   init: { method: string; headers?: Record<string, string>; body?: string },
 ): Promise<unknown> {
-  const controller = new AbortController();
-  // Long-poll rounds hold ~30s; cap a bit above that.
-  const timer = setTimeout(() => controller.abort(), 35_000);
-  try {
-    const response = await fetch(url, { ...init, signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`115 QR endpoint failed with HTTP ${response.status}`);
+  const maxAttempts = 3;
+  let lastError: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const controller = new AbortController();
+    // Long-poll rounds hold ~30s; cap a bit above that.
+    const timer = setTimeout(() => controller.abort(), 35_000);
+    try {
+      const response = await fetch(url, { ...init, signal: controller.signal });
+      if (!response.ok) {
+        throw new Error(`115 QR endpoint failed with HTTP ${response.status}`);
+      }
+      return await response.json();
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxAttempts - 1 && isTransientPan115NetworkError(err)) {
+        await new Promise((r) => setTimeout(r, (attempt + 1) * 600));
+        continue;
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    return response.json();
-  } finally {
-    clearTimeout(timer);
   }
+  throw lastError;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
