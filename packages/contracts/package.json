@@ -2,6 +2,7 @@
   "name": "@media-track/contracts",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "description": "中立契约层：基础设施端口与跨端 DTO，零第三方框架依赖",
   "exports": {
     ".": {

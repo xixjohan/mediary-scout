@@ -181,7 +181,7 @@ export function UpdateTab({
             {view.releases.length > 10 ? (
               <p className="update-muted">
                 这里只列最近 10 个版本，更早的见{" "}
-                <a href={`https://github.com/${REPO_SLUG}/tree/main/release-notes`} target="_blank" rel="noopener noreferrer">
+                <a href={`https://github.com/${REPO_SLUG}/tree/main/docs/release-notes`} target="_blank" rel="noopener noreferrer">
                   全部发布说明
                 </a>
                 。

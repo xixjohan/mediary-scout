@@ -22,18 +22,18 @@ chmod 600 ~/.mediary/agent.json
 
 ## 装上 skill
 
-skill 在本仓库的 `skills/mediary-scout` 里。桌面版用户手上没有仓库，先拉一份：
+skill 在本仓库的 `tools/skills/mediary-scout` 里。桌面版用户手上没有仓库，先拉一份：
 
 ```bash
 git clone --depth 1 https://github.com/xixjohan/mediary-scout /tmp/mediary-scout
-mkdir -p ~/.claude/skills/ && cp -r /tmp/mediary-scout/skills/mediary-scout ~/.claude/skills/      # 或 ~/.codex/skills/、~/.config/opencode/skills/
+mkdir -p ~/.claude/skills/ && cp -r /tmp/mediary-scout/tools/skills/mediary-scout ~/.claude/skills/      # 或 ~/.codex/skills/、~/.config/opencode/skills/
 ```
 
-Windows 上在 Git Bash 里跑同样的命令，或者手动把 `skills/mediary-scout` 文件夹复制到 `%USERPROFILE%\.claude\skills\`。
+Windows 上在 Git Bash 里跑同样的命令，或者手动把 `tools/skills/mediary-scout` 文件夹复制到 `%USERPROFILE%\.claude\skills\`。
 
 skill 用 `curl` 和 `jq` 调接口。Git Bash 不带 `jq`，Windows 上先装一下（`winget install jqlang.jq`）；macOS / Linux 没有的话用 `brew install jq` 或 `apt install jq`。
 
-之后直接跟 agent 说「帮我找进击的巨人第二季」「蜘蛛侠下好了吗」「把画质改成 high」就行。能说哪些话见 [`skills/mediary-scout/SKILL.md`](../skills/mediary-scout/SKILL.md)。
+之后直接跟 agent 说「帮我找进击的巨人第二季」「蜘蛛侠下好了吗」「把画质改成 high」就行。能说哪些话见 [`tools/skills/mediary-scout/SKILL.md`](../tools/skills/mediary-scout/SKILL.md)。
 
 ## 接口
 

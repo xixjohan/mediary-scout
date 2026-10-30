@@ -5,7 +5,7 @@
 # ---- Docker Hub 镜像源(墙内必读) ----
 #
 # 本文件里剩余镜像来自 Docker Hub:node(见 Dockerfile)、cloudflared、
-# updater 的 docker:27-cli(见 updater/Dockerfile)。
+# updater 的 docker:27-cli(见 apps/updater/Dockerfile)。
 # **在中国大陆,Docker Hub 经常拉不动** —— 表现为
 # `failed to fetch anonymous token: ... EOF` 或 `connection reset by peer`。
 # 这不是你的配置错了,是 registry-1.docker.io / auth.docker.io 不可达。
@@ -40,7 +40,7 @@ services:
     # a fresh pansou-web indexes only magnet channels and returns ZERO 115 shares —
     # the agent then never sees the good 网盘 4K/REMUX resources. See the file header.
     env_file:
-      - deploy/pansou.channels.env
+      - scripts/pansou.channels.env
     logging: *default-logging
     restart: unless-stopped
 
@@ -147,7 +147,7 @@ services:
   # 单镜像模式下它改为拉取发布镜像（不再本地 build web），见 updater/run-update.sh。
   updater:
     build:
-      context: ./updater
+      context: ./apps/updater
       args:
         DOCKER_MIRROR: ${DOCKER_MIRROR:-}
     volumes:

@@ -5,10 +5,10 @@ This file is an example host prompt for running Type 3 scheduled monitoring in a
 It is not the source of truth for the workflow.
 The source of truth remains:
 
-- [SKILL.md](../SKILL.md)
-- [references/02-global-constraints.md](../references/02-global-constraints.md)
-- [references/03-methods-reference.md](../references/03-methods-reference.md)
-- [references/07-type3-checklist.md](../references/07-type3-checklist.md)
+- [LEGACY-PYTHON-SKILL.md](./legacy-clawd-skill/LEGACY-PYTHON-SKILL.md)
+- [legacy-clawd-skill/02-global-constraints.md](./legacy-clawd-skill/02-global-constraints.md)
+- [legacy-clawd-skill/03-methods-reference.md](./legacy-clawd-skill/03-methods-reference.md)
+- [legacy-clawd-skill/07-type3-checklist.md](./legacy-clawd-skill/07-type3-checklist.md)
 
 Use this example when wiring a scheduled Type 3 job into a host agent that supports cron or recurring execution.
 

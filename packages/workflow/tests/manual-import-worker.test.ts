@@ -3,7 +3,7 @@ import type { MediaTitle, ResourceSnapshot, TransferAttempt } from "../src/domai
 import type { StorageExecutor } from "../src/ports.js";
 import { InMemoryWorkflowRepository } from "../src/repository.js";
 import { MANUAL_IMPORT_TTL_MS } from "../src/manual-import-resolver.js";
-import { runQueuedManualImport } from "../src/manual-import-worker.js";
+import { runQueuedManualImport, transitionClaimedRunStatus } from "../src/manual-import-worker.js";
 import { Pan115AuthError } from "../src/pan115-cookie-client.js";
 
 /**
@@ -598,5 +598,46 @@ describe("runQueuedManualImport — 多网盘分类路由与异常状态机护�
     const saved = await repo.getWorkflowRunSnapshot(runId, "acct_default");
     expect(saved!.workflowRun.status).toBe("failed");
     expect(saved!.workflowRun.auditEvents.some((e) => e.type === "manual_import_failed")).toBe(true);
+  });
+
+  it("resolveAccountContext 阶段抛错 ⇒ 同样由 try/catch 兜底置为 failed（绝不残留 running），且保持确定性时钟", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const runId = await seedQueuedRun(repo, {
+      snap: snapshot("s", FRESH_AT),
+      candidateId: "c1",
+      connectedStorageId: "cs_resolve_boom",
+    });
+    const fixedNow = "2026-01-10T12:00:00.000Z";
+    const res = await runQueuedManualImport({
+      repository: repo,
+      storage: fakeStorage(),
+      categoryParentDirectoryId: "tv_root",
+      resolveAccountContext: async () => {
+        throw new Error("DB_DECRYPT_FAILURE");
+      },
+      now: () => fixedNow,
+    });
+    expect(res.status).toBe("failed");
+    const saved = await repo.getWorkflowRunSnapshot(runId, "acct_default");
+    expect(saved!.workflowRun.status).toBe("failed");
+    expect(saved!.workflowRun.finishedAt).toBe(fixedNow);
+  });
+
+  it("transitionClaimedRunStatus 拒绝从非 running 状态跃迁至终态", () => {
+    expect(() =>
+      transitionClaimedRunStatus(
+        {
+          id: "r1",
+          kind: "manual_import",
+          status: "succeeded",
+          trackedSeasonId: "t1_s1",
+          startedAt: FRESH_AT,
+          finishedAt: FRESH_AT,
+          auditEvents: [],
+        },
+        "failed",
+        FRESH_AT,
+      ),
+    ).toThrow(/Illegal workflow run state transition/);
   });
 });

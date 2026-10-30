@@ -133,6 +133,8 @@ export async function fetchReleaseFeed(fetchImpl: typeof fetch = fetch): Promise
 export function readLocalReleaseNotes(tag: string): string | null {
   try {
     const candidates = [
+      join(/*turbopackIgnore: true*/ process.cwd(), "docs", "release-notes", `${tag}.md`),
+      join(/*turbopackIgnore: true*/ process.cwd(), "..", "..", "docs", "release-notes", `${tag}.md`),
       join(/*turbopackIgnore: true*/ process.cwd(), "release-notes", `${tag}.md`),
       join(/*turbopackIgnore: true*/ process.cwd(), "..", "..", "release-notes", `${tag}.md`),
     ];
@@ -186,9 +188,16 @@ async function fetchFeedFromRepo(
         if (index >= NOTES_LIMIT) return { ...release, notes: [] };
         let md = await getText(
           fetchImpl,
-          `https://api.github.com/repos/${slug}/contents/release-notes/${release.tag}.md?ref=${release.tag}`,
+          `https://api.github.com/repos/${slug}/contents/docs/release-notes/${release.tag}.md?ref=${release.tag}`,
           "application/vnd.github.raw",
         ).catch(() => null);
+        if (!md) {
+          md = await getText(
+            fetchImpl,
+            `https://api.github.com/repos/${slug}/contents/release-notes/${release.tag}.md?ref=${release.tag}`,
+            "application/vnd.github.raw",
+          ).catch(() => null);
+        }
         if (!md && fetchImpl === fetch) {
           md = readLocalReleaseNotes(release.tag);
         }
@@ -204,6 +213,8 @@ async function fetchFeedFromRepo(
 export function loadLocalReleaseFeed(): ReleaseEntry[] {
   try {
     const candidates = [
+      join(/*turbopackIgnore: true*/ process.cwd(), "docs", "release-notes"),
+      join(/*turbopackIgnore: true*/ process.cwd(), "..", "..", "docs", "release-notes"),
       join(/*turbopackIgnore: true*/ process.cwd(), "release-notes"),
       join(/*turbopackIgnore: true*/ process.cwd(), "..", "..", "release-notes"),
     ];

@@ -13,7 +13,29 @@ export interface FileMetadata {
   readonly extension?: string;
 }
 
-export type StorageBrand = "pan115" | "quark" | "pan123" | "guangya" | "tianyi";
+export type StorageBrand = "pan115" | "quark" | "uc" | "pan123" | "guangya" | "tianyi";
+
+export interface StorageQuotaInfo {
+  readonly totalBytes: number;
+  readonly usedBytes: number;
+  readonly remainingBytes: number;
+}
+
+export interface StorageCategoryTreeCids {
+  readonly rootCid: string;
+  readonly moviesCid: string;
+  readonly tvCid: string;
+  readonly animeCid: string;
+}
+
+export interface StorageTransferResult {
+  readonly status: "succeeded" | "failed";
+  readonly providerMessage: string;
+  readonly materializedFiles: readonly FileMetadata[];
+  readonly systemicBlock?: {
+    readonly reason: string;
+  };
+}
 
 export interface IStorageDriver {
   readonly brand: StorageBrand;
@@ -21,17 +43,21 @@ export interface IStorageDriver {
   /** 连通性与凭据 */
   ping(): Promise<boolean>;
   refreshToken(): Promise<void>;
+  getQuota?(): Promise<StorageQuotaInfo | null>;
 
   /** 目录操作 */
   ensureDir(parentId: string, dirName: string): Promise<string>;
+  provisionCategoryTree?(rootName?: string): Promise<StorageCategoryTreeCids>;
   listChildren(dirId: string): Promise<FileMetadata[]>;
 
   /** 文件流转（支持批量） */
   moveFiles(fileIds: readonly string[], targetDirId: string): Promise<void>;
   deleteFiles(fileIds: readonly string[]): Promise<void>;
 
-  /** 核心转存 / 离线能力 */
+  /** 核心转存 / 离线能力（含盘面强制回读） */
   transferShare(shareUrl: string, targetDirId: string, password?: string): Promise<string>;
+  transferWithReadback?(shareUrl: string, targetDirId: string, password?: string): Promise<StorageTransferResult>;
+  transferSubtitleUrl?(url: string, targetDirId: string, fileName: string): Promise<FileMetadata>;
   addOfflineTask(url: string, targetDirId: string): Promise<string>;
   queryTaskStatus(taskId: string): Promise<"pending" | "downloading" | "succeeded" | "failed">;
 }

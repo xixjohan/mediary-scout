@@ -18,9 +18,10 @@ export { userRequestBlock, type UserRequestPromptInput } from "./user-request-bl
  * disasters spelled out as the WHY.
  */
 function skillMandate(agent: "movie" | "tv"): string {
-  return `⛔ MANDATORY — before ANY reasoning or tool call, read your skill; re-read it DURING the loop. It is NOT optional.
+  return `⛔ MANDATORY — before ANY reasoning or tool call, read your skill; re-read it DURING the loop when entering a new phase. It is NOT optional.
 ${skillIndexForAgent(agent)}
-Acting before you have read it — or reaching a transfer/move/delete/mark without having re-read the section that governs it — makes you the old mechanical transferrer: it searched 16 times, hammered 115 into a rate-limit (the 逆鳞), transferred 6 overlapping full-season packs, deleted the LARGER/better files, and left libraries corrupted. DO NOT be that agent. The skill is the source of truth for HOW to act; skipping the governing section before a side effect is task failure.`;
+Acting before you have read it — or reaching a transfer/move/delete/mark without having re-read the section that governs it — makes you the old mechanical transferrer: it searched 16 times, hammered 115 into a rate-limit (the 逆鳞), transferred 6 overlapping full-season packs, deleted the LARGER/better files, and left libraries corrupted. DO NOT be that agent. The skill is the source of truth for HOW to act; skipping the governing section before a side effect is task failure.
+⚡ FAST-PATH EFFICIENCY: Read each needed section ONCE per phase (do not repeat identical readSkill calls for a section already in your context), and batch read-only inspection calls in the same turn to minimize round-trip latency.`;
 }
 
 /**

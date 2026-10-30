@@ -18,6 +18,7 @@
   <a href="#-docker-部署推荐">🐳 Docker 部署</a> ·
   <a href="#-当前系统核心功能与重磅优化">✨ 功能与优化特性</a> ·
   <a href="docs/deploy.md">📖 详细部署文档</a> ·
+  <a href="docs/architecture.md">🏗️ 架构与模块导航</a> ·
   <a href="README.en.md">English</a>
 </p>
 

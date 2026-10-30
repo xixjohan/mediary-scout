@@ -19,17 +19,15 @@ const ROOT_ALLOWLIST = new Set([
   ".dockerignore", ".env.example", ".eslintignore", ".gitignore", ".gitattributes",
   ".dependency-cruiser.cjs", ".dependency-cruiser-known-violations.json",
   "eslint-suppressions.json",
-  "Dockerfile", "LICENSE", "README.md", "README.en.md", "SKILL.md",
+  "Dockerfile", "LICENSE", "README.md", "README.en.md",
   "package.json", "package-lock.json", "tsconfig.json", "vitest.config.ts",
-  "eslint.config.mjs", "docker-compose.yml", "requirements.txt",
+  "eslint.config.mjs", "docker-compose.yml",
 ]);
 const ROOT_DIR_ALLOWLIST = new Set([
-  ".git", ".github", ".claude", ".next", ".venv", "node_modules", "dist",
-  "apps", "packages", "workers", "scripts", "docs", "site", "updater",
-  "deploy", "references", "release-notes", "skills", "tests", "data", "backups",
-  "e2e", // Playwright E2E（S4.3）
+  ".git", ".github", ".claude", ".next", ".venv", "node_modules",
+  "apps", "packages", "workers", "scripts", "tools", "tests", "docs", "site",
+  "data", "backups",
   "e2e-run", "test-results", "playwright-report", // E2E 运行时产物（gitignored）
-  "tools", // 构建/门禁工具脚本（S5.4 的 eslint 本地规则与其单测）
   "run", // scripts/run-local-real.sh 的本地真实实例运行时产物（DB/日志/pid，gitignored）
 ]);
 
@@ -98,6 +96,25 @@ for (const group of ["packages", "apps"]) {
     if (!declared.has(`${group}/*`)) {
       problems.push(`package.json workspaces 未覆盖 ${group}/*`);
     }
+  }
+}
+
+// 4) 超大文件行数棘轮门禁（Audit L5：防止 eslint-suppressions.json 的 max-lines: count: 1 漏洞导致巨型文件继续膨胀）
+const LARGE_FILE_LINE_CAPS = {
+  "apps/web/lib/workflow-runtime.ts": 3730,
+  "packages/workflow/src/sqlite.ts": 2600,
+  "packages/workflow/src/acquisition-v2/sandbox.ts": 2560,
+  "packages/workflow/src/repository.ts": 2410,
+  "packages/workflow/src/worker.ts": 1510,
+};
+for (const [relPath, maxLines] of Object.entries(LARGE_FILE_LINE_CAPS)) {
+  const fullPath = join(root, relPath);
+  if (!existsSync(fullPath)) continue;
+  const lineCount = readFileSync(fullPath, "utf8").split(/\r?\n/).length;
+  if (lineCount > maxLines) {
+    problems.push(
+      `${relPath}: 行数 ${lineCount} 超过棘轮上限 ${maxLines}（禁止向巨型模块继续堆叠代码，请拆分到独立子模块）`,
+    );
   }
 }
 

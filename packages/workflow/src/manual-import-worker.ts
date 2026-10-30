@@ -76,6 +76,27 @@ async function notifyFreezeIfBrandAuthError(input: {
   }
 }
 
+/**
+ * Pure finite-state transition guard for a claimed workflow run:
+ * only a run in `running` state may transition to a terminal `succeeded` or `failed` state.
+ */
+export function transitionClaimedRunStatus(
+  run: PersistedWorkflowRunSnapshot["workflowRun"],
+  nextStatus: "succeeded" | "failed",
+  finishedAt: string,
+): PersistedWorkflowRunSnapshot["workflowRun"] {
+  if (run.status !== "running") {
+    throw new Error(
+      `Illegal workflow run state transition: cannot transition run ${run.id} from '${run.status}' to '${nextStatus}'`,
+    );
+  }
+  return {
+    ...run,
+    status: nextStatus,
+    finishedAt,
+  };
+}
+
 export async function runQueuedManualImport(input: {
   repository: WorkflowRepository;
   /** The default account's executor; overridden per run when a resolver is given. */
@@ -102,11 +123,29 @@ export async function runQueuedManualImport(input: {
   if (claimed === null) {
     return { status: "idle" };
   }
-  // Per-account drive + category parents. Resolved after the claim (claim-first).
-  const ctx: AccountWorkerContext =
-    input.resolveAccountContext === undefined
-      ? {}
-      : await input.resolveAccountContext(claimed.accountId, claimed.connectedStorageId);
+  // Per-account drive + category parents. Resolved after the claim (claim-first)
+  // INSIDE a try/catch so a throw during credential/context resolution never strands
+  // the run in `running`.
+  let ctx: AccountWorkerContext;
+  try {
+    ctx =
+      input.resolveAccountContext === undefined
+        ? {}
+        : await input.resolveAccountContext(claimed.accountId, claimed.connectedStorageId);
+  } catch (error) {
+    await notifyFreezeIfBrandAuthError({
+      connectedStorageId: claimed.connectedStorageId,
+      error,
+      onAuthErrorFreeze: input.onAuthErrorFreeze,
+    });
+    return await failRun(
+      input,
+      claimed,
+      "transfer_error",
+      `转存失败：${error instanceof Error ? error.message : String(error)}`,
+      now,
+    );
+  }
   const storage = ctx.storage ?? input.storage;
   const categoryParentDirectoryId = resolveManualImportCategoryParent({
     titleType: claimed.title.type,
@@ -124,7 +163,7 @@ export async function runQueuedManualImport(input: {
     ...(input.ttlMs === undefined ? {} : { ttlMs: input.ttlMs }),
   });
   if (validated.kind !== "ok") {
-    return await failRun(input, claimed, validated.kind, manualImportFailureCopy(validated.kind));
+    return await failRun(input, claimed, validated.kind, manualImportFailureCopy(validated.kind), now);
   }
   const candidate: ResourceCandidate = validated.candidate;
 
@@ -153,6 +192,7 @@ export async function runQueuedManualImport(input: {
       claimed,
       "transfer_error",
       `转存失败：${error instanceof Error ? error.message : String(error)}`,
+      now,
     );
   }
 
@@ -162,6 +202,7 @@ export async function runQueuedManualImport(input: {
       claimed,
       "transfer_failed",
       attempt.providerMessage.length > 0 ? attempt.providerMessage : "网盘未接受这次转存",
+      now,
     );
   }
 
@@ -170,11 +211,7 @@ export async function runQueuedManualImport(input: {
     ...(claimed.connectedStorageId ? { connectedStorageId: claimed.connectedStorageId } : {}),
     title: claimed.title,
     season: claimed.season,
-    workflowRun: {
-      ...claimed.workflowRun,
-      status: "succeeded",
-      finishedAt: now(),
-    },
+    workflowRun: transitionClaimedRunStatus(claimed.workflowRun, "succeeded", now()),
     episodes: claimed.episodes,
     resourceSnapshots: claimed.resourceSnapshots,
     decisions: claimed.decisions,
@@ -190,16 +227,16 @@ async function failRun(
   claimed: PersistedWorkflowRunSnapshot,
   reason: string,
   message: string,
+  now: () => string,
 ): Promise<ManualImportWorkerResult> {
+  const transitioned = transitionClaimedRunStatus(claimed.workflowRun, "failed", now());
   await input.repository.saveWorkflowRunSnapshot({
     accountId: claimed.accountId,
     ...(claimed.connectedStorageId ? { connectedStorageId: claimed.connectedStorageId } : {}),
     title: claimed.title,
     season: claimed.season,
     workflowRun: {
-      ...claimed.workflowRun,
-      status: "failed",
-      finishedAt: new Date().toISOString(),
+      ...transitioned,
       auditEvents: [
         ...claimed.workflowRun.auditEvents,
         {
