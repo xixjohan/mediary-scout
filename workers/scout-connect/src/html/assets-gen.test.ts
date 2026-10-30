@@ -15,7 +15,7 @@ describe("generated asset freshness", () => {
     expect(files).toEqual(Object.keys(RAW_ASSETS).sort());
     for (const f of files) {
       expect(RAW_ASSETS[f], `${f} 与生成文件不一致——跑 node scripts/generate-content.mjs`).toBe(
-        readFileSync(join(assetsDir, f), "utf8"),
+        readFileSync(join(assetsDir, f), "utf8").replace(/\r\n/g, "\n"),
       );
     }
   });
