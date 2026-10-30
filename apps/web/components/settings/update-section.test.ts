@@ -80,7 +80,7 @@ describe("UpdateTab on desktop", () => {
     const src = readFileSync(new URL("./update-section.tsx", import.meta.url), "utf8");
     expect(src).toContain("const REPO_SLUG = updateRepoSlug();");
     expect(src).toContain("github.com/${REPO_SLUG}/releases/latest");
-    expect(src).toContain("github.com/${REPO_SLUG}/tree/main/release-notes");
+    expect(src).toContain("github.com/${REPO_SLUG}/tree/main/docs/release-notes");
     // 组件里再出现 fancydirty 即是回归（写死的仓库外链）
     expect(src).not.toContain("fancydirty/mediary-scout");
   });

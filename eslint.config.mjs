@@ -33,6 +33,8 @@ export default tseslint.config(
       "**/*.mjs",
       "apps/web/next-env.d.ts",
       "scripts/**",
+      "tools/**",
+      "tests/**",
       "**/*.test.ts",
       "**/*.test.tsx",
     ],

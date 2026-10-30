@@ -15,7 +15,7 @@
 
 ## 2. 拿到好频道配置
 
-本仓库的 [`deploy/pansou.channels.env`](../deploy/pansou.channels.env) 就是一份**已验证能返回 115 分享（含 4K）**的频道配置——里面是公开的 Telegram 频道名与 PanSou 插件名，不含任何密钥。
+本仓库的 [`scripts/pansou.channels.env`](../scripts/pansou.channels.env) 就是一份**已验证能返回 115 分享（含 4K）**的频道配置——里面是公开的 Telegram 频道名与 PanSou 插件名，不含任何密钥。
 
 下载它（或从仓库复制），存到本地任意目录，例如 `~/pansou.channels.env`。
 

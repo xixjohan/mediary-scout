@@ -100,7 +100,7 @@ describe("docker-compose.yml web service config", () => {
   it("starts the updater with an exec-form node ENTRYPOINT", () => {
     // docker:*-cli's own entrypoint prepends `docker` to a CMD that is a docker
     // subcommand, and `node` is one: `CMD ["node", ...]` runs `docker node ...`.
-    const dockerfile = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../updater/Dockerfile"), "utf8");
+    const dockerfile = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), "../../../apps/updater/Dockerfile"), "utf8");
     const lines = dockerfile.split("\n").map((line) => line.trim());
     expect(lines).toContain('ENTRYPOINT ["node", "server.mjs"]');
     expect(lines.some((line) => /^CMD\b/.test(line))).toBe(false);

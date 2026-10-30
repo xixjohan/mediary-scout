@@ -5,7 +5,7 @@
  * 无法匹配带 `..` 的相对引用；dependency-cruiser 解析磁盘真实路径，文件级
  * 边界（含相对路径逃逸）与循环依赖在这里守。
  */
-const APPS = ["web", "desktop", "host-worker"];
+const APPS = ["web", "desktop", "host-worker", "updater"];
 
 /** 宿主互相隔离：apps/X 不得引用 apps/Y（X≠Y），含 "../../desktop/src/..." 这种
  *  相对逃逸——正是 ESLint 匹配不到、而真实会发生的形式。 */

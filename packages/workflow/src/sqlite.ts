@@ -150,6 +150,8 @@ export const SQLITE_SCHEMA = `
     payload text NOT NULL,
     PRIMARY KEY (id, connected_storage_id)
   );
+  CREATE INDEX IF NOT EXISTS idx_tracked_seasons_title
+    ON tracked_seasons (media_title_id);
   CREATE TABLE IF NOT EXISTS workflow_runs (
     id text PRIMARY KEY,
     tracked_season_id text NOT NULL,
@@ -157,6 +159,12 @@ export const SQLITE_SCHEMA = `
     connected_storage_id text NOT NULL,
     payload text NOT NULL
   );
+  CREATE INDEX IF NOT EXISTS idx_workflow_runs_scope_season
+    ON workflow_runs (account_id, connected_storage_id, tracked_season_id);
+  CREATE INDEX IF NOT EXISTS idx_workflow_runs_season_storage
+    ON workflow_runs (tracked_season_id, connected_storage_id);
+  CREATE INDEX IF NOT EXISTS idx_workflow_runs_queue_claim
+    ON workflow_runs (json_extract(payload, '$.status'), json_extract(payload, '$.kind'), json_extract(payload, '$.startedAt'));
   CREATE TABLE IF NOT EXISTS episode_states (
     tracked_season_id text NOT NULL,
     connected_storage_id text NOT NULL,
@@ -170,6 +178,8 @@ export const SQLITE_SCHEMA = `
     ordinal integer NOT NULL,
     payload text NOT NULL
   );
+  CREATE INDEX IF NOT EXISTS idx_resource_snapshots_run
+    ON resource_snapshots (workflow_run_id, ordinal);
   CREATE TABLE IF NOT EXISTS agent_decisions (
     workflow_run_id text NOT NULL,
     ordinal integer NOT NULL,
@@ -190,12 +200,16 @@ export const SQLITE_SCHEMA = `
     candidate_id text NOT NULL,
     payload text NOT NULL
   );
+  CREATE INDEX IF NOT EXISTS idx_transfer_attempts_run
+    ON transfer_attempts (workflow_run_id, ordinal);
   CREATE TABLE IF NOT EXISTS notifications (
     id text PRIMARY KEY,
     workflow_run_id text NOT NULL,
     ordinal integer NOT NULL,
     payload text NOT NULL
   );
+  CREATE INDEX IF NOT EXISTS idx_notifications_run
+    ON notifications (workflow_run_id, ordinal);
   CREATE TABLE IF NOT EXISTS app_settings (
     key text PRIMARY KEY,
     value text NOT NULL
@@ -315,6 +329,8 @@ export const SQLITE_SCHEMA = `
     expires_at text NOT NULL,
     created_at text NOT NULL
   );
+  CREATE INDEX IF NOT EXISTS idx_sessions_account_expires
+    ON sessions (account_id, expires_at);
   CREATE TABLE IF NOT EXISTS connected_storages (
     id text PRIMARY KEY,
     account_id text NOT NULL,
@@ -332,6 +348,8 @@ export const SQLITE_SCHEMA = `
     created_at text NOT NULL,
     UNIQUE (provider, provider_uid)
   );
+  CREATE INDEX IF NOT EXISTS idx_connected_storages_account
+    ON connected_storages (account_id, created_at);
   CREATE TABLE IF NOT EXISTS chat_conversations (
     id text PRIMARY KEY,
     account_id text NOT NULL,
@@ -888,12 +906,14 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
   async requeueRunningWorkflowRuns(now: string = new Date().toISOString()): Promise<number> {
     // Crash recovery: every `running` run → requeue (capped) or terminal fail.
+    // Push `status = 'running'` into SQL to hit idx_workflow_runs_queue_claim instead of parsing all history.
     return this.db.transaction((): number => {
-      const running = this.allWorkflowRuns().filter(
-        (workflowRun) => workflowRun.status === "running",
-      );
+      const rows = this.db
+        .prepare("SELECT payload FROM workflow_runs WHERE json_extract(payload, '$.status') = 'running'")
+        .all() as Array<{ payload: string }>;
       let requeued = 0;
-      for (const workflowRun of running) {
+      for (const row of rows) {
+        const workflowRun = JSON.parse(row.payload) as WorkflowRun;
         const recovered = recoverOrphanRunningRun(workflowRun, now);
         this.upsertWorkflowRun(recovered.run);
         if (recovered.action === "requeue") requeued += 1;
@@ -912,16 +932,30 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
   async pruneFinishedWorkflowRuns(olderThan: string): Promise<number> {
     return this.db.transaction((): number => {
-      const prunable = this.allWorkflowRuns().filter((run) =>
-        isPrunableFinishedRun(run, olderThan),
-      );
+      const rows = this.db
+        .prepare(
+          "SELECT payload FROM workflow_runs WHERE json_extract(payload, '$.status') NOT IN ('queued', 'running')",
+        )
+        .all() as Array<{ payload: string }>;
+      const prunable = rows
+        .map((row) => JSON.parse(row.payload) as WorkflowRun)
+        .filter((run) => isPrunableFinishedRun(run, olderThan));
+      if (prunable.length === 0) {
+        return 0;
+      }
+      const delNotifications = this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?");
+      const delTransfers = this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?");
+      const delDecisions = this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?");
+      const delSteps = this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?");
+      const delSnapshots = this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?");
+      const delRun = this.db.prepare("DELETE FROM workflow_runs WHERE id = ?");
       for (const run of prunable) {
-        this.db.prepare("DELETE FROM notifications WHERE workflow_run_id = ?").run(run.id);
-        this.db.prepare("DELETE FROM transfer_attempts WHERE workflow_run_id = ?").run(run.id);
-        this.db.prepare("DELETE FROM agent_decisions WHERE workflow_run_id = ?").run(run.id);
-        this.db.prepare("DELETE FROM agent_steps WHERE workflow_run_id = ?").run(run.id);
-        this.db.prepare("DELETE FROM resource_snapshots WHERE workflow_run_id = ?").run(run.id);
-        this.db.prepare("DELETE FROM workflow_runs WHERE id = ?").run(run.id);
+        delNotifications.run(run.id);
+        delTransfers.run(run.id);
+        delDecisions.run(run.id);
+        delSteps.run(run.id);
+        delSnapshots.run(run.id);
+        delRun.run(run.id);
       }
       return prunable.length;
     })();
@@ -942,10 +976,12 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // season ids the same season can be active on multiple drives, so taking the latest
     // across all drives and THEN dropping cross-storage could return null even though a
     // scoped active run exists on an older drive. Mirror the InMemory oracle.
-    const latest = this.scopedRunRows()
+    const latest = this.scopedRunRows({
+      accountId: scope.accountId,
+      trackedSeasonId: input.trackedSeasonId,
+    })
       .filter(
         (row) =>
-          row.trackedSeasonId === input.trackedSeasonId &&
           scopeMatches(scope, row.accountId, row.connectedStorageId) &&
           row.kind === input.kind &&
           isActiveWorkflowStatus(row.status),
@@ -958,7 +994,14 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     scopeArg: ScopeArg = undefined,
   ): Promise<PersistedWorkflowRunSnapshot[]> {
     const scope = normalizeScope(scopeArg);
-    const runs = this.allWorkflowRunsForAccount(scope.accountId)
+    const rows = this.db
+      .prepare(
+        "SELECT payload FROM workflow_runs " +
+          "WHERE account_id = ? AND json_extract(payload, '$.status') IN ('queued', 'running')",
+      )
+      .all(scope.accountId) as Array<{ payload: string }>;
+    const runs = rows
+      .map((row) => JSON.parse(row.payload) as WorkflowRun)
       .filter((workflowRun) => isActiveWorkflowStatus(workflowRun.status))
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
     const snapshots: PersistedWorkflowRunSnapshot[] = [];
@@ -988,13 +1031,6 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return findStagingRecoveryIn(runs, input.stagingDirectoryId);
   }
 
-  private allWorkflowRuns(): WorkflowRun[] {
-    const rows = this.db.prepare("SELECT payload FROM workflow_runs").all() as Array<{
-      payload: string;
-    }>;
-    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
-  }
-
   private queuedRunsOfKind(kind: WorkflowKind, filter: QueuedRunDriveFilter): WorkflowRun[] {
     const rows = this.db
       .prepare(
@@ -1005,13 +1041,6 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return rows
       .filter((row) => passesQueuedRunDriveFilter(row.connected_storage_id, filter))
       .map((row) => JSON.parse(row.payload) as WorkflowRun);
-  }
-
-  private allWorkflowRunsForAccount(accountId: string): WorkflowRun[] {
-    const rows = this.db
-      .prepare("SELECT payload FROM workflow_runs WHERE account_id = ?")
-      .all(accountId) as Array<{ payload: string }>;
-    return rows.map((row) => JSON.parse(row.payload) as WorkflowRun);
   }
 
   async updateWorkflowRunProgress(
@@ -1334,12 +1363,11 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     const scope = normalizeScope(scopeArg);
     // Mirror the oracle: the LATEST run (by startedAt desc) for this season within
     // scope defines the state; episodes come from that (season, drive) bucket.
-    const latest = this.scopedRunRows()
-      .filter(
-        (row) =>
-          row.trackedSeasonId === trackedSeasonId &&
-          scopeMatches(scope, row.accountId, row.connectedStorageId),
-      )
+    const latest = this.scopedRunRows({
+      accountId: scope.accountId,
+      trackedSeasonId,
+    })
+      .filter((row) => scopeMatches(scope, row.accountId, row.connectedStorageId))
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0];
     if (!latest) {
       return null;
@@ -1350,7 +1378,9 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   async listTrackedSeasonStates(scopeArg?: ScopeArg): Promise<TrackedSeasonState[]> {
     const scope = normalizeScope(scopeArg);
     return this.latestRunPerSeason(
-      this.scopedRunRows().filter((row) => scopeMatches(scope, row.accountId, row.connectedStorageId)),
+      this.scopedRunRows({ accountId: scope.accountId }).filter((row) =>
+        scopeMatches(scope, row.accountId, row.connectedStorageId),
+      ),
     )
       .map((row) => this.trackedSeasonStateFromRun(row))
       .sort(compareTrackedSeasonStates);
@@ -1372,11 +1402,8 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       return cloneWorkflowValue(this.selectEpisodeStates(trackedSeasonId, scope.connectedStorageId));
     }
     const storages = new Set<string | null>();
-    for (const row of this.scopedRunRows()) {
-      if (
-        row.trackedSeasonId === trackedSeasonId &&
-        scopeMatches(scope, row.accountId, row.connectedStorageId)
-      ) {
+    for (const row of this.scopedRunRows({ accountId: scope.accountId, trackedSeasonId })) {
+      if (scopeMatches(scope, row.accountId, row.connectedStorageId)) {
         storages.add(row.connectedStorageId);
       }
     }
@@ -1388,8 +1415,13 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   /** All workflow_runs as {trackedSeasonId, accountId, connectedStorageId (collapsed
-   *  UNSCOPED→null), startedAt, id} — the raw material the tracked-season queries dedup. */
-  private scopedRunRows(): Array<{
+   *  UNSCOPED→null), startedAt, id} — the raw material the tracked-season queries dedup.
+   *  Projects scalar fields via SQLite json_extract and pushes optional account/season
+   *  filters into SQL (hitting idx_workflow_runs_scope_season) to avoid full-table JSON.parse. */
+  private scopedRunRows(filter?: {
+    accountId?: string;
+    trackedSeasonId?: string;
+  }): Array<{
     id: string;
     trackedSeasonId: string;
     accountId: string;
@@ -1398,23 +1430,41 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     kind: WorkflowRun["kind"];
     status: WorkflowRun["status"];
   }> {
+    const accountId = filter?.accountId ?? null;
+    const trackedSeasonId = filter?.trackedSeasonId ?? null;
     const rows = this.db
-      .prepare("SELECT payload, account_id, connected_storage_id FROM workflow_runs")
-      .all() as Array<{ payload: string; account_id: string; connected_storage_id: string | null }>;
+      .prepare(
+        "SELECT id, tracked_season_id, account_id, connected_storage_id, " +
+          "json_extract(payload, '$.startedAt') AS started_at, " +
+          "json_extract(payload, '$.kind') AS kind, " +
+          "json_extract(payload, '$.status') AS status " +
+          "FROM workflow_runs " +
+          "WHERE (? IS NULL OR account_id = ?) AND (? IS NULL OR tracked_season_id = ?)",
+      )
+      .all(accountId, accountId, trackedSeasonId, trackedSeasonId) as Array<{
+      id: string;
+      tracked_season_id: string;
+      account_id: string;
+      connected_storage_id: string | null;
+      started_at: string;
+      kind: WorkflowRun["kind"];
+      status: WorkflowRun["status"];
+    }>;
     // Hides rows the previous janitor wrote.
-    return rows.map((row) => {
-      const run = JSON.parse(row.payload) as WorkflowRun;
-      const rawStorage = row.connected_storage_id ?? null;
-      return {
-        id: run.id,
-        trackedSeasonId: run.trackedSeasonId,
-        accountId: row.account_id ?? DEFAULT_ACCOUNT_ID,
-        connectedStorageId: rawStorage === UNSCOPED_STORAGE ? null : rawStorage,
-        startedAt: run.startedAt,
-        kind: run.kind,
-        status: run.status,
-      };
-    }).filter((row) => !isStagingJanitorId(row.id) && !isStagingJanitorId(row.trackedSeasonId));
+    return rows
+      .map((row) => {
+        const rawStorage = row.connected_storage_id ?? null;
+        return {
+          id: row.id,
+          trackedSeasonId: row.tracked_season_id,
+          accountId: row.account_id ?? DEFAULT_ACCOUNT_ID,
+          connectedStorageId: rawStorage === UNSCOPED_STORAGE ? null : rawStorage,
+          startedAt: row.started_at,
+          kind: row.kind,
+          status: row.status,
+        };
+      })
+      .filter((row) => !isStagingJanitorId(row.id) && !isStagingJanitorId(row.trackedSeasonId));
   }
 
   /** Keep only the latest (startedAt desc) run row per season id. */

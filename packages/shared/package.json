@@ -2,6 +2,7 @@
   "name": "@media-track/shared",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "description": "无业务属主的共享基础层：crypto（AES-256-GCM 凭据加密）等",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

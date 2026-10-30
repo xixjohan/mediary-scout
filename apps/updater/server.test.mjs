@@ -8,7 +8,7 @@ import { spawn as spawnChild } from "node:child_process";
 
 const spawnProbe = () => spawnChild("sh", ["-c", "command -v flock >/dev/null 2>&1"], { stdio: "ignore" });
 import { describe, expect, it } from "vitest";
-import { parseReleaseTag } from "../apps/web/lib/release-version.ts";
+import { parseReleaseTag } from "@media-track/shared/release-tag";
 import {
   createUpdater,
   createUpdaterHttp,

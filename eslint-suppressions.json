@@ -151,7 +151,7 @@
   },
   "apps/web/lib/workflow-runtime.ts": {
     "complexity": {
-      "count": 4
+      "count": 2
     },
     "max-lines": {
       "count": 1

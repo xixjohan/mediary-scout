@@ -19,7 +19,7 @@ function fakeFetch(routes: Record<string, { status: number; body: string }>) {
 const TAGS = "https://api.github.com/repos/xixjohan/mediary-scout/git/matching-refs/tags/v";
 const ref = (tag: string, sha: string, type = "commit") => ({ ref: `refs/tags/${tag}`, object: { sha, type } });
 const notes = (tag: string) =>
-  `https://api.github.com/repos/xixjohan/mediary-scout/contents/release-notes/${tag}.md?ref=${tag}`;
+  `https://api.github.com/repos/xixjohan/mediary-scout/contents/docs/release-notes/${tag}.md?ref=${tag}`;
 const compare = (base: string, head: string) =>
   `https://api.github.com/repos/xixjohan/mediary-scout/compare/${base}...${head}`;
 
@@ -57,7 +57,7 @@ describe("fetchReleaseFeed", () => {
     const feed = await fetchReleaseFeed(fetchImpl);
     expect(feed).toHaveLength(45);
     expect(feed.at(-1)?.tag).toBe("v2026.10.01");
-    const noteCalls = vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url).includes("/contents/"));
+    const noteCalls = vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url).includes("/contents/docs/release-notes/"));
     expect(noteCalls).toHaveLength(10);
   });
 
@@ -329,7 +329,7 @@ describe("updateRepoSlug（S5.6：在线更新源可配置）", () => {
     const tags = "https://api.github.com/repos/xixjohan/mediary-scout/git/matching-refs/tags/v";
     const fetchImpl = fakeFetch({
       [tags]: { status: 200, body: JSON.stringify([ref("v2026.10.26", "f".repeat(40))]) },
-      ["https://api.github.com/repos/xixjohan/mediary-scout/contents/release-notes/v2026.10.26.md?ref=v2026.10.26"]:
+      ["https://api.github.com/repos/xixjohan/mediary-scout/contents/docs/release-notes/v2026.10.26.md?ref=v2026.10.26"]:
         { status: 200, body: "- 新增 自包含更新" },
     });
     const feed = await fetchReleaseFeed(fetchImpl);
@@ -347,7 +347,7 @@ describe("Decoupled Repository Independence (独立仓库解耦规范)", () => {
     delete process.env.MEDIA_TRACK_UPDATE_REPO;
     invalidateReleaseFeedCache();
     const currentTags = "https://api.github.com/repos/xixjohan/mediary-scout/git/matching-refs/tags/v";
-    const currentNotes = "https://api.github.com/repos/xixjohan/mediary-scout/contents/release-notes/v2026.10.29.md?ref=v2026.10.29";
+    const currentNotes = "https://api.github.com/repos/xixjohan/mediary-scout/contents/docs/release-notes/v2026.10.29.md?ref=v2026.10.29";
 
     const fetchImpl = fakeFetch({
       [currentTags]: { status: 200, body: JSON.stringify([ref("v2026.10.29", "a".repeat(40))]) },

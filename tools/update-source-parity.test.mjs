@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = new URL("../", import.meta.url).pathname;
 const DEPLOY = readFileSync(join(REPO_ROOT, "scripts/deploy.sh"), "utf8");
-const RUN_UPDATE = readFileSync(join(REPO_ROOT, "updater/run-update.sh"), "utf8");
+const RUN_UPDATE = readFileSync(join(REPO_ROOT, "apps/updater/run-update.sh"), "utf8");
 const TAG = "v2026.10.02";
 
 /** 抽出脚本里 [from, to] 两行之间的定义段，前面垫 TAG，末尾打印 $outVar。 */

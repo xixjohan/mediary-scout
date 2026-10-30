@@ -76,7 +76,7 @@ jobs:
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
-          NOTES="release-notes/$TAG.md"
+          NOTES="docs/release-notes/$TAG.md"
           if [ ! -f "$NOTES" ]; then
             echo "::error::$NOTES is missing. Write the release notes before tagging."
             exit 1
@@ -423,7 +423,7 @@ jobs:
         run: |
           BODY="$RUNNER_TEMP/release-body.md"
           # The Release title carries the version: drop the file's "# vYYYY.MM.DD" heading.
-          sed '1{/^# /d;}' "release-notes/$TAG.md" > "$BODY"
+          sed '1{/^# /d;}' "docs/release-notes/$TAG.md" > "$BODY"
           cat >> "$BODY" <<'EOF'
 
           ---

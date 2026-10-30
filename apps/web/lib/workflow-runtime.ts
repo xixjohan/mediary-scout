@@ -8,8 +8,7 @@ import {
 } from "@media-track/workflow";
 import { formatNetworkError } from "./http-proxy";
 import { isLiveSearch } from "./search-provider";
-import { createHash, randomBytes } from "node:crypto";
-import type { LanguageModel } from "ai";
+import { randomBytes } from "node:crypto";
 import { parseBearerToken } from "./bearer-scheme";
 import { isAgentMemoryEnabled } from "./agent-memory-server";
 import { sqliteDbPath } from "./durable-cache";
@@ -27,28 +26,16 @@ import {
   CompositeResourceProvider,
   ProwlarrResourceProvider,
   HaisouResourceProvider,
-  createJevJudge,
-  DEFAULT_JEV_BASE_URL,
-  type JevJudge,
   createTmdbMetadataProvider,
-  TMDB_DIRECT_BASE_URL,
-  type TmdbAccess,
   episodeCode,
   FakeResourceProvider,
   FakeStorageExecutor,
   FINISHED_RUN_RETENTION_MS,
-  createAgentModel,
-  createAgentModelFromEnv,
-  createStubAcquisitionModel,
-  FREE_LLM_PRESET,
-  isFreeLlmPreset,
-  isBlankEnvValue,
   llmConfigError,
   formatDailyDigestPushText,
   scheduledDigestItems,
   getTrackedSeasonStatusView,
   importForeignWorkAsMovie,
-  assertWorkflowAgentAdapterPolicy,
   prepareMovieTarget,
   prepareSeriesTarget,
   prepareTrackingTarget,
@@ -127,15 +114,77 @@ import {
   buildPanSouProviderChain,
   getPanSouAuth,
   resolveUserPanSouBaseUrl,
-  DEFAULT_PANSOU_BASE_URL as PUBLIC_PANSOU_BASE_URL,
 } from "./pansou-chain";
+import {
+  ASSRT_TOKEN_SETTING_KEY,
+  AUTO_UPDATE_ENABLED_SETTING_KEY,
+  AUTO_UPDATE_FAIL_STREAK_SETTING_KEY,
+  AUTO_UPDATE_LAST_ATTEMPT_SETTING_KEY,
+  AUTO_UPDATE_TIME_SETTING_KEY,
+  beijingDateTime,
+  DAILY_SWEEP_TIME_SETTING_KEY,
+  DAILY_SWEEP_TIMES_SETTING_KEY,
+  DEFAULT_DAILY_SWEEP_TIME,
+  DEFAULT_PATROL_CONCURRENCY,
+  DEFAULT_TMDB_PROXY_BASE_URL,
+  getAgentModel,
+  getAgentModelForSearch,
+  getAssrtToken,
+  getAutoUpdateSettings,
+  getAutoUpdateTime,
+  getDailySweepTime,
+  getDailySweepTimes,
+  getHaisouApiKey,
+  getJevConfig,
+  getJevInheritedBaseUrl as getJevInheritedBaseUrlFromRepo,
+  getLlmConfig,
+  getPanSouBaseUrl,
+  getPatrolConcurrency,
+  getPreferredLanguage,
+  getProwlarrConfig,
+  getQualityPreference,
+  getTmdbAccesses,
+  HAISOU_API_KEY_SETTING_KEY,
+  isAutoUpdateEnabled,
+  isJevPrefilterActive,
+  JEV_API_KEY_SETTING_KEY,
+  JEV_BASE_URL_SETTING_KEY,
+  JEV_HEALTH_SETTING_KEY,
+  JEV_MODEL_SETTING_KEY,
+  JEV_PREFILTER_ENABLED_SETTING_KEY,
+  JEV_PROBED_FOR_SETTING_KEY,
+  type JevConfig,
+  jevConfigFingerprint,
+  type JevSettingsSource,
+  LAST_SWEEP_CLAIMS_SETTING_KEY,
+  LAST_SWEEP_COMPLETED_AT_SETTING_KEY,
+  LAST_SWEEP_DATE_SETTING_KEY,
+  LLM_API_KEY_SETTING_KEY,
+  LLM_BASE_URL_SETTING_KEY,
+  LLM_MODEL_ID_SETTING_KEY,
+  MAX_DAILY_SWEEP_TIMES,
+  MAX_PATROL_CONCURRENCY,
+  PANSOU_BASE_URL_SETTING_KEY,
+  PANSOU_HEALTH_SETTING_KEY,
+  parseAutoUpdateFailStreak,
+  PATROL_CONCURRENCY_SETTING_KEY,
+  PREFERRED_LANGUAGE_SETTING_KEY,
+  PROWLARR_API_KEY_SETTING_KEY,
+  PROWLARR_BASE_URL_SETTING_KEY,
+  QUALITY_PREFERENCE_SETTING_KEY,
+  readSweepClaims,
+  resolveAgentModelConfig,
+  resolveJevJudge,
+  resolveTitleResearchOptions,
+  TMDB_API_KEY_SETTING_KEY,
+} from "./runtime/settings-readers";
 import { findDemoCandidateById, findDemoCandidateByTmdbId } from "./demo-candidates";
 import { verifyToken } from "@media-track/shared";
 import { seedDemoWorkflowRepository } from "./demo-workflow";
 import { resolveRegistration, deriveBootstrapState, canManageAccounts } from "./account-bootstrap";
 import { isDemoMode } from "./demo-mode";
 import { isUpdateHoldActive, whileInFlight } from "./update-hold";
-import { DEFAULT_AUTO_UPDATE_TIME, isAutoUpdateTime, shouldAutoUpdate } from "./auto-update-schedule";
+import { shouldAutoUpdate } from "./auto-update-schedule";
 
 /** Checked by the workflow package right before each claim or patrol reservation, not
  *  only at entry: the updater can take the hold while a tick is still setting up. */
@@ -162,10 +211,64 @@ let repository: WorkflowRepository | null = null;
 let demoSeedPromise: Promise<void> | null = null;
 let fakeResourceProvider: ResourceProvider | null = null;
 let fakeStorageExecutor: StorageExecutor | null = null;
-// Per-signature model cache (keyed by adapter|baseURL|modelId|apiKey) so multiple
-// accounts with different LLM configs each keep their own built model — a single
-// slot would thrash between accounts in multi-user mode.
-const agentModelCache = new Map<string, ReturnType<typeof createAgentModelFromEnv>>();
+
+export {
+  ASSRT_TOKEN_SETTING_KEY,
+  AUTO_UPDATE_ENABLED_SETTING_KEY,
+  AUTO_UPDATE_FAIL_STREAK_SETTING_KEY,
+  AUTO_UPDATE_TIME_SETTING_KEY,
+  beijingDateTime,
+  DAILY_SWEEP_TIME_SETTING_KEY,
+  DAILY_SWEEP_TIMES_SETTING_KEY,
+  DEFAULT_DAILY_SWEEP_TIME,
+  DEFAULT_PATROL_CONCURRENCY,
+  DEFAULT_TMDB_PROXY_BASE_URL,
+  getAgentModel,
+  getAgentModelForSearch,
+  getAssrtToken,
+  getAutoUpdateSettings,
+  getDailySweepTime,
+  getDailySweepTimes,
+  getHaisouApiKey,
+  getJevConfig,
+  getLlmConfig,
+  getPanSouBaseUrl,
+  getPatrolConcurrency,
+  getPreferredLanguage,
+  getProwlarrConfig,
+  getQualityPreference,
+  getTmdbAccesses,
+  HAISOU_API_KEY_SETTING_KEY,
+  isJevPrefilterActive,
+  JEV_API_KEY_SETTING_KEY,
+  JEV_BASE_URL_SETTING_KEY,
+  JEV_HEALTH_SETTING_KEY,
+  JEV_MODEL_SETTING_KEY,
+  JEV_PREFILTER_ENABLED_SETTING_KEY,
+  JEV_PROBED_FOR_SETTING_KEY,
+  type JevConfig,
+  jevConfigFingerprint,
+  type JevSettingsSource,
+  LAST_SWEEP_CLAIMS_SETTING_KEY,
+  LAST_SWEEP_COMPLETED_AT_SETTING_KEY,
+  LAST_SWEEP_DATE_SETTING_KEY,
+  LLM_API_KEY_SETTING_KEY,
+  LLM_BASE_URL_SETTING_KEY,
+  LLM_MODEL_ID_SETTING_KEY,
+  MAX_DAILY_SWEEP_TIMES,
+  MAX_PATROL_CONCURRENCY,
+  PANSOU_BASE_URL_SETTING_KEY,
+  PANSOU_HEALTH_SETTING_KEY,
+  PATROL_CONCURRENCY_SETTING_KEY,
+  PREFERRED_LANGUAGE_SETTING_KEY,
+  PROWLARR_API_KEY_SETTING_KEY,
+  PROWLARR_BASE_URL_SETTING_KEY,
+  QUALITY_PREFERENCE_SETTING_KEY,
+  resolveAgentModelConfig,
+  resolveJevJudge,
+  resolveTitleResearchOptions,
+  TMDB_API_KEY_SETTING_KEY,
+};
 
 export function getWorkflowRepository(): WorkflowRepository {
   if (!repository) {
@@ -1167,13 +1270,21 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   // The user's language preference is standing context baked into the agent
   // instance (one global preference), so every workflow — movie, series, type2,
   // anime — searches with it. No per-workflow plumbing.
-  const { model, llmConfig, preferredLanguage, qualityPreference } = await getAgentModel(getAccountScopedSettings(accountId));
+  const [
+    { model, llmConfig, preferredLanguage, qualityPreference },
+    baseCreds,
+    resourceProvider,
+  ] = await Promise.all([
+    getAgentModel(getAccountScopedSettings(accountId)),
+    getAccountStorageCredentials(accountId),
+    getWorkerResourceProvider(),
+  ]);
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
-  const baseCreds = await getAccountStorageCredentials(accountId);
-  const storage = await getWorkerStorageExecutor(accountId, undefined, baseCreds);
-  const parents = await getWorkerStorageParents(accountId, undefined, baseCreds);
-  const resourceProvider = await getWorkerResourceProvider();
+  const [storage, parents] = await Promise.all([
+    getWorkerStorageExecutor(accountId, undefined, baseCreds),
+    getWorkerStorageParents(accountId, undefined, baseCreds),
+  ]);
   const resolveAccountContext = buildAccountContextResolver();
   const startedAt = new Date().toISOString();
   const onAuthErrorFreeze = (id: string, reason: string) => freezeConnectedStorage(id, reason);
@@ -1310,308 +1421,10 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   });
 }
 
-/** The user's preferred subtitle language for acquisition search, or undefined
- *  when unset / "any" (agent searches broadly). */
-export async function getPreferredLanguage(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<string | undefined> {
-  const value = (await repository.getSetting(PREFERRED_LANGUAGE_SETTING_KEY))?.trim();
-  // Explicit "不限" → no preference. Unset → the product default the Settings UI
-  // shows as selected ("中文（默认）"), so a fresh install actually prefers Chinese
-  // subtitles instead of silently searching broadly.
-  if (value === "any") {
-    return undefined;
-  }
-  return value || "中文";
-}
-
-export const PREFERRED_LANGUAGE_SETTING_KEY = "preferred_language";
-
-export const QUALITY_PREFERENCE_SETTING_KEY = "quality_preference";
-
-/** The user's acquisition quality preference, or undefined when 不限/unset
- *  (the default). undefined → inject NO quality guidance (coverage-only, current
- *  behavior). Only "high"/"medium" are honored; anything else (incl. the legacy
- *  "4K" value) is treated as 不限. */
-export async function getQualityPreference(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<"high" | "medium" | undefined> {
-  const value = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY))?.trim();
-  return value === "high" || value === "medium" ? value : undefined;
-}
-
-// AI 模型 (LLM) 三件套 — OpenAI-compatible. Stored in the user's OWN app_settings
-// (self-host, BYO-key: the operator never sees these). DB overrides .env.
-export const LLM_BASE_URL_SETTING_KEY = "llm_base_url";
-export const LLM_API_KEY_SETTING_KEY = "llm_api_key";
-export const LLM_MODEL_ID_SETTING_KEY = "llm_model_id";
-
-/** The user's configured OpenAI-compatible LLM (Settings → AI 模型). Each field is
- *  undefined when unset/blank, so `getAgentModel` cleanly falls back to .env. */
-export async function getLlmConfig(repository: {
-  getSetting(key: string): Promise<string | null>;
-}): Promise<{ baseURL: string | undefined; apiKey: string | undefined; modelId: string | undefined }> {
-  const read = async (key: string): Promise<string | undefined> => {
-    const value = (await repository.getSetting(key))?.trim();
-    return value ? value : undefined;
-  };
-  return {
-    baseURL: await read(LLM_BASE_URL_SETTING_KEY),
-    apiKey: await read(LLM_API_KEY_SETTING_KEY),
-    modelId: await read(LLM_MODEL_ID_SETTING_KEY),
-  };
-}
-
-/**
- * The model the SEARCH BOX uses to interpret a description. It is the account's
- * own configured model (Settings → AI 模型), and consciously NOT the shipped
- * free preset: the free pool is a shared, rate-limited courtesy meant for
- * acquisitions, so a typed description must not burn it. Returns null when the
- * account configured nothing of its own — the search then stays keyword-only.
- */
-export async function getAgentModelForSearch(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<LanguageModel | null> {
-  const resolved = await resolveAgentModelConfig(repository);
-  // "free-preset" = the account configured nothing of its own. The shipped free
-  // pool is a shared, rate-limited courtesy for acquisitions; a typed
-  // description must not spend it (and after the「换回免费模型」button the
-  // effective values ARE the preset even though the source reads "db").
-  if (resolved.source === "free-preset" || isFreeLlmPreset(resolved)) return null;
-  if (llmConfigError(resolved)) return null;
-  try {
-    return createAgentModel(resolved);
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Web search for the acquisition agent, always available. When the account's
- * configured LLM endpoint is DeepSeek's own API we search with THEIR engine and
- * THEIR key (they already pay for it); otherwise the keyless anonymous provider
- * is used. Never carries a key toward a third party: `resolveAgentModelConfig`
- * drops the key whenever the effective config is the free preset.
- */
-export async function resolveTitleResearchOptions(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<{ web: { llmBaseURL?: string; llmApiKey?: string } }> {
-  const resolved = await resolveAgentModelConfig(repository);
-  return {
-    web: {
-      ...(resolved.baseURL === undefined ? {} : { llmBaseURL: resolved.baseURL }),
-      ...(resolved.apiKey === undefined ? {} : { llmApiKey: resolved.apiKey }),
-    },
-  };
-}
-
-export const TMDB_API_KEY_SETTING_KEY = "tmdb_api_key";
-
-export const ASSRT_TOKEN_SETTING_KEY = "assrt_token";
-
-/** The user's assrt.net subtitle API token (Settings → 字幕来源). Undefined when
- *  unset/blank → the orchestrator skips the subtitle flow entirely (the agent
- *  never sees viewSubtitleSnapshot/transferSubtitle). Free registration, BYO-token. */
-export async function getAssrtToken(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<string | undefined> {
-  const value = (await repository.getSetting(ASSRT_TOKEN_SETTING_KEY))?.trim();
-  return value ? value : undefined;
-}
-
-/** Author-deployed CF Worker that proxies TMDB with the author's key (KV-cached).
- *  env TMDB_PROXY_BASE_URL overrides it (e.g. a user who self-hosts the worker).
- *  Custom domain, NOT the *.workers.dev alias — several mainland ISPs block the
- *  whole workers.dev zone (#83), and this default is the ONLY metadata channel
- *  for a tokenless user. The workers.dev URL still serves older releases. */
-export const DEFAULT_TMDB_PROXY_BASE_URL = "https://tmdb-proxy.mediaryscout.app";
-
-/** Ordered TMDB access channels: user's own key (direct) → env token (direct) →
- *  the proxy Worker (always last, no token — the Worker injects the author's).
- *  Each HTTP call tries them in order; a dead user key falls through to the proxy. */
-export async function getTmdbAccesses(
-  repository: { getSetting(key: string): Promise<string | null> },
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<TmdbAccess[]> {
-  const accesses: TmdbAccess[] = [];
-  const userKey = (await repository.getSetting(TMDB_API_KEY_SETTING_KEY))?.trim();
-  if (userKey) {
-    accesses.push({ baseURL: TMDB_DIRECT_BASE_URL, readToken: userKey });
-  }
-  const envToken = env.TMDB_READ_TOKEN?.trim();
-  if (envToken) {
-    accesses.push({ baseURL: TMDB_DIRECT_BASE_URL, readToken: envToken });
-  }
-  const proxyBase = env.TMDB_PROXY_BASE_URL?.trim() || DEFAULT_TMDB_PROXY_BASE_URL;
-  accesses.push({ baseURL: proxyBase });
-  return accesses;
-}
-
-/** True when the app runs inside the Electron desktop shell (server-launch sets
- *  MEDIA_TRACK_DESKTOP=1). Unlike the docker/compose stack, the desktop shell
- *  does NOT bundle a PanSou container — so the settings copy points the user at
- *  the self-host tutorial instead of claiming "内置、开箱即用". */
-// 零依赖叶子模块（S4.3）：客户端动作链上的模块不得 reaches 到本文件的重依赖，
-// 见 desktop-flag.ts 顶部说明。
 import { resolveIsDesktop } from "./desktop-flag";
 export { resolveIsDesktop };
-
-export const PANSOU_BASE_URL_SETTING_KEY = "pansou_base_url";
-
-/** 自建搜索源的最新健康结论。取值只有三种:`"ok"` / `"unhealthy"` / `""`(未配或
- *  已清空)—— **不是**结构化 reason,别按 reason 去解析。
- *  两个写入方:保存时探活(actions / config-io)与每次真实搜索后的回写
- *  (recordPanSouHealth)。设置页徽章每 8s 轮询,绝不能在那条路径上打网络,
- *  所以它只读这里。 */
-export const PANSOU_HEALTH_SETTING_KEY = "pansou_last_probe";
-
-/** Default public PanSou instance (author-hosted), used when neither the DB
- *  setting nor env overrides it. The compose stack injects PANSOU_BASE_URL to
- *  point at the bundled `pansou` service instead.
- *  从 ./pansou-chain 再导出:装配链要用同一个常量判「用户配的是不是官方源」,
- *  两份字面量一旦漂移,fallback 就会把官方源包成自己的备源、每次失败白跑两遍。 */
 export { DEFAULT_PANSOU_BASE_URL } from "./pansou-chain";
-
-/** S5.4 登录链（lib/auth-chain.ts）要从本模块取默认账号 id——本文件上方只是
- *  `import` 了它而没有 re-export，直接 `import { DEFAULT_ACCOUNT_ID } from
- *  "./workflow-runtime"` 在真实构建下会炸（被 mock 的测试看不见）。在此补一个
- *  与 DEFAULT_PANSOU_BASE_URL 同款的再导出，保持 auth 面 import 面稳定。 */
 export { DEFAULT_ACCOUNT_ID } from "@media-track/workflow";
-
-/** The PanSou search aggregator base URL: DB setting > env PANSOU_BASE_URL >
- *  public default. No runtime container auto-detection — compose wires the
- *  service name and this lets a self-hoster override it by hand.
- *  前两层复用 resolveUserPanSouBaseUrl:它和装配链共用一份优先级,免得这里改了
- *  而检索路径没改(或反过来)。 */
-export async function getPanSouBaseUrl(
-  repository: { getSetting(key: string): Promise<string | null> },
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string> {
-  const configured = resolveUserPanSouBaseUrl(
-    await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY),
-    env,
-  );
-  return configured || PUBLIC_PANSOU_BASE_URL;
-}
-
-export const PROWLARR_BASE_URL_SETTING_KEY = "prowlarr_base_url";
-export const PROWLARR_API_KEY_SETTING_KEY = "prowlarr_api_key";
-
-/** The user's configured Prowlarr indexer aggregator (Settings → 资源提供商).
- *  Each field undefined when unset/blank → getWorkerResourceProvider skips it. */
-export async function getProwlarrConfig(
-  repository: { getSetting(key: string): Promise<string | null> },
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<{ baseURL: string | undefined; apiKey: string | undefined }> {
-  const read = async (key: string, envKey: string): Promise<string | undefined> => {
-    const dbValue = (await repository.getSetting(key))?.trim();
-    if (dbValue) return dbValue;
-    const envValue = env[envKey]?.trim();
-    return envValue ? envValue : undefined;
-  };
-  return {
-    baseURL: await read(PROWLARR_BASE_URL_SETTING_KEY, "PROWLARR_BASE_URL"),
-    apiKey: await read(PROWLARR_API_KEY_SETTING_KEY, "PROWLARR_API_KEY"),
-  };
-}
-
-export const HAISOU_API_KEY_SETTING_KEY = "haisou_api_key";
-
-/** 海搜 (haisou) 的官方 API key —— idatariver 项目 b9d1，站方页脚「开放接口」
- *  指向的就是它。每日前 100 次免费，之后阶梯计费，所以它只做补充源。
- *
- *  为什么不走 haisou.cc 自己的 /api/v2：那条路要用户的登录 cookie
- *  (`hs_web_session`)，匿名配额耗尽后连续 429，而且站方页面明写不要用脚本
- *  调用。官方 API 只要一个 apikey，是站方给出的程序化入口。 */
-export async function getHaisouApiKey(
-  repository: { getSetting(key: string): Promise<string | null> },
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string | undefined> {
-  const dbValue = (await repository.getSetting(HAISOU_API_KEY_SETTING_KEY))?.trim();
-  if (dbValue) return dbValue;
-  const envValue = env["HAISOU_API_KEY"]?.trim();
-  return envValue ? envValue : undefined;
-}
-
-export const JEV_API_KEY_SETTING_KEY = "jev_api_key";
-export const JEV_BASE_URL_SETTING_KEY = "jev_base_url";
-export const JEV_PREFILTER_ENABLED_SETTING_KEY = "jev_prefilter_enabled";
-/** "ok" after a successful save-time probe; anything else (absent/blank) = inactive.
- *  A failed probe refuses the save and leaves the previous state untouched, so
- *  "fail" is never written; runtime failures fail open per search (see
- *  SnapshotPrefilter.status) and are not recorded here (future: health badge). */
-export const JEV_HEALTH_SETTING_KEY = "jev_health";
-/** The model name the save-time probe answered with (e.g. "jev-1.13.0" direct,
- *  "typesafe/jev-1.13-20260917" via OpenRouter). Display only — the settings page
- *  shows it as a pill next to 生效中. Blank/absent → no pill; never invented. */
-export const JEV_MODEL_SETTING_KEY = "jev_model";
-
-/** Which (key, base URL) the "ok" above was probed with — see jevConfigFingerprint.
- *  Written together with health by 保存并测试, blanked by 清除. */
-export const JEV_PROBED_FOR_SETTING_KEY = "jev_probed_for";
-
-/** A short one-way fingerprint of the probed config. The raw key never goes into it
- *  in a recoverable form; 64 bits is plenty to notice a rotation. */
-export function jevConfigFingerprint(apiKey: string, baseUrl: string): string {
-  return createHash("sha256").update(`${apiKey.trim()}\n${baseUrl.trim()}`).digest("hex").slice(0, 16);
-}
-
-/** Where Jev settings are read from: a plain repository, or the account → global
- *  facade (getAccountScopedSettings), whose getOwnSetting tells the account's own rows
- *  apart from what it inherits. */
-export interface JevSettingsSource {
-  getSetting(key: string): Promise<string | null>;
-  getOwnSetting?(key: string): Promise<string | null>;
-}
-
-export interface JevConfig {
-  apiKey: string | undefined;
-  baseUrl: string;
-  enabled: boolean;
-  health: string | undefined;
-}
-
-/** Jev candidate prefilter settings (Settings → AI 模型). DB wins over env;
- *  blank = unset. `enabled` is true only for the exact string "1".
- *  env JEV_API_KEY / JEV_BASE_URL only supply the key/url; activation still
- *  requires a successful 保存并测试 (which writes enabled/health) — an env-only
- *  deployment activates by saving the form with the key left blank. */
-export async function getJevConfig(
-  repository: JevSettingsSource,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<JevConfig> {
-  const read = async (key: string, envKey: string): Promise<string | undefined> => {
-    const dbValue = (await repository.getSetting(key))?.trim();
-    if (dbValue) return dbValue;
-    const envValue = env[envKey]?.trim();
-    return envValue ? envValue : undefined;
-  };
-  const apiKey = await read(JEV_API_KEY_SETTING_KEY, "JEV_API_KEY");
-  const baseUrl = (await read(JEV_BASE_URL_SETTING_KEY, "JEV_BASE_URL")) ?? DEFAULT_JEV_BASE_URL;
-  const health = (await repository.getSetting(JEV_HEALTH_SETTING_KEY))?.trim() || undefined;
-  // A verdict only covers the config it was probed with. When the effective key or URL
-  // has moved since (an env JEV_API_KEY rotated, an operator changed the global URL),
-  // "ok" would keep the prefilter "active" while every real search fails open without
-  // a word — so it reads as untested until the next 保存并测试. Rows saved before the
-  // fingerprint existed carry none and keep their verdict: an upgrade must not switch
-  // the prefilter off silently.
-  const probedFor = (await repository.getSetting(JEV_PROBED_FOR_SETTING_KEY))?.trim();
-  const stale = Boolean(probedFor) && probedFor !== jevConfigFingerprint(apiKey ?? "", baseUrl);
-  // A URL the account chose carries the account's OWN key or nothing. With the key
-  // inherited from the instance (global row or env), an account-level URL would send
-  // the shared key to a host of the account's choosing on every search (multi-user);
-  // it reads as untested instead, so no call is ever made. 保存并测试 refuses to
-  // create this state; this covers rows it did not write.
-  const ownUrl = (await repository.getOwnSetting?.(JEV_BASE_URL_SETTING_KEY))?.trim();
-  const ownKey = (await repository.getOwnSetting?.(JEV_API_KEY_SETTING_KEY))?.trim();
-  const borrowedKeyAtOwnUrl = Boolean(ownUrl) && !ownKey;
-  return {
-    apiKey,
-    baseUrl,
-    enabled: ((await repository.getSetting(JEV_PREFILTER_ENABLED_SETTING_KEY))?.trim() ?? "") === "1",
-    health: stale || borrowedKeyAtOwnUrl ? undefined : health,
-  };
-}
 
 /** The account's OWN Jev base-URL override, for the settings input. Deliberately NOT
  *  read through the account → global facade: prefilling a global (or env) value would
@@ -1625,95 +1438,17 @@ export async function getJevBaseUrlOverride(
 }
 
 /** Where a BLANK account Base URL resolves: the instance-wide (global) row → env
- *  JEV_BASE_URL → the OpenRouter default. 保存并测试 probes this when the field is left
- *  blank, and the settings input shows it as the placeholder — one rule, so the page
- *  can never promise an endpoint other than the one that will be called. */
+ *  JEV_BASE_URL → the OpenRouter default. */
 export async function getJevInheritedBaseUrl(
   repo: Pick<WorkflowRepository, "getSetting"> = getWorkflowRepository(),
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
-  const global = (await repo.getSetting(JEV_BASE_URL_SETTING_KEY))?.trim();
-  if (global) return global;
-  return env.JEV_BASE_URL?.trim() || DEFAULT_JEV_BASE_URL;
-}
-
-/** The go/no-go, on an already-read config: key set AND enabled AND the last
- *  probe succeeded. The settings page and resolveJevJudge share this one rule. */
-export function isJevPrefilterActive(cfg: JevConfig): boolean {
-  return Boolean(cfg.apiKey) && cfg.enabled && cfg.health === "ok";
-}
-
-/** The ONE place that decides whether the prefilter is active. Anything short of
- *  key + enabled + healthy → undefined → the orchestrator uses the bare provider
- *  (zero Jev calls, zero prompt change). */
-export async function resolveJevJudge(
-  repository: JevSettingsSource,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<JevJudge | undefined> {
-  const cfg = await getJevConfig(repository, env);
-  if (!isJevPrefilterActive(cfg) || !cfg.apiKey) return undefined;
-  return createJevJudge({ apiKey: cfg.apiKey, baseUrl: cfg.baseUrl });
-}
-
-export const DAILY_SWEEP_TIME_SETTING_KEY = "daily_sweep_time";
-/** Default daily 巡检 time (Beijing) when the user hasn't configured one. */
-export const DEFAULT_DAILY_SWEEP_TIME = "06:00";
-
-/** The configured daily-sweep time as "HH:MM" (Beijing), or the 06:00 default
- *  when unset/malformed. Legacy single-value key — kept as the migration
- *  fallback for getDailySweepTimes. */
-export async function getDailySweepTime(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<string> {
-  const value = (await repository.getSetting(DAILY_SWEEP_TIME_SETTING_KEY))?.trim();
-  // 范围校验（不只是格式）：99:99 之类脏值当默认处理，否则 slot 永远到不了点。
-  return value && HHMM_RE.test(value) ? value : DEFAULT_DAILY_SWEEP_TIME;
-}
-
-export const DAILY_SWEEP_TIMES_SETTING_KEY = "daily_sweep_times";
-export const MAX_DAILY_SWEEP_TIMES = 6;
-
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-
-export const PATROL_CONCURRENCY_SETTING_KEY = "patrol_max_concurrent_runs";
-export const DEFAULT_PATROL_CONCURRENCY = 1;
-export const MAX_PATROL_CONCURRENCY = 5;
-
-/** 同时处理几部作品（1~5，默认 1 = 逐部），巡检和手动获取共用。同一块网盘上的作品始终逐部跑。 */
-export async function getPatrolConcurrency(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<number> {
-  const value = Number((await repository.getSetting(PATROL_CONCURRENCY_SETTING_KEY))?.trim());
-  return Number.isInteger(value) && value >= 1 && value <= MAX_PATROL_CONCURRENCY ? value : DEFAULT_PATROL_CONCURRENCY;
+  return getJevInheritedBaseUrlFromRepo(repo, env);
 }
 
 /** The in-process worker's limit on queued runs going at once (same setting as the patrol). */
 export async function getWorkerConcurrency(): Promise<number> {
   return getPatrolConcurrency(getWorkflowRepository());
-}
-
-/**
- * 巡检时间点列表（北京 "HH:MM"，升序去重，1~6 个）。读取顺序：
- * daily_sweep_times(JSON 数组) → legacy daily_sweep_time 单值 → 默认 ["06:00"]。
- */
-export async function getDailySweepTimes(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<string[]> {
-  const raw = (await repository.getSetting(DAILY_SWEEP_TIMES_SETTING_KEY))?.trim();
-  if (raw) {
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const valid = [...new Set(parsed.filter((t): t is string => typeof t === "string" && HHMM_RE.test(t)))]
-          .sort()
-          .slice(0, MAX_DAILY_SWEEP_TIMES);
-        if (valid.length > 0) return valid;
-      }
-    } catch {
-      // 烂 JSON 走回退
-    }
-  }
-  return [await getDailySweepTime(repository)];
 }
 
 
@@ -1982,108 +1717,6 @@ export async function queueCandidateSeries(
     workflowRunId: request.workflowRunId,
     trackedSeasonId: buildTvCandidateId({ source: "tmdb", id: candidate.tmdbId, seasonNumber: 1 }),
   };
-}
-
-/** Legacy 单日一次闸的 key——仅供升级迁移读，不再写入。 */
-export const LAST_SWEEP_DATE_SETTING_KEY = "last_sweep_date";
-export const LAST_SWEEP_CLAIMS_SETTING_KEY = "last_sweep_claims";
-export const LAST_SWEEP_COMPLETED_AT_SETTING_KEY = "last_sweep_completed_at";
-
-interface SweepClaims {
-  date: string;
-  slots: string[];
-}
-
-/** 今天已认领的时间点。升级迁移：只有 legacy last_sweep_date=今天时，视「已到点
- *  的 slot 全部已认领」，避免升级当日按新语义重扫一遍。 */
-async function readSweepClaims(
-  repository: { getSetting(key: string): Promise<string | null> },
-  today: string,
-): Promise<string[]> {
-  const raw = (await repository.getSetting(LAST_SWEEP_CLAIMS_SETTING_KEY))?.trim();
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as Partial<SweepClaims>;
-      if (parsed.date === today && Array.isArray(parsed.slots)) {
-        // 读时归一（过滤非法/去重/排序）：手改坏值不进内存、也不会在回滚时被写回。
-        return [...new Set(parsed.slots.filter((slot): slot is string => typeof slot === "string" && HHMM_RE.test(slot)))].sort();
-      }
-    } catch {
-      // 烂 JSON 当无认领
-    }
-    return [];
-  }
-  const legacyDate = (await repository.getSetting(LAST_SWEEP_DATE_SETTING_KEY))?.trim();
-  if (legacyDate === today) {
-    const times = await getDailySweepTimes(repository);
-    const { hhmm } = beijingDateTime();
-    return times.filter((slot) => hhmm >= slot);
-  }
-  return [];
-}
-
-/** Beijing wall-clock "date" (YYYY-MM-DD) and "HH:MM" right now. */
-export function beijingDateTime(): { date: string; hhmm: string } {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(new Date());
-  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "";
-  return { date: `${get("year")}-${get("month")}-${get("day")}`, hhmm: `${get("hour")}:${get("minute")}` };
-}
-
-export const AUTO_UPDATE_ENABLED_SETTING_KEY = "auto_update_enabled";
-export const AUTO_UPDATE_TIME_SETTING_KEY = "auto_update_time";
-const AUTO_UPDATE_LAST_ATTEMPT_SETTING_KEY = "auto_update_last_attempt";
-export const AUTO_UPDATE_FAIL_STREAK_SETTING_KEY = "auto_update_fail_streak";
-
-/** The auto-update switch and its hour (Beijing time). Off unless explicitly turned on;
- *  a missing or malformed hour (anything but a whole hour) reads as the 04:00 default. */
-export async function getAutoUpdateSettings(
-  repository: { getSetting(key: string): Promise<string | null> },
-): Promise<{ enabled: boolean; time: string }> {
-  return { enabled: await isAutoUpdateEnabled(repository), time: await getAutoUpdateTime(repository) };
-}
-
-async function isAutoUpdateEnabled(repository: { getSetting(key: string): Promise<string | null> }): Promise<boolean> {
-  return (await repository.getSetting(AUTO_UPDATE_ENABLED_SETTING_KEY))?.trim() === "1";
-}
-
-async function getAutoUpdateTime(repository: { getSetting(key: string): Promise<string | null> }): Promise<string> {
-  const time = (await repository.getSetting(AUTO_UPDATE_TIME_SETTING_KEY))?.trim();
-  return time && isAutoUpdateTime(time) ? time : DEFAULT_AUTO_UPDATE_TIME;
-}
-
-/** Failed attempts at one release. `at` is when the last counted attempt ended: one failed
- *  attempt is counted once, however many days its status stays on the updater. */
-interface AutoUpdateFailStreak {
-  tag: string;
-  count: number;
-  at: string;
-}
-
-function parseAutoUpdateFailStreak(raw: string | null): AutoUpdateFailStreak | null {
-  if (!raw?.trim()) return null;
-  try {
-    const parsed = JSON.parse(raw) as Partial<AutoUpdateFailStreak> | null;
-    if (
-      parsed &&
-      typeof parsed.tag === "string" &&
-      typeof parsed.count === "number" &&
-      Number.isInteger(parsed.count) &&
-      parsed.count > 0
-    ) {
-      return { tag: parsed.tag, count: parsed.count, at: typeof parsed.at === "string" ? parsed.at : "" };
-    }
-  } catch {
-    // A hand-edited or damaged value counts as no failures.
-  }
-  return null;
 }
 
 /** Daily auto-update. The worker calls this every tick (3 s): with the switch off it reads
@@ -3142,75 +2775,6 @@ async function getWorkerStorageParents(
   };
 }
 
-/**
- * The V2 acquisition agent is a bare LanguageModel driving the sandbox tool-loop
- * (not the old AgentNodes). The adapter policy forces vercel-ai whenever the live
- * PanSou provider or 115 storage is in use; the fake adapter gets a no-op stub so
- * dev/demo runs complete without a real model. The preferred subtitle language is
- * passed to each workflow as standing context, not baked into the model instance.
- */
-/** Resolve the live agent model config the SAME way the worker builds it: DB
- *  (pass an account-scoped repo) → .env (AGENT_MODEL_* with XIAOMI_MIMO_* as a
- *  back-compat fallback) → 出厂免费预设 FREE_LLM_PRESET（Kilo 免费池，issue #52
- *  之后的兜底层）。回落只看 baseURL 与 modelId：两者都空（未设或空串，含
- *  .env.example 照抄形态）即视为无自定义配置、回落免费预设，所以 baseURL/modelId
- *  永远有可用值 —— 未配置的自部署实例开箱即用。apiKey 不参与回落判定，理由：
- *  ①key 没有独立意义，url/model 双空=没配自己的服务（设置页「清空地址保存」后
- *  DB 只剩 blank-keep 的 key，正是这个形态，不能再让它阻断回落）；②回落分支返回
- *  FREE_LLM_PRESET 且不携带 apiKey —— 残留 key 属于用户自配服务（如 DeepSeek），
- *  绝不能作为 Authorization 头发给 Kilo 免费池第三方（免费池本就无 key 调用）；
- *  ③非回落分支同样防 —— 生效 baseURL/modelId 逐字等于免费预设（isFreeLlmPreset，
- *  「换回免费模型」按钮写库后的形态）时也不携带 apiKey，DB 里的 key 原样保留、
- *  供用户换回自带服务时复用（丢弃只发生在本函数的返回值，不动库）。
- *  注意 env 层的 createAgentModelFromEnv 维持「三键全空」判定不动 —— env 是运维
- *  显式配置，语义不同。半截配置（baseURL/modelId 只有一边非空）照旧原样返回，
- *  由下游 llmConfigError fail-fast（用户错误不静默变免费池）。Shared by
- *  getAgentModel and testLlmConnectionAction so the Settings 「测试连接」exercises
- *  exactly what acquisitions use.
- *
- *  `source` 标记生效值来自哪一层（DB 层参与了任何一项就算 db）：设置页（Task 4）
- *  用它判定免费档（"free-preset"）与「来自环境变量」的呈现，不用再跑一次 predicate。 */
-export async function resolveAgentModelConfig(
-  repository: { getSetting(key: string): Promise<string | null> },
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<{ apiKey?: string; baseURL?: string; modelId?: string; source: "db" | "env" | "free-preset" }> {
-  const llm = await getLlmConfig(repository);
-  // env 内部的 modern→legacy 兜底 blank-aware（Copilot r2 B）：出厂 .env.example
-  // 带三个空串 AGENT_MODEL_* 键，与有值的 XIAOMI_MIMO_* 并存时空串不能遮蔽
-  // legacy 值 —— 否则下面的免费预设回落会把用户的 legacy 服务静默换成 Kilo。
-  // 与 agent-model.ts 的 createAgentModelFromEnv 同一条规则（isBlankEnvValue
-  // 自 @media-track/workflow 导入，单一谓词，无跨包复制体）。DB→env 的 ??
-  // 不动：DB 值 undefined 才看 env 是既有语义（DB 空串已在 getLlmConfig 归一为
-  // undefined）。
-  const pickEnvValue = (modern: string | undefined, legacy: string | undefined): string | undefined =>
-    isBlankEnvValue(modern) ? legacy : modern;
-  const apiKey = llm.apiKey ?? pickEnvValue(env.AGENT_MODEL_API_KEY, env.XIAOMI_MIMO_API_KEY);
-  const baseURL = llm.baseURL ?? pickEnvValue(env.AGENT_MODEL_BASE_URL, env.XIAOMI_MIMO_BASE_URL);
-  const modelId = llm.modelId ?? pickEnvValue(env.AGENT_MODEL_ID, env.XIAOMI_MIMO_MODEL_ID);
-  // 出厂回落：只看 baseURL 与 modelId（都比 env 层的「三键全空」宽一档，理由见上）。
-  if (isBlankEnvValue(baseURL) && isBlankEnvValue(modelId)) {
-    // 不带 apiKey：FREE_LLM_PRESET 本就只有 baseURL/modelId，残留 key 就地丢弃（②）。
-    return { ...FREE_LLM_PRESET, source: "free-preset" };
-  }
-  const source =
-    llm.apiKey !== undefined || llm.baseURL !== undefined || llm.modelId !== undefined ? "db" : "env";
-  // 生效配置逐字等于免费池预设（无论值来自 DB 还是 env —— 前者即「换回免费
-  // 模型」按钮写库后的形态：地址+模型名来自预设、key 是 blank-keep 留下的残留）
-  // → 与回落分支同样不携带 apiKey：残留 key 属于用户自带服务（如 DeepSeek），
-  // 不得作为 Authorization 头发给 Kilo 第三方免费池。丢弃只发生在返回值，
-  // DB 里的 key 原样保留，供用户换回自带服务时复用。
-  const presetValued = isFreeLlmPreset({
-    ...(baseURL === undefined ? {} : { baseURL }),
-    ...(modelId === undefined ? {} : { modelId }),
-  });
-  return {
-    ...(apiKey === undefined || presetValued ? {} : { apiKey }),
-    ...(baseURL === undefined ? {} : { baseURL }),
-    ...(modelId === undefined ? {} : { modelId }),
-    source,
-  };
-}
-
 /** Acquire-time LLM pre-check (issue #52)，随出厂免费预设收窄：对**生效配置**
  *  （resolveAgentModelConfig：DB → env → FREE_LLM_PRESET 回落）跑 llmConfigError。
  *  零配置 → 回落补齐 baseURL/modelId → 校验通过 → 返 null 不拦（开箱即用语义
@@ -3236,59 +2800,6 @@ export async function acquireLlmPreflightError(
   }
   const resolved = await resolveAgentModelConfig(settings, env);
   return llmConfigError(resolved);
-}
-
-export async function getAgentModel(repository: {
-  getSetting(key: string): Promise<string | null>;
-}): Promise<{
-  model: ReturnType<typeof createAgentModelFromEnv>;
-  /** The config that built `model` (baseURL/modelId only — NEVER the apiKey: the
-   *  worker only needs it to run isFreeLlmPreset for the free-tier failure copy).
-   *  The stub (fake adapter) path carries the resolved values all the same. */
-  llmConfig: { baseURL?: string; modelId?: string };
-  preferredLanguage: string | undefined;
-  qualityPreference: "high" | "medium" | undefined;
-}> {
-  assertWorkflowAgentAdapterPolicy(process.env);
-  const env = process.env;
-  const adapter = env.MEDIA_TRACK_AGENT_ADAPTER === "vercel-ai" ? "vercel-ai" : "fake";
-  const preferredLanguage = await getPreferredLanguage(repository);
-  const qualityPreference = await getQualityPreference(repository);
-
-  // Resolve the live model config the SAME way the test action does (shared
-  // resolver) — DB-first, then .env, then the shipped free preset
-  // (baseURL+modelId 双空回落，key 不参与判定).
-  const resolved = await resolveAgentModelConfig(repository, env);
-  const { apiKey, baseURL, modelId } = resolved;
-  // Fail-fast pre-check (issue #49): on the live (vercel-ai) path, if baseURL or
-  // modelId is missing the run would die on its first model call. With the free
-  // preset fallback this only trips on HALF-configured setups (e.g. a baseURL
-  // without a modelId) — a user error that must not silently become the free
-  // pool. Throw the actionable, agnostic guidance NOW — before building/using
-  // the model — so the user gets guidance at 获取 time instead of a raw failure
-  // after a long agent run. apiKey may be empty (keyless local LLM is valid);
-  // the fake/stub adapter never needs a model config.
-  if (adapter === "vercel-ai") {
-    const configError = llmConfigError(resolved);
-    if (configError) {
-      throw new Error(configError);
-    }
-  }
-  // Cache per resolved config signature (so a Settings edit takes effect without
-  // a restart AND different accounts' models coexist).
-  const signature = `${adapter}|${baseURL ?? ""}|${modelId ?? ""}|${apiKey ?? ""}`;
-  let model = agentModelCache.get(signature);
-  if (!model) {
-    model = adapter === "vercel-ai" ? createAgentModel(resolved) : createStubAcquisitionModel();
-    agentModelCache.set(signature, model);
-  }
-  // Deliberately WITHOUT apiKey (see return type): the worker's llmConfig is a
-  // display/copy hint (isFreeLlmPreset), not a credential carrier.
-  const llmConfig = {
-    ...(baseURL === undefined ? {} : { baseURL }),
-    ...(modelId === undefined ? {} : { modelId }),
-  };
-  return { model, llmConfig, preferredLanguage, qualityPreference };
 }
 
 function fakeTransferOutcomes() {

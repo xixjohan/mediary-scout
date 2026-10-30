@@ -1,0 +1,6 @@
+{
+  "name": "@media-track/updater",
+  "private": true,
+  "type": "module",
+  "description": "容器更新守护宿主：只挂 Docker socket，监听 compose 内网，执行标签拉取更新与隧道环境变量持久化"
+}
