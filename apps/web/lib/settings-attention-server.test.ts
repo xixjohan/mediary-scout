@@ -1,6 +1,33 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FREE_LLM_PRESET } from "@media-track/workflow";
 
+const containerMocks = vi.hoisted(() => ({
+  getWorkflowRepository: vi.fn(),
+  getCurrentAccountId: vi.fn(async () => "acct_default"),
+  requireAuthenticatedAccountId: vi.fn(async () => "acct_default"),
+}));
+
+const systemSettingsMocks = vi.hoisted(() => ({
+  getAccountScopedSettings: vi.fn(() => ({ getSetting: async () => null })),
+  getLlmConfig: vi.fn(async () => ({ baseURL: "https://llm.example", modelId: "m" })),
+  resolveAgentModelConfig: vi.fn(async () => ({
+    baseURL: "https://llm.example",
+    modelId: "m",
+    source: "db",
+  })),
+  PANSOU_BASE_URL_SETTING_KEY: "pansou_base_url",
+  PANSOU_HEALTH_SETTING_KEY: "pansou_last_probe",
+}));
+
+vi.mock("../features/settings-system/application/system-settings-service", () => systemSettingsMocks);
+vi.mock("./runtime/settings-readers", () => ({
+  PANSOU_BASE_URL_SETTING_KEY: "pansou_base_url",
+  PANSOU_HEALTH_SETTING_KEY: "pansou_last_probe",
+  resolveAgentModelConfig: systemSettingsMocks.resolveAgentModelConfig,
+}));
+vi.mock("../composition/runtime-container", () => containerMocks);
+vi.mock("./auth-chain", () => ({ isMultiUserEnabled: vi.fn(() => false) }));
+
 vi.mock("./demo-mode", () => ({ isDemoMode: vi.fn(() => false) }));
 vi.mock("./update-view-server", () => ({ loadUpdateView: vi.fn(async () => ({ available: null, current: { label: "v2026.09.28", tag: "v2026.09.28" } })) }));
 vi.mock("./workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 现在 import hasLoginPassword（设了密码后
@@ -32,14 +59,17 @@ import {
   resolveCurrentIsOwner,
 } from "./settings-attention-server";
 import {
-  getAccountScopedSettings,
-  getCurrentAccountId,
-  getLlmConfig,
-  getWorkflowRepository,
-  isMultiUserEnabled,
-  resolveAgentModelConfig,
+  // getAccountScopedSettings,
+  // getCurrentAccountId & getWorkflowRepository mocked from containerMocks below
+  // getLlmConfig,
+  // getWorkflowRepository,
+// isMultiUserEnabled
+  // resolveAgentModelConfig,
   resolveIsDesktop,
 } from "./workflow-runtime";
+import { isMultiUserEnabled } from "./auth-chain";
+const { getCurrentAccountId, getWorkflowRepository } = containerMocks;
+const { getAccountScopedSettings, resolveAgentModelConfig, getLlmConfig } = systemSettingsMocks;
 
 const VIEW_UPDATE = {
   available: { tag: "v2026.10.02", commit: "2".repeat(40), date: "2026-10-02", notes: [] },
@@ -66,6 +96,7 @@ function makeRepository(drives: Drive[], accounts: Record<string, { isOwner: boo
     setSetting: vi.fn(async () => {}),
   };
   (getWorkflowRepository as ReturnType<typeof vi.fn>).mockReturnValue(repository);
+  containerMocks.getWorkflowRepository.mockReturnValue(repository);
   return { repository, accountSettings };
 }
 
@@ -74,6 +105,7 @@ const T_MID = "2026-07-02T00:00:00.000Z";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  makeRepository([]);
   (isDemoMode as ReturnType<typeof vi.fn>).mockReturnValue(false);
   (getCurrentAccountId as ReturnType<typeof vi.fn>).mockResolvedValue("acct_default");
   (getLlmConfig as ReturnType<typeof vi.fn>).mockResolvedValue({

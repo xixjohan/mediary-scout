@@ -521,7 +521,7 @@ describe("ConnectLoginForm 的异常处理(源码断言)", () => {
   it("startTransition 里 catch 了 server action 的异常", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(
-      new URL("../components/settings/connect-login-form.tsx", import.meta.url),
+      new URL("../features/settings-system/components/settings/connect-login-form.tsx", import.meta.url),
       "utf8",
     );
     // action 会 throw:demo 门禁(DemoReadOnlyError)、Next 运行时错误、
@@ -537,7 +537,7 @@ describe("ConnectLoginForm 的异常处理(源码断言)", () => {
   it("反馈按成败切换 role(成功 status / 失败 alert)", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(
-      new URL("../components/settings/connect-login-form.tsx", import.meta.url),
+      new URL("../features/settings-system/components/settings/connect-login-form.tsx", import.meta.url),
       "utf8",
     );
     expect(src).toContain('role={msg.ok ? "status" : "alert"}');
@@ -550,7 +550,7 @@ describe("ConnectLoginForm 的异常处理(源码断言)", () => {
   it("邮箱输入框有 name 与 required", async () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync(
-      new URL("../components/settings/connect-login-form.tsx", import.meta.url),
+      new URL("../features/settings-system/components/settings/connect-login-form.tsx", import.meta.url),
       "utf8",
     );
     expect(src).toContain('name="email"');

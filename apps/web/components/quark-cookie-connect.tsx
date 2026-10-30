@@ -1,7 +1,3 @@
 "use client";
 
-import { CloudFamilyCookieConnect } from "./cloud-family-cookie-connect";
-
-export function QuarkCookieConnect() {
-  return <CloudFamilyCookieConnect brand="quark" />;
-}
+export * from "../features/storage-drives/components/quark-cookie-connect";

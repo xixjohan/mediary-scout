@@ -54,7 +54,7 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: h.push }) }));
 
 import { createElement, isValidElement, type ReactElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { InProgressTitle, LibraryWallEntry } from "../lib/title-hub";
+import type { InProgressTitle, LibraryWallEntry } from "../../../lib/title-hub";
 import { filterLibraryEntries, LibraryQuickFind } from "./library-quick-find";
 
 type Props = Parameters<typeof LibraryQuickFind>[0];

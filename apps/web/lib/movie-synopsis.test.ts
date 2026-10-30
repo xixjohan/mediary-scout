@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 describe("movie synopsis mobile contract", () => {
+  const componentPath = resolve(__dirname, "../features/catalog/components/movie-synopsis.tsx");
   const component = readFileSync(
-    resolve(__dirname, "../components/movie-synopsis.tsx"),
+    existsSync(componentPath) ? componentPath : resolve(__dirname, "../components/movie-synopsis.tsx"),
     "utf8",
   );
   const css = readFileSync(resolve(__dirname, "../app/globals.css"), "utf8");
