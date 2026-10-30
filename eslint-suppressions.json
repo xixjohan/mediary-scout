@@ -347,7 +347,7 @@
       "count": 1
     }
   },
-  "packages/workflow/tests/repository-contract.ts": {
+  "packages/workflow/tests/fixtures/repository-contract.ts": {
     "max-lines": {
       "count": 1
     }
