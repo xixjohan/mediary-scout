@@ -40,6 +40,8 @@ export const DEFAULT_DOMESTIC_NO_PROXY = [
   "pansou",
   "115.com",
   "*.115.com",
+  "115cdn.com",
+  "*.115cdn.com",
   "quark.cn",
   "*.quark.cn",
   "123pan.com",

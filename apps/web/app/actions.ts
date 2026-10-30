@@ -100,6 +100,19 @@ export interface ConnectQuarkActionResult {
   message: string;
 }
 
+/** Settings "添加网盘 → 115网盘": bind a pasted 115 cookie as a new drive. */
+export async function connectPan115CookieAction(cookie: string): Promise<ConnectQuarkActionResult> {
+  assertNotDemo();
+  try {
+    const { connectPan115Cookie } = await import("../lib/workflow-runtime");
+    const { providerUid } = await connectPan115Cookie(cookie);
+    revalidatePath("/settings");
+    return { ok: true, message: `115网盘已连接（账号 ${providerUid.slice(0, 10)}…）。` };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /** Settings "添加网盘 → 夸克": bind a pasted 夸克 cookie as a new drive. */
 export async function connectQuarkAction(cookie: string): Promise<ConnectQuarkActionResult> {
   return connectCloudFamilyCookieAction(cookie, "quark");

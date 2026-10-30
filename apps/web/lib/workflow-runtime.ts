@@ -3708,6 +3708,49 @@ export async function completePan115QrLogin(input: {
 }
 
 /**
+ * Settings "添加网盘 → 115网盘": bind a pasted 115 cookie directly (manual fallback).
+ */
+export async function connectPan115Cookie(
+  rawCookie: string,
+): Promise<{ providerUid: string; userName: string }> {
+  const cookie = rawCookie.trim();
+  if (!cookie) {
+    throw new Error("Cookie 不能为空");
+  }
+  const providerUid = parsePan115Uid(cookie);
+  if (!providerUid) {
+    throw new Error("115 Cookie 格式不正确（未找到 UID，需包含 UID=...; CID=...; SEID=... 等）");
+  }
+
+  const accountId = await requireAuthenticatedAccountId();
+  const userName = `115_${providerUid.slice(0, 8)}`;
+  const app = "manual_cookie";
+
+  await bindPan115ConnectedStorage({
+    accountId,
+    cookie,
+    userName,
+    app,
+  });
+
+  const repository = getWorkflowRepository();
+  if (accountId === DEFAULT_ACCOUNT_ID) {
+    await repository.setSetting(PAN115_COOKIE_KEY, cookie);
+    await repository.setSetting(
+      PAN115_META_KEY,
+      JSON.stringify({
+        userName,
+        app,
+        connectedAt: new Date().toISOString(),
+      }),
+    );
+    process.env.PAN115_COOKIE = cookie;
+    pan115CookieHydrated = true;
+  }
+  return { providerUid, userName };
+}
+
+/**
  * Settings "添加网盘 → 夸克网盘": bind a pasted 夸克 cookie.
  */
 export async function connectQuarkCookie(rawCookie: string): Promise<{ providerUid: string }> {

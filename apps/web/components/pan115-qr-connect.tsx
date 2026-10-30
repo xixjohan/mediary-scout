@@ -8,13 +8,30 @@ type Session = { uid: string; time: number; sign: string; qrcodeContent: string 
 type Phase = "idle" | "loading" | "waiting" | "scanned" | "confirming" | "done" | "expired" | "error";
 
 const APP_OPTIONS = [
-  { value: "alipaymini", label: "支付宝小程序（推荐，长效）" },
-  { value: "wechatmini", label: "微信小程序" },
-  { value: "tv", label: "电视端" },
-  { value: "android", label: "Android" },
-  { value: "ios", label: "iOS" },
+  { value: "alipaymini", label: "支付宝小程序（推荐，长效免挤下线）" },
+  { value: "wechatmini", label: "微信小程序（长效免挤下线）" },
+  { value: "tv", label: "电视端（推荐，免挤手机端）" },
+  { value: "android", label: "Android 端" },
+  { value: "ios", label: "iOS 端" },
   { value: "web", label: "网页端（不推荐，易失效）" },
 ] as const;
+
+function getScanHint(app: string): string {
+  switch (app) {
+    case "alipaymini":
+      return "请使用 支付宝 扫码授权";
+    case "wechatmini":
+      return "请使用 微信 扫码授权";
+    case "tv":
+      return "请使用 115 App 扫码授权（TV通道）";
+    case "android":
+      return "请使用 115 Android App 扫码授权";
+    case "ios":
+      return "请使用 115 iOS App 扫码授权";
+    default:
+      return "请使用 支付宝 / 微信 / 115 App 扫码授权";
+  }
+}
 
 export function Pan115QrConnect() {
   const router = useRouter();
@@ -157,7 +174,7 @@ export function Pan115QrConnect() {
       </div>
 
       <p className="qr-hint">
-        所选客户端类型若已有登录会话，该设备会被登出；小程序类型平时用不到、cookie 长效，推荐保持默认。
+        支持使用支付宝、微信或 115 手机 App 扫码。系统已启用多客户端自适应协议，不同 App 扫码均可自动匹配并绑定。
       </p>
 
       {session && (phase === "waiting" || phase === "scanned" || phase === "confirming") ? (
@@ -166,7 +183,7 @@ export function Pan115QrConnect() {
           <img src={`/api/115/qrcode/image?uid=${encodeURIComponent(session.uid)}`} alt="115 登录二维码" />
           <span className={`qr-status ${phase}`}>
             {phase === "waiting"
-              ? "用 115 App 扫码"
+              ? getScanHint(app)
               : phase === "scanned"
                 ? "已扫码，请在手机上确认"
                 : "正在完成登录…"}
