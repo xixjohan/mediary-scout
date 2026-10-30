@@ -95,16 +95,44 @@ Open `http://<host-ip>:3000` in your browser. Go to **Settings**, scan your driv
 
 ---
 
-### Method 2: Docker CLI Single Container
+### Method 2: Docker CLI Single Container Deployment
 
+For lightweight setups or environments without Docker Compose, launch as a standalone container (includes Web + in-process queue worker):
+
+#### 1. Standard Direct Run (Recommended)
 ```bash
 docker run -d \
   --name mediary-scout \
-  -p 3000:3000 \
-  -v mediary-data:/app/data \
   --restart unless-stopped \
+  -p 3000:3000 \
+  -v mediaray-data:/app/data \
+  -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db \
+  -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb \
+  -e MEDIA_TRACK_WORKER_MODE=inprocess \
+  -e MEDIA_TRACK_DEMO_SEED=0 \
   ghcr.io/xixjohan/mediary-scout:latest
 ```
+
+#### 2. With Outbound Proxy (For Regions with TMDB Restrictions)
+```bash
+docker run -d \
+  --name mediary-scout \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v mediaray-data:/app/data \
+  -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db \
+  -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb \
+  -e MEDIA_TRACK_WORKER_MODE=inprocess \
+  -e MEDIA_TRACK_DEMO_SEED=0 \
+  -e HTTP_PROXY="http://172.17.0.1:7890" \
+  -e HTTPS_PROXY="http://172.17.0.1:7890" \
+  -e NO_PROXY="localhost,127.0.0.1,115.com,*.115.com,quark.cn,*.quark.cn,123pan.com,*.123pan.com,189.cn,*.189.cn,douban.com,*.douban.com" \
+  ghcr.io/xixjohan/mediary-scout:latest
+```
+
+> [!IMPORTANT]
+> 1. **Data Volume**: Use a named volume `-v mediaray-data:/app/data` to ensure SQLite write permissions.
+> 2. **Network Bypass**: Chinese cloud drives (115, Quark, 123, Tianyi) and Douban are directly accessible and bypass proxies automatically. Ensure your proxy host allows LAN access (`Allow LAN`).
 
 ---
 
