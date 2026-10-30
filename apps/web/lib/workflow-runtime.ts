@@ -3675,7 +3675,7 @@ export async function completePan115QrLogin(input: {
   const { Pan115QrLoginClient, PAN115_QR_LOGIN_APPS } = await import("@media-track/workflow");
   const app = (PAN115_QR_LOGIN_APPS as readonly string[]).includes(input.app ?? "")
     ? (input.app as (typeof PAN115_QR_LOGIN_APPS)[number])
-    : "alipaymini";
+    : "tv";
   const client = new Pan115QrLoginClient();
   const result = await client.exchangeCookie(input.session, app);
   const accountId = await requireAuthenticatedAccountId();

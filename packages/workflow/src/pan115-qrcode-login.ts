@@ -29,13 +29,27 @@ export interface Pan115QrCookie {
   app: string;
 }
 
+export class Pan115QrExchangeError extends Error {
+  readonly code?: number | undefined;
+  constructor(message: string, code?: number | undefined) {
+    super(`PAN115_QR_EXCHANGE_FAILED: ${message}`);
+    this.name = "Pan115QrExchangeError";
+    this.code = code;
+  }
+}
+
+export function isPan115QrExchangeError(error: unknown): error is Pan115QrExchangeError {
+  return error instanceof Pan115QrExchangeError;
+}
+
 export const PAN115_QR_LOGIN_APPS = [
-  "alipaymini",
-  "wechatmini",
   "tv",
+  "qandroid",
   "android",
   "ios",
   "web",
+  "alipaymini",
+  "wechatmini",
 ] as const;
 
 export type Pan115QrLoginApp = (typeof PAN115_QR_LOGIN_APPS)[number];
@@ -128,13 +142,14 @@ export class Pan115QrLoginClient {
    */
   async exchangeCookie(
     session: Pan115QrSession,
-    preferredApp: Pan115QrLoginApp = "alipaymini",
+    preferredApp: Pan115QrLoginApp = "tv",
   ): Promise<Pan115QrCookie> {
     const candidates = [
       preferredApp,
       ...PAN115_QR_LOGIN_APPS.filter((a) => a !== preferredApp),
     ];
     let firstErrorMessage = "";
+    let firstErrorCode: number | undefined;
 
     for (const app of candidates) {
       const body = new URLSearchParams({ account: session.uid, app });
@@ -165,12 +180,11 @@ export class Pan115QrLoginClient {
 
       if (!firstErrorMessage) {
         firstErrorMessage = stringValue(response["message"]) || stringValue(response["error"]);
+        firstErrorCode = numberValue(response["code"]) || numberValue(response["errno"]) || undefined;
       }
     }
 
-    throw new Error(
-      `PAN115_QR_EXCHANGE_FAILED: ${firstErrorMessage || "no cookie in response"}`,
-    );
+    throw new Pan115QrExchangeError(firstErrorMessage || "no cookie in response", firstErrorCode);
   }
 
   private headers(): Record<string, string> {

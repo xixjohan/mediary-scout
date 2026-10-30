@@ -2,6 +2,8 @@ import { isDemoMode } from "../../../../../lib/demo-mode";
 import { NextResponse, type NextRequest } from "next/server";
 import { completePan115QrLogin, StorageOwnedByOtherAccountError } from "../../../../../lib/workflow-runtime";
 import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { formatNetworkError } from "../../../../../lib/http-proxy";
+import { isPan115QrExchangeError } from "@media-track/workflow";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const gate = await requireApiAccount(request);
@@ -27,8 +29,17 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (error instanceof StorageOwnedByOtherAccountError) {
       return NextResponse.json({ ok: false, error: error.message }, { status: 409 });
     }
+    if (
+      isPan115QrExchangeError(error) ||
+      ((error as Error)?.message && (error as Error).message.startsWith("PAN115_QR_EXCHANGE_FAILED"))
+    ) {
+      return NextResponse.json(
+        { ok: false, error: (error as Error).message },
+        { status: 422 },
+      );
+    }
     return NextResponse.json(
-      { ok: false, error: (error as Error)?.message || "登录失败" },
+      { ok: false, error: formatNetworkError(error) },
       { status: 502 },
     );
   }

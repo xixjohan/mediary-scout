@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { Pan115QrLoginClient } from "../src/index.js";
+import {
+  Pan115QrLoginClient,
+  PAN115_QR_LOGIN_APPS,
+  Pan115QrExchangeError,
+  isPan115QrExchangeError,
+} from "../src/index.js";
 
 interface RecordedRequest {
   url: string;
@@ -73,18 +78,18 @@ describe("Pan115QrLoginClient", () => {
 
     const result = await client.exchangeCookie(
       { uid: "uid_1", time: 1, sign: "sig", qrcodeContent: "x" },
-      "alipaymini",
+      "tv",
     );
 
     expect(requests[0]?.url).toBe(
-      "https://passportapi.115.com/app/1.0/alipaymini/1.0/login/qrcode/",
+      "https://passportapi.115.com/app/1.0/tv/1.0/login/qrcode/",
     );
-    expect(requests[0]?.body).toBe("account=uid_1&app=alipaymini");
+    expect(requests[0]?.body).toBe("account=uid_1&app=tv");
     expect(result).toEqual({
       cookie: "UID=u_R2_1; CID=c; SEID=s; KID=k",
       userId: 42,
       userName: "fancy",
-      app: "alipaymini",
+      app: "tv",
     });
   });
 
@@ -117,7 +122,7 @@ describe("Pan115QrLoginClient", () => {
       "alipaymini",
     );
 
-    expect(attemptedApps).toEqual(["alipaymini", "wechatmini"]);
+    expect(attemptedApps).toEqual(["alipaymini", "tv", "qandroid", "android", "ios", "web", "wechatmini"]);
     expect(result).toEqual({
       cookie: "UID=u_wechat; CID=c2; SEID=s2; KID=k2",
       userId: 100,
@@ -143,13 +148,47 @@ describe("Pan115QrLoginClient", () => {
     expect(session.uid).toBe("uid_retry");
   });
 
-  it("fails loudly when the exchange returns no cookie across all candidates", async () => {
+  it("defaults to tv when no app is specified", async () => {
+    const requests: RecordedRequest[] = [];
     const client = new Pan115QrLoginClient({
-      fetchJson: async () => ({ state: 0, message: "登录失败", data: {} }),
+      fetchJson: async (url, init) => {
+        requests.push({ url, method: init.method, body: init.body ?? "", headers: init.headers ?? {} });
+        return {
+          state: 1,
+          data: {
+            cookie: { UID: "u_I1_1" },
+            user_id: 1,
+            user_name: "tv_user",
+          },
+        };
+      },
     });
 
-    await expect(
-      client.exchangeCookie({ uid: "u", time: 1, sign: "s", qrcodeContent: "x" }),
-    ).rejects.toThrow("PAN115_QR_EXCHANGE_FAILED: 登录失败");
+    const result = await client.exchangeCookie({ uid: "uid_tv", time: 1, sign: "sig", qrcodeContent: "" });
+    expect(requests[0]?.url).toBe("https://passportapi.115.com/app/1.0/tv/1.0/login/qrcode/");
+    expect(requests[0]?.body).toBe("account=uid_tv&app=tv");
+    expect(result.app).toBe("tv");
+  });
+
+  it("ensures tv is the primary recommended client and qandroid is supported", () => {
+    expect(PAN115_QR_LOGIN_APPS[0]).toBe("tv");
+    expect(PAN115_QR_LOGIN_APPS).toContain("qandroid");
+  });
+
+  it("fails loudly with Pan115QrExchangeError when the exchange returns no cookie or system discontinued", async () => {
+    const client = new Pan115QrLoginClient({
+      fetchJson: async () => ({ state: 0, error: "登录失败，系统已下架！", errno: 40101017, data: {} }),
+    });
+
+    let thrown: unknown;
+    try {
+      await client.exchangeCookie({ uid: "u", time: 1, sign: "s", qrcodeContent: "x" }, "alipaymini");
+    } catch (e) {
+      thrown = e;
+    }
+
+    expect(isPan115QrExchangeError(thrown)).toBe(true);
+    expect((thrown as Pan115QrExchangeError).message).toBe("PAN115_QR_EXCHANGE_FAILED: 登录失败，系统已下架！");
+    expect((thrown as Pan115QrExchangeError).code).toBe(40101017);
   });
 });

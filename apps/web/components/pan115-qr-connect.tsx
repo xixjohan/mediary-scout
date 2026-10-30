@@ -8,35 +8,34 @@ type Session = { uid: string; time: number; sign: string; qrcodeContent: string 
 type Phase = "idle" | "loading" | "waiting" | "scanned" | "confirming" | "done" | "expired" | "error";
 
 const APP_OPTIONS = [
-  { value: "alipaymini", label: "支付宝小程序（推荐，长效免挤下线）" },
-  { value: "wechatmini", label: "微信小程序（长效免挤下线）" },
-  { value: "tv", label: "电视端（推荐，免挤手机端）" },
-  { value: "android", label: "Android 端" },
-  { value: "ios", label: "iOS 端" },
+  { value: "tv", label: "电视端（推荐，长效且不挤掉手机/网页）" },
+  { value: "qandroid", label: "Android 备用通道（长效）" },
+  { value: "android", label: "Android 官方客户端" },
+  { value: "ios", label: "iOS 官方客户端" },
   { value: "web", label: "网页端（不推荐，易失效）" },
+  { value: "alipaymini", label: "支付宝小程序（备选自适应）" },
+  { value: "wechatmini", label: "微信小程序（备选自适应）" },
 ] as const;
 
 function getScanHint(app: string): string {
   switch (app) {
-    case "alipaymini":
-      return "请使用 支付宝 扫码授权";
-    case "wechatmini":
-      return "请使用 微信 扫码授权";
     case "tv":
-      return "请使用 115 App 扫码授权（TV通道）";
+      return "请使用 115生活 App 扫码（推荐TV通道）";
+    case "qandroid":
+      return "请使用 115 Android App 扫码";
     case "android":
-      return "请使用 115 Android App 扫码授权";
+      return "请使用 115 Android App 扫码";
     case "ios":
-      return "请使用 115 iOS App 扫码授权";
+      return "请使用 115 iOS App 扫码";
     default:
-      return "请使用 支付宝 / 微信 / 115 App 扫码授权";
+      return "请使用 115生活 App / 支付宝 / 微信 扫码";
   }
 }
 
 export function Pan115QrConnect() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
-  const [app, setApp] = useState<string>("alipaymini");
+  const [app, setApp] = useState<string>("tv");
   const [session, setSession] = useState<Session | null>(null);
   const [message, setMessage] = useState<string>("");
   const generation = useRef(0);
@@ -174,7 +173,7 @@ export function Pan115QrConnect() {
       </div>
 
       <p className="qr-hint">
-        支持使用支付宝、微信或 115 手机 App 扫码。系统已启用多客户端自适应协议，不同 App 扫码均可自动匹配并绑定。
+        推荐使用【电视端】通道配合【115生活 App】扫码（独立会话免挤下线）。系统已启用多客户端自适应协议，不同 App 扫码均可自动匹配并绑定。
       </p>
 
       {session && (phase === "waiting" || phase === "scanned" || phase === "confirming") ? (
