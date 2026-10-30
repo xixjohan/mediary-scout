@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AccountRow, EndpointRow, EntitlementRow } from "../db.js";
+import type { AccountRow, EndpointRow, EntitlementRow } from "../infra/db.js";
 import { consolePage } from "./console-page.js";
 
 const NOW = "2026-07-28T00:00:00.000Z";

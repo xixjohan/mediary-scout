@@ -1,0 +1,2066 @@
+import { readJsonBody, assertSameOriginRequest, assertDeclaredSizeWithinCap, readBodyTextCapped, optString, decodeParam } from "../infra/http.js";
+import { upsertAccount, isUniqueViolation } from "../auth/account-auth.js";
+import type { CfApi } from "../tunnel/cf-api.js";
+import type { AccountRow, ConnectDb, PaymentOrderRow } from "../infra/db.js";
+import { HttpError, handleError, htmlPage, json } from "../infra/http.js";
+import { requireAdmin } from "../auth/auth.js";
+import { provisionEndpoint } from "../tunnel/provision.js";
+import { restoreEndpoint } from "../tunnel/restore.js";
+import { revokeEndpoint } from "../tunnel/revoke.js";
+import { revealByCode } from "../tunnel/reveal.js";
+import {
+  SLUG_CHECK_RATE_LIMIT,
+  SLUG_CHECK_RATE_WINDOW_MS,
+  SIGNUP_IP_RATE_LIMIT,
+  SIGNUP_EMAIL_RATE_LIMIT,
+  SIGNUP_RATE_WINDOW_MS,
+  checkRateLimit,
+  createRateLimiter,
+} from "../infra/rate-limit.js";
+import { assertSlug } from "../tunnel/slug.js";
+import { checkSlug, type IsTaken } from "../tunnel/slug-availability.js";
+import { homePage } from "../html/home-page.js";
+import { normalizeTurnstileSitekey } from "../html/theme.js";
+import { adminPage } from "../html/admin-page.js";
+import { invitePage, type InvitePageState } from "../html/invite-page.js";
+
+import { CAPACITY_LIMIT, isAtCapacityError } from "../tunnel/capacity.js";
+import { grantEntitlement } from "../billing/grant.js";
+import { buyPage } from "../html/buy-page.js";
+import { paymentSuccessPage } from "../html/payment-success-page.js";
+import { compliancePage, COMPLIANCE_PAGES, type CompliancePageKey } from "../html/compliance-page.js";
+import { RAW_ASSETS } from "../html/assets.gen.js";
+import { consolePage } from "../html/console-page.js";
+import { loginPage } from "../html/login-page.js";
+import { EMAIL_MAX_LENGTH, EMAIL_RE } from "../infra/validation.js";
+import { newId } from "../infra/ids.js";
+import { sha256Hex } from "../auth/crypto-token.js";
+import { signToken, verifyToken } from "../auth/signed-token.js";
+import { buildSessionCookie, parseSessionCookie } from "../auth/session.js";
+import { confirmLoginPage } from "../html/confirm-login-page.js";
+import { computeExpiry, isEntitlementActive, latestExpiry, reconcileEntitlementLedger } from "../billing/entitlement.js";
+import type { WaffoApi, WaffoEnvironment, WaffoPayment } from "../billing/waffo-api.js";
+import {
+  assertWaffoCompletedEvidence,
+  InvalidWaffoEvidenceError,
+  isWaffoFullRefund,
+  normalizeWaffoAmount,
+  readWaffoCompletedEvidence,
+} from "../billing/waffo-service.js";
+import { PAYMENT_TIERS, resolvePaymentTier, canTransitionPaymentOrder } from "../billing/payment-order.js";
+import { isWaffoNotApprovedError } from "../billing/waffo-api.js";
+import { resolveAccount } from "../auth/account-auth.js";
+import {
+  startInstanceLink,
+  instanceLinkLanding,
+  confirmInstanceLink,
+  pollInstanceLink,
+  revokeInstanceLink,
+} from "../tunnel/instance-link.js";
+
+// Same aperture mark as apps/web/app/icon.svg — the product brand.
+const LOGO_SVG =
+  '<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg"><circle cx="16" cy="16" r="16" fill="#1ED760"/><g transform="translate(4,4)" fill="none" stroke="#0B3B1E" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="m14.31 8 5.74 9.94"/><path d="M9.69 8h11.48"/><path d="m7.38 12 5.74-9.94"/><path d="M9.69 16 3.95 6.06"/><path d="M14.31 16H2.83"/><path d="m16.62 12-5.74 9.94"/></g></svg>';
+
+export interface RouteDeps {
+  db: ConnectDb;
+  cf: CfApi;
+  adminToken: string;
+  rootDomain: string;
+  tokenWrapKeyHex: string;
+  now: () => string;
+  newInviteId: () => string;
+  newEndpointId: () => string;
+  newAuditId: () => string;
+  newInviteCode: () => string;
+  // Cloudflare Turnstile config for the public waitlist gate. Both optional —
+  // the gate is active ONLY when both are set — the paired rule lives in
+  // turnstileSitekeyIfConfigured() / turnstileGateEnabled() below;
+  // either absent → no widget rendered, POST /waitlist skips verification.
+  turnstileSitekey?: string | undefined;
+  /** Waffo server API. Missing configuration keeps new checkout fail-closed. */
+  waffoApi?: WaffoApi | undefined;
+  waffoEnvironment?: WaffoEnvironment | undefined;
+  waffoStoreId?: string | undefined;
+  waffoProducts?: {
+    quarter: string;
+    year: string;
+    two_years: string;
+  } | undefined;
+  /** Deterministic injection points for checkout tests; production uses crypto randomness. */
+  newPaymentOrderId?: (() => string) | undefined;
+  newWaffoExternalId?: (() => string) | undefined;
+  newCheckoutToken?: (() => string) | undefined;
+  turnstileSecret?: string | undefined;
+  // P3: 魔法链接登录
+  newAccountId: () => string;
+  newEntitlementId: () => string;
+  sessionSecret: string;
+  /** 发一封含魔法链接的邮件。注入以便测试不打真 Resend。 */
+  sendMagicLink: (to: string, url: string) => Promise<void>;
+  /** 发一封含实例连接确认链接的邮件。 */
+  sendInstanceLinkEmail: (
+    to: string,
+    details: { url: string; verifyCode: string; requestIp: string; requestedAt: string },
+  ) => Promise<void>;
+}
+
+// slug/check 限流器,worker 实例生命周期内有效(单实例内存窗口,
+// 见 rate-limit.ts 对「挡不住分布式滥用」的诚实标注)。
+const slugCheckLimiter = createRateLimiter({
+  limit: SLUG_CHECK_RATE_LIMIT,
+  windowMs: SLUG_CHECK_RATE_WINDOW_MS,
+  now: () => Date.now(),
+});
+
+
+/**
+ * 发信入口限流 —— **只判 IP 维度**(**跨实例,走 D1**)。
+ *
+ * 原先用内存滑动窗口,但 Worker 每次请求可能落在不同隔离实例上、各有一份
+ * 计数 —— 生产实测同一邮箱连打 5 次得到 `429 202 429 202 202`,实际拦截率
+ * 约 40%。D1 是所有实例共享的唯一真源,计数才一致。
+ *
+ * **调用位置必须在邮箱形状校验之后**:否则一串 `not-an-email` 就能把正常用户
+ * 的配额耗光(拒绝服务),而那些请求本来就注定 400。
+ *
+ * 拿不到 cf-connecting-ip 时放行(理论上 CF 总会给)—— 调用方 /waitlist 只有
+ * 这一道,/api/auth/magic 还有邮箱维度兜底。
+ *
+ * 调用方返回 429 而不是静默丢弃:让脚本作者知道撞墙了,也让正常用户看到原因。
+ * fail open(D1 抖动时放行)的理由见 rate-limit.ts 的 checkRateLimit。
+ */
+async function signupIpRateLimited(request: Request, deps: RouteDeps): Promise<boolean> {
+  const ip = request.headers.get("cf-connecting-ip")?.trim() || "";
+  if (ip === "") return false;
+  const r = await checkRateLimit({
+    store: deps.db,
+    bucket: "signup_ip",
+    key: ip,
+    limit: SIGNUP_IP_RATE_LIMIT,
+    windowMs: SIGNUP_RATE_WINDOW_MS,
+    now: () => Date.parse(deps.now()),
+  });
+  return !r.allowed;
+}
+
+/**
+ * IP + 邮箱双维度。给 /api/auth/magic 用 —— 邮箱维度防「换 IP 轰同一个人」
+ * 的邮件骚扰。/waitlist 只用 IP 维度(见那里的注释:邮箱维度会误杀幂等重提交)。
+ *
+ * 顺序重要:先判 IP。IP 被限时**不再写邮箱维度的计数** —— 否则攻击者能用
+ * 一个 IP 把受害者邮箱的配额也耗掉(每次 hitAndCount 都会插一行)。
+ */
+async function signupRateLimited(request: Request, email: string, deps: RouteDeps): Promise<boolean> {
+  if (await signupIpRateLimited(request, deps)) return true;
+  const r = await checkRateLimit({
+    store: deps.db,
+    bucket: "signup_email",
+    key: email,
+    limit: SIGNUP_EMAIL_RATE_LIMIT,
+    windowMs: SIGNUP_RATE_WINDOW_MS,
+    now: () => Date.parse(deps.now()),
+  });
+  return !r.allowed;
+}
+
+export async function handleRequest(request: Request, deps: RouteDeps): Promise<Response> {
+  try {
+    // HEAD 按 RFC 9110 必须与 GET 返回**相同的头**、只是没有 body。此前
+    // 没有任何 HEAD 分支,于是所有 HEAD 一路落到末尾的 404 JSON —— 线上
+    // 实测 `HEAD /` 是 application/json 而 `GET /` 是 text/html。部分抓取器
+    // 和链接校验器先发 HEAD,会把首页误判成非 HTML 资源。
+    //
+    // 做法:用同一个 URL 造一个 GET 走完整路由,再把 body 换成 null。
+    // 这样头(content-type / cache-control / X-Robots-Tag …)天然与 GET 一致,
+    // 不需要在每个页面分支里各写一遍,也不会漏掉将来新增的路由。
+    if (request.method === "HEAD") {
+      const asGet = new Request(request.url, {
+        method: "GET",
+        headers: request.headers,
+      });
+      const res = await route(asGet, deps);
+      // 复用原 Response 的 status/headers,只丢 body。
+      return new Response(null, {
+        status: res.status,
+        statusText: res.statusText,
+        headers: res.headers,
+      });
+    }
+    return await route(request, deps);
+  } catch (e) {
+    return handleError(e);
+  }
+}
+
+/**
+ * Hard cap on any request body this Worker will buffer or parse.
+ *
+ * 8 KB, because every body we accept is tiny and fixed-shape: `{email}` on
+ * POST /waitlist (an email is capped at 254 bytes by RFC 5321 — see
+ * EMAIL_MAX_LENGTH), `{email, slug, invitee_label}` on invite creation,
+ * `{slug}` on provision, and `{version, uptime_seconds}` on the status
+ * heartbeat. 8 KB is ~30x the largest of those, so it cannot reject a
+ * legitimate caller, while still being small enough that the worst case a
+ * stranger can force is trivial.
+ *
+ * This matters because POST /waitlist is public and unauthenticated, and this
+ * Worker shares its D1 instance with the provisioning control plane: an
+ * unbounded read+JSON.parse here is free CPU/memory amplification that
+ * degrades provisioning and revocation, not just the waitlist.
+ */
+export const MAX_JSON_BODY_BYTES = 8 * 1024;
+/**
+ * Waffo 支付异步通知的 body 上限,比普通 API 请求宽。
+ *
+ * Waffo webhook 通常很小，但未来字段扩展和签名值会增加体积。
+ * **上限设太紧会拒掉真实付款通知 —— 那是
+ * 直接丢钱**,所以留足余量。仍然要有上限:webhook 端点公开可打,裸
+ * request.text() 会把 500MB body 全缓存进内存(readBodyTextCapped 的注释里
+ * 写的正是这个放大漏洞)。
+ */
+export const MAX_PAYMENT_NOTIFY_BODY_BYTES = 128 * 1024;
+
+/**
+ * Cheap pre-read rejection on the DECLARED size. Costs nothing and refuses the
+ * request before a single byte is buffered — but it is only half the defence,
+ * because Content-Length is absent under chunked encoding and is attacker-
+ * controlled besides. readBodyTextCapped() enforces the real limit.
+ */
+
+async function route(request: Request, deps: RouteDeps): Promise<Response> {
+  const url = new URL(request.url);
+  const path = url.pathname;
+  const method = request.method;
+
+  // www.* → apex, preserving path (and query).
+  if (url.hostname.toLowerCase().startsWith("www.")) {
+    const target = new URL(url.toString());
+    target.hostname = url.hostname.slice("www.".length);
+    return Response.redirect(target.toString(), 301);
+  }
+
+  if (method === "GET" && path === "/") {
+    // beta 子域根路径 **301 到 apex** —— 内测报名页已退役。
+    // apex 现在有完整的登录+购买路径,用户不需要先「报名内测」再等邀请;
+    // 留着它还多一个要同步一致性的地方(创始价撤掉时就在那里多活了一轮)。
+    // 301 而非 404:主站还有一条指向它的链接,404 会丢权重,也可能有人存了书签。
+    // /waitlist 接口**保留**(已有报名者的数据还在)。
+    //
+    // Normalize BOTH sides: url.hostname is already lowercase, but
+    // deps.rootDomain comes from env (CONNECT_ROOT_DOMAIN) untrimmed — a
+    // mixed-case or space-padded value would silently break this routing.
+    const betaHost = `beta.${deps.rootDomain.trim().toLowerCase()}`;
+    if (url.hostname.toLowerCase() === betaHost) {
+      // 与上面 www.* → apex 同款写法:用 URL 改 host,**保留 query**
+      // (主站那条链接若带 UTM 不能丢)并沿用当前 scheme(本地/预发一致)。
+      const target = new URL(url.toString());
+      target.hostname = deps.rootDomain.trim().toLowerCase();
+      target.pathname = "/";
+      return Response.redirect(target.toString(), 301);
+    }
+    // posters:true 放行 TMDB 图片代理(hero 海报墙)。只首页需要 ——
+    // 其余页面维持 img-src 'self' data: 的最严策略。
+    return htmlPage(homePage(), { posters: true });
+  }
+  if (method === "POST" && path === "/api/waffo/webhook") {
+    return waffoWebhook(request, deps);
+  }
+  if (method === "POST" && path === "/api/checkout") {
+    assertSameOriginRequest(request, url);
+    return createWaffoCheckout(request, deps);
+  }
+  const waffoStatusMatch = path.match(/^\/api\/orders\/([^/]+)\/status$/);
+  if (method === "GET" && waffoStatusMatch !== null) {
+    const rawOrderId = waffoStatusMatch[1] ?? "";
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(rawOrderId)) {
+      return json({ error: "not found" }, 404, { noStore: true });
+    }
+    return getWaffoOrderStatus(request, deps, rawOrderId);
+  }
+  // /buy —— Waffo 微信支付档位选择页。
+  if (method === "GET" && path === "/buy") {
+    return htmlPage(buyPage({ waffoConfigured: deps.waffoApi !== undefined }), { noStore: true });
+  }
+  // /payment-success —— Waffo success_url 的落点。页面只查本地订单状态,
+  // return 参数本身绝不作为付款成功证据。
+  // noStore:这是一次性的支付确认页,不该被缓存复用。
+  if (method === "GET" && path === "/payment-success") {
+    return htmlPage(paymentSuccessPage(), { noStore: true });
+  }
+  if (method === "GET" && path === "/link") {
+    return await instanceLinkLanding(url, deps);
+  }
+  if (method === "POST" && path === "/link") {
+    return await confirmInstanceLink(request, deps);
+  }
+  // 合规五页（条款/隐私/退款/定价/联系）。两个 host 都放行。
+  if (method === "GET" && path.length > 1) {
+    const key = path.slice(1);
+    // Object.hasOwn 而非 `in`：后者沿原型链找到 toString/valueOf，
+    // 随后 compliancePage() 因内容缺失抛错变 500（round 1 评审抓到）。
+    if (Object.hasOwn(COMPLIANCE_PAGES, key)) {
+      // 中文默认(受众是中文用户);?lang=en 给英文页。任何其它值(含空串、
+      // 大小写变体、垃圾值)都回落中文而非报错——法律页面必须永远打得开,
+      // 一个拼错的 query 不该变成 4xx。
+      const lang = url.searchParams.get("lang")?.trim().toLowerCase() === "en" ? "en" : "zh";
+      return htmlPage(compliancePage(key as CompliancePageKey, lang));
+    }
+  }
+  // robots.txt —— worker 接管。此前是 Cloudflare 的纯注释样板(去注释后
+  // **零有效指令**),既没声明 Sitemap,也没显式 Allow。
+  //
+  // **必须是 Allow,绝不能 Disallow。** 被 robots.txt 屏蔽的 URL 仍可能因外链
+  // 被索引(只是显示无描述),而且屏蔽后爬虫**读不到**页面上的 noindex ——
+  // 想让某页不被索引,唯一可靠的组合是「允许抓取 + noindex」。
+  // 见 https://developers.google.com/search/docs/crawling-indexing/block-indexing
+  if (method === "GET" && path === "/robots.txt") {
+    const root = deps.rootDomain.trim().toLowerCase();
+    const body = [
+      "User-agent: *",
+      "Allow: /",
+      "",
+      `Sitemap: https://${root}/sitemap.xml`,
+      "",
+    ].join("\n");
+    return new Response(body, {
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  // sitemap.xml —— 只放**该被索引且有搜索价值**的页:首页 + 定价(中英)。
+  // 法务五页不进:它们对搜索用户零价值,进 sitemap 只是稀释抓取配额。
+  // 用户实例子域(<slug>.…)**永远不进** —— 那是私有实例,slug 可能含真名,
+  // 被索引即隐私事件(边缘已加 X-Robots-Tag: noindex 兜底)。
+  if (method === "GET" && path === "/sitemap.xml") {
+    const root = deps.rootDomain.trim().toLowerCase();
+    const base = `https://${root}`;
+    // 两个语言版本共用同一组 hreflang,且**每组都包含自己**(Google 要求
+    // alternate 集合自含,否则算「无返回标记」错误)。x-default 指中文 ——
+    // 主受众是中文用户。
+    const hreflang = [
+      `    <xhtml:link rel="alternate" hreflang="zh-Hans" href="${base}/pricing"/>`,
+      `    <xhtml:link rel="alternate" hreflang="en" href="${base}/pricing?lang=en"/>`,
+      `    <xhtml:link rel="alternate" hreflang="x-default" href="${base}/pricing"/>`,
+    ].join("\n");
+    // `?lang=en` 里的 & 若将来出现须转义成 &amp;(当前只有单参数,无此问题)。
+    const body = `<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"
+        xmlns:xhtml="http://www.w3.org/1999/xhtml">
+  <url>
+    <loc>${base}/</loc>
+  </url>
+  <url>
+    <loc>${base}/pricing</loc>
+${hreflang}
+  </url>
+  <url>
+    <loc>${base}/pricing?lang=en</loc>
+${hreflang}
+  </url>
+</urlset>
+`;
+    return new Response(body, {
+      headers: { "content-type": "application/xml; charset=utf-8" },
+    });
+  }
+  if (method === "GET" && path === "/healthz") {
+    return new Response("ok", {
+      headers: { "content-type": "text/plain; charset=utf-8" },
+    });
+  }
+  // P3: 魔法链接登录
+  if (method === "POST" && path === "/api/auth/magic") {
+    return await requestMagicLink(request, deps);
+  }
+  if (method === "POST" && path === "/api/instance-link/start") {
+    return await startInstanceLink(request, deps);
+  }
+  if (method === "POST" && path === "/api/instance-link/poll") {
+    return await pollInstanceLink(request, deps);
+  }
+  if (method === "POST" && path === "/api/instance-link/revoke") {
+    return await revokeInstanceLink(request, deps);
+  }
+  if (method === "GET" && path === "/auth/callback") {
+    return await magicLanding(url, deps);
+  }
+  if (method === "POST" && path === "/auth/callback") {
+    assertSameOriginRequest(request, url);
+    return await confirmMagicLogin(request, deps);
+  }
+  if (method === "GET" && path === "/login") {
+    return htmlPage(loginPage(turnstileSitekeyIfConfigured(deps)));
+  }
+  if (method === "GET" && path === "/console") {
+    return await consoleRoute(request, deps);
+  }
+  if (method === "GET" && path === "/api/slug/check") {
+    return await slugCheckRoute(url, request, deps);
+  }
+  if (method === "GET" && path === "/api/account") {
+    return await accountRoute(request, deps);
+  }
+  if (method === "POST" && path === "/api/claim-code") {
+    assertSameOriginRequest(request, url);
+    return await issueClaimCode(request, deps);
+  }
+  if (method === "POST" && path === "/api/provision") {
+    assertSameOriginRequest(request, url);
+    return await selfServeProvision(request, deps);
+  }
+  if (method === "POST" && path === "/api/claim/exchange") {
+    return await exchangeClaimCode(request, deps);
+  }
+  if (method === "GET" && path === "/connect.sh") {
+    const script = RAW_ASSETS["connect.sh"];
+    if (script !== undefined) {
+      // 让下载到的脚本自洽于它的来源主机:把内置的生产默认 WORKER_BASE
+      // 改写成当前请求的 origin。否则在 staging/preview(不同 rootDomain)下
+      // 用户从该主机 curl 脚本,脚本却仍打生产 API——staging 签的取件码拿到
+      // 生产去 exchange 必然失败(secret 不同)。用户仍可用 MEDIARY_CONNECT_BASE
+      // 覆盖(:- 默认写法保留)。只替换首个默认值,精确匹配那一行的字面量。
+      const served = script.replace(
+        'WORKER_BASE="${MEDIARY_CONNECT_BASE:-https://mediaryconnect.app}"',
+        `WORKER_BASE="\${MEDIARY_CONNECT_BASE:-${url.origin}}"`,
+      );
+      return new Response(served, {
+        headers: {
+          "content-type": "text/x-shellscript; charset=utf-8",
+          "cache-control": "public, max-age=300",
+        },
+      });
+    }
+  }
+  // Brand logo for Access Custom Pages + invite page — self-hosted so we don't
+  // depend on any external asset host.
+  if (method === "GET" && path === "/logo.svg") {
+    return new Response(LOGO_SVG, {
+      headers: {
+        "content-type": "image/svg+xml; charset=utf-8",
+        "cache-control": "public, max-age=86400",
+      },
+    });
+  }
+  if (method === "GET" && path === "/admin") {
+    return htmlPage(adminPage());
+  }
+  if (method === "GET" && path === "/beta") {
+    // 内测页退役,301 到 apex(理由见 beta 子域那处的注释)。
+    // 同样保留 query、沿用 scheme。
+    const target = new URL(url.toString());
+    target.hostname = deps.rootDomain.trim().toLowerCase();
+    target.pathname = "/";
+    return Response.redirect(target.toString(), 301);
+  }
+
+  // ---- admin api (bearer required) ----
+  if (path === "/api/admin/invites") {
+    requireAdmin(request, deps.adminToken);
+    if (method === "GET") {
+      return json({ invites: await deps.db.listInvites() });
+    }
+    if (method === "POST") {
+      return await createInvite(request, url, deps);
+    }
+    throw new HttpError(404, "not found");
+  }
+
+  if (path === "/api/admin/endpoints" && method === "GET") {
+    requireAdmin(request, deps.adminToken);
+    // PUBLIC shape only — token_ciphertext / token_sha256 (and CF-internal
+    // resource ids besides the tunnel id) must never leave the server.
+    const endpoints = (await deps.db.listEndpoints()).map((ep) => ({
+      id: ep.id,
+      invite_id: ep.invite_id,
+      slug: ep.slug,
+      hostname: ep.hostname,
+      status: ep.status,
+      token_shown_at: ep.token_shown_at,
+      last_seen_at: ep.last_seen_at,
+      created_at: ep.created_at,
+      revoked_at: ep.revoked_at,
+      cf_tunnel_id: ep.cf_tunnel_id,
+    }));
+    return json({ endpoints });
+  }
+
+  if (path === "/api/admin/waitlist" && method === "GET") {
+    requireAdmin(request, deps.adminToken);
+    // Queue order straight from the db
+    return json({ waitlist: await deps.db.listWaitlist(WAITLIST_BATCH) });
+  }
+
+  if (path === "/api/admin/grant" && method === "POST") {
+    return await adminGrant(request, deps);
+  }
+
+  if (path === "/api/admin/audits" && method === "GET") {
+    requireAdmin(request, deps.adminToken);
+    // Operator-facing read of the audit log (newest first, from the db).
+    // detail_json may carry invitee emails — same sensitivity as the invites
+    // list, and this route sits behind the same admin bearer as that one.
+    return json({ audits: await deps.db.listAudits() });
+  }
+
+  const provisionMatch = path.match(/^\/api\/admin\/invites\/([^/]+)\/provision$/);
+  if (provisionMatch !== null && method === "POST") {
+    requireAdmin(request, deps.adminToken);
+    return await provisionInvite(request, url, deps, decodeParam(provisionMatch[1] ?? ""));
+  }
+
+  const revokeMatch = path.match(/^\/api\/admin\/endpoints\/([^/]+)\/revoke$/);
+  if (revokeMatch !== null && method === "POST") {
+    requireAdmin(request, deps.adminToken);
+    const endpointId = decodeParam(revokeMatch[1] ?? "");
+    // 404 (not 500) for a missing endpoint — the admin client distinguishes
+    // "already gone" from "revoke failed".
+    const existing = await deps.db.getEndpointById(endpointId);
+    if (existing === null) {
+      throw new HttpError(404, "endpoint not found");
+    }
+    // Retrying a failed cleanup finishes that revoke: keep why it happened, so an address taken
+    // down for expiry or a refund stays restorable after renewal.
+    const reason = existing.status === "revoke_failed" && existing.revoke_reason !== null ? existing.revoke_reason : "admin";
+    const result = await revokeEndpoint({
+      endpointId,
+      reason,
+      deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId },
+    });
+    return json({ hostname: result.hostname, revoked: true });
+  }
+
+  // ---- invitee ----
+  const inviteMatch = path.match(/^\/i\/([^/]+)$/);
+  if (inviteMatch !== null && method === "GET") {
+    const state = await inviteState(deps, decodeParam(inviteMatch[1] ?? ""));
+    return htmlPage(invitePage(state));
+  }
+
+  const revealMatch = path.match(/^\/api\/i\/([^/]+)\/reveal$/);
+  if (revealMatch !== null && method === "POST") {
+    return await revealInvite(deps, decodeParam(revealMatch[1] ?? ""));
+  }
+
+  // ---- public waitlist ----
+  if (path === "/waitlist" && method === "POST") {
+    return await addToWaitlist(request, deps);
+  }
+  if (path === "/waitlist/survey" && method === "POST") {
+    return await saveWaitlistSurvey(request, deps);
+  }
+
+  // ---- instance status reporting (bearer token auth) ----
+  if (path === "/api/instance/status" && method === "POST") {
+    return await reportInstanceStatus(request, deps);
+  }
+  if (path === "/api/instance/meta" && method === "GET") {
+    return await getInstanceMeta(request, deps);
+  }
+
+  throw new HttpError(404, "not found");
+}
+
+// P3: 魔法链接登录 —— magic purpose token 有效期 30 分钟。
+const MAGIC_TTL_MS = 30 * 60_000;
+// session 有效期 30 天(低频访问,长会话减少重复登录摩擦)。
+const SESSION_TTL_MS = 30 * 24 * 3600_000;
+// 取件码有效期:15 分钟。够 agent 走完「SSH 到部署机 → 跑 connect.sh」,
+// 又短到即便泄露也很快作废(决策 #12:能取 token 的凭据必须短命)。
+const CLAIM_TTL_MS = 15 * 60_000;
+
+async function requestMagicLink(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const emailRaw = body.email;
+  if (typeof emailRaw !== "string") throw new HttpError(400, "email required");
+  const email = emailRaw.trim().toLowerCase();
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
+    throw new HttpError(400, "invalid email");
+  }
+  // 与 /waitlist 同一条防滥用规则:Turnstile 成对配置时,发信入口也要过人机
+  // 校验——否则这是个公开的「触发发邮件」放大面。校验在邮箱形状之后:
+  // 一次性 token 不浪费在注定 400 的请求上。
+  // **生产已关**(challenges.cloudflare.com 在中国大陆不可靠),此时直接放行。
+  await requireTurnstileIfEnabled(request, body, deps);
+  // 限流:在邮箱形状校验之后(无效邮箱不消耗配额),且**在 Turnstile 之后**。
+  //
+  // 顺序不能反:若限流在前,门禁将来重开时攻击者能用无效 token 反复请求,
+  // 每次消耗 IP/邮箱配额,把真实用户锁死在 429 —— 那些请求本该先被
+  // Turnstile 拦掉、根本不该计入配额。与 /waitlist 的顺序保持一致。
+  if (await signupRateLimited(request, email, deps)) {
+    return json({ error: "too many requests" }, 429, { noStore: true });
+  }
+  // 注册即登录:不论邮箱是否已存在都发信,不泄露注册状态。账号在 callback
+  // 落地时才创建(避免未验证邮箱污染 accounts 表)。
+  const token = await signToken(
+    { purpose: "magic", subject: email },
+    { key: deps.sessionSecret, ttlMs: MAGIC_TTL_MS, now: Date.parse(deps.now()) },
+  );
+  // rootDomain 需 normalize:CONNECT_ROOT_DOMAIN 可能带空白/大小写,直拼到邮件
+  // 链接里会坏掉——与路由期待的规范 host 不符(Copilot round 3)。
+  const domain = deps.rootDomain.trim().toLowerCase();
+  const origin = deps.waffoEnvironment === "test" ? new URL(request.url).origin : `https://${domain}`;
+  const url = `${origin}/auth/callback?t=${encodeURIComponent(token)}`;
+  // 发信失败不改变对外结果(固定 202):既不泄露邮箱是否存在,也不让
+  // Resend 的抖动变成用户可见的 500。失败在 sender 内部已 console.error。
+  try {
+    await deps.sendMagicLink(email, url);
+  } catch {
+    // swallowed — sender logs its own diagnostics
+  }
+  // 固定 202,无论邮箱存在与否。
+  return json({ ok: true }, 202, { noStore: true });
+}
+
+/** 自助开通(0004,spec 2026-07-28):登录 + 有效时长的账号选 slug 给自己开
+ *  endpoint。门禁次序 session → slug 形状校验 → entitlement(后两步在
+ *  provisionEndpoint 内)→ slug 查重;402/409 级失败绝不烧 CF API 调用
+ *  (门禁都在 CF 编排之前)。响应绝不含 token:接入唯一路径是控制台取件码
+ *  (决策 #10/#12)。 */
+/** 解析 session cookie,若 deps.now() 畸形则 fail-closed 而不是伪装成"未登录"。
+ *  早先多处裸写 `Date.parse(deps.now())`:now 坏值 → NaN → session 总被判无效 →
+ *  401 误导排障,以为用户没登录而真正的问题是服务器时钟。
+ *  现在一处守卫,四处复用,与别处「non-finite now 视为过期」的守卫契约一致。 */
+export async function parseSessionWithValidatedNow(
+  cookie: string | null,
+  deps: Pick<RouteDeps, "sessionSecret" | "now">,
+): Promise<{ ok: false } | { ok: true; accountId: string }> {
+  const nowMs = Date.parse(deps.now());
+  if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
+  return parseSessionCookie(cookie, { secret: deps.sessionSecret, now: nowMs });
+}
+
+async function resolveRouteAccount(
+  request: Request,
+  deps: RouteDeps,
+): ReturnType<typeof resolveAccount> {
+  return resolveAccount(request, {
+    db: deps.db,
+    sessionSecret: deps.sessionSecret,
+    now: deps.now,
+  });
+}
+
+async function selfServeProvision(request: Request, deps: RouteDeps): Promise<Response> {
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) throw new HttpError(401, "unauthorized");
+  const body = await readJsonBody(request);
+  const slugRaw = optString(body.slug);
+  if (slugRaw === null) throw new HttpError(400, "slug required");
+  let slug: string;
+  try {
+    slug = assertSlug(slugRaw);
+  } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : "invalid slug");
+  }
+  const restorable = await deps.db.getRestorableEndpointByAccountId(accountAuth.accountId);
+  if (restorable !== null && restorable.slug === slug) {
+    try {
+      const result = await restoreEndpoint({
+        accountId: accountAuth.accountId,
+        deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId },
+      });
+      return json({ hostname: result.hostname }, 200, { noStore: true });
+    } catch (e) {
+      throw selfServeHttpError(e);
+    }
+  }
+  try {
+    const result = await provisionEndpoint({
+      origin: { kind: "account", accountId: accountAuth.accountId },
+      slug,
+      deps: {
+        cf: deps.cf,
+        db: deps.db,
+        rootDomain: deps.rootDomain,
+        tokenWrapKeyHex: deps.tokenWrapKeyHex,
+        now: deps.now,
+        newEndpointId: deps.newEndpointId,
+        newAuditId: deps.newAuditId,
+      },
+    });
+    // 只回 hostname——token/agentPrompt 在 account 分支本就是 null,这里再
+    // 显式收窄一层,响应形状永远不含敏感字段。
+    return json({ hostname: result.hostname }, 200, { noStore: true });
+  } catch (e) {
+    throw selfServeHttpError(e);
+  }
+}
+
+/** 开通和恢复共用的错误映射。恢复多两种：nothing to restore、restore cleanup failed。 */
+function selfServeHttpError(e: unknown): never {
+  const msg = e instanceof Error ? e.message : "";
+  // 无有效时长:语义上最诚实的 402(前端据此引导去 /pricing 续期/开通)。
+  if (msg.includes("no active entitlement")) {
+    throw new HttpError(402, "no active entitlement");
+  }
+  // 陈旧 session(账号已删)fail closed。
+  if (msg.includes("account not found")) {
+    throw new HttpError(401, "unauthorized");
+  }
+  // 一账号一 live endpoint:预检消息 + 部分唯一索引的 UNIQUE 兜底,两条路
+  // 归并为同一个 409 语义,body error 供前端区分于 slug 冲突。
+  // nothing to restore 同样是「现在不能再开一个地址」。
+  if (
+    msg.includes("already provisioned") ||
+    msg === "nothing to restore" ||
+    msg.includes("UNIQUE constraint failed: endpoints.account_id")
+  ) {
+    throw new HttpError(409, "already provisioned");
+  }
+  // slug/hostname 冲突:预检消息与 UNIQUE 兜底同样归并(与 provisionInvite
+  // 的映射一致——绝不回显裸 UNIQUE 文本泄 schema)。
+  if (
+    msg.includes("already in use") ||
+    msg.includes("UNIQUE constraint failed: endpoints.slug") ||
+    msg.includes("UNIQUE constraint failed: endpoints.hostname")
+  ) {
+    throw new HttpError(409, "slug taken");
+  }
+  if (msg === "restore cleanup failed") {
+    throw new HttpError(503, "restore cleanup failed");
+  }
+  // 容量已满 → 503(共享 helper,见 capacity.ts:两条 provision 路由必须
+  // 用同一个判定,否则漏掉的那条会把容量满变成 500)。
+  if (isAtCapacityError(e)) {
+    throw new HttpError(503, "at capacity");
+  }
+  throw e;
+}
+
+function randomHex(bytes: number): string {
+  const buffer = crypto.getRandomValues(new Uint8Array(bytes));
+  return Array.from(buffer, (value) => value.toString(16).padStart(2, "0")).join("");
+}
+
+function newPaymentOrderId(deps: RouteDeps): string {
+  return deps.newPaymentOrderId?.() ?? "ord_" + randomHex(16);
+}
+
+function newWaffoExternalId(deps: RouteDeps): string {
+  return deps.newWaffoExternalId?.() ?? "MC" + randomHex(24).toUpperCase();
+}
+
+function newCheckoutToken(deps: RouteDeps): string {
+  return deps.newCheckoutToken?.() ?? "chk_" + randomHex(24);
+}
+
+function isProductionHost(request: Request, rootDomain: string): boolean {
+  const hostname = new URL(request.url).hostname.toLowerCase();
+  const root = rootDomain.trim().toLowerCase();
+  return root !== "" && (hostname === root || hostname.endsWith("." + root));
+}
+
+function assertWaffoRuntime(request: Request, deps: RouteDeps): WaffoApi {
+  if (deps.waffoApi === undefined || deps.waffoEnvironment === undefined || deps.waffoStoreId?.trim() === "") {
+    throw new HttpError(503, "checkout_not_open");
+  }
+  if (deps.waffoEnvironment !== "prod" && deps.waffoEnvironment !== "test") {
+    throw new HttpError(503, "checkout_not_open");
+  }
+  if (deps.waffoEnvironment === "test" && isProductionHost(request, deps.rootDomain)) {
+    throw new HttpError(503, "checkout_not_open");
+  }
+  return deps.waffoApi;
+}
+
+function waffoProductId(deps: RouteDeps, tier: ReturnType<typeof resolvePaymentTier>): string | null {
+  if (tier === null || deps.waffoProducts === undefined) return null;
+  return deps.waffoProducts[tier.id];
+}
+
+function paymentOrigin(request: Request, deps: RouteDeps): string {
+  return deps.waffoEnvironment === "prod"
+    ? "https://" + deps.rootDomain.trim().toLowerCase()
+    : new URL(request.url).origin;
+}
+
+// A buyer needs a handful of attempts a day; 20 keeps one account far below the 200-row reconciliation batch.
+const WAFFO_CHECKOUT_DAILY_LIMIT = 20;
+
+/** Create an account-bound Waffo order from a server-owned tier and amount. */
+async function createWaffoCheckout(request: Request, deps: RouteDeps): Promise<Response> {
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
+  const api = assertWaffoRuntime(request, deps);
+  const account = await deps.db.getAccountById(accountAuth.accountId);
+  if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
+
+  const body = await readJsonBody(request);
+  const tier = resolvePaymentTier(body.tier);
+  if (tier === null) throw new HttpError(400, "unknown tier");
+  const productId = waffoProductId(deps, tier);
+  if (productId === null || productId.trim() === "") {
+    return json({ error: "checkout_not_open" }, 503, { noStore: true });
+  }
+
+  let requestedSuccessUrl: string | null = null;
+  if (accountAuth.via === "bearer" && body.returnUrl !== undefined) {
+    if (typeof body.returnUrl !== "string" || body.returnUrl.length > 400) {
+      throw new HttpError(400, "invalid returnUrl");
+    }
+    try {
+      const candidate = new URL(body.returnUrl);
+      if (
+        (candidate.protocol !== "http:" && candidate.protocol !== "https:") ||
+        candidate.username !== "" ||
+        candidate.password !== ""
+      ) {
+        throw new Error("invalid returnUrl");
+      }
+      requestedSuccessUrl = candidate.toString();
+    } catch {
+      throw new HttpError(400, "invalid returnUrl");
+    }
+  }
+
+  const now = deps.now();
+  const nowMs = Date.parse(now);
+  if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
+  const sinceIso = new Date(nowMs - 24 * 60 * 60 * 1000).toISOString();
+  const externalId = newWaffoExternalId(deps);
+  const order = {
+    id: newPaymentOrderId(deps),
+    checkout_token_sha256: await sha256Hex(externalId),
+    account_id: account.id,
+    provider: "waffo",
+    out_trade_no: externalId,
+    trade_no: null,
+    waffo_session_id: null,
+    waffo_order_id: null,
+    months: tier.months,
+    total_amount: tier.totalAmount,
+    status: "created",
+    created_at: now,
+    expires_at: new Date(nowMs + 1_800_000).toISOString(),
+    paid_at: null,
+    fulfilled_at: null,
+    closed_at: null,
+    refunded_at: null,
+    refund_request_no: null,
+    last_notify_id: null,
+    last_queried_at: null,
+  } satisfies PaymentOrderRow;
+  if (!(await deps.db.insertPaymentOrderWithinDailyLimit(order, { sinceIso, limit: WAFFO_CHECKOUT_DAILY_LIMIT }))) {
+    return json({ error: "too_many_checkouts" }, 429, { noStore: true });
+  }
+  try {
+    const sessionResult = await api.createSession({
+      productId,
+      productType: "onetime",
+      currency: "CNY",
+      successUrl:
+        requestedSuccessUrl ??
+        paymentOrigin(request, deps) + "/payment-success?order=" + encodeURIComponent(order.id),
+      orderMerchantExternalId: order.out_trade_no,
+      metadata: { orderId: order.id },
+      expiresInSeconds: 1800,
+      language: "zh-Hans",
+      buyerEmail: account.email,
+    });
+    await deps.db.updatePaymentOrder(order.id, {
+      waffo_session_id: sessionResult.sessionId,
+      expires_at: sessionResult.expiresAt,
+    });
+    return json({ checkoutUrl: sessionResult.checkoutUrl, orderId: order.id }, 200, { noStore: true });
+  } catch (error) {
+    if (isWaffoNotApprovedError(error)) {
+      return json({ error: "checkout_not_open" }, 503, { noStore: true });
+    }
+    console.error("Waffo checkout session failed");
+    return json({ error: "checkout_unavailable" }, 503, { noStore: true });
+  }
+}
+
+type BrowserPaymentStatus = "pending" | "paid_unfulfilled" | "fulfilled" | "closed" | "expired";
+
+function browserPaymentStatus(order: PaymentOrderRow, nowMs: number): BrowserPaymentStatus {
+  if (order.status === "fulfilled") return "fulfilled";
+  if (order.status === "paid") return "paid_unfulfilled";
+  if (order.status === "closed" || order.status === "refunded") return "closed";
+  const expiresMs = Date.parse(order.expires_at);
+  if (Number.isFinite(expiresMs) && nowMs >= expiresMs) return "expired";
+  return "pending";
+}
+
+async function fulfillWaffoOrder(staleOrder: PaymentOrderRow, deps: RouteDeps): Promise<PaymentOrderRow> {
+  const order = await deps.db.getPaymentOrderById(staleOrder.id);
+  if (order === null) throw new Error("payment order disappeared");
+  if (order.status === "fulfilled" || order.status === "refunded") return order;
+  if (order.status !== "paid") throw new Error("Waffo order has no verified paid state");
+  const account = await deps.db.getAccountById(order.account_id);
+  if (account === null) throw new Error("payment account missing");
+  await grantEntitlement({
+    accountId: account.id,
+    email: account.email,
+    months: order.months,
+    source: "waffo",
+    paymentProvider: "waffo",
+    paymentTransactionId: order.out_trade_no,
+  }, deps);
+  const committed = await deps.db.compareAndSetPaymentOrder(
+    order.id,
+    { statuses: ["paid"], refundRequestNo: null },
+    { status: "fulfilled", fulfilled_at: deps.now() },
+  );
+  const latest = await deps.db.getPaymentOrderById(order.id);
+  if (latest === null) throw new Error("fulfilled payment order disappeared");
+  if (committed || latest.status === "fulfilled") return latest;
+  if (latest.status === "refunded") {
+    await deps.db.markEntitlementRefunded("waffo", order.out_trade_no, deps.now());
+    await reconcileEntitlementLedger(order.account_id, deps.db);
+  }
+  return (await deps.db.getPaymentOrderById(order.id)) ?? latest;
+}
+
+async function acceptWaffoPayment(
+  evidence: { orderId: string; paymentId: string; orderMerchantExternalId: string; currency: string; total: string; paymentStatus: string },
+  deps: RouteDeps,
+): Promise<PaymentOrderRow> {
+  const order = await deps.db.getPaymentOrderByOutTradeNo(evidence.orderMerchantExternalId);
+  if (order === null || order.provider !== "waffo") throw new InvalidWaffoEvidenceError("Waffo payment order not found");
+  assertWaffoCompletedEvidence(evidence, order.out_trade_no, order.total_amount);
+  if (order.trade_no !== null && order.trade_no !== evidence.paymentId) {
+    throw new InvalidWaffoEvidenceError("Waffo payment id mismatch");
+  }
+  if (order.status === "closed" || order.status === "refunded") {
+    throw new InvalidWaffoEvidenceError("Waffo order is terminal and not payable");
+  }
+  if (order.status !== "fulfilled" && order.status !== "paid") {
+    const changed = await deps.db.compareAndSetPaymentOrder(
+      order.id,
+      { statuses: ["created", "form_issued", "pending"] },
+      { status: "paid", trade_no: evidence.paymentId, waffo_order_id: evidence.orderId, paid_at: deps.now() },
+    );
+    if (!changed) {
+      const latest = await deps.db.getPaymentOrderById(order.id);
+      if (latest === null) throw new Error("payment order disappeared");
+      if (latest.trade_no !== null && latest.trade_no !== evidence.paymentId) {
+        throw new InvalidWaffoEvidenceError("Waffo payment id mismatch");
+      }
+      if (latest.status === "fulfilled") return latest;
+      if (latest.status !== "paid") throw new InvalidWaffoEvidenceError("Waffo paid state race");
+    }
+  } else if (order.status === "paid" && (order.trade_no === null || order.waffo_order_id === null)) {
+    await deps.db.updatePaymentOrder(order.id, {
+      ...(order.trade_no === null ? { trade_no: evidence.paymentId } : {}),
+      ...(order.waffo_order_id === null ? { waffo_order_id: evidence.orderId } : {}),
+    });
+  }
+  return fulfillWaffoOrder((await deps.db.getPaymentOrderById(order.id)) ?? order, deps);
+}
+
+async function applyWaffoRefund(order: PaymentOrderRow, deps: RouteDeps): Promise<PaymentOrderRow> {
+  let current = (await deps.db.getPaymentOrderById(order.id)) ?? order;
+  if (current.status === "created" || current.status === "form_issued" || current.status === "pending") {
+    console.warn("Waffo refund received for an unpaid local order");
+    return current;
+  }
+  if (current.status !== "refunded") {
+    if (!canTransitionPaymentOrder(current.status, "refunded")) {
+      throw new InvalidWaffoEvidenceError("Waffo order cannot be refunded");
+    }
+    await deps.db.compareAndSetPaymentOrder(
+      current.id,
+      { statuses: ["paid", "fulfilled"] },
+      { status: "refunded", refunded_at: deps.now() },
+    );
+    current = (await deps.db.getPaymentOrderById(current.id)) ?? current;
+  }
+  await deps.db.markEntitlementRefunded("waffo", current.out_trade_no, deps.now());
+  const expiry = await reconcileEntitlementLedger(current.account_id, deps.db);
+  if (!isEntitlementActive(expiry, deps.now())) {
+    const endpoint = (await deps.db.listEndpoints()).find(
+      (candidate) => candidate.account_id === current.account_id && candidate.status !== "revoked",
+    );
+    if (endpoint !== undefined) {
+      await revokeEndpoint({
+        endpointId: endpoint.id,
+        reason: "refunded",
+        deps: { cf: deps.cf, db: deps.db, now: deps.now, newAuditId: deps.newAuditId, actor: "system" },
+      });
+    }
+  }
+  return (await deps.db.getPaymentOrderById(current.id)) ?? current;
+}
+
+function paymentEvidenceFromQuery(order: PaymentOrderRow, payment: WaffoPayment) {
+  const currency = payment.amount?.currency ?? "";
+  const total = normalizeWaffoAmount(payment.amount);
+  if (total === null) throw new InvalidWaffoEvidenceError("Waffo payment amount is missing");
+  if (typeof payment.orderMerchantExternalId !== "string" || payment.orderMerchantExternalId.trim() === "") {
+    throw new InvalidWaffoEvidenceError("Waffo order merchant external id is missing");
+  }
+  return {
+    orderId: payment.orderId,
+    paymentId: payment.id,
+    orderMerchantExternalId: payment.orderMerchantExternalId.trim(),
+    currency,
+    total,
+    paymentStatus: payment.status,
+  };
+}
+
+interface WaffoCompensationOptions {
+  checkFulfilledForRefund?: boolean;
+}
+
+// Covers the Waffo session/retry lifetime for unpaid orders.
+const WAFFO_UNPAID_RECONCILIATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+// Covers the 14-day refund policy plus exceptional refunds granted later by the owner.
+const WAFFO_SETTLED_RECONCILIATION_WINDOW_MS = 60 * 24 * 60 * 60 * 1000;
+// Keeps one daily run inside the cron wall-clock limit; later runs cover the rest.
+const WAFFO_RECONCILIATION_BATCH_LIMIT = 200;
+
+async function compensateWaffoOrder(
+  orderId: string,
+  deps: RouteDeps,
+  options: WaffoCompensationOptions = {},
+): Promise<PaymentOrderRow> {
+  let order = await deps.db.getPaymentOrderById(orderId);
+  if (order === null) throw new InvalidWaffoEvidenceError("Waffo payment order not found");
+  if (order.provider !== "waffo") throw new InvalidWaffoEvidenceError("payment provider mismatch");
+  if (order.status === "refunded") return order;
+  if (order.status === "fulfilled" && options.checkFulfilledForRefund !== true) return order;
+  if (order.status === "paid") return fulfillWaffoOrder(order, deps);
+  const queriedAtMs = Date.parse(deps.now());
+  if (!Number.isFinite(queriedAtMs)) throw new Error("server time is invalid");
+  const queriedAt = new Date(queriedAtMs).toISOString();
+  const cutoff = new Date(queriedAtMs - 2_500).toISOString();
+  if (!(await deps.db.claimPaymentOrderQuery(order.id, queriedAt, cutoff))) {
+    return (await deps.db.getPaymentOrderById(order.id)) ?? order;
+  }
+  const payments = await deps.waffoApi!.queryPayments(order.out_trade_no);
+  const expectedTestMode = deps.waffoEnvironment === "test";
+  const matchingPayments = payments.filter((candidate) =>
+    candidate.orderMerchantExternalId === order.out_trade_no &&
+    candidate.testMode === expectedTestMode,
+  );
+  if (matchingPayments.length === 0) return order;
+  const refundedPayment = matchingPayments.find((candidate) =>
+    candidate.isFullyRefunded === true || isWaffoFullRefund(order.total_amount, candidate),
+  );
+  if (refundedPayment !== undefined) {
+    return applyWaffoRefund(order, deps);
+  }
+  const payment = matchingPayments.find((candidate) => candidate.status === "succeeded");
+  if (payment !== undefined) {
+    return acceptWaffoPayment(paymentEvidenceFromQuery(order, payment), deps);
+  }
+  return order;
+}
+
+function waffoResponse(status: number, body: unknown): Response {
+  return json(body, status, { noStore: true });
+}
+
+async function waffoWebhook(request: Request, deps: RouteDeps): Promise<Response> {
+  const api = assertWaffoRuntime(request, deps);
+  const signature = request.headers.get("x-waffo-signature")?.trim() ?? "";
+  if (signature === "") return waffoResponse(401, { error: "invalid signature" });
+  const raw = await readBodyTextCapped(request, MAX_PAYMENT_NOTIFY_BODY_BYTES);
+  let event: Awaited<ReturnType<WaffoApi["verifyWebhook"]>>;
+  try {
+    event = await api.verifyWebhook(raw, signature);
+  } catch {
+    return waffoResponse(401, { error: "invalid signature" });
+  }
+  try {
+    if (event.mode !== deps.waffoEnvironment || event.storeId !== deps.waffoStoreId) {
+      return waffoResponse(400, { error: "webhook context mismatch" });
+    }
+    if (event.eventType === "order.completed") {
+      const eventData = event.data !== null && typeof event.data === "object"
+        ? event.data as Record<string, unknown>
+        : {};
+      const externalId = typeof eventData.orderMerchantExternalId === "string"
+        ? eventData.orderMerchantExternalId.trim()
+        : "";
+      if (externalId === "") return waffoResponse(200, { ok: true });
+      const evidence = readWaffoCompletedEvidence(event.data);
+      const order = await deps.db.getPaymentOrderByOutTradeNo(evidence.orderMerchantExternalId);
+      if (order === null || order.provider !== "waffo") return waffoResponse(200, { ok: true });
+      await acceptWaffoPayment(evidence, deps);
+      return waffoResponse(200, { ok: true });
+    }
+    if (event.eventType === "refund.succeeded") {
+      const data = event.data as Record<string, unknown>;
+      const externalId = typeof data.orderMerchantExternalId === "string" ? data.orderMerchantExternalId : "";
+      if (externalId === "") return waffoResponse(200, { ok: true });
+      const order = await deps.db.getPaymentOrderByOutTradeNo(externalId);
+      if (order === null || order.provider !== "waffo") return waffoResponse(200, { ok: true });
+      if (!isWaffoFullRefund(order.total_amount, data)) {
+        console.warn("Waffo partial refund ignored for entitlement");
+        return waffoResponse(200, { ok: true });
+      }
+      await applyWaffoRefund(order, deps);
+      return waffoResponse(200, { ok: true });
+    }
+    return waffoResponse(200, { ok: true });
+  } catch (error) {
+    if (error instanceof InvalidWaffoEvidenceError) {
+      return waffoResponse(400, { error: "invalid payment evidence" });
+    }
+    if (error instanceof Error && /signature/i.test(error.message)) {
+      return waffoResponse(401, { error: "invalid signature" });
+    }
+    console.error("Waffo webhook processing failed");
+    return waffoResponse(500, { error: "temporary failure" });
+  }
+}
+
+async function getWaffoOrderStatus(request: Request, deps: RouteDeps, orderId: string): Promise<Response> {
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
+  assertWaffoRuntime(request, deps);
+  let order = await deps.db.getPaymentOrderById(orderId);
+  if (order === null || order.account_id !== accountAuth.accountId) {
+    return json({ error: "not found" }, 404, { noStore: true });
+  }
+  const nowMs = Date.parse(deps.now());
+  if (!Number.isFinite(nowMs)) return json({ error: "unavailable" }, 500, { noStore: true });
+  if (order.status !== "fulfilled" && order.status !== "closed" && order.status !== "refunded") {
+    try {
+      order = await compensateWaffoOrder(order.id, deps);
+    } catch {
+      return json({ error: "temporarily unavailable" }, 503, { noStore: true });
+    }
+  }
+  return json({ status: browserPaymentStatus(order, nowMs) }, 200, { noStore: true });
+}
+
+/** Daily production reconciliation; each order is isolated so one provider/D1 failure does not stop the rest. */
+export async function reconcileWaffoOrders(
+  deps: RouteDeps,
+  options: { limit?: number } = {},
+): Promise<void> {
+  if (deps.waffoEnvironment !== "prod" || deps.waffoApi === undefined) return;
+  const nowMs = Date.parse(deps.now());
+  if (!Number.isFinite(nowMs)) throw new Error("server time is invalid");
+  const unpaidSinceIso = new Date(nowMs - WAFFO_UNPAID_RECONCILIATION_WINDOW_MS).toISOString();
+  const settledSinceIso = new Date(nowMs - WAFFO_SETTLED_RECONCILIATION_WINDOW_MS).toISOString();
+  const orders = await deps.db.listPaymentOrdersForReconciliation("waffo", {
+    unpaidSinceIso,
+    settledSinceIso,
+    limit: options.limit ?? WAFFO_RECONCILIATION_BATCH_LIMIT,
+  });
+  for (const order of orders) {
+    try {
+      await compensateWaffoOrder(order.id, deps, { checkFulfilledForRefund: true });
+    } catch (error) {
+      console.error("Waffo reconciliation failed for order", order.id, error instanceof Error ? error.message : "unknown error");
+    }
+  }
+}
+
+
+
+async function issueClaimCode(request: Request, deps: RouteDeps): Promise<Response> {
+  // now 只取一次:签名过期与返回的 expires_at 必须基于同一时刻,否则两次
+  // deps.now() 之间若推进,签发的 token 过期时刻与告知用户的会漂移。
+  const nowMs = Date.parse(deps.now());
+  // fail-closed:now 畸形(misconfig/坏 stub)时 nowMs=NaN,后面
+  // new Date(NaN).toISOString() 会抛 RangeError 变裸 500;且签出的 token
+  // 过期语义不可信。与别处「non-finite now 视为过期」的守卫一致,显式拒。
+  if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) throw new HttpError(401, "unauthorized");
+  const endpoint = await deps.db.getActiveEndpointByAccountId(accountAuth.accountId);
+  if (endpoint === null) {
+    // 还没开通(付费但未 provision,或从未开通)→ 没有可接入的实例。
+    throw new HttpError(404, "no active endpoint");
+  }
+  const code = await signToken(
+    { purpose: "claim", subject: endpoint.id },
+    { key: deps.sessionSecret, ttlMs: CLAIM_TTL_MS, now: nowMs },
+  );
+  const expiresAt = new Date(nowMs + CLAIM_TTL_MS).toISOString();
+  return json({ code, expires_at: expiresAt }, 200, { noStore: true });
+}
+
+/** 脚本凭码换 token(无 session)。验签 → 查 endpoint 仍 active → 向 CF 现取
+ *  token。窗口内可重复换(脚本重试/换机器);endpoint 撤销后拒发。 */
+async function exchangeClaimCode(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const codeRaw = body.code;
+  const code = typeof codeRaw === "string" ? codeRaw : "";
+  // now 取一次 + finite 守卫,与 issueClaimCode 对称:now 畸形时若直接传给
+  // verifyToken,会把 token 判成过期→400 client error,把服务端时间/配置问题
+  // 误报为「码失效」。显式 500 才诚实。
+  const nowMs = Date.parse(deps.now());
+  if (!Number.isFinite(nowMs)) throw new HttpError(500, "server time unavailable");
+  const result = await verifyToken(code, {
+    key: deps.sessionSecret,
+    now: nowMs,
+    expectPurpose: "claim",
+  });
+  if (!result.ok) throw new HttpError(400, "invalid or expired code");
+  const endpoint = await deps.db.getEndpointById(result.subject);
+  if (endpoint === null || endpoint.status !== "active") {
+    // 撤销/不存在 → 不给已死隧道取 token。403 而非 404:码本身有效,是目标失效。
+    throw new HttpError(403, "endpoint not active");
+  }
+  const token = await deps.cf.getTunnelToken(endpoint.cf_tunnel_id);
+  return json({ hostname: endpoint.hostname, token }, 200, { noStore: true });
+}
+
+/** slug 实时查重 + 相似推荐(登录后选 slug 用)。需 session。 */
+async function slugCheckRoute(url: URL, request: Request, deps: RouteDeps): Promise<Response> {
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) throw new HttpError(401, "unauthorized");
+  // 限流:此端点登录即可访问,且每个查询可能触发上百次 D1 查重。
+  // 不限流的话任一登录用户能无限枚举全站 slug 占用情况(隐私 + 资源放大)。
+  // 按账号限 —— 比按 IP 准(用户可能在 NAT 后),且它本就是登录态端点。
+  if (!slugCheckLimiter.allow(accountAuth.accountId)) {
+    return json({ error: "too many requests" }, 429, { noStore: true });
+  }
+  const slug = url.searchParams.get("s") ?? "";
+  // 占用判定查所有状态的行(含 revoked/purged):slug 永久保留不释放(决策 #9)。
+  // rootDomain normalize:与本文件别处一致(CONNECT_ROOT_DOMAIN 可能带空白/大小写)。
+  const domain = deps.rootDomain.trim().toLowerCase();
+  // 账号自己可恢复的旧名字不算占用:旧版实例向导不认识 restorable,只会提交查重说可用的名字,
+  // 这里说「已占用」,它的主人就只能另起名字,原地址从此恢复不了。提交这个名字走的就是恢复。
+  const ownRestorable = await deps.db.getRestorableEndpointByAccountId(accountAuth.accountId);
+  const isTaken: IsTaken = async (s) =>
+    s !== ownRestorable?.slug && (await deps.db.findEndpointBySlugOrHostname(s, `${s}.${domain}`)) !== null;
+  const result = await checkSlug(slug, isTaken);
+  return json(result, 200, { noStore: true });
+}
+
+/** Account snapshot consumed by the in-instance settings wizard. */
+async function accountRoute(request: Request, deps: RouteDeps): Promise<Response> {
+  const accountAuth = await resolveRouteAccount(request, deps);
+  if (!accountAuth.ok) return json({ error: "unauthorized" }, 401, { noStore: true });
+  const account = await deps.db.getAccountById(accountAuth.accountId);
+  if (account === null) return json({ error: "unauthorized" }, 401, { noStore: true });
+
+  const now = deps.now();
+  const entitlements = await deps.db.listEntitlements(account.id);
+  const expiresAt = latestExpiry(entitlements);
+  const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
+  const restorable = endpoint === null ? await deps.db.getRestorableEndpointByAccountId(account.id) : null;
+  // Only tiers whose Waffo product is configured: /api/checkout refuses the others.
+  const tiers = Object.values(PAYMENT_TIERS).filter((tier) => (waffoProductId(deps, tier) ?? "").trim() !== "");
+  let checkoutOpen = false;
+  try {
+    assertWaffoRuntime(request, deps);
+    checkoutOpen = tiers.length > 0;
+  } catch {
+    // The account endpoint is still useful when checkout is not configured;
+    // report the gate as a boolean instead of surfacing a 503.
+  }
+
+  return json(
+    {
+      email: account.email,
+      active: isEntitlementActive(expiresAt, now),
+      expiresAt,
+      endpoint: endpoint === null
+        ? null
+        : { slug: endpoint.slug, hostname: endpoint.hostname, status: endpoint.status, tunnelId: endpoint.cf_tunnel_id },
+      restorable: restorable === null ? null : { slug: restorable.slug, hostname: restorable.hostname },
+      checkoutOpen,
+      tiers: tiers.map((tier) => ({
+        id: tier.id,
+        label: tier.label,
+        months: tier.months,
+        price: tier.totalAmount,
+        featured: tier.featured,
+      })),
+    },
+    200,
+    { noStore: true },
+  );
+}
+
+/** 按 email upsert 账号,race-safe:两个并发请求可能都读到 null,第二个
+ *  INSERT 撞 UNIQUE(email) —— 捕获后重读,而不是让登录 500(Copilot round 2)。 */
+// upsertAccount moved to auth/account-auth.ts
+async function _legacyUpsertAccount(email: string, deps: RouteDeps): Promise<AccountRow> {
+  const existing = await deps.db.getAccountByEmail(email);
+  if (existing !== null) return existing;
+  try {
+    return await deps.db.insertAccount({
+      id: deps.newAccountId(),
+      email,
+      paddle_customer_id: null,
+      created_at: deps.now(),
+      last_login_at: null,
+    });
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+    // 并发对手赢了这一插:重读它插入的行。
+    const raced = await deps.db.getAccountByEmail(email);
+    if (raced === null) throw e; // UNIQUE 失败却读不到 → 真异常,不吞
+    return raced;
+  }
+}
+
+async function verifyMagicToken(token: string, deps: RouteDeps): Promise<string> {
+  const result = await verifyToken(token, {
+    key: deps.sessionSecret,
+    now: Date.parse(deps.now()),
+    expectPurpose: "magic",
+  });
+  if (!result.ok) throw new HttpError(400, "invalid or expired link");
+  return result.subject;
+}
+
+/** 魔法链接落地:只显示确认页,不登录。任何网页都能把访客导到这里(带上它
+ *  自己的 token),GET 直接种 cookie 就是把访客登进别人的账号。 */
+async function magicLanding(url: URL, deps: RouteDeps): Promise<Response> {
+  const email = await verifyMagicToken(url.searchParams.get("t") ?? "", deps);
+  // htmlPage 自带 referrer-policy: no-referrer —— 地址栏里有 ?t=<magic token>,
+  // 不能经 Referer 带到别处。
+  return htmlPage(confirmLoginPage(email), { noStore: true });
+}
+
+/** 确认页按钮(本站页面)提交:这一步才建号/登录、种 session cookie。 */
+async function confirmMagicLogin(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const email = await verifyMagicToken(optString(body.t) ?? "", deps);
+
+  // 账号 upsert:首次登录建号,之后复用。
+  const account = await upsertAccount(email, deps);
+  await deps.db.updateAccountLastLogin(account.id, deps.now());
+
+  const cookie = await buildSessionCookie(account.id, {
+    secret: deps.sessionSecret,
+    ttlMs: SESSION_TTL_MS,
+    now: Date.parse(deps.now()),
+  });
+  const response = json({ ok: true }, 200, { noStore: true });
+  response.headers.set("set-cookie", cookie);
+  return response;
+}
+
+async function consoleRoute(request: Request, deps: RouteDeps): Promise<Response> {
+  const session = await parseSessionWithValidatedNow(request.headers.get("cookie"), deps);
+  if (!session.ok) {
+    return new Response(null, { status: 302, headers: { location: "/login" } });
+  }
+  const account = await deps.db.getAccountById(session.accountId);
+  if (account === null) {
+    // 陈旧 cookie(账号已删)→ fail closed 回登录页。
+    return new Response(null, { status: 302, headers: { location: "/login" } });
+  }
+  const entitlements = await deps.db.listEntitlements(account.id);
+  // 该账号的 active endpoint(可能为 null:已付费但还没选 slug,或未开通)。
+  // 控制台据此决定显示「选专属地址」入口还是「接入命令」提示词区。
+  const endpoint = await deps.db.getActiveEndpointByAccountId(account.id);
+  const restorable = endpoint === null ? await deps.db.getRestorableEndpointByAccountId(account.id) : null;
+  // 仅在「真的能走到 slug 表单」时才数配额,两个条件都要满足:
+  //   1. 还没开通(已开通用户不受配额影响)
+  //   2. 有有效时长(无时长的用户在 console-page 走早返回分支,压根用不到这个值)
+  // 否则未付费/已过期用户每次进控制台都白跑一次全表 COUNT。
+  // now 只取一次:同一请求里若取两次,在到期边界附近会出现「判断条件用的时刻」
+  // 与「页面渲染的时刻」不一致(状态显示与实际门禁矛盾)。
+  const now = deps.now();
+  const eligibleToProvision =
+    endpoint === null && isEntitlementActive(latestExpiry(entitlements), now);
+  // 账号自己那条清理失败的旧地址被 countLiveEndpoints 偏保守计入；恢复会先删它的旧资源再数配额，
+  // 这里也不算它，否则正好满额时会把能成功的恢复藏成「售罄」。
+  const ownRevokeFailed = restorable?.status === "revoke_failed" ? 1 : 0;
+  const atCapacity = eligibleToProvision
+    ? (await deps.db.countLiveEndpoints()) - ownRevokeFailed >= CAPACITY_LIMIT
+    : false;
+  const url = new URL(request.url);
+  return htmlPage(
+    consolePage({
+      account,
+      entitlements,
+      endpoint,
+      restorable: restorable === null ? null : { slug: restorable.slug, hostname: restorable.hostname },
+      baseUrl: url.origin,
+      rootDomain: deps.rootDomain.trim().toLowerCase(),
+      now,
+      atCapacity,
+      // Waffo 配置完整才给真按钮；缺项时页面明确显示不可用。
+      tiers: deps.waffoApi === undefined || deps.waffoProducts === undefined
+        ? []
+        : Object.values(PAYMENT_TIERS).map((tier) => ({
+            tierId: tier.id,
+            months: tier.months,
+            label: tier.label,
+            price: tier.price,
+            featured: tier.featured,
+            note: tier.months === 12 ? "12 个月 · 折月付 ¥9" : `${tier.months} 个月`,
+          })),
+    }),
+    { noStore: true }, // 用户专属页面,不可缓存(Copilot round 3)
+  );
+}
+
+/** 内测手工授予时长(admin)，与付费入账复用同一账本叠加逻辑。 */
+async function adminGrant(request: Request, deps: RouteDeps): Promise<Response> {
+  requireAdmin(request, deps.adminToken);
+  const body = await readJsonBody(request);
+  const emailRaw = body.email;
+  if (typeof emailRaw !== "string") throw new HttpError(400, "email required");
+  const email = emailRaw.trim().toLowerCase();
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
+    throw new HttpError(400, "invalid email");
+  }
+  const months = body.months;
+  if (typeof months !== "number" || !Number.isInteger(months) || months < 1 || months > 120) {
+    throw new HttpError(400, "months must be an integer in [1,120]");
+  }
+  const source = body.source === "founding" || body.source === "manual" || body.source === "beta"
+    ? body.source
+    : "manual";
+
+  // 与付费入账共用同一套发放逻辑(grant.ts):续费叠加语义、账号 upsert
+  // 的竞态处理必须完全一致。此前这里手写了一遍「找最新到期」的 for
+  // 循环,而 entitlement.ts 早就有 latestExpiry() —— 两份实现迟早漂移。
+  const r = await grantEntitlement(
+    { email, months, source, paymentProvider: null, paymentTransactionId: null },
+    deps,
+  );
+  return json({ ok: true, account_id: r.accountId, expires_at: r.expiresAt });
+}
+
+async function createInvite(request: Request, url: URL, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const emailRaw = body.email;
+  if (typeof emailRaw !== "string") {
+    throw new HttpError(400, "email required");
+  }
+  const email = emailRaw.trim().toLowerCase();
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
+    throw new HttpError(400, "invalid email");
+  }
+  // Validate/normalize the slug at creation time so a bad slug fails fast
+  // (400 here) instead of later at provision.
+  const slugRaw = optString(body.slug);
+  let slug: string | null = null;
+  if (slugRaw !== null) {
+    try {
+      slug = assertSlug(slugRaw);
+    } catch (e) {
+      throw new HttpError(400, e instanceof Error ? e.message : "invalid slug");
+    }
+  }
+  const invite = await deps.db.insertInvite({
+    id: deps.newInviteId(),
+    code: deps.newInviteCode(),
+    invitee_label: optString(body.invitee_label),
+    email,
+    slug,
+    status: "pending",
+    created_at: deps.now(),
+    provisioned_at: null,
+    revoked_at: null,
+  });
+  await deps.db.insertAudit({
+    id: deps.newAuditId(),
+    at: deps.now(),
+    actor: "admin",
+    action: "invite.create",
+    invite_id: invite.id,
+    endpoint_id: null,
+    detail_json: JSON.stringify({ email }),
+  });
+  return json(
+    { id: invite.id, code: invite.code, inviteUrl: `${url.origin}/i/${invite.code}` },
+    201,
+  );
+}
+
+async function provisionInvite(
+  request: Request,
+  url: URL,
+  deps: RouteDeps,
+  inviteId: string,
+): Promise<Response> {
+  const invite = await deps.db.getInviteById(inviteId);
+  if (invite === null) {
+    throw new HttpError(404, "invite not found");
+  }
+  const body = await readJsonBody(request);
+  const slugRaw = optString(body.slug) ?? invite.slug;
+  if (slugRaw === null) {
+    throw new HttpError(400, "slug required");
+  }
+  let slug: string;
+  try {
+    slug = assertSlug(slugRaw);
+  } catch (e) {
+    throw new HttpError(400, e instanceof Error ? e.message : "invalid slug");
+  }
+  if (invite.status !== "pending") {
+    throw new HttpError(409, "invite not pending");
+  }
+  let result;
+  try {
+    result = await provisionEndpoint({
+      origin: { kind: "invite", inviteId: invite.id },
+      slug,
+      deps: {
+        cf: deps.cf,
+        db: deps.db,
+        rootDomain: deps.rootDomain,
+        tokenWrapKeyHex: deps.tokenWrapKeyHex,
+        now: deps.now,
+        newEndpointId: deps.newEndpointId,
+        newAuditId: deps.newAuditId,
+      },
+    });
+  } catch (e) {
+    // Domain conflicts (TOCTOU races past the pre-checks above) are client
+    // errors, not 500s. Everything else (CF/D1 failures) stays a 500.
+    // The actual race loser dies on the UNIQUE constraint — "UNIQUE
+    // constraint failed: endpoints.slug" (same wording in D1 and the memory
+    // mock) — which contains neither pre-check message, so map it explicitly.
+    // 容量已满 → 503。**必须与自助路径用同一个判定**:provisionEndpoint 是
+    // 共享函数,这条路径原先漏了映射,容量满时会变成 500(且语义不对——那不是
+    // 服务器故障,而是我方配额用尽)。
+    if (isAtCapacityError(e)) {
+      throw new HttpError(503, "at capacity");
+    }
+    const msg = e instanceof Error ? e.message : "";
+    if (msg.includes("invite not pending") || msg.includes("already in use")) {
+      throw new HttpError(409, msg);
+    }
+    // The actual race loser dies on the UNIQUE constraint — same wording in D1
+    // and the memory mock. Translate to user-facing text: echoing the raw
+    // "UNIQUE constraint failed: endpoints.<column>" string would leak internal
+    // schema details to the client (this file's contract is to never leak
+    // internal error text) and make the response brittle across runtimes.
+    // Messages match the pre-check path's format ("…: <value>") so callers see
+    // the same text whether the conflict was caught by the pre-check or the race.
+    if (msg.includes("UNIQUE constraint failed: endpoints.slug")) {
+      throw new HttpError(409, `slug already in use: ${slug}`);
+    }
+    if (msg.includes("UNIQUE constraint failed: endpoints.hostname")) {
+      // rootDomain normalize:与 provision.ts 拼 hostname 同款(trim+lowercase),
+      // 否则 env 带空白/大写时,竞态失败文案里的 hostname 与实际写入的对不上。
+      throw new HttpError(409, `hostname already in use: ${slug}.${deps.rootDomain.trim().toLowerCase()}`);
+    }
+    if (msg.includes("UNIQUE constraint failed: endpoints.invite_id")) {
+      throw new HttpError(409, "invite already provisioned");
+    }
+    throw e;
+  }
+  // 判别联合的显式收窄:invite 来源必得 invite 分支结果。这不只是取悦 TS——
+  // 若未来重构把 account 分支的结果带到这里,fail-fast 500 好过把 null
+  // 序列化成 "/i/null" 发给客户端(Copilot #198 round-2)。
+  if (result.kind !== "invite") {
+    throw new Error("provisionEndpoint returned non-invite result for an invite origin");
+  }
+  return json(
+    {
+      hostname: result.hostname,
+      token: result.token,
+      agentPrompt: result.agentPrompt,
+      inviteUrl: `${url.origin}/i/${result.inviteCode}`,
+    },
+    200,
+    { noStore: true },
+  );
+}
+
+// Read-only mirror of revealByCode's state machine: a GET page render must
+// never burn the one-time ciphertext, so revealByCode is deliberately NOT
+// reused here — the state is queried directly from the db.
+async function inviteState(deps: RouteDeps, code: string): Promise<InvitePageState> {
+  const invite = await deps.db.getInviteByCode(code);
+  if (invite === null || invite.status === "revoked") {
+    return { kind: "not_found" };
+  }
+  if (invite.status === "pending") {
+    return { kind: "waiting" };
+  }
+  const endpoint = await deps.db.getEndpointByInviteId(invite.id);
+  if (endpoint === null) {
+    // provisioning half-done (invite flipped, endpoint row missing)
+    return { kind: "waiting" };
+  }
+  // Match revealByCode: a non-active endpoint is an invalid link — never show
+  // a hostname or ready state for a revoked/revoke_failed endpoint.
+  if (endpoint.status !== "active") {
+    return { kind: "not_found" };
+  }
+  // P4: reveal 现在幂等(token 按需向 CF 取,无一次性 burn),所以 active 的
+  // endpoint 永远展示「获取接入信息」按钮——换机器/重试都能再取。不再有
+  // 「已展示过」的终态。
+  return { kind: "ready", code };
+}
+
+async function revealInvite(deps: RouteDeps, code: string): Promise<Response> {
+  const outcome = await revealByCode({
+    code,
+    deps: {
+      db: deps.db,
+      cf: deps.cf,
+      now: deps.now,
+      newAuditId: deps.newAuditId,
+    },
+  });
+  switch (outcome.kind) {
+    case "not_found":
+      throw new HttpError(404, "not found");
+    case "not_ready":
+      return json({ error: "not ready" }, 409);
+    case "revealed":
+      return json(
+        {
+          hostname: outcome.hostname,
+          token: outcome.token,
+          agentPrompt: outcome.agentPrompt,
+        },
+        200,
+        { noStore: true },
+      );
+  }
+}
+
+const WAITLIST_BATCH = 1; // Fixed batch for 阶段 1.
+
+/**
+ * Founding-batch seat cap. 阶段 1 admits at most 100 signups; new emails past
+ * the cap get 409. A module constant (like WAITLIST_BATCH), not an env var:
+ * the cap is a product decision tied to the fixed batch, and making it
+ * deploy-configurable would invite changing it without a code review.
+ */
+const WAITLIST_SEAT_CAP = 100;
+
+/** The status literal for a queued signup. Must match schema.sql's DEFAULT. */
+const WAITLIST_PENDING = "pending";
+
+/**
+ * True when an insert failed because the (email, batch) UNIQUE index rejected
+ * it, as opposed to any other D1 failure. Deliberately narrow: a broad
+ * catch-all here would convert real outages into cheerful 200s.
+ */
+function isUniqueViolation(e: unknown): boolean {
+  return e instanceof Error && /UNIQUE constraint failed/i.test(e.message);
+}
+
+/**
+ * POST /waitlist — public, unauthenticated signup.
+ *
+ * Request: `{ email: string, turnstile_token?: string }`
+ * (email ≤ EMAIL_MAX_LENGTH bytes; trimmed+lowercased. turnstile_token is
+ * REQUIRED when the Turnstile gate is configured — see turnstileGateEnabled —
+ * and ignored entirely when it is not.)
+ *
+ * Responses — `position` is present on EVERY success path, new or repeat:
+ *   201 `{ id: string, position: number }`
+ *   200 `{ already_exists: true, id: string, position: number }`
+ *   400 `{ error: "email required" | "invalid email" | "turnstile required" }`
+ *       ("turnstile required" only when the gate is on and the token is
+ *        missing/blank/non-string; plus "invalid json" / "invalid body"
+ *        from the shared body reader)
+ *   403 `{ error: "turnstile failed" }` — gate on and siteverify did not
+ *       return success (fail CLOSED: network/timeout/non-2xx count as failure)
+ *   409 `{ error: "本批内测席位已满" }` — founding batch at WAITLIST_SEAT_CAP;
+ *       NEW emails only, repeats still get their 200 below
+ *   413 `{ error: "body too large" }`
+ *
+ * The 200 body is a strict superset of `{ already_exists, id }`. Any doc that
+ * omits `position` there is stale — see the comment on the branch itself for
+ * why it is deliberate. `position` is 1-based within the batch.
+ */
+/**
+ * sitekey 只在两半齐备时下发页面（sitekey 无 secret → 铸出验不了的 token；
+ * secret 无 sitekey → 没有 widget 可铸）。与 /waitlist 的门同一条规则。
+ */
+function turnstileSitekeyIfConfigured(deps: RouteDeps): string | undefined {
+  // 与页面同一个归一化（trim + 字符集校验）：畸形 sitekey 会让页面不渲染
+  // widget，此时门也必须关——否则用户没有任何途径拿到 token，报名全 400。
+  const key = normalizeTurnstileSitekey(deps.turnstileSitekey);
+  return key && turnstileSecretIfConfigured(deps) ? key : undefined;
+}
+
+/** 归一化后的 secret：`wrangler secret put` 从文件/echo 灌进来常带尾换行，
+ *  原样用会让门「开着但永远验不过」（报名 100% 静默死）。纯空白 = 未配置。 */
+function turnstileSecretIfConfigured(deps: RouteDeps): string | undefined {
+  const secret = deps.turnstileSecret?.trim();
+  return secret ? secret : undefined;
+}
+
+/** Turnstile 门是否启用——与 turnstileSitekeyIfConfigured 同一条「成对」规则。 */
+function turnstileGateEnabled(deps: RouteDeps): boolean {
+  return turnstileSitekeyIfConfigured(deps) !== undefined;
+}
+
+/**
+ * Cloudflare Turnstile 服务端校验（siteverify）。project 硬规则：外部 HTTP
+ * 一律带超时。失败一律 fail CLOSED（这是公开报名漏斗，宁误杀不放过）——
+ * 但日志里绝不带 secret 与用户 token。
+ */
+/** 若 Turnstile 成对配置则强制校验;否则放行。发信入口(/api/auth/magic)与
+ *  报名入口(/waitlist)共用,消除两处逻辑漂移。约定:调用方须先做完邮箱形状
+ *  校验,不把一次性 token 浪费在注定失败的请求上。 */
+async function requireTurnstileIfEnabled(
+  request: Request,
+  body: Record<string, unknown>,
+  deps: RouteDeps,
+): Promise<void> {
+  if (!turnstileGateEnabled(deps)) return;
+  const rawToken = body.turnstile_token;
+  const token = typeof rawToken === "string" ? rawToken.trim() : "";
+  if (token === "") throw new HttpError(400, "turnstile required");
+  const remoteIp = request.headers.get("cf-connecting-ip")?.trim() || null;
+  const secret = turnstileSecretIfConfigured(deps);
+  if (!secret) throw new HttpError(500, "internal");
+  const ok = await verifyTurnstile(secret, token, remoteIp);
+  if (!ok) throw new HttpError(403, "turnstile failed");
+}
+
+async function verifyTurnstile(secret: string, token: string, remoteIp: string | null): Promise<boolean> {
+  const form = new URLSearchParams();
+  form.set("secret", secret);
+  form.set("response", token);
+  if (remoteIp) form.set("remoteip", remoteIp);
+  try {
+    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: form.toString(),
+      signal: AbortSignal.timeout(5_000),
+    });
+    // 基础设施异常必须与「正常拦截」在日志里可区分：两者对用户都是 403，
+    // 若日志也一样，CF 挂掉/secret 配错会让报名漏斗静默归零且无人知情。
+    if (!res.ok) {
+      console.error("turnstile siteverify HTTP error, status:", res.status);
+      return false;
+    }
+    const data = (await res.json().catch(() => null)) as TurnstileVerifyResponse | null;
+    if (data === null) {
+      console.error("turnstile siteverify returned a non-JSON body, status:", res.status);
+      return false;
+    }
+    if (data.success === true) return true;
+    const actionable = turnstileActionableCodes(data);
+    if (actionable.length > 0) {
+      // error-codes 是 CF 的固定枚举，既不含 secret 也不含用户 token。
+      console.error("turnstile siteverify config/infra error:", actionable.join(","));
+    }
+    return false;
+  } catch (e) {
+    console.error("turnstile siteverify failed:", errorName(e));
+    return false;
+  }
+}
+
+type TurnstileVerifyResponse = { success?: boolean; "error-codes"?: unknown };
+
+/** 需要运维介入的 siteverify error-codes（其余属于正常拦截，不该刷日志）。
+ *  见 developers.cloudflare.com/turnstile/get-started/server-side-validation。
+ *  刻意排除 missing/invalid-input-response 与 timeout-or-duplicate——过期、
+ *  重放、机器人是这条公开漏斗的日常，报警值为零。 */
+const TURNSTILE_ACTIONABLE_CODES = new Set([
+  "missing-input-secret",
+  "invalid-input-secret",
+  "invalid-widget-id",
+  "invalid-parsed-secret",
+  "bad-request",
+  "internal-error",
+]);
+
+function turnstileActionableCodes(data: TurnstileVerifyResponse): string[] {
+  const raw = data["error-codes"];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((c): c is string => typeof c === "string" && TURNSTILE_ACTIONABLE_CODES.has(c));
+}
+
+/** 某些运行时的 DOMException 不是 `instanceof Error`（AbortSignal.timeout 抛的
+ *  就是它）——只按 instanceof 取名字会把 TimeoutError 记成 "unknown error"。 */
+function errorName(e: unknown): string {
+  if (typeof e === "object" && e !== null && "name" in e) {
+    const n = (e as { name?: unknown }).name;
+    if (typeof n === "string" && n.length > 0) return n;
+  }
+  return "unknown error";
+}
+
+async function addToWaitlist(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const emailRaw = body.email;
+  if (typeof emailRaw !== "string") {
+    throw new HttpError(400, "email required");
+  }
+  // Normalize FIRST, then bound, then run the regex.
+  //
+  // The cap measures the value we actually validate and store, not the raw
+  // submission: a 254-char address pasted with surrounding whitespace is a
+  // legitimate address, and capping `emailRaw` rejected it on a length its
+  // normalized form does not have.
+  //
+  // Trimming first is NOT a DoS hole, so do not "restore" a pre-trim check as
+  // hardening. The raw string is already bounded far earlier and far more
+  // cheaply by MAX_JSON_BODY_BYTES (8 KB, enforced as a streaming byte cap in
+  // readBodyTextCapped before this function is ever entered), so `trim()` here
+  // can only ever see ≤8 KB. The 200KB-address case is a 413 at the body cap.
+  // The cap below still bounds what reaches EMAIL_RE and the database.
+  const email = emailRaw.trim().toLowerCase();
+  if (email.length > EMAIL_MAX_LENGTH || !EMAIL_RE.test(email)) {
+    throw new HttpError(400, "invalid email");
+  }
+
+  // Turnstile 门(成对配置时启用)。位置刻意在邮箱形状校验之后:一次性
+  // token 不浪费在注定 400 的请求上。与 /api/auth/magic 共用同一 helper。
+  // **生产已关**:sitekey 未配置 → 此 helper 直接放行。见 rate-limit.ts。
+  await requireTurnstileIfEnabled(request, body, deps);
+
+  const batch = WAITLIST_BATCH;
+
+  // Fast path for the common repeat submit. This is only an optimisation — the
+  // INSERT below is authoritative, because a SELECT-then-INSERT pair is not
+  // atomic and a double-clicked Submit used to 500.
+  const existing = await deps.db.getWaitlistByEmail(email, batch);
+  if (existing !== null) {
+    // `position` is returned on the already-exists path INTENTIONALLY, and the
+    // extra indexed read it costs is intentional too. The settings-page
+    // waitlist form shows the user their rank, and a repeat submit (double
+    // click, revisit, refresh) is exactly when they want to see it again.
+    // Returning it on both the 201 and 200 paths keeps one response contract
+    // instead of forcing the client to branch. Do not "optimise" it away.
+    return json(
+      { already_exists: true, id: existing.id, position: await waitlistPosition(deps, existing) },
+      200,
+    );
+  }
+
+  // 限流:**只限 IP,不限邮箱**,且放在「重复提交快路径」之后。
+  //
+  // 为什么不限邮箱:报名本身是幂等的(同邮箱只会有一行),邮箱维度挡不住任何
+  // 真实滥用;而真并发时 5 个同邮箱请求会一起穿过快路径(那时还没有行),
+  // 邮箱限额 2 次会把其中 3 个误杀成 429 —— 直接破坏「双击提交不出错」
+  // 的幂等保证(TOCTOU 测试:1 个 201 + 4 个 200)。
+  //
+  // 发信入口(/api/auth/magic)则**两个维度都要**:那里邮箱维度是防「换 IP
+  // 轰同一个人」的邮件骚扰,而报名不发信,没有这个面。
+  if (await signupIpRateLimited(request, deps)) {
+    return json({ error: "too many requests" }, 429, { noStore: true });
+  }
+
+  // Founding-batch seat cap — checked AFTER the repeat-submit fast path, so
+  // an email already on the list keeps its 200 position lookup even when the
+  // batch is full; only NEW emails are turned away.
+  //
+  // Like the email pre-check above, this count-then-insert pair is not
+  // atomic: concurrent signups at cap-1 can all pass and overshoot the cap by
+  // a little. Tolerable for a soft product cap (the founding batch is
+  // hand-invited from the admin console anyway); the one hard invariant —
+  // one row per (email, batch) — stays with the UNIQUE index below.
+  if ((await deps.db.countWaitlist(batch)) >= WAITLIST_SEAT_CAP) {
+    throw new HttpError(409, "本批内测席位已满");
+  }
+
+  const row = {
+    id: newId("wl"),
+    email,
+    batch,
+    status: WAITLIST_PENDING,
+    created_at: deps.now(),
+    survey_json: null,
+  };
+  try {
+    await deps.db.insertWaitlist(row);
+  } catch (e) {
+    if (!isUniqueViolation(e)) {
+      throw e;
+    }
+    // Lost the race: someone inserted this exact (email, batch) between our
+    // pre-check and here. That is a successful signup, not an error — return
+    // the same shape as the already-exists branch above.
+    const winner = await deps.db.getWaitlistByEmail(email, batch);
+    if (winner === null) {
+      throw e; // UNIQUE fired but the row is not readable — genuinely broken.
+    }
+    // Same contract as the pre-check branch above, `position` included.
+    return json(
+      { already_exists: true, id: winner.id, position: await waitlistPosition(deps, winner) },
+      200,
+    );
+  }
+
+  return json({ id: row.id, position: await waitlistPosition(deps, row) }, 201);
+}
+
+/**
+ * Position of `row` in its batch, via an indexed count rather than by pulling
+ * every row and scanning in JS. The old implementation made TWO full table
+ * scans per request — O(n) per call and O(n^2) cumulatively on an
+ * unauthenticated endpoint that shares its D1 instance with `endpoints`, so
+ * filling the waitlist degraded provisioning and revocation.
+ *
+ * Ranks on the composite (created_at, id). created_at alone is not a total
+ * order — it is a whole-second ISO string, so every signup in the same second
+ * used to collapse to one shared position (measured: three same-second rows
+ * all reported position 3). `id` is the PRIMARY KEY, which makes the order
+ * total and every position distinct.
+ *
+ * Caveat worth knowing: ids are random (see newId), not monotonic, so within a
+ * single second the tiebreak is arbitrary-but-stable rather than true arrival
+ * order. Distinctness and stability are what the UI needs; exact sub-second
+ * arrival ordering would require a monotonic key we do not currently store.
+ */
+async function waitlistPosition(
+  deps: RouteDeps,
+  row: { batch: number; created_at: string; id: string },
+): Promise<number> {
+  return deps.db.waitlistRankOf(row.batch, row.created_at, row.id);
+}
+
+/** Server-side twin of the /beta textarea's maxlength="500". */
+const SURVEY_FEEDBACK_MAX = 500;
+
+/**
+ * POST /waitlist/survey — the optional post-signup survey from the beta page
+ * (served at GET /beta, and at GET / on the beta subdomain).
+ * Public and unauthenticated like POST /waitlist; the same 8 KB capped body
+ * reader applies.
+ *
+ * Request: `{ id: string, willing_to_pay?: string, price_point?: string,
+ *            use_cases?: string[], donate?: boolean, feedback?: string }`
+ *
+ * Responses:
+ *   204 — stored (or nothing to store); no body
+ *   400 `{ error: "id required" }` (plus "invalid json" / "invalid body"
+ *        from the shared body reader)
+ *   404 `{ error: "waitlist entry not found" }`
+ *   413 `{ error: "body too large" }`
+ *   503 `{ error: "survey temporarily unavailable" }` — only in the migration
+ *        window (survey_json column missing); any other db error stays a
+ *        generic 500 and must never be masked as a 503
+ *
+ * Only keys actually answered are persisted, under their contract names —
+ * unknown body keys are dropped, wrong-typed values are dropped, and
+ * `feedback` is capped at SURVEY_FEEDBACK_MAX chars. A submit with zero
+ * answered fields is a 204 WITHOUT touching survey_json, so a skipped/empty
+ * re-submit can never clobber answers already stored.
+ */
+async function saveWaitlistSurvey(request: Request, deps: RouteDeps): Promise<Response> {
+  const body = await readJsonBody(request);
+  const id = optString(body.id);
+  if (id === null) {
+    throw new HttpError(400, "id required");
+  }
+  if ((await deps.db.getWaitlistById(id)) === null) {
+    throw new HttpError(404, "waitlist entry not found");
+  }
+
+  const survey: Record<string, unknown> = {};
+  const willingToPay = optString(body.willing_to_pay);
+  if (willingToPay !== null) {
+    survey.willing_to_pay = willingToPay;
+  }
+  const pricePoint = optString(body.price_point);
+  if (pricePoint !== null) {
+    survey.price_point = pricePoint;
+  }
+  if (Array.isArray(body.use_cases)) {
+    const useCases = body.use_cases.filter((u): u is string => typeof u === "string");
+    if (useCases.length > 0) {
+      survey.use_cases = useCases;
+    }
+  }
+  if (typeof body.donate === "boolean") {
+    survey.donate = body.donate;
+  }
+  const feedback = optString(body.feedback);
+  if (feedback !== null) {
+    survey.feedback = feedback.slice(0, SURVEY_FEEDBACK_MAX);
+  }
+
+  if (Object.keys(survey).length > 0) {
+    try {
+      await deps.db.updateWaitlistSurvey(id, JSON.stringify(survey));
+    } catch (e) {
+      // Migration window: 0002 not yet applied → the column doesn't exist and
+      // the raw D1 error would surface as an unobservable 500 outside this
+      // route's declared contract. Answer in-contract instead: 503 tells the
+      // client "not you, us, try later" (the signup itself already succeeded).
+      const msg = e instanceof Error ? e.message : "";
+      const isMissingColumn =
+        msg.includes("survey_json") &&
+        (msg.includes("no such column") || msg.includes("no column named"));
+      if (!isMissingColumn) throw e;
+      throw new HttpError(503, "survey temporarily unavailable");
+    }
+  }
+  return new Response(null, { status: 204 });
+}
+
+/**
+ * Shared Bearer-token auth for the two /api/instance/* endpoints.
+ *
+ * Extracted so the read endpoint can't drift from the write one — in
+ * particular the `status !== "active"` check: an expired or revoked endpoint
+ * must be indistinguishable from a bad token (both 401), otherwise the
+ * response tells an attacker that a given token *was* real.
+ */
+async function authenticateInstanceToken(
+  request: Request,
+  deps: RouteDeps,
+): Promise<NonNullable<Awaited<ReturnType<ConnectDb["getEndpointByTokenSha256"]>>>> {
+  const authHeader = request.headers.get("authorization");
+  if (!authHeader || !authHeader.toLowerCase().startsWith("bearer ")) {
+    throw new HttpError(401, "unauthorized");
+  }
+  const token = authHeader.slice("bearer ".length).trim();
+  if (token === "") {
+    throw new HttpError(401, "unauthorized");
+  }
+
+  const tokenHash = await sha256Hex(token);
+  const endpoint = await deps.db.getEndpointByTokenSha256(tokenHash);
+  if (endpoint === null || endpoint.status !== "active") {
+    throw new HttpError(401, "unauthorized");
+  }
+  return endpoint;
+}
+
+async function reportInstanceStatus(request: Request, deps: RouteDeps): Promise<Response> {
+  const endpoint = await authenticateInstanceToken(request, deps);
+
+  // Update last_seen_at
+  await deps.db.updateEndpointLastSeen(endpoint.id, deps.now());
+
+  // Return 204 No Content
+  return new Response(null, { status: 204 });
+}
+
+/**
+ * GET /api/instance/meta — read-only sibling of POST /api/instance/status.
+ *
+ * ## Why a new endpoint instead of widening /status to 200 + JSON
+ *
+ * The container **strictly checks 204** (`apps/web/lib/remote-access.ts`,
+ * `defaultSendHeartbeat`), and that strictness is deliberate: widening it to
+ * `res.ok` would make any reverse-proxy or access-gate login page (HTTP 200)
+ * read as "tunnel healthy" — precisely the case that must surface as degraded.
+ * There is a test pinning "200 also fails".
+ *
+ * Worker and container ship through **independent channels** (`wrangler deploy`
+ * vs. each user running `git pull` on their own box), so a contract change on
+ * /status would break every existing container during the rollout window —
+ * flipping them all to "can't reach the control plane" and hiding their
+ * hostname. Adding an endpoint costs one extra request and zero breakage.
+ *
+ * ## Why the response body is only a timestamp
+ *
+ * The 204-no-body contract on /status exists so that holding a valid token
+ * reveals no endpoint metadata — the endpoint can't be used as an oracle for
+ * "which domain does this token map to". This endpoint keeps that property:
+ * `last_seen_at` is something the token holder already knows (it's their own
+ * last visit), so returning it leaks nothing new. **Do not add hostname,
+ * slug, connection counts, or expiry here** — that would reopen the very
+ * surface Plan 3 closed on purpose.
+ *
+ * ## Why this does NOT update last_seen_at
+ *
+ * Writing here would corrupt the value's meaning: "last time the user opened
+ * their settings page" is what makes it displayable at all. A read endpoint
+ * that also writes would make every poll look like fresh activity.
+ */
+async function getInstanceMeta(request: Request, deps: RouteDeps): Promise<Response> {
+  const endpoint = await authenticateInstanceToken(request, deps);
+  // noStore:token 作用域的数据,绝不能被任何中间层缓存。worker 里其它 27 处
+  // 敏感 JSON 端点都带这个,漏掉它就是在赌所有中间层配置都正确(Copilot 抓到)。
+  return json({ last_seen_at: endpoint.last_seen_at }, 200, { noStore: true });
+}
+
+export { readJsonBody, assertSameOriginRequest, assertDeclaredSizeWithinCap, readBodyTextCapped, upsertAccount };

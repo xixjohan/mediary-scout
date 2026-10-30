@@ -1,5 +1,5 @@
 import { BRAND_BAR, BRAND_CSS, FAVICON_LINK, THEME_BASE, THEME_TOKENS } from "./theme.js";
-import { PAYMENT_TIERS } from "../payment-order.js";
+import { PAYMENT_TIERS } from "../billing/payment-order.js";
 
 export function buyPage(input: { waffoConfigured: boolean }): string {
   const tiers = Object.values(PAYMENT_TIERS).map(

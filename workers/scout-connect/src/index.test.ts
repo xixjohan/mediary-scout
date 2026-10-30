@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { createMemoryConnectDb } from "./db.js";
-import type { RouteDeps } from "./routes.js";
+import { createMemoryConnectDb } from "./infra/db.js";
+import type { RouteDeps } from "./routes/routes.js";
 import { runScheduledMaintenance } from "./index.js";
 
 describe("scheduled maintenance", () => {
