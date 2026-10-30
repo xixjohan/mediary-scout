@@ -71,4 +71,15 @@ describe("configureHttpProxyFromEnv — opt-in proxy for outbound fetch (undici 
     expect(result.enabled).toBe(true);
     expect(result.proxyDisplay).toBe("172.17.0.1:7890");
   });
+
+  it("automatically incorporates domestic cloud drive domains into NO_PROXY when proxy is enabled", () => {
+    configureHttpProxyFromEnv(
+      { HTTP_PROXY: "http://172.17.0.1:7890", NO_PROXY: "custom.domain" },
+      { setDispatcher: vi.fn(), makeAgent: () => ({}) as unknown as import("undici").Dispatcher },
+    );
+    expect(process.env.NO_PROXY).toContain("custom.domain");
+    expect(process.env.NO_PROXY).toContain("115.com");
+    expect(process.env.NO_PROXY).toContain("quark.cn");
+    expect(process.env.NO_PROXY).toContain("douban.com");
+  });
 });
