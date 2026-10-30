@@ -1,0 +1,378 @@
+import { describe, expect, it } from "vitest";
+import { bridgeV2WorkflowToResult } from "../../src/acquisition-v2/workflow-v2-bridge.js";
+import type { RunAcquisitionV2WorkflowResult } from "../../src/acquisition-v2/workflow-v2.js";
+import type { MediaTitle } from "../../src/domain.js";
+
+const title = {
+  id: "tmdb_tv_100",
+  tmdbId: 100,
+  type: "tv",
+  title: "示例剧",
+  year: 2024,
+  aliases: ["Example Show"],
+} as unknown as MediaTitle;
+
+function v2Result(over: Partial<RunAcquisitionV2WorkflowResult>): RunAcquisitionV2WorkflowResult {
+  return {
+    directories: { showDirectoryId: "show_1", seasonDirectoryIds: { 1: "season_1_dir" }, stagingDirectoryId: "staging_1" },
+    missingBefore: [],
+    outcome: { resourceSnapshots: [], decisions: [], transferAttempts: [] },
+    agentText: "",
+    stillMissing: [],
+    obtained: [],
+    providerAhead: [],
+    auditEvents: [],
+    ...over,
+  };
+}
+
+/**
+ * 批次 5：冷却期水位线的信号源。
+ *
+ * `cooldownDays` 意味着“忽略之后 N 天内的匹配”，所以水位线只能在真的采纳了资源
+ * 时才往前走。这里固定两条边界：
+ *   · 搜了但没命中（no_coverage）不能移动水位线，否则一次空搜就会重置冷却，那部作品每次巡检都被重搜。
+ *   · 部分落地（partial）也算采纳——取到了就是取到了。
+ */
+describe("bridgeV2WorkflowToResult — newlyObtainedCodes (cooldown watermark source)", () => {
+  function bridge(over: Partial<Parameters<typeof bridgeV2WorkflowToResult>[0]["v2"]>) {
+    return bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      v2: v2Result(over),
+      workflowRunId: "run-x",
+      now: () => "2026-01-01T00:00:00.000Z",
+    });
+  }
+
+  it("**搜了但没命中 => 空**（一次空搜不能重置冷却）", () => {
+    const result = bridge({ missingBefore: ["S01E01", "S01E02"], stillMissing: ["S01E01", "S01E02"], obtained: [] });
+    expect(result.newlyObtainedCodes).toEqual([]);
+  });
+
+  it("**部分落地 => 只列本次新拿到的**", () => {
+    const result = bridge({
+      missingBefore: ["S01E01", "S01E02", "S01E03"],
+      stillMissing: ["S01E03"],
+      obtained: ["S01E01", "S01E02"],
+    });
+    expect(result.newlyObtainedCodes).toEqual(["S01E01", "S01E02"]);
+  });
+
+  it("**之前就已经有、本次没变 => 不算新拿到**（否则冷却永远不启动）", () => {
+    const result = bridge({ missingBefore: ["S01E01"], stillMissing: ["S01E01"], obtained: [] });
+    expect(result.newlyObtainedCodes).toEqual([]);
+  });
+
+  it("**全部落地 => 全部列出**", () => {
+    const result = bridge({ missingBefore: ["S01E01", "S01E02"], stillMissing: [], obtained: ["S01E01", "S01E02"] });
+    expect(result.newlyObtainedCodes).toEqual(["S01E01", "S01E02"]);
+  });
+});
+
+describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult shape", () => {
+  it("single-season type2, everything obtained → succeeded, season tracked with the V2 directory, all episodes obtained, user notification", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      v2: v2Result({
+        missingBefore: ["S01E01", "S01E02", "S01E03"],
+        obtained: ["S01E01", "S01E02", "S01E03"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.seasons).toHaveLength(1);
+    const season = result.seasons[0]!;
+    expect(season.season.storageDirectoryId).toBe("season_1_dir");
+    expect(season.season.id).toBe("tmdb_tv_100_s1");
+    expect(season.season.status).toBe("completed"); // aired >= total
+    expect(season.episodes).toHaveLength(3);
+    expect(season.episodes.every((episode) => episode.obtained)).toBe(true);
+    expect(result.notification.kind).toBe("tracking_initialized");
+    expect(result.notification.trigger).toBe("user");
+    expect(result.notifications).toContain(result.notification);
+  });
+
+  it("single-season, nothing obtained but had a gap → no_coverage notification", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      v2: v2Result({
+        missingBefore: ["S01E01", "S01E02", "S01E03"],
+        obtained: [],
+        stillMissing: ["S01E01", "S01E02", "S01E03"],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.status).toBe("no_coverage");
+    expect(result.seasons[0]!.episodes.every((episode) => !episode.obtained)).toBe(true);
+    expect(result.notification.kind).toBe("no_coverage");
+  });
+
+  it("nothing obtained because transfers were systemically BLOCKED → honest 转存失败 (failed), not 暂未找到资源", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      v2: v2Result({
+        missingBefore: ["S01E01", "S01E02", "S01E03"],
+        obtained: [],
+        stillMissing: ["S01E01", "S01E02", "S01E03"],
+        outcome: {
+          resourceSnapshots: [],
+          decisions: [],
+          transferAttempts: [
+            { id: "t1", workflowRunId: "run-x", candidateId: "c1", status: "failed", providerMessage: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！", materializedFileIds: [] },
+            { id: "t2", workflowRunId: "run-x", candidateId: "c2", status: "failed", providerMessage: "云下载配额不足，请升级VIP获得赠送配额或购买云下载配额！", materializedFileIds: [] },
+          ],
+        },
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    // Run-level coverage is still no_coverage (0 obtained), but the user-facing
+    // report is honest: failed + the real reason, never "暂未找到资源".
+    expect(result.notification.report?.status).toBe("failed");
+    expect(result.notification.body).toContain("转存失败");
+    expect(result.notification.body).toContain("配额");
+    expect(result.notification.body).not.toContain("暂未找到");
+    // kind must NOT be no_coverage — else the leading icon + daily-digest would
+    // still count this account block as 暂无资源, contradicting the failed pill.
+    expect(result.notification.kind).toBe("transfer_failed");
+  });
+
+  it("no-op (nothing was missing) → succeeded, episodes reflect the already-obtained set, no transfers", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02", "S01E03"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.seasons[0]!.episodes.every((episode) => episode.obtained)).toBe(true);
+    expect(result.transferAttempts).toEqual([]);
+    expect(result.notification.trigger).toBe("scheduled");
+  });
+
+  it("type3 patrol no-op: airing 且本次无新增 → kind already_current（例行巡检折叠降噪）", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      // 追更中：已播 4/12，S01E01-E04 全在库，无缺无新增（金特务场景）
+      seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 4, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02", "S01E03", "S01E04"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-noop",
+      now: () => "2026-07-09T00:00:00.000Z",
+    });
+
+    expect(result.notification.kind).toBe("already_current");
+    expect(result.notification.trigger).toBe("scheduled");
+    expect(result.notification.report?.status).toBe("airing");
+    expect(result.notification.report?.newlyObtained).toEqual([]);
+  });
+
+  it("type3 patrol: airing 但本次真收到新集 → 仍是 episodes_restored（不许把有效更新降噪掉）", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 5, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: ["S01E05"],
+        obtained: ["S01E01", "S01E02", "S01E03", "S01E04", "S01E05"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-gain",
+      now: () => "2026-07-09T00:00:00.000Z",
+    });
+
+    expect(result.notification.kind).toBe("episodes_restored");
+    expect(result.notification.report?.newlyObtained).toEqual(["E05"]);
+  });
+
+  it("type3 patrol: 有已播缺集（partial）→ 仍是 episodes_restored（真缺集不降噪）", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 6, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: ["S01E05", "S01E06"],
+        obtained: ["S01E01", "S01E02", "S01E03", "S01E04", "S01E05"],
+        stillMissing: ["S01E06"],
+      }),
+      workflowRunId: "run-partial",
+      now: () => "2026-07-09T00:00:00.000Z",
+    });
+
+    expect(result.notification.report?.status).toBe("partial");
+    expect(result.notification.kind).toBe("episodes_restored");
+  });
+
+  // The finale graduation promised by season-sync.ts ("only the finale — all
+  // obtained — graduates it to completed"). Callers pass the persisted status
+  // through, so without graduating HERE an active season stays active forever:
+  // the patrol re-sweeps a finished, fully-obtained show daily and the library
+  // keeps its 追更中 badge while the notification says 不再追踪 (莫离 bug).
+  it("type3 patrol: active season now fully aired AND fully obtained → persisted status graduates to completed", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02", "S01E03"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("completed");
+    // The user-facing report agrees — persisted state and 不再追踪 wording can't diverge.
+    expect(result.notification.report?.status).toBe("complete");
+  });
+
+  it("type3 patrol: fully aired but a real gap remains → stays active so the sweep keeps filling", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: ["S01E02"],
+        obtained: ["S01E01", "S01E03"],
+        stillMissing: ["S01E02"],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+
+  it("type3 patrol: still airing (latestAired < total) with everything aired obtained → stays active", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 12, latestAiredEpisode: 2, qualityPreference: "4K", status: "active" }],
+      v2: v2Result({
+        missingBefore: [],
+        obtained: ["S01E01", "S01E02"],
+        stillMissing: [],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+
+  it("multi-season series, partial coverage → status partial, series-level rollup notification", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "series",
+      seasons: [
+        { seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" },
+        { seasonNumber: 2, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" },
+      ],
+      v2: {
+        directories: {
+          showDirectoryId: "show_1",
+          seasonDirectoryIds: { 1: "s1_dir", 2: "s2_dir" },
+          stagingDirectoryId: "staging_1",
+        },
+        missingBefore: ["S01E01", "S01E02", "S01E03", "S02E01", "S02E02", "S02E03"],
+        outcome: { resourceSnapshots: [], decisions: [], transferAttempts: [] },
+        agentText: "",
+        obtained: ["S01E01", "S01E02", "S01E03"],
+        stillMissing: ["S02E01", "S02E02", "S02E03"],
+        providerAhead: [],
+        auditEvents: [],
+      },
+      workflowRunId: "run-x",
+      now: () => "2026-06-15T00:00:00.000Z",
+    });
+
+    expect(result.status).toBe("partial");
+    expect(result.seasons).toHaveLength(2);
+    expect(result.seasons[0]!.season.storageDirectoryId).toBe("s1_dir");
+    expect(result.seasons[1]!.season.storageDirectoryId).toBe("s2_dir");
+    expect(result.seasons[0]!.episodes.every((episode) => episode.obtained)).toBe(true);
+    expect(result.seasons[1]!.episodes.every((episode) => !episode.obtained)).toBe(true);
+    expect(result.notification.kind).toBe("series_initialized");
+    expect(result.notification.title).toBe("示例剧");
+  });
+
+  // 完结剧缺集 bug (2026-09-04): a season is "completed" ONLY when fully OBTAINED,
+  // never merely because every episode has AIRED. A fully-aired (完结) drama whose
+  // initial acquisition left gaps must stay "active" so the daily patrol keeps
+  // filling it — otherwise it graduates to completed at track time and is skipped
+  // forever (这一秒过火 缺 1-13, 永不消逝的电波 缺全集, 醒来 缺 21).
+  it("type2 init: fully aired but a LEADING gap remains (obtained 14-33 of 33) → stays active", () => {
+    const missing = Array.from({ length: 33 }, (_, i) => `S01E${String(i + 1).padStart(2, "0")}`);
+    const obtained = missing.slice(13); // E14..E33; E01..E13 missing
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 33, latestAiredEpisode: 33, qualityPreference: "4K" }],
+      v2: v2Result({ missingBefore: missing, obtained, stillMissing: missing.slice(0, 13) }),
+      workflowRunId: "run-x",
+      now: () => "2026-09-04T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+
+  it("type2 init: fully aired but NOTHING obtained (no_coverage) → stays active, not completed", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K" }],
+      v2: v2Result({
+        missingBefore: ["S01E01", "S01E02", "S01E03"],
+        obtained: [],
+        stillMissing: ["S01E01", "S01E02", "S01E03"],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-09-04T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+
+  it("a stale persisted status:'completed' does NOT stick a season that still has a real gap → active", () => {
+    const result = bridgeV2WorkflowToResult({
+      title,
+      mode: "type3",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "4K", status: "completed" }],
+      v2: v2Result({
+        missingBefore: ["S01E02"],
+        obtained: ["S01E01", "S01E03"],
+        stillMissing: ["S01E02"],
+      }),
+      workflowRunId: "run-x",
+      now: () => "2026-09-04T00:00:00.000Z",
+    });
+
+    expect(result.seasons[0]!.season.status).toBe("active");
+  });
+});
