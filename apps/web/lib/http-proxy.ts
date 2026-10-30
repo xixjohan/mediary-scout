@@ -122,8 +122,12 @@ export function formatNetworkError(error: unknown): string {
   if (error instanceof Error) {
     const cause = (error as { cause?: unknown }).cause;
     if (cause) {
+      const causeCode =
+        typeof cause === "object" && cause !== null && "code" in cause && typeof (cause as { code: unknown }).code === "string"
+          ? ` [${(cause as { code: string }).code}]`
+          : "";
       const causeMsg = cause instanceof Error ? cause.message : String(cause);
-      return `${error.message} (${causeMsg})`;
+      return `${error.message}${causeCode} (${causeMsg})`;
     }
     return error.message;
   }

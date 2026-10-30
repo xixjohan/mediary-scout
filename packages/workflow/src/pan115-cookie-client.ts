@@ -358,9 +358,20 @@ async function defaultFetchJson(url: string, init: Pan115HttpInit): Promise<unkn
   }
   const response = await fetchWithTimeout(url, requestInit, DEFAULT_HTTP_TIMEOUT_MS);
   if (!response.ok) {
+    if (response.status === 405) {
+      throw new Error("PAN115_WAF_BLOCKED: 115 安全网关阻断了请求 (405)，请检查是否配置了代理或白名单");
+    }
     throw new Error(`PAN115_HTTP_FAILED: ${response.status}`);
   }
-  return response.json();
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (text.includes("安全威胁") || text.includes("阻断") || text.includes("<title>405</title>")) {
+      throw new Error("PAN115_WAF_BLOCKED: 115 安全网关阻断了请求，请检查是否通过境外/机房代理访问，建议直连或配置国内白名单");
+    }
+    throw new Error(`PAN115_INVALID_JSON: 115 返回了非 JSON 格式内容 (${text.slice(0, 80).trim()})`);
+  }
 }
 
 function actionResultFromResponse(response: unknown): Pan115ActionResult {

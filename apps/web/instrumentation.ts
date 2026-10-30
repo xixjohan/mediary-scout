@@ -8,6 +8,16 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== "nodejs") {
     return;
   }
+  // 锁死 IPv4 优先解析：Node 17+ 默认 verbatim (可能返回 IPv6 首位)，在容器/无 IPv6 外网路由环境下
+  // 极易导致对国内网盘（如 115/夸克）的请求落入 IPv6 黑洞或触发 connect timeout。
+  try {
+    const dns = await import("node:dns");
+    if (typeof dns.setDefaultResultOrder === "function") {
+      dns.setDefaultResultOrder("ipv4first");
+    }
+  } catch {
+    // 忽略特定运行时环境不支持的情况
+  }
   // Opt-in outbound proxy: Node's built-in fetch (undici) ignores HTTP_PROXY /
   // HTTPS_PROXY on its own, so a self-hoster behind the GFW who sets them in
   // docker-compose still couldn't reach api.themoviedb.org directly (#68).
