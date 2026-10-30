@@ -80,6 +80,8 @@ describe("configureHttpProxyFromEnv — opt-in proxy for outbound fetch (undici 
     expect(process.env.NO_PROXY).toContain("custom.domain");
     expect(process.env.NO_PROXY).toContain("115.com");
     expect(process.env.NO_PROXY).toContain("quark.cn");
+    expect(process.env.NO_PROXY).toContain("uc.cn");
+    expect(process.env.NO_PROXY).toContain("10.*");
     expect(process.env.NO_PROXY).toContain("douban.com");
   });
 });

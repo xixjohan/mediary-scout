@@ -67,7 +67,10 @@ function FamilyQrConnectBody({ brand }: { brand: keyof typeof BRANDS }) {
     setPhase("loading");
     setMessage("");
     try {
-      const res = await fetch(config.api, { method: "POST" });
+      const res = await fetch(config.api, {
+        method: "POST",
+        signal: AbortSignal.timeout(15_000),
+      });
       const data = (await res.json()) as { ok: boolean; session?: Session; error?: string };
       if (!data.ok || !data.session) throw new Error(data.error ?? "无法获取二维码");
       if (generation.current !== myGen) return;
@@ -91,7 +94,9 @@ function FamilyQrConnectBody({ brand }: { brand: keyof typeof BRANDS }) {
       let status = "waiting";
       let serviceTicket: string | undefined;
       try {
-        const res = await fetch(`${config.api}/status?token=${encodeURIComponent(s.token)}`);
+        const res = await fetch(`${config.api}/status?token=${encodeURIComponent(s.token)}`, {
+          signal: AbortSignal.timeout(8_000),
+        });
         const data = (await res.json()) as { ok: boolean; status?: string; serviceTicket?: string };
         if (data.ok && data.status) {
           status = data.status;
@@ -120,11 +125,14 @@ function FamilyQrConnectBody({ brand }: { brand: keyof typeof BRANDS }) {
   }
 
   async function confirm(serviceTicket: string, myGen: number) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25_000);
     try {
       const res = await fetch(`${config.api}/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ serviceTicket }),
+        signal: controller.signal,
       });
       const data = (await res.json()) as { ok: boolean; providerUid?: string; error?: string };
       if (!data.ok) {
@@ -137,13 +145,20 @@ function FamilyQrConnectBody({ brand }: { brand: keyof typeof BRANDS }) {
       setPhase("done");
       setMessage(`${config.label}已连接。`);
       router.refresh();
-    } catch {
+    } catch (error) {
       // Anything here is NOT a clean API error (those returned in `data` above):
       // a network failure (fetch threw) OR a JSON decode failure (response.json()
       // threw on a non-JSON body). Show a generic retry hint + the cookie fallback.
       if (generation.current !== myGen) return;
       setPhase("error");
-      setMessage("网络异常，请重试。（可改用下方手动粘 cookie）");
+      const isTimeout = error instanceof Error && error.name === "AbortError";
+      setMessage(
+        isTimeout
+          ? "登录确认超时，请重试或改用下方手动粘 cookie。"
+          : "网络异常，请重试。（可改用下方手动粘 cookie）",
+      );
+    } finally {
+      clearTimeout(timer);
     }
   }
 

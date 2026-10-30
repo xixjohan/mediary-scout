@@ -37,7 +37,10 @@ export function Pan123QrConnect() {
     setPhase("loading");
     setMessage("");
     try {
-      const res = await fetch("/api/pan123/qrcode", { method: "POST" });
+      const res = await fetch("/api/pan123/qrcode", {
+        method: "POST",
+        signal: AbortSignal.timeout(15_000),
+      });
       const data = (await res.json()) as { ok: boolean; session?: Session; error?: string };
       if (!data.ok || !data.session) throw new Error(data.error ?? "无法获取二维码");
       if (generation.current !== myGen) return;
@@ -64,6 +67,7 @@ export function Pan123QrConnect() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ uniID: current.uniID }),
+          signal: AbortSignal.timeout(8_000),
         });
         const data = (await res.json()) as { ok: boolean; status?: string; token?: string };
         if (data.ok && data.status) {
@@ -95,11 +99,14 @@ export function Pan123QrConnect() {
   }
 
   async function confirm(token: string, myGen: number) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 25_000);
     try {
       const res = await fetch("/api/pan123/qrcode/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token }),
+        signal: controller.signal,
       });
       const data = (await res.json()) as { ok: boolean; providerUid?: string; error?: string };
       if (!data.ok) {
@@ -112,12 +119,19 @@ export function Pan123QrConnect() {
       setPhase("done");
       setMessage("123网盘已连接。");
       router.refresh();
-    } catch {
+    } catch (error) {
       // NOT a clean API error (those return in `data` above): a network failure
       // (fetch threw) or a JSON decode failure. Generic retry hint + fallback.
       if (generation.current !== myGen) return;
       setPhase("error");
-      setMessage("网络异常，请重试。（可改用下方手动粘 token）");
+      const isTimeout = error instanceof Error && error.name === "AbortError";
+      setMessage(
+        isTimeout
+          ? "登录确认超时，请重试。（可改用下方手动粘 token）"
+          : "网络异常，请重试。（可改用下方手动粘 token）",
+      );
+    } finally {
+      clearTimeout(timer);
     }
   }
 

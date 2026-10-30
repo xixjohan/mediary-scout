@@ -230,6 +230,9 @@ export class QuarkQrLoginClient {
       "User-Agent": this.userAgent,
       Referer: this.profile.referer,
       Accept: "application/json, text/plain, */*",
+      // Explicitly close the connection after each request so undici does not pool
+      // idle sockets that cloud gateways terminate abruptly with TCP RST (causing read ECONNRESET).
+      Connection: "close",
     };
     if (jar && jar.size > 0) {
       headers["Cookie"] = [...jar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
@@ -316,11 +319,18 @@ function randomId(): string {
   return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.floor(Math.random() * 1e9)}`;
 }
 
+const DEFAULT_CLOUD_QR_TIMEOUT_MS = 15_000;
+
 async function defaultFetchJson(
   url: string,
   init: { method: string; headers?: Record<string, string> },
 ): Promise<unknown> {
-  const res = await fetch(url, { method: init.method, ...(init.headers ? { headers: init.headers } : {}) });
+  // HARD project rule "新外部HTTP一律带超时": a bare fetch hung the whole app in the PanSou incident.
+  const res = await fetch(url, {
+    method: init.method,
+    signal: AbortSignal.timeout(DEFAULT_CLOUD_QR_TIMEOUT_MS),
+    ...(init.headers ? { headers: init.headers } : {}),
+  });
   const text = await res.text();
   try {
     return JSON.parse(text) as unknown;
@@ -333,9 +343,11 @@ async function defaultRawFetch(
   url: string,
   init: { method: string; headers?: Record<string, string>; redirect?: "manual" },
 ): Promise<QuarkQrRawResponse> {
+  // HARD project rule "新外部HTTP一律带超时": a bare fetch hung the whole app in the PanSou incident.
   const res = await fetch(url, {
     method: init.method,
     redirect: init.redirect ?? "manual",
+    signal: AbortSignal.timeout(DEFAULT_CLOUD_QR_TIMEOUT_MS),
     ...(init.headers ? { headers: init.headers } : {}),
   });
   return {
