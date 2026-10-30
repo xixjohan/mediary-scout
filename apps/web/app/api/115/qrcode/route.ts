@@ -2,6 +2,7 @@ import { isDemoMode } from "../../../../lib/demo-mode";
 import { NextResponse, type NextRequest } from "next/server";
 import { Pan115QrLoginClient } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
+import { formatNetworkError } from "../../../../lib/http-proxy";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const gate = await requireApiAccount(request);
@@ -11,6 +12,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const session = await new Pan115QrLoginClient().getToken();
     return NextResponse.json({ ok: true, session });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: String(error) }, { status: 502 });
+    return NextResponse.json({ ok: false, error: formatNetworkError(error) }, { status: 502 });
   }
 }

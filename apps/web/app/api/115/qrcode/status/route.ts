@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { Pan115QrLoginClient } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { formatNetworkError } from "../../../../../lib/http-proxy";
 
 // One long-poll round per request: the upstream endpoint holds the
 // connection until the status changes or ~30s passes; the browser just
@@ -23,6 +24,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     });
     return NextResponse.json({ ok: true, status });
   } catch (error) {
-    return NextResponse.json({ ok: false, error: String(error) }, { status: 502 });
+    return NextResponse.json({ ok: false, error: formatNetworkError(error) }, { status: 502 });
   }
 }

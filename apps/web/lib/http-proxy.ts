@@ -30,6 +30,57 @@ export interface ConfigureProxyResult {
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 
+/** 境内网盘生态、豆瓣评分及内部微服务默认免代理白名单，确保即使开启外网代理，国内直连服务也绝不挂起或被拉崩。 */
+export const DEFAULT_DOMESTIC_NO_PROXY = [
+  "localhost",
+  "127.0.0.1",
+  "::1",
+  "web",
+  "worker",
+  "pansou",
+  "115.com",
+  "*.115.com",
+  "quark.cn",
+  "*.quark.cn",
+  "123pan.com",
+  "*.123pan.com",
+  "123pan.cn",
+  "*.123pan.cn",
+  "189.cn",
+  "*.189.cn",
+  "ctyun.cn",
+  "*.ctyun.cn",
+  "douban.com",
+  "*.douban.com",
+  "doubanio.com",
+  "*.doubanio.com",
+] as const;
+
+export function resolveMergedNoProxy(existing?: string): string {
+  const custom = (existing ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const set = new Set(custom);
+  for (const domain of DEFAULT_DOMESTIC_NO_PROXY) {
+    set.add(domain);
+  }
+  return Array.from(set).join(",");
+}
+
+/** 展开 fetch 错误中的 cause（如 connect ECONNREFUSED），避免向前端仅仅抛出泛化的 "TypeError: fetch failed" */
+export function formatNetworkError(error: unknown): string {
+  if (error instanceof Error) {
+    const cause = (error as { cause?: unknown }).cause;
+    if (cause) {
+      const causeMsg = cause instanceof Error ? cause.message : String(cause);
+      return `${error.message} (${causeMsg})`;
+    }
+    return error.message;
+  }
+  return String(error);
+}
+
 /** Reduce a proxy URL to `host:port`, dropping any embedded credentials. Falls
  *  back to the raw value when it is not a parseable URL (e.g. bare `host:port`). */
 function redactProxy(raw: string): string {
@@ -59,6 +110,11 @@ export function configureHttpProxyFromEnv(
   if (!proxyUrl) {
     return { enabled: false };
   }
+  const currentNoProxy = env.NO_PROXY ?? env.no_proxy ?? process.env.NO_PROXY ?? process.env.no_proxy;
+  const mergedNoProxy = resolveMergedNoProxy(currentNoProxy);
+  process.env.NO_PROXY = mergedNoProxy;
+  process.env.no_proxy = mergedNoProxy;
+
   deps.setDispatcher(deps.makeAgent());
   return { enabled: true, proxyUrl, proxyDisplay: redactProxy(proxyUrl) };
 }
