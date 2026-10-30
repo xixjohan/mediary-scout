@@ -65,9 +65,11 @@
 - **多会话并行与历史管理**：支持一键创建新聊天、会话重命名、历史记录加载与单会话/全量清空；
 - **实体感知卡片**：助理交互时自动解析影视实体，直接在聊天流中内嵌展现可交互的影视卡片、豆瓣评分与一键获取按钮。
 
-### 5. 🛡️ 零停机热更与静态资源韧性防御
+### 5. 🛡️ 零停机热更与系统韧性防御
 - **静态资产物理一致性门禁 (`check-build-assets`)**：CI 与本地构建门禁全量校验 HTML 与 Manifest 引用，杜绝任何悬空分块；
-- **前端 `ChunkLoadError` 智能自愈**：全局错误边界自动捕获部署更新时的分块漂移，利用防抖状态机无感刷新拉取最新资源，彻底杜绝发版后客户端卡死在错误页。
+- **前端 `ChunkLoadError` 智能自愈**：全局错误边界自动捕获部署更新时的分块漂移，利用防抖状态机无感刷新拉取最新资源，彻底杜绝发版后客户端卡死在错误页；
+- **原生扩展完整收纳与容灾降级**：Docker 生产镜像内置 `better-sqlite3` 原生 C++ 驱动及 bindings，多网盘及身份组件具备异常隔离与安全降级保护；
+- **出站网络智能分流与免代理白名单**：内置国内网盘（115、夸克、天翼、123）与豆瓣直连白名单，杜绝外网代理拉崩境内扫码与元数据请求。
 
 ---
 
@@ -100,18 +102,46 @@ docker compose up -d
 
 ---
 
-### 方式二：Docker CLI 单容器快速体验
+### 方式二：Docker CLI 单容器独立部署
 
-若仅需快速测试或无 Compose 环境，可直接单容器启动（单容器内含 Web 与调度 Worker）：
+若无需 Compose 或在轻量设备上运行，可直接单容器独立启动（容器内自带 Web 与进程内后台调度 Worker）：
 
+#### 1. 标准直连运行（推荐）
+适合服务器直连网络良好的环境，国内网盘（115、夸克、123、天翼）与豆瓣评分天然直连：
 ```bash
 docker run -d \
   --name mediary-scout \
-  -p 3000:3000 \
-  -v mediary-data:/app/data \
   --restart unless-stopped \
+  -p 3000:3000 \
+  -v mediaray-data:/app/data \
+  -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db \
+  -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb \
+  -e MEDIA_TRACK_WORKER_MODE=inprocess \
+  -e MEDIA_TRACK_DEMO_SEED=0 \
   ghcr.io/xixjohan/mediary-scout:latest
 ```
+
+#### 2. 大陆网络配合宿主机出站代理（加速 TMDB）
+若宿主机运行了 Clash / V2Ray 等代理客户端且需要加速访问 TMDB：
+```bash
+docker run -d \
+  --name mediary-scout \
+  --restart unless-stopped \
+  -p 3000:3000 \
+  -v mediaray-data:/app/data \
+  -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db \
+  -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb \
+  -e MEDIA_TRACK_WORKER_MODE=inprocess \
+  -e MEDIA_TRACK_DEMO_SEED=0 \
+  -e HTTP_PROXY="http://172.17.0.1:7890" \
+  -e HTTPS_PROXY="http://172.17.0.1:7890" \
+  -e NO_PROXY="localhost,127.0.0.1,115.com,*.115.com,quark.cn,*.quark.cn,123pan.com,*.123pan.com,189.cn,*.189.cn,douban.com,*.douban.com" \
+  ghcr.io/xixjohan/mediary-scout:latest
+```
+
+> [!IMPORTANT]
+> 1. **存储卷**：强烈推荐使用具名卷 `-v mediaray-data:/app/data`（由 Docker 引擎全托管权限），避免宿主机挂载目录因 UID 权限不足导致 SQLite 读写失败；
+> 2. **网络分流**：115、夸克、天翼、123 等国内网盘与豆瓣服务器均在中国大陆境内，**系统内置了直连白名单**。配置代理时必须确保宿主机代理开启了「允许局域网连接（Allow LAN）」，且不可把境内网盘流量送往不可达的代理端口，否则会导致扫码报 `TypeError: fetch failed`。
 
 ---
 
