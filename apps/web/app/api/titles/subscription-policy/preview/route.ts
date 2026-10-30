@@ -148,8 +148,9 @@ export async function POST(request: NextRequest): Promise<Response> {
   const keywords = buildTitleSearchKeywords(tracked.title).map((entry) => entry.keyword);
   // Same cooldown as the resources route: a preview right after a search should hit the
   // cache, and a preview fired repeatedly must not walk around the limiter the user's
-  // own search just paid. Keyed by title, so previewing one title never throttles another.
-  if (!resourceLimiter.tryAcquire(`title:${parsed.tmdbId}`)) {
+  // own search just paid. Keyed by account + title, so previewing one title never throttles another.
+  const cooldownKey = `preview:${accountId}:title:${parsed.tmdbId}`;
+  if (!resourceLimiter.tryAcquire(cooldownKey)) {
     return NextResponse.json({ error: "too many requests" }, { status: 429, headers: NO_STORE });
   }
   const provider = await getWorkerResourceProvider();
@@ -167,6 +168,7 @@ export async function POST(request: NextRequest): Promise<Response> {
   } catch (error) {
     // 502, not an empty preview: "0 matched" read as "your rule matches nothing" when the
     // truth is "we could not look" sends the user off to loosen a rule that was fine.
+    resourceLimiter.reset(cooldownKey);
     return NextResponse.json(
       { error: "搜索失败，无法预览", detail: error instanceof Error ? error.message : String(error) },
       { status: 502, headers: NO_STORE },

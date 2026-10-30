@@ -115,6 +115,38 @@ describe("provisionCategoryDirs (find-or-create, idempotent)", () => {
     expect(cids.rootCid).not.toBe("0");
     expect(created.slice(1)).toEqual(["Movies@new_Mediary Scout", "TV@new_Mediary Scout", "Anime@new_Mediary Scout"]);
   });
+
+  it("avoids N+1 listChildDirs waterfall: lists rootCid at most once when root exists, and 0 times when root is freshly created", async () => {
+    const listCallsOnNewRoot: string[] = [];
+    await provisionCategoryDirs({
+      baseParentId: "0",
+      storage: {
+        async listChildDirs(parentId: string) {
+          listCallsOnNewRoot.push(parentId);
+          return [];
+        },
+        async createDirectory({ name }) {
+          return `cid_${name}`;
+        },
+      },
+    });
+    expect(listCallsOnNewRoot).toEqual(["0"]);
+
+    const listCallsOnExistingRoot: string[] = [];
+    await provisionCategoryDirs({
+      baseParentId: "0",
+      storage: {
+        async listChildDirs(parentId: string) {
+          listCallsOnExistingRoot.push(parentId);
+          return parentId === "0" ? [{ name: "Mediary Scout", id: "existing_root" }] : [{ name: "Movies", id: "m1" }];
+        },
+        async createDirectory({ name }) {
+          return `cid_${name}`;
+        },
+      },
+    });
+    expect(listCallsOnExistingRoot).toEqual(["0", "existing_root"]);
+  });
 });
 
 describe("parsePan115Uid", () => {

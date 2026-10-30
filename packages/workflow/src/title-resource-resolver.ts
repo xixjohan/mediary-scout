@@ -53,7 +53,14 @@ export type TitleResourceResult =
   | { kind: "unauthorized" }
   | { kind: "throttled"; retryAfterMs: number }
   | { kind: "error"; message: string }
-  | { kind: "ok"; candidates: ResourceCandidateView[]; cached: boolean; snapshot: ResourceSnapshot | null };
+  | {
+      kind: "ok";
+      candidates: ResourceCandidateView[];
+      cached: boolean;
+      snapshot: ResourceSnapshot | null;
+      /** Authoritative snapshotId for manual import (present on both cache miss and cache hit). */
+      snapshotId?: string | undefined;
+    };
 
 export async function resolveTitleResources(deps: TitleResourceDeps): Promise<TitleResourceResult> {
   // 1) Scope. Null/empty account ⇒ fail closed, before any budget is spent.
@@ -76,7 +83,15 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
     // No snapshot on a cache hit: the merged snapshot was persisted on the miss that
     // filled this cache, and the DB copy is the one import reads. Re-deriving one here
     // would need the per-keyword snapshots, which this process no longer holds.
-    return { kind: "ok", candidates: [...cached], cached: true, snapshot: null };
+    // However, we preserve the snapshotId from the miss so manual import remains functional!
+    const cachedSnapshotId = deps.cache.getSnapshotId(scopeKey);
+    return {
+      kind: "ok",
+      candidates: [...cached],
+      cached: true,
+      snapshot: null,
+      ...(cachedSnapshotId === undefined ? {} : { snapshotId: cachedSnapshotId }),
+    };
   }
 
   try {
@@ -111,7 +126,6 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
       }),
     );
     const views = [...byId.values()];
-    deps.cache.put(scopeKey, views);
     // The ONE snapshot the user actually saw: the ladder produced several, but the
     // panel shows the deduped list, and the import path's "does this candidate belong
     // to this snapshot?" check needs exactly one snapshot to answer against.
@@ -122,11 +136,12 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
       snapshots: perKeyword,
       createdAt: new Date().toISOString(),
     });
-    return { kind: "ok", candidates: views, cached: false, snapshot };
+    deps.cache.put(scopeKey, views, snapshot.id);
+    return { kind: "ok", candidates: views, cached: false, snapshot, snapshotId: snapshot.id };
   } catch (error) {
     // A failed search must not leave the user throttled for the next 60s — they did
     // not get a result, so charging them the cooldown would punish them for our error.
-    deps.limiter.reset(scopeKey);
+    deps.limiter.reset(baseKey);
     return { kind: "error", message: error instanceof Error ? error.message : String(error) };
   }
 }

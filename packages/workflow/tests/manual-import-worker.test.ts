@@ -4,6 +4,7 @@ import type { StorageExecutor } from "../src/ports.js";
 import { InMemoryWorkflowRepository } from "../src/repository.js";
 import { MANUAL_IMPORT_TTL_MS } from "../src/manual-import-resolver.js";
 import { runQueuedManualImport } from "../src/manual-import-worker.js";
+import { Pan115AuthError } from "../src/pan115-cookie-client.js";
 
 /**
  * The worker half of manual import.
@@ -19,7 +20,7 @@ const NOW_MS = Date.parse("2026-01-10T12:00:00.000Z");
 const FRESH_AT = new Date(NOW_MS - 5 * 60 * 1000).toISOString();
 const STALE_AT = new Date(NOW_MS - MANUAL_IMPORT_TTL_MS - 60_000).toISOString();
 
-function title(type: "tv" | "movie" = "tv"): MediaTitle {
+function title(type: "tv" | "movie" | "anime" = "tv"): MediaTitle {
   return {
     id: "t1",
     tmdbId: 283428,
@@ -101,14 +102,16 @@ async function seedQueuedRun(
   opts: {
     snap: ResourceSnapshot;
     candidateId: string;
-    titleType?: "tv" | "movie";
+    titleType?: "tv" | "movie" | "anime";
     accountId?: string;
+    connectedStorageId?: string;
   },
 ): Promise<string> {
   const accountId = opts.accountId ?? "acct_default";
   const runId = `mi_${Math.random().toString(36).slice(2, 8)}`;
   await repo.saveWorkflowRunSnapshot({
     accountId,
+    ...(opts.connectedStorageId ? { connectedStorageId: opts.connectedStorageId } : {}),
     title: title(opts.titleType ?? "tv"),
     season: season(),
     workflowRun: {
@@ -486,5 +489,114 @@ describe("runQueuedManualImport — 空队列", () => {
     expect(result.status).toBe("idle");
     const saved = await repo.getWorkflowRunSnapshot("other", "acct_default");
     expect(saved!.workflowRun.status).toBe("queued");
+  });
+});
+
+describe("runQueuedManualImport — 多网盘分类路由与异常状态机护栏", () => {
+  it("按标题类型（movie / anime / tv）精准路由到对应网盘分类目录", async () => {
+    for (const [titleType, expectedParent] of [
+      ["movie", "drive2_movies_cid"],
+      ["anime", "drive2_anime_cid"],
+      ["tv", "drive2_tv_cid"],
+    ] as const) {
+      const repo = new InMemoryWorkflowRepository();
+      const parentsUsed: string[] = [];
+      const storage = fakeStorage({
+        listChildDirectories: async (parentId) => {
+          parentsUsed.push(parentId);
+          return [];
+        },
+      });
+      await seedQueuedRun(repo, {
+        snap: snapshot("s", FRESH_AT),
+        candidateId: "c1",
+        titleType,
+        connectedStorageId: "cs_drive2",
+      });
+      const res = await runQueuedManualImport({
+        repository: repo,
+        storage: fakeStorage(),
+        categoryParentDirectoryId: "wrong_fallback",
+        resolveAccountContext: async () => ({
+          storage,
+          storageParentDirectoryId: "drive2_tv_cid",
+          animeStorageParentDirectoryId: "drive2_anime_cid",
+          moviesParentDirectoryId: "drive2_movies_cid",
+        }),
+        now: () => new Date(NOW_MS).toISOString(),
+      });
+      expect(res.status).toBe("succeeded");
+      expect(parentsUsed[0]).toBe(expectedParent);
+    }
+  });
+
+  it("Season NN 已存在时幂等复用已有目录 ID，不重复调用 createDirectory", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const created: string[] = [];
+    let transferredTo = "";
+    const storage = fakeStorage({
+      listChildDirectories: async (parentId) => {
+        if (parentId === "tv_root") return [{ id: "show_1", name: "孤独摇滚 (2022) {tmdb-283428}" }];
+        if (parentId === "show_1") return [{ id: "existing_s01", name: "Season 01" }];
+        return [];
+      },
+      createDirectory: async ({ name }) => {
+        created.push(name);
+        return `new_${name}`;
+      },
+      transfer: async (input) => {
+        transferredTo = input.directoryId;
+        return {
+          id: "a",
+          workflowRunId: input.workflowRunId,
+          candidateId: "c1",
+          status: "succeeded",
+          providerMessage: "",
+          materializedFileIds: ["f1"],
+        };
+      },
+    });
+    await seedQueuedRun(repo, { snap: snapshot("s", FRESH_AT), candidateId: "c1" });
+    const res = await runQueuedManualImport({
+      repository: repo,
+      storage,
+      categoryParentDirectoryId: "tv_root",
+      now: () => new Date(NOW_MS).toISOString(),
+    });
+    expect(res.status).toBe("succeeded");
+    expect(transferredTo).toBe("existing_s01");
+    expect(created).toEqual([]);
+  });
+
+  it("目录创建阶段抛错并触发网盘鉴权失效 ⇒ 安全收口为 failed（绝不残留 running），且调用 onAuthErrorFreeze", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const runId = await seedQueuedRun(repo, {
+      snap: snapshot("s", FRESH_AT),
+      candidateId: "c1",
+      connectedStorageId: "cs_pan115_dead",
+    });
+    let frozenDriveId = "";
+    let frozenReason = "";
+    const storage = fakeStorage({
+      listChildDirectories: async () => {
+        throw new Pan115AuthError("PAN115_COOKIE_EXPIRED: 115 cookie dead", 99);
+      },
+    });
+    const res = await runQueuedManualImport({
+      repository: repo,
+      storage,
+      categoryParentDirectoryId: "tv_root",
+      onAuthErrorFreeze: async (storageId, reason) => {
+        frozenDriveId = storageId;
+        frozenReason = reason;
+      },
+      now: () => new Date(NOW_MS).toISOString(),
+    });
+    expect(res.status).toBe("failed");
+    expect(frozenDriveId).toBe("cs_pan115_dead");
+    expect(frozenReason).toContain("PAN115_COOKIE_EXPIRED");
+    const saved = await repo.getWorkflowRunSnapshot(runId, "acct_default");
+    expect(saved!.workflowRun.status).toBe("failed");
+    expect(saved!.workflowRun.auditEvents.some((e) => e.type === "manual_import_failed")).toBe(true);
   });
 });

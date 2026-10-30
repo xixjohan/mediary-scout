@@ -4,7 +4,6 @@ import {
   executeOrganizePlan,
   organizeDriftCopy,
   organizePlanCopy,
-  organizeRunId,
   planOrganizeMoves,
   type OrganizePlan,
 } from "@media-track/workflow";
@@ -196,7 +195,6 @@ export async function POST(request: NextRequest) {
     connectedStorageId,
     now: new Date().toISOString(),
   });
-  const runId = organizeRunId(title.id, season.seasonNumber);
 
   if (plan.kind !== "deterministic") {
     // Nothing was touched. Persist the review so the user can see what was ambiguous.
@@ -209,16 +207,17 @@ export async function POST(request: NextRequest) {
 
   // Deterministic: execute with the guardrail. The plan is on the run BEFORE the first
   // move, and the result is compared against a re-read of the drive.
+  const recordedEvents = [...run.workflowRun.auditEvents];
   const execution = await executeOrganizePlan({
     storage,
     plan,
     persist: async (event) => {
-      const existing = await getWorkflowRepository().getWorkflowRunSnapshot(runId, accountId);
+      recordedEvents.push(event);
       await getWorkflowRepository().saveWorkflowRunSnapshot({
         ...run,
         workflowRun: {
           ...run.workflowRun,
-          auditEvents: [...(existing?.workflowRun.auditEvents ?? []), event],
+          auditEvents: [...recordedEvents],
         },
       });
     },
@@ -226,22 +225,37 @@ export async function POST(request: NextRequest) {
 
   if (execution.status !== "organized") {
     // Drift or failure: 409, never 200. The drive did not confirm what was planned.
-    await getWorkflowRepository().saveWorkflowRunSnapshot(run);
+    // Mark the persisted run as failed and keep the recorded drift/planned audit events.
+    const failureCopy =
+      execution.status === "drift"
+        ? organizeDriftCopy(execution.drift)
+        : execution.status === "failed"
+          ? execution.error
+          : organizePlanCopy(plan);
+    await getWorkflowRepository().saveWorkflowRunSnapshot({
+      ...run,
+      workflowRun: {
+        ...run.workflowRun,
+        status: "failed",
+        auditEvents: [...recordedEvents],
+      },
+    });
     return NextResponse.json(
       {
         status: execution.status,
-        copy:
-          execution.status === "drift"
-            ? organizeDriftCopy(execution.drift)
-            : execution.status === "failed"
-              ? execution.error
-              : organizePlanCopy(plan),
+        copy: failureCopy,
       },
       { status: 409, headers: NO_STORE },
     );
   }
 
-  await getWorkflowRepository().saveWorkflowRunSnapshot(run);
+  await getWorkflowRepository().saveWorkflowRunSnapshot({
+    ...run,
+    workflowRun: {
+      ...run.workflowRun,
+      auditEvents: [...recordedEvents],
+    },
+  });
   return NextResponse.json(
     {
       status: "organized",

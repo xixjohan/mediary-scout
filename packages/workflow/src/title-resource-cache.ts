@@ -29,7 +29,10 @@ export interface TitleResourceCacheOptions<T> {
 }
 
 export class TitleResourceCache<T = unknown> {
-  private readonly entries = new Map<string, { values: readonly T[]; storedAtMs: number }>();
+  private readonly entries = new Map<
+    string,
+    { values: readonly T[]; storedAtMs: number; snapshotId?: string | undefined }
+  >();
 
   constructor(private readonly options: TitleResourceCacheOptions<T>) {
     if (!Number.isFinite(options.ttlMs) || options.ttlMs <= 0) {
@@ -56,8 +59,23 @@ export class TitleResourceCache<T = unknown> {
     return entry.values;
   }
 
-  put(key: string, values: readonly T[]): void {
-    this.entries.set(key, { values: [...values], storedAtMs: this.options.now() });
+  /** Read the authoritative persisted snapshotId associated with a fresh cache entry. */
+  getSnapshotId(key: string): string | undefined {
+    const entry = this.entries.get(key);
+    if (entry === undefined) return undefined;
+    if (this.isExpired(entry)) {
+      this.entries.delete(key);
+      return undefined;
+    }
+    return entry.snapshotId;
+  }
+
+  put(key: string, values: readonly T[], snapshotId?: string): void {
+    this.entries.set(key, {
+      values: [...values],
+      storedAtMs: this.options.now(),
+      ...(snapshotId === undefined ? {} : { snapshotId }),
+    });
   }
 
   /**

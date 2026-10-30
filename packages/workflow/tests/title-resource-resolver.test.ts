@@ -275,6 +275,24 @@ describe("resolveTitleResources — 合并快照（批次 3：import 的取回�
     expect(second.cached).toBe(true);
     // 命中时若也回一份快照，调用方会把它再落一次库，而它可能与 DB 里那份不一致。
     expect(second.snapshot).toBeNull();
+    // 但必须保留首次落库时的权威 snapshotId，否则缓存命中的结果前端无法发起手动入库！
+    expect(second.snapshotId).toBe(first.snapshot!.id);
+  });
+
+  it("带 cacheKeySuffix（如自定义关键词）搜索失败时，正确重置 baseKey 冷却锁", async () => {
+    const d = deps({
+      cacheKeySuffix: "custom:s1",
+      search: async () => {
+        throw new Error("indexer error");
+      },
+    });
+    const res = await resolveTitleResources(d);
+    expect(res.kind).toBe("error");
+    const retry = await resolveTitleResources({
+      ...d,
+      search: async () => snapshotOf(["c_ok"]),
+    });
+    expect(retry.kind).toBe("ok");
   });
 
   it("providerPayload 在合并快照里（import 要取回的正是它）", async () => {

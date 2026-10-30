@@ -132,14 +132,28 @@ export async function provisionCategoryDirs(input: {
   const moviesName = named(input.moviesName, "Movies");
   const tvName = named(input.tvName, "TV");
   const animeName = named(input.animeName, "Anime");
-  const findOrCreate = async (name: string, parentId: string): Promise<string> => {
-    const existing = (await input.storage.listChildDirs(parentId)).find((dir) => dir.name === name);
-    return existing ? existing.id : input.storage.createDirectory({ name, parentId });
+
+  const baseChildren = await input.storage.listChildDirs(input.baseParentId);
+  const existingRoot = baseChildren.find((dir) => dir.name === rootName);
+  const rootCid = existingRoot
+    ? existingRoot.id
+    : await input.storage.createDirectory({ name: rootName, parentId: input.baseParentId });
+
+  // If rootCid already existed, list it once to resolve all 3 categories without 3x waterfall calls;
+  // if rootCid was freshly created, it is guaranteed empty so we skip listing it altogether.
+  const rootChildren = existingRoot ? await input.storage.listChildDirs(rootCid) : [];
+  const byName = new Map(rootChildren.map((dir) => [dir.name, dir.id]));
+  const findOrCreateUnderRoot = async (name: string): Promise<string> => {
+    const hit = byName.get(name);
+    if (hit !== undefined) return hit;
+    const created = await input.storage.createDirectory({ name, parentId: rootCid });
+    byName.set(name, created);
+    return created;
   };
-  const rootCid = await findOrCreate(rootName, input.baseParentId);
-  const moviesCid = await findOrCreate(moviesName, rootCid);
-  const tvCid = await findOrCreate(tvName, rootCid);
-  const animeCid = await findOrCreate(animeName, rootCid);
+
+  const moviesCid = await findOrCreateUnderRoot(moviesName);
+  const tvCid = await findOrCreateUnderRoot(tvName);
+  const animeCid = await findOrCreateUnderRoot(animeName);
   return { rootCid, moviesCid, tvCid, animeCid };
 }
 
