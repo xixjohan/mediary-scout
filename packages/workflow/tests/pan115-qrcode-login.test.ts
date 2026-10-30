@@ -4,6 +4,7 @@ import {
   PAN115_QR_LOGIN_APPS,
   Pan115QrExchangeError,
   isPan115QrExchangeError,
+  isTransientPan115NetworkError,
 } from "../src/index.js";
 
 interface RecordedRequest {
@@ -190,5 +191,59 @@ describe("Pan115QrLoginClient", () => {
     expect(isPan115QrExchangeError(thrown)).toBe(true);
     expect((thrown as Pan115QrExchangeError).message).toBe("PAN115_QR_EXCHANGE_FAILED: 登录失败，系统已下架！");
     expect((thrown as Pan115QrExchangeError).code).toBe(40101017);
+  });
+
+  it("sends Connection: close in headers to prevent stale socket resets", async () => {
+    const requests: RecordedRequest[] = [];
+    const client = new Pan115QrLoginClient({
+      fetchJson: async (url, init) => {
+        requests.push({ url, method: init.method, body: init.body ?? "", headers: init.headers ?? {} });
+        return {
+          state: 1,
+          data: {
+            cookie: { UID: "u_tv" },
+            user_id: 2,
+            user_name: "test",
+          },
+        };
+      },
+    });
+
+    await client.exchangeCookie({ uid: "u", time: 1, sign: "s", qrcodeContent: "" }, "tv");
+    expect(requests[0]?.headers?.Connection).toBe("close");
+  });
+
+  it("continues probing candidates even if an earlier candidate throws a network error", async () => {
+    const client = new Pan115QrLoginClient({
+      fetchJson: async (url) => {
+        if (url.includes("/tv/")) {
+          throw new Error("fetch failed (read ECONNRESET)");
+        }
+        if (url.includes("/qandroid/")) {
+          return {
+            state: 1,
+            data: {
+              cookie: { UID: "u_qandroid" },
+              user_id: 3,
+              user_name: "qandroid_user",
+            },
+          };
+        }
+        return { state: 0, message: "not this one", data: {} };
+      },
+    });
+
+    const result = await client.exchangeCookie({ uid: "u", time: 1, sign: "s", qrcodeContent: "" }, "tv");
+    expect(result.app).toBe("qandroid");
+    expect(result.userName).toBe("qandroid_user");
+  });
+
+  it("identifies transient network reset errors correctly", () => {
+    expect(isTransientPan115NetworkError(new Error("fetch failed (read ECONNRESET)"))).toBe(true);
+    expect(isTransientPan115NetworkError(new Error("socket hang up"))).toBe(true);
+    expect(isTransientPan115NetworkError(new Error("connect ETIMEDOUT"))).toBe(true);
+    expect(isTransientPan115NetworkError(new Error("connect ECONNREFUSED"))).toBe(true);
+    expect(isTransientPan115NetworkError(new Error("Client network socket disconnected"))).toBe(true);
+    expect(isTransientPan115NetworkError(new Error("PAN115_QR_EXCHANGE_FAILED: 老乡验证失败！"))).toBe(false);
   });
 });

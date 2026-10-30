@@ -40,6 +40,6 @@ describe("connectPan115Cookie", () => {
     const bound = await repo.findConnectedStorageByUid("pan115", "10086115");
     expect(bound).not.toBeNull();
     expect(bound?.provider).toBe("pan115");
-    expect(bound?.payload.cookie).toBe(LIVE_COOKIE);
+    expect((bound?.payload as { cookie?: string })?.cookie).toBe(LIVE_COOKIE);
   });
 });
