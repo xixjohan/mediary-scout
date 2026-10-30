@@ -90,6 +90,11 @@ ENV HOSTNAME=0.0.0.0
 # Standalone traces from the monorepo root → server entry at apps/web/server.js.
 COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
+# Native module for SQLite (better-sqlite3 + bindings): standalone tracing skips
+# dynamically-required native bindings, so copy them explicitly into node_modules.
+COPY --from=builder /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
+COPY --from=builder /app/node_modules/bindings ./node_modules/bindings
+COPY --from=builder /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
 # `output: standalone` does NOT bundle public/ — copy it explicitly, else every
 # public asset (e.g. /brands/<provider>.svg for the workspace switcher icons) 404s
 # and BrandMark falls back to a bare dot (demo on Vercel serves public/ natively).

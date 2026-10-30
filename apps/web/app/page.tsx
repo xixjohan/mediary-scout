@@ -152,7 +152,7 @@ async function HomeSurface({
   // on the drive you're viewing — not silently on the primary drive. Root route
   // (no storageId) posts to "/" as before.
   const basePath = workspaceBasePath(storageId);
-  const driveCount = await getRegisteredDriveCount();
+  const driveCount = await getRegisteredDriveCount().catch(() => 0);
 
 
   return (

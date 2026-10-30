@@ -13,8 +13,12 @@ import { AccountIdentity } from "./account-identity";
  */
 export async function AccountIdentityLoader() {
   await connection();
-  if (!isMultiUserEnabled()) return null;
-  const summary = await getCurrentAccountSummary();
-  if (!summary) return null;
-  return <AccountIdentity username={summary.username} isOwner={summary.isOwner} />;
+  try {
+    if (!isMultiUserEnabled()) return null;
+    const summary = await getCurrentAccountSummary();
+    if (!summary) return null;
+    return <AccountIdentity username={summary.username} isOwner={summary.isOwner} />;
+  } catch {
+    return null;
+  }
 }
