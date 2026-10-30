@@ -12,16 +12,16 @@ import {
  */
 describe("resolveBundledSqliteDir", () => {
   it("darwin：.app/Contents/Resources/app 下 standalone 的拷贝", () => {
-    expect(resolveBundledSqliteDir("/out", "darwin", "Mediary Scout")).toBe(
+    expect(resolveBundledSqliteDir("/out", "darwin", "Mediary Scout").replace(/\\/g, "/")).toBe(
       "/out/Mediary Scout.app/Contents/Resources/app/apps/web/.next/standalone/node_modules/better-sqlite3",
     );
   });
 
   it("win/linux：<out>/resources/app 下 standalone 的拷贝", () => {
-    expect(resolveBundledSqliteDir("/out", "win32", "Mediary Scout")).toBe(
+    expect(resolveBundledSqliteDir("/out", "win32", "Mediary Scout").replace(/\\/g, "/")).toBe(
       "/out/resources/app/apps/web/.next/standalone/node_modules/better-sqlite3",
     );
-    expect(resolveBundledSqliteDir("/out", "linux", "Mediary Scout")).toBe(
+    expect(resolveBundledSqliteDir("/out", "linux", "Mediary Scout").replace(/\\/g, "/")).toBe(
       "/out/resources/app/apps/web/.next/standalone/node_modules/better-sqlite3",
     );
   });
