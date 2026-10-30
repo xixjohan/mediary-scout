@@ -88,7 +88,62 @@ describe("Pan115QrLoginClient", () => {
     });
   });
 
-  it("fails loudly when the exchange returns no cookie", async () => {
+  it("automatically probes candidate apps when the preferred app fails (e.g. scanned with wechat)", async () => {
+    const attemptedApps: string[] = [];
+    const client = new Pan115QrLoginClient({
+      fetchJson: async (url) => {
+        const match = url.match(/\/app\/1\.0\/([^/]+)\/1\.0\/login\/qrcode\//);
+        const app = match?.[1] ?? "";
+        attemptedApps.push(app);
+        if (app === "alipaymini") {
+          return { state: 0, message: "老乡验证失败！", data: {} };
+        }
+        if (app === "wechatmini") {
+          return {
+            state: 1,
+            data: {
+              cookie: { UID: "u_wechat", CID: "c2", SEID: "s2", KID: "k2" },
+              user_id: 100,
+              user_name: "wechat_user",
+            },
+          };
+        }
+        return { state: 0, message: "fail", data: {} };
+      },
+    });
+
+    const result = await client.exchangeCookie(
+      { uid: "uid_1", time: 1, sign: "sig", qrcodeContent: "x" },
+      "alipaymini",
+    );
+
+    expect(attemptedApps).toEqual(["alipaymini", "wechatmini"]);
+    expect(result).toEqual({
+      cookie: "UID=u_wechat; CID=c2; SEID=s2; KID=k2",
+      userId: 100,
+      userName: "wechat_user",
+      app: "wechatmini",
+    });
+  });
+
+  it("retries getToken on transient network failure", async () => {
+    let attempts = 0;
+    const client = new Pan115QrLoginClient({
+      fetchJson: async () => {
+        attempts++;
+        if (attempts === 1) {
+          throw new Error("transient socket hang up");
+        }
+        return { state: 1, code: 0, data: { uid: "uid_retry", time: 1718000000, sign: "sig" } };
+      },
+    });
+
+    const session = await client.getToken();
+    expect(attempts).toBe(2);
+    expect(session.uid).toBe("uid_retry");
+  });
+
+  it("fails loudly when the exchange returns no cookie across all candidates", async () => {
     const client = new Pan115QrLoginClient({
       fetchJson: async () => ({ state: 0, message: "登录失败", data: {} }),
     });

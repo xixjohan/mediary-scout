@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Pan115QrConnect } from "./pan115-qr-connect";
+import { Pan115CookieConnect } from "./pan115-cookie-connect";
 import { QuarkQrConnect } from "./quark-qr-connect";
 import { QuarkCookieConnect } from "./quark-cookie-connect";
 import { CloudFamilyCookieConnect } from "./cloud-family-cookie-connect";
@@ -18,7 +19,7 @@ type Brand = "pan115" | "quark" | "uc" | "guangya" | "tianyi" | "pan123";
 /** 品牌图库瓦片的静态元数据:图标走 /brands/<key>.svg(workspace-switcher 同款资产),
  *  authNote 把认证方式前置到选择时刻(选之前就知道要扫码还是粘贴)。加新品牌:此表加一行 + Brand 联合 + 下方连接区分支 + /brands svg(完整触点见加品牌清单)。 */
 const BRAND_TILES: Array<{ key: Brand; label: string; authNote: string }> = [
-  { key: "pan115", label: "115网盘", authNote: "扫码登录" },
+  { key: "pan115", label: "115网盘", authNote: "扫码 / 粘 cookie" },
   { key: "quark", label: "夸克网盘", authNote: "扫码 / 粘 cookie" },
   { key: "uc", label: "UC网盘", authNote: "扫码 / 粘 cookie" },
   { key: "guangya", label: "光鸭云盘", authNote: "扫码 / 粘 token" },
@@ -57,6 +58,14 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
       {brand === "pan115" ? (
         <div className="brand-connect-area">
           <Pan115QrConnect />
+          <details style={{ marginTop: 12 }}>
+            <summary className="panel-note" style={{ cursor: "pointer" }}>
+              扫码不行？手动粘 cookie
+            </summary>
+            <div style={{ marginTop: 10 }}>
+              <Pan115CookieConnect />
+            </div>
+          </details>
         </div>
       ) : brand === "quark" ? (
         <div className="brand-connect-area">

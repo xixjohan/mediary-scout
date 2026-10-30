@@ -55,23 +55,34 @@ export class Pan115QrLoginClient {
   }
 
   async getToken(): Promise<Pan115QrSession> {
-    const response = asRecord(
-      await this.fetchJson(`${QRCODE_API}/api/1.0/web/1.0/token/`, {
-        method: "GET",
-        headers: this.headers(),
-      }),
-    );
-    const data = asRecord(response["data"]);
-    const uid = stringValue(data["uid"]);
-    if (!uid) {
-      throw new Error("PAN115_QR_TOKEN_FAILED: no uid in token response");
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const response = asRecord(
+          await this.fetchJson(`${QRCODE_API}/api/1.0/web/1.0/token/`, {
+            method: "GET",
+            headers: this.headers(),
+          }),
+        );
+        const data = asRecord(response["data"]);
+        const uid = stringValue(data["uid"]);
+        if (!uid) {
+          throw new Error("PAN115_QR_TOKEN_FAILED: no uid in token response");
+        }
+        return {
+          uid,
+          time: numberValue(data["time"]),
+          sign: stringValue(data["sign"]),
+          qrcodeContent: stringValue(data["qrcode"]) || `https://115.com/scan/dg-${uid}`,
+        };
+      } catch (err) {
+        lastError = err;
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 800));
+        }
+      }
     }
-    return {
-      uid,
-      time: numberValue(data["time"]),
-      sign: stringValue(data["sign"]),
-      qrcodeContent: stringValue(data["qrcode"]) || `https://115.com/scan/dg-${uid}`,
-    };
+    throw lastError;
   }
 
   /**
@@ -108,38 +119,58 @@ export class Pan115QrLoginClient {
     }
   }
 
-  /** Only call after pollStatus returned "confirmed". */
+  /**
+   * Only call after pollStatus returned "confirmed".
+   * Tries the preferred client app type first; if 115 rejects that specific app
+   * (e.g. user scanned with WeChat or 115 App while dropdown was set to Alipay),
+   * automatically probes the alternative candidate apps so authorization succeeds
+   * regardless of which app scanned the code.
+   */
   async exchangeCookie(
     session: Pan115QrSession,
-    app: Pan115QrLoginApp = "alipaymini",
+    preferredApp: Pan115QrLoginApp = "alipaymini",
   ): Promise<Pan115QrCookie> {
-    const body = new URLSearchParams({ account: session.uid, app });
-    const response = asRecord(
-      await this.fetchJson(`${PASSPORT_API}/app/1.0/${app}/1.0/login/qrcode/`, {
-        method: "POST",
-        headers: {
-          ...this.headers(),
-          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
-        },
-        body: body.toString(),
-      }),
-    );
-    const data = asRecord(response["data"]);
-    const cookieRecord = asRecord(data["cookie"]);
-    const pairs = (["UID", "CID", "SEID", "KID"] as const)
-      .map((key) => [key, stringValue(cookieRecord[key])] as const)
-      .filter(([, value]) => value !== "");
-    if (!pairs.some(([key]) => key === "UID")) {
-      throw new Error(
-        `PAN115_QR_EXCHANGE_FAILED: ${stringValue(response["message"]) || "no cookie in response"}`,
+    const candidates = [
+      preferredApp,
+      ...PAN115_QR_LOGIN_APPS.filter((a) => a !== preferredApp),
+    ];
+    let firstErrorMessage = "";
+
+    for (const app of candidates) {
+      const body = new URLSearchParams({ account: session.uid, app });
+      const response = asRecord(
+        await this.fetchJson(`${PASSPORT_API}/app/1.0/${app}/1.0/login/qrcode/`, {
+          method: "POST",
+          headers: {
+            ...this.headers(),
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          },
+          body: body.toString(),
+        }),
       );
+      const data = asRecord(response["data"]);
+      const cookieRecord = asRecord(data["cookie"]);
+      const pairs = (["UID", "CID", "SEID", "KID"] as const)
+        .map((key) => [key, stringValue(cookieRecord[key])] as const)
+        .filter(([, value]) => value !== "");
+
+      if (pairs.some(([key]) => key === "UID")) {
+        return {
+          cookie: pairs.map(([key, value]) => `${key}=${value}`).join("; "),
+          userId: numberValue(data["user_id"]),
+          userName: stringValue(data["user_name"]),
+          app,
+        };
+      }
+
+      if (!firstErrorMessage) {
+        firstErrorMessage = stringValue(response["message"]) || stringValue(response["error"]);
+      }
     }
-    return {
-      cookie: pairs.map(([key, value]) => `${key}=${value}`).join("; "),
-      userId: numberValue(data["user_id"]),
-      userName: stringValue(data["user_name"]),
-      app,
-    };
+
+    throw new Error(
+      `PAN115_QR_EXCHANGE_FAILED: ${firstErrorMessage || "no cookie in response"}`,
+    );
   }
 
   private headers(): Record<string, string> {
