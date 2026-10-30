@@ -20,7 +20,8 @@ const PAN115_ANDROID_USER_AGENT =
 const DEFAULT_LIST_LIMIT = 200; // 115's per-page cap for /files
 const DEFAULT_MAX_LIST_TOTAL = 1000; // stitch up to this across pages; beyond it, fail loud
 const DEFAULT_LIST_PAGE_DELAY_MS = 1_200; // 逆鳞 spacing between page fetches (matches the guard)
-const DEFAULT_USER_AGENT = "media-track/0.1";
+const DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 const DEFAULT_HTTP_TIMEOUT_MS = 20_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -331,6 +332,8 @@ export class Pan115CookieClient implements Pan115StorageApi {
       Cookie: this.cookie,
       "User-Agent": this.userAgent,
       Accept: "application/json, text/plain, */*",
+      Referer: "https://115.com/",
+      Connection: "close",
     };
   }
 }

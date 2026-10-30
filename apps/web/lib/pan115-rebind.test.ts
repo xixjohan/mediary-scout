@@ -51,7 +51,10 @@ describe("completePan115QrLogin on a frozen drive", () => {
       providerUid: "103164004",
       label: "tester",
       payload: { cookie: "UID=103164004_A1_1; CID=old; SEID=old" },
+      rootCid: "root-1",
+      moviesCid: "mov-1",
       tvCid: "tv-1",
+      animeCid: "ani-1",
       createdAt: "2020-01-01T00:00:00.000Z",
     });
     await repository.setConnectedStorageStatus("cs_103164004", "frozen", "PAN115_COOKIE_EXPIRED", "2026-09-30T00:00:00.000Z");

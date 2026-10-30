@@ -2614,7 +2614,9 @@ async function provisionDriveCategoryDirs(
   const executor =
     brand.authKind === "token"
       ? createExecutorForBrand({ provider, credential: credential ?? {}, scopeCids: [] })
-      : buildBootstrapExecutorForBrand(brand, { cookie, credential, env: process.env });
+      : provider === "pan115"
+        ? createBootstrapPan115CookieStorageExecutor({ cookie, env: process.env })
+        : buildBootstrapExecutorForBrand(brand, { cookie, credential, env: process.env });
   return provisionCategoryDirs({
     baseParentId,
     ...customDirNamesFromEnv(process.env),
@@ -2727,7 +2729,7 @@ async function getAccountStorageCredentials(
     // so the queued acquisition just proceeds — no manual rebind. Idempotent;
     // persisted so subsequent runs skip. Best-effort: a failure leaves the CIDs
     // null and the scoped executor still fails loud (surfaced, not silent).
-    const liveMode = process.env.MEDIA_TRACK_STORAGE_ADAPTER === "115";
+    const liveMode = process.env.MEDIA_TRACK_STORAGE_ADAPTER !== "fake";
     if (liveMode && drive.status === "active" && !(rootCid && moviesCid && tvCid && animeCid)) {
       try {
         const p = await provisionDriveCategoryDirs(drive.provider, cookie, credential);
@@ -2846,10 +2848,54 @@ async function freezeConnectedStorage(storageId: string, reason: string): Promis
  * the explicit "测试连接" trigger and the deterministic freeze/unfreeze hook the
  * e2e drives — independent of waiting for the next acquisition/patrol.
  */
+async function healDriveProvisioning(
+  repository: WorkflowRepository,
+  accountId: string,
+  creds: AccountStorageCredentials,
+): Promise<boolean> {
+  if (
+    process.env.MEDIA_TRACK_STORAGE_ADAPTER === "fake" ||
+    (creds.rootCid && creds.moviesCid && creds.tvCid && creds.animeCid)
+  ) {
+    return false;
+  }
+  try {
+    const p = await provisionDriveCategoryDirs(creds.provider, creds.cookie, creds.credential);
+    const drive = (await repository.listConnectedStorages(accountId)).find((s) => s.id === creds.id);
+    if (!drive) return false;
+    await repository.upsertConnectedStorage({
+      id: drive.id,
+      accountId,
+      provider: drive.provider,
+      providerUid: drive.providerUid,
+      label: drive.label,
+      payload: drive.payload,
+      rootCid: p.rootCid,
+      moviesCid: p.moviesCid,
+      tvCid: p.tvCid,
+      animeCid: p.animeCid,
+      createdAt: drive.createdAt,
+    });
+    return true;
+  } catch (error) {
+    console.error(`[media-track] testConnection auto-provision failed for ${creds.id}: ${String(error)}`);
+    return false;
+  }
+}
+
 export async function testConnection(
   accountId: string,
   connectedStorageId: string,
 ): Promise<{ ok: boolean; status: "active" | "frozen"; message: string }> {
+  const repository = getWorkflowRepository();
+  const existingStorage = (await repository.listConnectedStorages(accountId)).find(
+    (s) => s.id === connectedStorageId,
+  );
+  const wasPendingProvision = Boolean(
+    existingStorage &&
+      !(existingStorage.rootCid && existingStorage.moviesCid && existingStorage.tvCid && existingStorage.animeCid),
+  );
+
   const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
   if (!creds) {
     return { ok: false, status: "frozen", message: "找不到该网盘的凭证。" };
@@ -2863,7 +2909,11 @@ export async function testConnection(
       creds.credential,
       makeTokenPersister(accountId, creds.id, creds.provider),
     );
-    await getWorkflowRepository().setConnectedStorageStatus(creds.id, "active", null, null);
+    await repository.setConnectedStorageStatus(creds.id, "active", null, null);
+    const healed = await healDriveProvisioning(repository, accountId, creds);
+    if (healed || wasPendingProvision) {
+      return { ok: true, status: "active", message: "连接正常，目录已初始化就绪。" };
+    }
     return { ok: true, status: "active", message: "连接正常。" };
   } catch (error) {
     // The brand's own dead-cookie signal → freeze; anything else (network/
@@ -3002,42 +3052,46 @@ async function getWorkerStorageExecutor(
   accountId: string = DEFAULT_ACCOUNT_ID,
   connectedStorageId?: string | null,
 ): Promise<StorageExecutor> {
-  const adapter = process.env.MEDIA_TRACK_STORAGE_ADAPTER ?? "fake";
-  // "115" is the legacy name for "real storage mode"; the actual brand now comes
-  // from the resolved drive's provider, so a quark drive works under the same gate.
-  if (adapter === "115") {
-    const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
-    if (creds) {
-      // Scope writes to THIS drive's own provisioned dirs — not the global env CIDs
-      // (which belong to the default account's drive). Dispatch by the drive's
-      // brand: 115 → Storage115Executor, quark → QuarkStorageExecutor.
-      const scopeCids = [creds.rootCid, creds.moviesCid, creds.tvCid, creds.animeCid].filter(
-        (cid): cid is string => Boolean(cid),
-      );
-      // Token-auth brands (光鸭/天翼) authenticate with a rotating credential blob
-      // (not a cookie): pass the credential + a persist hook so a mid-run refresh
-      // writes the new blob back into this drive's payload. Cookie brands (115/
-      // 夸克) keep the cookie path untouched.
-      if (isRegisteredStorageProvider(creds.provider) && getStorageBrand(creds.provider).authKind === "token") {
-        return createExecutorForBrand({
-          provider: creds.provider,
-          credential: creds.credential ?? {},
-          scopeCids,
-          env: process.env,
-          onCredentialRefresh: makeTokenPersister(accountId, creds.id, creds.provider),
-        });
-      }
+  const adapter = process.env.MEDIA_TRACK_STORAGE_ADAPTER;
+  if (adapter === "fake") {
+    fakeStorageExecutor ??= new FakeStorageExecutor({
+      transferOutcomes: fakeTransferOutcomes(),
+    });
+    return fakeStorageExecutor;
+  }
+  const creds = await getAccountStorageCredentials(accountId, connectedStorageId);
+  if (creds) {
+    // Scope writes to THIS drive's own provisioned dirs — not the global env CIDs
+    // (which belong to the default account's drive). Dispatch by the drive's
+    // brand: 115 → Storage115Executor, quark → QuarkStorageExecutor.
+    const scopeCids = [creds.rootCid, creds.moviesCid, creds.tvCid, creds.animeCid].filter(
+      (cid): cid is string => Boolean(cid),
+    );
+    // Token-auth brands (光鸭/天翼) authenticate with a rotating credential blob
+    // (not a cookie): pass the credential + a persist hook so a mid-run refresh
+    // writes the new blob back into this drive's payload. Cookie brands (115/
+    // 夸克) keep the cookie path untouched.
+    if (isRegisteredStorageProvider(creds.provider) && getStorageBrand(creds.provider).authKind === "token") {
       return createExecutorForBrand({
         provider: creds.provider,
-        cookie: creds.cookie,
+        credential: creds.credential ?? {},
         scopeCids,
         env: process.env,
+        onCredentialRefresh: makeTokenPersister(accountId, creds.id, creds.provider),
       });
     }
+    return createExecutorForBrand({
+      provider: creds.provider,
+      cookie: creds.cookie,
+      scopeCids,
+      env: process.env,
+    });
+  }
+  if (adapter === "115") {
     // No drive bound yet → legacy env-cookie 115 path (fresh deploy bootstrap).
     return createProtectedPan115CookieStorageExecutorFromEnv({ env: process.env });
   }
-  if (adapter !== "fake") {
+  if (adapter !== undefined && adapter !== "fake" && adapter !== "115") {
     throw new Error(`MEDIA_TRACK_STORAGE_ADAPTER_UNSUPPORTED: ${adapter}`);
   }
   fakeStorageExecutor ??= new FakeStorageExecutor({
@@ -3578,6 +3632,82 @@ async function bindTokenConnectedStorage(input: {
  * - refresh: same account re-scanned → update the cookie payload, keep CIDs.
  * - insert: new connection → provision Movies/TV/Anime (or honor env CIDs) + store.
  */
+async function provisionPan115CategoryDirs(
+  cookie: string,
+): Promise<{ rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null }> {
+  if (process.env.MEDIA_TRACK_STORAGE_ADAPTER === "fake") {
+    return { rootCid: null, moviesCid: null, tvCid: null, animeCid: null };
+  }
+  try {
+    const executor = createBootstrapPan115CookieStorageExecutor({ cookie });
+    return await provisionCategoryDirs({
+      baseParentId: "0",
+      ...customDirNamesFromEnv(process.env),
+      storage: {
+        listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
+        createDirectory: (dir) => executor.createDirectory(dir),
+      },
+    });
+  } catch (error) {
+    console.error(`[media-track] 115 directory provision failed: ${String(error)}`);
+    return { rootCid: null, moviesCid: null, tvCid: null, animeCid: null };
+  }
+}
+
+async function refreshPan115Storage(
+  repository: WorkflowRepository,
+  existing: ConnectedStorage,
+  input: { accountId: string; cookie: string; userName: string },
+  payload: unknown,
+): Promise<void> {
+  let { rootCid, moviesCid, tvCid, animeCid } = existing;
+  if (!(rootCid && moviesCid && tvCid && animeCid)) {
+    const p = await provisionPan115CategoryDirs(input.cookie);
+    if (p.rootCid) {
+      ({ rootCid, moviesCid, tvCid, animeCid } = p);
+    }
+  }
+  await refreshConnectedStorage(repository, existing, {
+    id: existing.id,
+    accountId: input.accountId,
+    provider: "pan115",
+    providerUid: existing.providerUid,
+    label: input.userName,
+    payload,
+    rootCid,
+    moviesCid,
+    tvCid,
+    animeCid,
+    createdAt: existing.createdAt,
+  });
+}
+
+async function resolve115LandingCids(cookie: string): Promise<{
+  rootCid: string | null;
+  moviesCid: string | null;
+  tvCid: string | null;
+  animeCid: string | null;
+}> {
+  const envMovies = process.env.MEDIA_TRACK_MOVIES_PARENT_CID ?? null;
+  const envTv = process.env.MEDIA_TRACK_TV_PARENT_CID ?? null;
+  const envAnime = process.env.MEDIA_TRACK_ANIME_PARENT_CID ?? null;
+  if (envMovies && envTv && envAnime) {
+    return {
+      rootCid: process.env.MEDIA_TRACK_115_TEST_ROOT_CID ?? null,
+      moviesCid: envMovies,
+      tvCid: envTv,
+      animeCid: envAnime,
+    };
+  }
+  const provisioned = await provisionPan115CategoryDirs(cookie);
+  return {
+    rootCid: provisioned.rootCid ?? process.env.MEDIA_TRACK_115_TEST_ROOT_CID ?? null,
+    moviesCid: provisioned.moviesCid ?? envMovies,
+    tvCid: provisioned.tvCid ?? envTv,
+    animeCid: provisioned.animeCid ?? envAnime,
+  };
+}
+
 async function bindPan115ConnectedStorage(input: {
   accountId: string;
   cookie: string;
@@ -3601,58 +3731,10 @@ async function bindPan115ConnectedStorage(input: {
     meta: { userName: input.userName, app: input.app, connectedAt: new Date().toISOString() },
   };
   if (decision.action === "refresh" && existing) {
-    // Keep the already-resolved directory CIDs; only refresh the cookie.
-    await refreshConnectedStorage(repository, existing, {
-      id: existing.id,
-      accountId: input.accountId,
-      provider: "pan115",
-      providerUid,
-      label: input.userName,
-      payload,
-      rootCid: existing.rootCid,
-      moviesCid: existing.moviesCid,
-      tvCid: existing.tvCid,
-      animeCid: existing.animeCid,
-      createdAt: existing.createdAt,
-    });
+    await refreshPan115Storage(repository, existing, input, payload);
     return;
   }
-  // insert: honor env CIDs if a deploy pre-configured them, else provision a fresh
-  // media-track/ tree under the 115 root. Provisioning is best-effort — a failure
-  // still stores the connection (worker falls back to env CIDs).
-  let cids = {
-    rootCid: process.env.MEDIA_TRACK_115_TEST_ROOT_CID ?? null,
-    moviesCid: process.env.MEDIA_TRACK_MOVIES_PARENT_CID ?? null,
-    tvCid: process.env.MEDIA_TRACK_TV_PARENT_CID ?? null,
-    animeCid: process.env.MEDIA_TRACK_ANIME_PARENT_CID ?? null,
-  };
-  const hasEnvCids = Boolean(cids.tvCid && cids.moviesCid && cids.animeCid);
-  if (!hasEnvCids && process.env.MEDIA_TRACK_STORAGE_ADAPTER === "115") {
-    try {
-      // Bootstrap (unrestricted) executor — a fresh drive has no write scope yet,
-      // and the protected/env executor throws without one (the catch-22 that left
-      // 115 drives stuck "目录待建"). Steady-state acquisition uses a scoped executor.
-      const executor = createBootstrapPan115CookieStorageExecutor({ cookie: input.cookie });
-      const provisioned = await provisionCategoryDirs({
-        baseParentId: "0", // 115 account root
-        ...customDirNamesFromEnv(process.env),
-        storage: {
-          // listChildDirectories = single-level, root-safe (find-or-create reads
-          // the account root's children; recursive listSubdirectories is guarded).
-          listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
-          createDirectory: (dir) => executor.createDirectory(dir),
-        },
-      });
-      cids = {
-        rootCid: provisioned.rootCid,
-        moviesCid: provisioned.moviesCid,
-        tvCid: provisioned.tvCid,
-        animeCid: provisioned.animeCid,
-      };
-    } catch (error) {
-      console.error(`[media-track] 115 directory provision failed (will use env fallback): ${String(error)}`);
-    }
-  }
+  const cids = await resolve115LandingCids(input.cookie);
   await repository.upsertConnectedStorage({
     id: `cs_${providerUid}`,
     accountId: input.accountId,
