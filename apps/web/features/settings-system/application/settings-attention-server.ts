@@ -17,7 +17,7 @@ import {
   parseAttentionTimeMap,
   type SettingsAttentionSummary,
 } from "../core/settings-attention";
-import { UNAUTHENTICATED_ACCOUNT_ID } from "@media-track/contracts";
+import { UNAUTHENTICATED_ACCOUNT_ID } from "../../auth/contracts/auth-tokens";
 import {
   getCurrentAccountId,
   getWorkflowRepository,

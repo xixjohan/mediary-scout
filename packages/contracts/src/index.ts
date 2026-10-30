@@ -13,3 +13,13 @@ export type { FileMetadata, IStorageDriver, StorageBrand } from "./infrastructur
 export type { IJobQueue, Job, JobStatus, EnqueueJobInput } from "./infrastructure-ports/IJobQueue.js";
 export type { ISearchProvider, ResourceCandidate, SearchQuery } from "./infrastructure-ports/ISearchProvider.js";
 export type { IMediaMetadataProvider, MediaMetadata, MediaType } from "./infrastructure-ports/IMediaMetadataProvider.js";
+
+export const DEFAULT_ACCOUNT_ID = "acct_default";
+export const UNAUTHENTICATED_ACCOUNT_ID = "acct_unauthenticated";
+
+export class UnauthenticatedAccountError extends Error {
+  constructor(message = "未登录，请先登录后再操作。") {
+    super(message);
+    this.name = "UnauthenticatedAccountError";
+  }
+}

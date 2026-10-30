@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}), { virtual: true });
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined }) }));
-vi.mock("../../app/connect-actions", () => ({}));
+vi.mock("../../../../app/connect-actions", () => ({}));
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";

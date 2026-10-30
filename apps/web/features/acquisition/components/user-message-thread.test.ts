@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { UserMessageReply } from "@media-track/workflow";
-import type { MessageRunView, MessageThreadView } from "../lib/user-message-server";
-import type { ThreadMessage } from "../lib/user-message-state";
+import type { MessageRunView, MessageThreadView } from "../../../lib/user-message-server";
+import type { ThreadMessage } from "../../../lib/user-message-state";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined }) }));
 vi.mock("../app/actions", () => ({

@@ -9,12 +9,12 @@ const state = vi.hoisted(() => ({
 }));
 
 vi.mock("next/server", () => ({ connection: vi.fn(async () => undefined) }));
-vi.mock("../../lib/workflow-runtime", () => ({
+vi.mock("../../../../lib/workflow-runtime", () => ({
   getCurrentAccountSummary: vi.fn(async () => ({ isOwner: true })),
   hasLoginPassword: vi.fn(async () => true),
   isMultiUserEnabled: vi.fn(() => false),
 }));
-vi.mock("../../lib/remote-access", () => ({
+vi.mock("../../../../lib/remote-access", () => ({
   resolveInstanceTunnelToken: vi.fn(async () => undefined),
   resolveInstanceConnectHostname: vi.fn(async () => undefined),
   resolveRemoteAccessState: vi.fn(async () => ({ kind: "not_provisioned" })),
@@ -26,7 +26,7 @@ vi.mock("../../lib/remote-access", () => ({
 vi.mock("../password-change-form", () => ({ PasswordChangeForm: () => null }));
 vi.mock("./remote-access-test-button", () => ({ RemoteAccessTestButton: () => null }));
 vi.mock("./connect-wizard", () => ({ ConnectWizard: () => null }));
-vi.mock("../../app/connect-actions", () => ({
+vi.mock("../../../../app/connect-actions", () => ({
   connectAccountAction: vi.fn(async () => {
     if (state.accountAnswer === "linked") {
       return {
@@ -41,7 +41,7 @@ vi.mock("../../app/connect-actions", () => ({
     return { state: "unlinked" };
   }),
 }));
-vi.mock("../../lib/connect-link-store", () => ({
+vi.mock("../../../../lib/connect-link-store", () => ({
   getConnectInstanceCredential: vi.fn(async () => state.credential),
   getConnectAccountEmail: vi.fn(async () => state.email),
   getConnectLinkPending: vi.fn(async () => null),
@@ -75,7 +75,7 @@ beforeEach(() => {
 
 describe("RemoteAccessSection", () => {
   it("passes the tunnel id decoded from the resolved local token to the connected wizard", async () => {
-    const { resolveInstanceTunnelToken, resolveRemoteAccessState } = await import("../../lib/remote-access");
+    const { resolveInstanceTunnelToken, resolveRemoteAccessState } = await import("../../../../lib/remote-access");
     const id = "6f5a3c2e-1b4d-4e8f-9a0b-1c2d3e4f5a6b";
     vi.mocked(resolveInstanceTunnelToken).mockResolvedValueOnce(Buffer.from(JSON.stringify({ t: id })).toString("base64"));
     vi.mocked(resolveRemoteAccessState).mockResolvedValueOnce({ kind: "active_degraded" });
@@ -85,8 +85,8 @@ describe("RemoteAccessSection", () => {
   });
 
   it("starts the Connect account read before waiting on the tunnel status, so two slow calls do not add up", async () => {
-    const { connectAccountAction } = await import("../../app/connect-actions");
-    const { resolveRemoteAccessState } = await import("../../lib/remote-access");
+    const { connectAccountAction } = await import("../../../../app/connect-actions");
+    const { resolveRemoteAccessState } = await import("../../../../lib/remote-access");
     vi.mocked(resolveRemoteAccessState).mockImplementationOnce(async () => {
       expect(vi.mocked(connectAccountAction)).toHaveBeenCalled();
       return { kind: "not_provisioned" } as never;

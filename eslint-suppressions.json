@@ -35,73 +35,40 @@
       "count": 1
     }
   },
-  "apps/web/components/library-quick-find.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/components/pan115-qr-connect.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/components/pan123-qr-connect.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/components/request-track-button.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/components/season-request-menu.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/components/settings/connect-wizard.tsx": {
-    "complexity": {
-      "count": 3
-    },
-    "max-lines": {
-      "count": 1
-    }
-  },
-  "apps/web/components/settings/remote-access-section.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/components/settings/update-section.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/components/tianyi-qr-connect.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/components/title-action-buttons.tsx": {
-    "complexity": {
-      "count": 2
-    }
-  },
-  "apps/web/components/user-message-thread.tsx": {
-    "complexity": {
-      "count": 1
-    },
-    "max-lines": {
-      "count": 1
-    }
-  },
   "apps/web/features/acquisition/application/worker-runner-service.ts": {
     "complexity": {
       "count": 1
     },
     "max-lines": {
       "count": 1
+    }
+  },
+  "apps/web/features/acquisition/components/request-track-button.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/acquisition/components/season-request-menu.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/acquisition/components/user-message-thread.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/features/catalog/components/library-quick-find.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/catalog/components/title-action-buttons.tsx": {
+    "complexity": {
+      "count": 2
     }
   },
   "apps/web/features/settings-system/application/auto-update-service.ts": {
@@ -124,6 +91,24 @@
       "count": 1
     }
   },
+  "apps/web/features/settings-system/components/settings/connect-wizard.tsx": {
+    "complexity": {
+      "count": 3
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/components/settings/remote-access-section.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/components/settings/update-section.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
   "apps/web/features/settings-system/core/update-state.ts": {
     "complexity": {
       "count": 1
@@ -131,6 +116,21 @@
   },
   "apps/web/features/storage-drives/application/drive-service.ts": {
     "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/features/storage-drives/components/pan115-qr-connect.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/storage-drives/components/pan123-qr-connect.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/storage-drives/components/tianyi-qr-connect.tsx": {
+    "complexity": {
       "count": 1
     }
   },

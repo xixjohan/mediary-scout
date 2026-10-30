@@ -1,4 +1,5 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -24,7 +25,7 @@ import { describe, expect, it } from "vitest";
  * 注释绕过——两类假绿在 /api 侧已经踩过（见 route-auth-inventory.test.ts）。
  */
 
-const WEB_ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+const WEB_ROOT = fileURLToPath(new URL("../../..", import.meta.url)).replace(/\/$/, "");
 
 /** 文件里所有会进到用户眼前的文本：字符串字面量 + JSX 文本（不含注释）。 */
 function userVisibleText(source: string): string[] {
@@ -40,7 +41,18 @@ function userVisibleText(source: string): string[] {
 }
 
 function read(rel: string): string {
-  return readFileSync(`${WEB_ROOT}/${rel}`, "utf8");
+  const fullPath = `${WEB_ROOT}/${rel}`;
+  const content = readFileSync(fullPath, "utf8");
+  const facadeMatch = content.match(/export\s+\*\s+from\s+["']([^"']+)["']/);
+  if (facadeMatch) {
+    const ext = rel.endsWith(".tsx") ? ".tsx" : ".ts";
+    const targetRel = facadeMatch[1]!.replace(/\.js$/, "") + ext;
+    const resolvedPath = resolve(dirname(fullPath), targetRel);
+    if (existsSync(resolvedPath)) {
+      return readFileSync(resolvedPath, "utf8");
+    }
+  }
+  return content;
 }
 
 /** A/C 类：追踪列表语义，必须已改成「订阅」、不得再出现「媒体库」。 */

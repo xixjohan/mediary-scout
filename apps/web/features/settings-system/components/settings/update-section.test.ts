@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 import { createElement, isValidElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { UpdateView } from "../../lib/update-state";
-import type { UpdaterStatus } from "../../lib/updater-client";
+import type { UpdateView } from "../../../../lib/update-state";
+import type { UpdaterStatus } from "../../../../lib/updater-client";
 import { nextPollStep } from "./update-actions";
 import { ReleaseBlock, UpdateTab } from "./update-section";
 
