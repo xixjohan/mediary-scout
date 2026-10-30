@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AssrtSubtitleProvider, type AssrtFetchJson } from "../../src/subtitle-provider.js";
+import { AssrtSubtitleProvider, type AssrtFetchJson } from "../../src/providers/subtitle-provider.js";
 
 function fakeFetch(byUrl: Record<string, unknown>): AssrtFetchJson {
   return async (url: string) => {

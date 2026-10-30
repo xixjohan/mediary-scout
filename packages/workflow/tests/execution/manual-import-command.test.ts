@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { MediaTitle, ResourceCandidate, ResourceSnapshot, TrackedSeason } from "../../src/domain.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
-import { MANUAL_IMPORT_KIND, buildManualImportReservation, queueManualImport } from "../../src/manual-import-command.js";
-import { MANUAL_IMPORT_TTL_MS } from "../../src/manual-import-resolver.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
+import { MANUAL_IMPORT_KIND, buildManualImportReservation, queueManualImport } from "../../src/execution/manual-import-command.js";
+import { MANUAL_IMPORT_TTL_MS } from "../../src/execution/manual-import-resolver.js";
 
 /**
  * 批次 3 ①：手动入库的排队命令。

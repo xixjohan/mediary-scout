@@ -1,6 +1,6 @@
-import type { AgentMemoryStore } from "../agent-memory.js";
+import type { AgentMemoryStore } from "../domain/agent-memory.js";
 import type { LanguageModel } from "ai";
-import type { ResourceProvider, StorageExecutor } from "../ports.js";
+import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
 import type { AuditEvent } from "../domain.js";
 import {
   bindRecoveryDirectories,
@@ -19,7 +19,7 @@ import type { DeadLinkStore } from "./dead-links.js";
 import { readLandedSize } from "./landed-size.js";
 import type { AgentToolEvent } from "./activity.js";
 import { runAcquisitionV2, type AcquisitionV2Outcome, type RunAcquisitionV2Request, type RunAcquisitionV2Result } from "./orchestrator.js";
-import type { JevJudge } from "../jev-judge.js";
+import type { JevJudge } from "../providers/jev-judge.js";
 import { syncSeasonNeed } from "./sync-need.js";
 import { RunStateMachine, type Compensation, type RunState } from "./run-state-machine.js";
 import type { SearchProfile } from "./search-profile.js";

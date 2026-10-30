@@ -1,7 +1,7 @@
 // packages/workflow/tests/jev-prefilter-provider.test.ts
 import { describe, expect, it } from "vitest";
-import { isTitleless, JEV_CIRCUIT_BREAKER_FAILURES, JevPrefilterProvider } from "../../src/jev-prefilter-provider.js";
-import { JEV_MODEL, type JevJudge, type JevJudgeInput } from "../../src/jev-judge.js";
+import { isTitleless, JEV_CIRCUIT_BREAKER_FAILURES, JevPrefilterProvider } from "../../src/providers/jev-prefilter-provider.js";
+import { JEV_MODEL, type JevJudge, type JevJudgeInput } from "../../src/providers/jev-judge.js";
 import type { ResourceProvider, ResourceSnapshot } from "../../src/index.js";
 
 function snapshot(titles: Array<string | { title: string; type?: "115" | "magnet" }>): ResourceSnapshot {

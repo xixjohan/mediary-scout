@@ -1,15 +1,15 @@
-import { memoryTitleKey, type AgentMemory, type AgentMemoryStore } from "../agent-memory.js";
+import { memoryTitleKey, type AgentMemory, type AgentMemoryStore } from "../domain/agent-memory.js";
 import { buildReflectionDigest, runMemoryReflection } from "./agent-loop.js";
 import type { LanguageModel } from "ai";
 import type { AgentDecision, AuditEvent, ResourceSnapshot, TransferAttempt } from "../domain.js";
-import type { ResourceProvider, StorageExecutor } from "../ports.js";
+import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
 import type { AcquisitionAgentResult } from "./agent-loop.js";
 import type { AgentToolEvent } from "./activity.js";
 import { CandidateRegistry } from "./candidate-registry.js";
 import type { DeadLinkStore } from "./dead-links.js";
-import type { PolicyResource } from "../subscription-policy.js";
+import type { PolicyResource } from "../execution/subscription-policy.js";
 import { linkHistoryByKey } from "./link-history.js";
-import { brandSupportsSubtitleDirectLink } from "../storage-brands.js";
+import { brandSupportsSubtitleDirectLink } from "../storage/storage-brands.js";
 import { resourceLinkKey } from "./resource-link.js";
 import { resourceFingerprintMatches, type LinkHistoryRow } from "../user-requests.js";
 import type { UserRequestPromptInput } from "./user-request-block.js";
@@ -17,10 +17,10 @@ import { RealResourceProviderV2 } from "./real-provider-adapter.js";
 import { RealStorageV2 } from "./real-storage-adapter.js";
 import { budgetSoftThreshold } from "./agent-loop-guards.js";
 import { TaskSandbox } from "./sandbox.js";
-import { JANITOR_LIST_DEPTH } from "../staging-depth.js";
-import { AssrtSubtitleProvider, type AssrtProviderPort } from "../subtitle-provider.js";
-import { JevPrefilterProvider } from "../jev-prefilter-provider.js";
-import type { JevJudge, JevJudgeTarget } from "../jev-judge.js";
+import { JANITOR_LIST_DEPTH } from "../execution/staging-depth.js";
+import { AssrtSubtitleProvider, type AssrtProviderPort } from "../providers/subtitle-provider.js";
+import { JevPrefilterProvider } from "../providers/jev-prefilter-provider.js";
+import type { JevJudge, JevJudgeTarget } from "../providers/jev-judge.js";
 import type { SearchProfile } from "./search-profile.js";
 import {
   needForMovie,

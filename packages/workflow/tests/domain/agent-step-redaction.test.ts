@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REDACTED, redactAgentStepArgs, redactSensitive } from "../../src/agent-step-redaction.js";
+import { REDACTED, redactAgentStepArgs, redactSensitive } from "../../src/domain/agent-step-redaction.js";
 
 /**
  * 脱敏是日志页（W4 L1）的前置条件，不是后续补丁。

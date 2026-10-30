@@ -3,8 +3,8 @@ import { runAcquisitionAgent, type AcquisitionAgentResult } from "./agent-loop.j
 import type { AgentToolEvent } from "./activity.js";
 import type { TaskSandbox } from "./sandbox.js";
 import { skillIndexForAgent } from "./skill.js";
-import { getStorageBrand } from "../storage-brands.js";
-import { stripMemoryFence, type AgentMemory } from "../agent-memory.js";
+import { getStorageBrand } from "../storage/storage-brands.js";
+import { stripMemoryFence, type AgentMemory } from "../domain/agent-memory.js";
 import { LINK_HISTORY_PROMPT } from "./link-history.js";
 import { hasUserRequests, userRequestBlock, type UserRequestPromptInput } from "./user-request-block.js";
 

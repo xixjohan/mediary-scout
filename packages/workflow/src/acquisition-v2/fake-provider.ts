@@ -10,7 +10,7 @@
  * on the id rather than assume one snapshot per search.
  */
 
-import type { MergedSourceHealth } from "../resource-source-health.js";
+import type { MergedSourceHealth } from "../domain/resource-source-health.js";
 
 export interface SimResourceCandidate {
   id: string;

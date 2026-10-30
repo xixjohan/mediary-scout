@@ -5,7 +5,7 @@ import {
   decisionFromSelection,
   type CandidateSelection,
   type CandidateSelector,
-} from "../../src/candidate-selector.js";
+} from "../../src/execution/candidate-selector.js";
 
 /**
  * 批次 3 第四项：CandidateSelector 端口 + agent/human 两实现。

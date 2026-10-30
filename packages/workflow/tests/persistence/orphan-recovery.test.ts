@@ -3,7 +3,7 @@ import {
   isQueueClaimableKind,
   recoverOrphanRunningRun,
   ORPHAN_REQUEUE_MAX,
-} from "../../src/repository.js";
+} from "../../src/persistence/repository.js";
 import type { WorkflowKind, WorkflowRun } from "../../src/domain.js";
 
 function runningRun(kind: WorkflowKind, over: Partial<WorkflowRun> = {}): WorkflowRun {

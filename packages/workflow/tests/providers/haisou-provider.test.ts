@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { HaisouResourceProvider } from "../../src/haisou-provider.js";
-import type { HaisouFetchJson } from "../../src/haisou-provider.js";
+import { HaisouResourceProvider } from "../../src/providers/haisou-provider.js";
+import type { HaisouFetchJson } from "../../src/providers/haisou-provider.js";
 
 function okResponse(items: unknown[]) {
   return { code: 0, requestId: "idr_api_test", result: { items, pagination: { page: 1, pageSize: 100, total: items.length } } };

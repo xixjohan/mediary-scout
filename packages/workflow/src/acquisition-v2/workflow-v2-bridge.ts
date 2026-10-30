@@ -14,7 +14,7 @@ import {
   type TransferAttempt,
   type WorkflowStatus,
 } from "../domain.js";
-import { buildReplacementReport, buildSeasonReport, buildSeriesReport, formatReportPushText } from "../notification-report.js";
+import { buildReplacementReport, buildSeasonReport, buildSeriesReport, formatReportPushText } from "../domain/notification-report.js";
 import { classifyTransferBlock } from "./transfer-block.js";
 import { classifySearchSourceFault } from "./search-source-fault.js";
 import type { RunAcquisitionV2WorkflowResult } from "./workflow-v2.js";

@@ -9,7 +9,7 @@ import {
   type StorageExecutor,
 } from "../../src/index.js";
 import { runAcquisitionV2Workflow } from "../../src/acquisition-v2/workflow-v2.js";
-import { runStagingRecoveryV2AndPersist } from "../../src/runner-v2.js";
+import { runStagingRecoveryV2AndPersist } from "../../src/execution/runner-v2.js";
 import { Storage115Simulator, type SimTreeFile } from "../../src/acquisition-v2/storage-115-simulator.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
 
@@ -1208,7 +1208,7 @@ describe("staging_recovery", () => {
   });
 
   it("auto-requeues a staging_recovery run when the free-preset LLM fails with an HTTP 503 status error", async () => {
-    const { FREE_LLM_PRESET } = await import("../../src/agent-model.js");
+    const { FREE_LLM_PRESET } = await import("../../src/domain/agent-model.js");
     const repo = new InMemoryWorkflowRepository();
     const scope = { accountId: "acct", connectedStorageId: "drive" };
     const title = {

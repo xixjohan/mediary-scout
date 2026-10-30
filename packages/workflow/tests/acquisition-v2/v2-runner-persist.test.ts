@@ -5,11 +5,11 @@ import {
   runSeriesInitializationV2AndPersist,
   runType2InitializationV2AndPersist,
   runType3MonitoringV2AndPersist,
-} from "../../src/runner-v2.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
+} from "../../src/execution/runner-v2.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
 import { createEpisodeStates, type MediaTitle, type ResourceSnapshot, type TrackedSeason } from "../../src/domain.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },

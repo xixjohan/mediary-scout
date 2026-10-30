@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
-import { runType2InitializationV2AndPersist } from "../../src/runner-v2.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
+import { runType2InitializationV2AndPersist } from "../../src/execution/runner-v2.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
 import type { MediaTitle, ResourceSnapshot, TrackedSeason } from "../../src/domain.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },

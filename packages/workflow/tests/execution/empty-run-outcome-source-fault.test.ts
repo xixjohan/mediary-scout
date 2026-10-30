@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emptyRunOutcome } from "../../src/notification-report.js";
+import { emptyRunOutcome } from "../../src/domain/notification-report.js";
 
 /**
  * 这是整个 PR 真正要证明的东西:源挂了的时候,用户读到的那句话变了。

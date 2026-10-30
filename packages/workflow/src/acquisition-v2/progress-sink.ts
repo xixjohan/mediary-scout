@@ -1,4 +1,4 @@
-import type { WorkflowRepository } from "../repository.js";
+import type { WorkflowRepository } from "../persistence/repository.js";
 import { phaseProgress, type AgentToolEvent } from "./activity.js";
 
 /**

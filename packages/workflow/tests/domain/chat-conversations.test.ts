@@ -3,9 +3,9 @@ import {
   groupConversationsByDate,
   heuristicConversationTitle,
   type ChatConversationSummary,
-} from "../../src/chat-conversations.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
-import { createSqliteWorkflowRepository } from "../../src/sqlite.js";
+} from "../../src/domain/chat-conversations.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
+import { createSqliteWorkflowRepository } from "../../src/persistence/sqlite.js";
 
 describe("heuristicConversationTitle", () => {
   it("strips common user prompt prefixes and trailing punctuation", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { withBrandPacing } from "../../src/brand-pacing.js";
+import { withBrandPacing } from "../../src/storage/brand-pacing.js";
 
 /**
  * 任务单 S3.3：给网盘 client 包一层品牌限速（治理文档参数：115 漏桶 1.2s、

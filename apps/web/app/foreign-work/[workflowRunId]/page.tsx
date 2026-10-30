@@ -3,9 +3,9 @@ import { PageLoginGuard } from "../../../lib/page-auth-guard";
 import Link from "next/link";
 import { connection } from "next/server";
 import { ArrowLeft, Film, TriangleAlert } from "lucide-react";
-import { AppSidebar } from "../../../components/app-sidebar";
-import { GitHubNameplate } from "../../../components/github-nameplate";
-import { ForeignWorkImportForm } from "../../../components/foreign-work-import-form";
+import { AppSidebar } from "../../../components/layout/app-sidebar";
+import { GitHubNameplate } from "../../../components/layout/github-nameplate";
+import { ForeignWorkImportForm } from "../../../features/acquisition/components/foreign-work-import-form";
 import { getForeignWorkReview } from "../../../lib/workflow-runtime";
 
 function ForeignWorkPageInner({

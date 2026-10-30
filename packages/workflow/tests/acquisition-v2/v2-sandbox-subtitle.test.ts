@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { SUBTITLE_RENEWAL_CHUNK_SIZE, TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
 import { Storage115Simulator, type TransferAttemptResult } from "../../src/acquisition-v2/storage-115-simulator.js";
-import { Pan115AuthError } from "../../src/pan115-cookie-client.js";
-import type { AssrtCandidate, AssrtSubtitleFile } from "../../src/subtitle-provider.js";
+import { Pan115AuthError } from "../../src/storage/pan115-cookie-client.js";
+import type { AssrtCandidate, AssrtSubtitleFile } from "../../src/providers/subtitle-provider.js";
 import { buildSandboxToolSet } from "../../src/acquisition-v2/agent-loop.js";
 import { STAGING_RECOVERY_PROMPT } from "../../src/acquisition-v2/task-agents.js";
 

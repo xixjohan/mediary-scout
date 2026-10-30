@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ensureSeasonAcquisitionDirectories } from "../../src/acquisition-v2/directory-lifecycle.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
 
 describe("ensureSeasonAcquisitionDirectories — verify-or-create the 115 directory tree", () => {
   it("creates show dir under category, each Season dir under show, staging under show (never inside a season)", async () => {

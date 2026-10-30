@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CandidateRegistry } from "../../src/acquisition-v2/candidate-registry.js";
 import { RealResourceProviderV2 } from "../../src/acquisition-v2/real-provider-adapter.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot, SnapshotPrefilter } from "../../src/domain.js";
 
 function realSnapshot(): ResourceSnapshot {

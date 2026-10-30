@@ -6,12 +6,12 @@ import {
   planPatrolScope,
   type PatrolCandidate,
   type PolicyLookup,
-} from "../../src/patrol-scope.js";
+} from "../../src/execution/patrol-scope.js";
 import {
   EMPTY_POLICY,
   type SubscriptionPolicy,
-} from "../../src/subscription-policy.js";
-import type { StoredSubscriptionPolicy } from "../../src/subscription-policy-store.js";
+} from "../../src/execution/subscription-policy.js";
+import type { StoredSubscriptionPolicy } from "../../src/persistence/subscription-policy-store.js";
 
 /**
  * 批次 5 的巡检成本门（plan §4.1 成本模型）。

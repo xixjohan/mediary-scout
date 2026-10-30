@@ -3,9 +3,9 @@ import { TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
 import { RealResourceProviderV2 } from "../../src/acquisition-v2/real-provider-adapter.js";
 import { CandidateRegistry } from "../../src/acquisition-v2/candidate-registry.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "../../src/acquisition-v2/fake-provider.js";
-import { JEV_UNCERTAIN_LEGEND } from "../../src/jev-judge.js";
+import { JEV_UNCERTAIN_LEGEND } from "../../src/providers/jev-judge.js";
 
 describe("TaskSandbox — searchResources (system-budgeted, dedup, snapshot-bound)", () => {
   it("returns the full candidate snapshot for a fresh keyword", async () => {

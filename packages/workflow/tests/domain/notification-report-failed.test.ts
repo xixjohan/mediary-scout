@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatReportPushText } from "../../src/notification-report.js";
+import { formatReportPushText } from "../../src/domain/notification-report.js";
 import type { NotificationReport } from "../../src/domain.js";
 
 const base: NotificationReport = {

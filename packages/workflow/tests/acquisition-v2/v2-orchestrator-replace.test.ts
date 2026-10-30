@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionV2, type RunAcquisitionV2Request } from "../../src/acquisition-v2/orchestrator.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceCandidate, VerifiedFile } from "../../src/domain.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
 import { deadLinkKey } from "../../src/acquisition-v2/dead-links.js";
 import { resourceLinkKey } from "../../src/acquisition-v2/resource-link.js";
 import { resourceFingerprintMatches } from "../../src/user-requests.js";

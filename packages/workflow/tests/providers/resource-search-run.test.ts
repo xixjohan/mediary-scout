@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MediaTitle, ResourceSnapshot, TrackedSeason } from "../../src/domain.js";
 import { isUserVisibleWorkflowKind } from "../../src/domain.js";
-import { RESOURCE_SEARCH_KIND, buildResourceSearchRun, resourceSearchIsUserVisible } from "../../src/resource-search-run.js";
+import { RESOURCE_SEARCH_KIND, buildResourceSearchRun, resourceSearchIsUserVisible } from "../../src/providers/resource-search-run.js";
 
 /**
  * 批次 3：把用户态搜索的快照落成一个 run。

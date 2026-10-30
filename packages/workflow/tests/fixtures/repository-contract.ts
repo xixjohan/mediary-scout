@@ -4,14 +4,14 @@ import {
   type ReserveWorkflowRunInput,
   type TrackedSeasonState,
   type WorkflowRepository,
-} from "../../src/repository.js";
-import type { Account } from "../../src/account-credentials.js";
+} from "../../src/persistence/repository.js";
+import type { Account } from "../../src/storage/account-credentials.js";
 import type { WorkflowKind } from "../../src/domain.js";
 import type { TransferAttempt } from "../../src/domain.js";
 import { workflowPersistenceFixture } from "./workflow-fixtures.js";
-import { queueReplaceRequest } from "../../src/replace-request.js";
-import { claimNextQueuedRun } from "../../src/repository.js";
-import { handleWorkflowRunFailure } from "../../src/worker.js";
+import { queueReplaceRequest } from "../../src/execution/replace-request.js";
+import { claimNextQueuedRun } from "../../src/persistence/repository.js";
+import { handleWorkflowRunFailure } from "../../src/execution/worker.js";
 
 /** A factory that yields a FRESH, empty repository and a teardown. SQLite/InMemory
  *  return async; InMemory is sync — accept both. */

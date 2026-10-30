@@ -13,7 +13,7 @@ import {
   parseTvCandidateId,
   type MediaSource,
   type MediaTitleId,
-} from "../../src/media-identity.js";
+} from "../../src/domain/media-identity.js";
 
 describe("MediaSource", () => {
   it("**收敛来源**——支持 tmdb 与 douban", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GuangYaDeviceLogin } from "../../src/guangya-device-login.js";
+import { GuangYaDeviceLogin } from "../../src/storage/guangya-device-login.js";
 
 // Shapes captured from the real account.guangyapan.com on 2026-10-26.
 const STARTED = {

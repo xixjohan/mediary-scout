@@ -4,22 +4,22 @@ import { driveConnectionBadge } from "../../lib/settings-badge";
 import { maskProviderUid } from "../../lib/mask-provider-uid";
 import { connection } from "next/server";
 import { Bell, Bot, Cable, CalendarClock, Clapperboard, ExternalLink, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
-import { AppSidebar } from "../../components/app-sidebar";
-import { AddDriveBrandTabs } from "../../components/add-drive-brand-tabs";
-import { TestConnectionButton } from "../../components/test-connection-button";
-import { UnbindStorageButton } from "../../components/unbind-storage-button";
-import { PushNotificationForm } from "../../components/push-notification-form";
-import { PreferredLanguageForm } from "../../components/preferred-language-form";
-import { QualityPreferenceForm } from "../../components/quality-preference-form";
-import { LlmConfigForm } from "../../components/llm-config-form";
-import { RestoreFreeLlmButton } from "../../components/restore-free-llm-button";
-import { TmdbApiKeyForm } from "../../components/tmdb-api-key-form";
-import { AssrtTokenForm } from "../../components/assrt-token-form";
-import { ProwlarrConfigForm } from "../../components/prowlarr-config-form";
-import { HaisouConfigForm } from "../../components/haisou-config-form";
-import { JevPrefilterForm } from "../../components/jev-prefilter-form";
-import { ServiceBlock } from "../../components/service-block";
-import { AgentMemoryNotes, AgentMemoryStats } from "../../components/agent-memory-panel";
+import { AppSidebar } from "../../components/layout/app-sidebar";
+import { AddDriveBrandTabs } from "../../features/storage-drives/components/add-drive-brand-tabs";
+import { TestConnectionButton } from "../../features/settings-system/components/test-connection-button";
+import { UnbindStorageButton } from "../../features/storage-drives/components/unbind-storage-button";
+import { PushNotificationForm } from "../../features/settings-system/components/push-notification-form";
+import { PreferredLanguageForm } from "../../features/settings-system/components/preferred-language-form";
+import { QualityPreferenceForm } from "../../features/settings-system/components/quality-preference-form";
+import { LlmConfigForm } from "../../features/settings-system/components/llm-config-form";
+import { RestoreFreeLlmButton } from "../../features/settings-system/components/restore-free-llm-button";
+import { TmdbApiKeyForm } from "../../features/settings-system/components/tmdb-api-key-form";
+import { AssrtTokenForm } from "../../features/settings-system/components/assrt-token-form";
+import { ProwlarrConfigForm } from "../../features/settings-system/components/prowlarr-config-form";
+import { HaisouConfigForm } from "../../features/settings-system/components/haisou-config-form";
+import { JevPrefilterForm } from "../../features/settings-system/components/jev-prefilter-form";
+import { ServiceBlock } from "../../components/layout/service-block";
+import { AgentMemoryNotes, AgentMemoryStats } from "../../features/activity/components/agent-memory-panel";
 import {
   driveLabelerFor,
   isAgentMemoryEnabled,
@@ -28,18 +28,18 @@ import {
   toMemoryItem,
 } from "../../lib/agent-memory-server";
 import { assrtPills, haisouPills, isEnvBackedValue, jevPills, llmPills, pansouPills, prowlarrPills, tmdbPills } from "../../lib/service-status";
-import { PanSouConfigForm } from "../../components/pansou-config-form";
-import { DailySweepForm } from "../../components/daily-sweep-form";
-import { PatrolConcurrencyForm } from "../../components/patrol-concurrency-form";
-import { PatrolNowButton } from "../../components/patrol-now-button";
-import { SettingsTabs } from "../../components/settings-tabs";
-import { PasswordChangeForm } from "../../components/password-change-form";
-import { AccountAdminPanel } from "../../components/account-admin-panel";
-import { RemoteAccessSection } from "../../components/settings/remote-access-section";
-import { ApiKeySection } from "../../components/settings/api-key-section";
-import { UpdateSection } from "../../components/settings/update-section";
-import { GitHubNameplate } from "../../components/github-nameplate";
-import { SettingsActionInbox } from "../../components/settings-action-inbox";
+import { PanSouConfigForm } from "../../features/settings-system/components/pansou-config-form";
+import { DailySweepForm } from "../../features/settings-system/components/daily-sweep-form";
+import { PatrolConcurrencyForm } from "../../features/settings-system/components/patrol-concurrency-form";
+import { PatrolNowButton } from "../../features/settings-system/components/patrol-now-button";
+import { SettingsTabs } from "../../features/settings-system/components/settings-tabs";
+import { PasswordChangeForm } from "../../features/settings-system/components/password-change-form";
+import { AccountAdminPanel } from "../../features/auth/components/account-admin-panel";
+import { RemoteAccessSection } from "../../features/settings-system/components/settings/remote-access-section";
+import { ApiKeySection } from "../../features/settings-system/components/settings/api-key-section";
+import { UpdateSection } from "../../features/settings-system/components/settings/update-section";
+import { GitHubNameplate } from "../../components/layout/github-nameplate";
+import { SettingsActionInbox } from "../../features/settings-system/components/settings-action-inbox";
 import { loadSettingsAttentionSummary, markSettingsAttentionSeen } from "../../lib/settings-attention-server";
 import {
   getAccountConnectedStorages,

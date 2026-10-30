@@ -2,7 +2,7 @@ import Link from "next/link";
 import { Film, RefreshCw, Search } from "lucide-react";
 import { getDiscoverFeed, type TrendingKind } from "../../../lib/trending";
 import { getDoubanRatings } from "../../../lib/douban-rating";
-import { PaginationBar } from "../../../components/pagination-bar";
+import { PaginationBar } from "../../../components/ui/pagination-bar";
 
 const POSTER = "https://image.tmdb.org/t/p/w342";
 

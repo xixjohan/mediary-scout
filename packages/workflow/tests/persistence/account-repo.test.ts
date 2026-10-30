@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
 import { DEFAULT_ACCOUNT_ID } from "../../src/domain.js";
 
 function seededDefault(repo: InMemoryWorkflowRepository) {

@@ -5,7 +5,7 @@ import {
   signFrodoRequest,
   DEFAULT_FRODO_KEY,
   DEFAULT_FRODO_SECRET,
-} from "../../src/douban-provider.js";
+} from "../../src/providers/douban-provider.js";
 import type { MediaSearchCandidate, MediaSearchProvider } from "../../src/search-view.js";
 
 describe("signFrodoRequest", () => {

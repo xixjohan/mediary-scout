@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionAgent } from "../../src/acquisition-v2/agent-loop.js";
-import { AgentContentFilterError } from "../../src/agent-error.js";
+import { AgentContentFilterError } from "../../src/domain/agent-error.js";
 import { isTransientAcquisitionError } from "../../src/acquisition-v2/transient-error.js";
 import { TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";

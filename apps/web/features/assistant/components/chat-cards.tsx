@@ -21,7 +21,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { ActionCardPayload, ToolCallItem } from "../../../lib/chat-agent-service";
-import { MarkdownContent } from "../../../components/markdown-content";
+import { MarkdownContent } from "../../../components/ui/markdown-content";
 
 export interface ChatMessage {
   id: string;

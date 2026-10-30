@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { FallbackResourceProvider } from "../../src/fallback-provider.js";
-import { PanSouAuthError } from "../../src/resource-source-health.js";
-import { PanSouResourceProvider } from "../../src/pansou-provider.js";
+import { FallbackResourceProvider } from "../../src/providers/fallback-provider.js";
+import { PanSouAuthError } from "../../src/domain/resource-source-health.js";
+import { PanSouResourceProvider } from "../../src/providers/pansou-provider.js";
 
 /** 记录到的每一次出站请求。登录与搜索都走可注入的 fetchJson/loginJson，
  *  所以一个数组就能同时断言「登录发了什么」与「搜索带了什么头」。 */

@@ -1,10 +1,10 @@
 import type { ResourceSnapshot } from "../domain.js";
-import type { ResourceProvider } from "../ports.js";
+import type { ResourceProvider } from "../domain/ports.js";
 import { resourceFingerprintMatches } from "../user-requests.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import { deadLinkKey, type DeadLinkStore } from "./dead-links.js";
 import { resourceLinkKey } from "./resource-link.js";
-import type { PolicyResource } from "../subscription-policy.js";
+import type { PolicyResource } from "../execution/subscription-policy.js";
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 
 /**

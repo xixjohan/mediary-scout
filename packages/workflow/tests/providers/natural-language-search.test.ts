@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
-import { parseResolvedTitles, resolveTitles } from "../../src/natural-language-search.js";
+import { parseResolvedTitles, resolveTitles } from "../../src/providers/natural-language-search.js";
 import { getSearchPageView, InMemoryMediaSearchCache, stripSeasonMarkers } from "../../src/search-view.js";
 import { InMemorySearchInterpretationCache } from "../../src/search-view.js";
 import type { MediaSearchCandidate, MediaSearchProvider } from "../../src/search-view.js";
-import type { WorkflowRepository } from "../../src/repository.js";
+import type { WorkflowRepository } from "../../src/persistence/repository.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },

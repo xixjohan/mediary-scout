@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { MediaTitle, ResourceSnapshot, TransferAttempt } from "../../src/domain.js";
-import type { StorageExecutor } from "../../src/ports.js";
-import { InMemoryWorkflowRepository } from "../../src/repository.js";
-import { MANUAL_IMPORT_TTL_MS } from "../../src/manual-import-resolver.js";
-import { runQueuedManualImport, transitionClaimedRunStatus } from "../../src/manual-import-worker.js";
-import { Pan115AuthError } from "../../src/pan115-cookie-client.js";
+import type { StorageExecutor } from "../../src/domain/ports.js";
+import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
+import { MANUAL_IMPORT_TTL_MS } from "../../src/execution/manual-import-resolver.js";
+import { runQueuedManualImport, transitionClaimedRunStatus } from "../../src/execution/manual-import-worker.js";
+import { Pan115AuthError } from "../../src/storage/pan115-cookie-client.js";
 
 /**
  * The worker half of manual import.

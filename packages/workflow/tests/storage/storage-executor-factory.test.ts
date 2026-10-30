@@ -5,9 +5,9 @@ import {
   Storage115Executor,
   STORAGE_BRANDS,
 } from "../../src/index.js";
-import { GuangYaStorageExecutor } from "../../src/guangya-storage-executor.js";
-import { Pan123StorageExecutor } from "../../src/pan123-storage-executor.js";
-import { TianyiStorageExecutor } from "../../src/tianyi-storage-executor.js";
+import { GuangYaStorageExecutor } from "../../src/storage/guangya-storage-executor.js";
+import { Pan123StorageExecutor } from "../../src/storage/pan123-storage-executor.js";
+import { TianyiStorageExecutor } from "../../src/storage/tianyi-storage-executor.js";
 import * as barrel from "../../src/index.js";
 
 describe("createExecutorForBrand", () => {

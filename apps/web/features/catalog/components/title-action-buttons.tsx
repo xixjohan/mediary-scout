@@ -9,10 +9,10 @@ import {
   type RequestTrackingActionResult,
 } from "../../../app/actions";
 import { runAction } from "../../../lib/run-action";
-import { useAcquisitionLock } from "../../../components/acquisition-lock";
-import { AcquireResultNotice, isLockedResult } from "../../../components/request-state";
+import { useAcquisitionLock } from "../../acquisition/components/acquisition-lock";
+import { AcquireResultNotice, isLockedResult } from "../../acquisition/components/request-state";
 import { isDemoModeClient } from "../../../lib/demo-mode";
-import { DemoAcquirePlayback } from "../../../components/demo-acquire-playback";
+import { DemoAcquirePlayback } from "../../acquisition/components/demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import { useDemoAcquiredTmdbIds } from "../../../lib/use-demo-session";
 

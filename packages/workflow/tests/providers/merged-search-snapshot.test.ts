@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ResourceCandidate, ResourceSnapshot } from "../../src/domain.js";
-import { buildMergedSearchSnapshot } from "../../src/merged-search-snapshot.js";
-import { resolveManualImportCandidate } from "../../src/manual-import-resolver.js";
+import { buildMergedSearchSnapshot } from "../../src/providers/merged-search-snapshot.js";
+import { resolveManualImportCandidate } from "../../src/execution/manual-import-resolver.js";
 
 /**
  * 批次 3：把关键词阶梯的多份快照合并成用户看到的那一份。

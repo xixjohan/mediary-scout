@@ -8,7 +8,7 @@ import {
   llmConfigError,
   normalizeLlmBaseUrl,
   sanitizeLlmApiKey,
-} from "../../src/agent-model.js";
+} from "../../src/domain/agent-model.js";
 
 /**
  * The live vercel-ai model factory — RESTORED after Phase 8 (764ae19) deleted it

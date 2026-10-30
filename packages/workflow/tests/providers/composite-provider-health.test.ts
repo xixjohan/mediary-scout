@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { CompositeResourceProvider } from "../../src/composite-provider.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import { CompositeResourceProvider } from "../../src/providers/composite-provider.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
-import { PanSouProtocolError } from "../../src/resource-source-health.js";
+import { PanSouProtocolError } from "../../src/domain/resource-source-health.js";
 
 function stubProvider(over: Partial<ResourceSnapshot> = {}): ResourceProvider {
   return {

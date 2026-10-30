@@ -4,7 +4,7 @@ import { Storage115Simulator } from "../../src/acquisition-v2/storage-115-simula
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
 import { RealResourceProviderV2 } from "../../src/acquisition-v2/real-provider-adapter.js";
 import { CandidateRegistry } from "../../src/acquisition-v2/candidate-registry.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
 
 async function setup(

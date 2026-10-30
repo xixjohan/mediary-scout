@@ -8,7 +8,7 @@ import { CalendarClock, CheckCircle2, Clock3, LoaderCircle, Search, TriangleAler
 // drags server-only code into the client bundle (see request-state.tsx).
 import { showHref } from "@media-track/workflow/scope";
 import type { InProgressTitle, LibraryWallEntry } from "../../../lib/title-hub";
-import { AcquiringDetailModal } from "../../../components/acquiring-detail-modal";
+import { AcquiringDetailModal } from "../../acquisition/components/acquiring-detail-modal";
 
 /** Mirror of page.tsx's workspaceBasePath: "/" is the account's primary drive,
  *  "/w/<id>" a specific drive. Library links must route within the workspace. */

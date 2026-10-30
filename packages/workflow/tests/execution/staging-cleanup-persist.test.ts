@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { MediaTitle, TrackedSeason, WorkflowRun } from "../../src/domain.js";
-import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } from "../../src/repository.js";
+import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } from "../../src/persistence/repository.js";
 import { attachStagingCleanupUnverified, stagingCleanupUnverifiedAuditEvent } from "../../src/acquisition-v2/directory-lifecycle.js";
-import { handleWorkflowRunFailure } from "../../src/worker.js";
+import { handleWorkflowRunFailure } from "../../src/execution/worker.js";
 
 const title: MediaTitle = {
   id: "tmdb_tv_1",

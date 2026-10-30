@@ -4,7 +4,7 @@ import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.j
 import { Storage115Simulator } from "../../src/acquisition-v2/storage-115-simulator.js";
 import { RealStorageV2 } from "../../src/acquisition-v2/real-storage-adapter.js";
 import { CandidateRegistry } from "../../src/acquisition-v2/candidate-registry.js";
-import type { StorageExecutor, UnparsedVideoFile } from "../../src/ports.js";
+import type { StorageExecutor, UnparsedVideoFile } from "../../src/domain/ports.js";
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, VerifiedFile } from "../../src/domain.js";
 
 /**

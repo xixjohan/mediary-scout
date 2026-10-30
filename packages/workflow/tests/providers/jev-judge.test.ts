@@ -16,7 +16,7 @@ import {
   normalizedTargetNames,
   titleContainsAny,
   titleContainsTarget,
-} from "../../src/jev-judge.js";
+} from "../../src/providers/jev-judge.js";
 import type { ResourceSnapshot, SnapshotPrefilter } from "../../src/domain.js";
 
 describe("buildJevQuestions", () => {

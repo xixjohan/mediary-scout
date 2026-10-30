@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MediaTitle } from "../../src/domain.js";
-import { buildTitleSearchKeywords, titleSearchKeywordStrings } from "../../src/title-search-keywords.js";
-import { normalizeSearchKeyword } from "../../src/planning-search-gate.js";
+import { buildTitleSearchKeywords, titleSearchKeywordStrings } from "../../src/providers/title-search-keywords.js";
+import { normalizeSearchKeyword } from "../../src/providers/planning-search-gate.js";
 
 /**
  * 阶梯顺序是设计的一部分：先本地化标题（最具体），再原名/别名，year 附在裸标题后

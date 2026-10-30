@@ -8,7 +8,7 @@
  * Built test-first, one capability at a time. No real 115, ever.
  */
 
-import type { MediaFileNameParse } from "../media-title-parser.js";
+import type { MediaFileNameParse } from "../providers/media-title-parser.js";
 
 export interface SimTreeFile {
   /** Stable file id (provider file id analogue). */

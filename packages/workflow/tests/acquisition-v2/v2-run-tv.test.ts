@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runTvAcquisitionV2 } from "../../src/acquisition-v2/run-tv-v2.js";
-import { FakeStorageExecutor } from "../../src/fakes.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { MediaTitle, ResourceSnapshot } from "../../src/domain.js";
 
 const USAGE = {

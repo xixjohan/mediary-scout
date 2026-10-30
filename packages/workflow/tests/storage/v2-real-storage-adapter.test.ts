@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { RealStorageV2 } from "../../src/acquisition-v2/real-storage-adapter.js";
 import { CandidateRegistry } from "../../src/acquisition-v2/candidate-registry.js";
-import { GuangYaAuthError } from "../../src/guangya-client.js";
-import { Pan115AuthError } from "../../src/pan115-cookie-client.js";
-import type { StorageExecutor, UnparsedVideoFile } from "../../src/ports.js";
+import { GuangYaAuthError } from "../../src/storage/guangya-client.js";
+import { Pan115AuthError } from "../../src/storage/pan115-cookie-client.js";
+import type { StorageExecutor, UnparsedVideoFile } from "../../src/domain/ports.js";
 import type { PackageTreeFile, ResourceCandidate, TransferAttempt, VerifiedFile } from "../../src/domain.js";
 
 function candidate(id: string): ResourceCandidate {

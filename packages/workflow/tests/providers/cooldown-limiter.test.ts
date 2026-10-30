@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CooldownLimiter } from "../../src/cooldown-limiter.js";
+import { CooldownLimiter } from "../../src/providers/cooldown-limiter.js";
 
 /**
  * 60s 限流的两个方向都要测：放行，以及**拒绝不延长冷却**。

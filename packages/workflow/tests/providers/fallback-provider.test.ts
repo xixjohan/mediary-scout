@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { FallbackResourceProvider } from "../../src/fallback-provider.js";
-import type { ResourceProvider } from "../../src/ports.js";
+import { FallbackResourceProvider } from "../../src/providers/fallback-provider.js";
+import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
-import { PanSouProtocolError } from "../../src/resource-source-health.js";
+import { PanSouProtocolError } from "../../src/domain/resource-source-health.js";
 
 function snapshotWith(over: Partial<ResourceSnapshot>): ResourceSnapshot {
   return {

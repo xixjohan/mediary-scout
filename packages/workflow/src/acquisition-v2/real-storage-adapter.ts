@@ -1,10 +1,10 @@
 import type { TransferAttempt } from "../domain.js";
-import { parseGuangYaShareUrl } from "../guangya-client.js";
-import { parsePan123ShareUrl } from "../pan123-storage-executor.js";
-import type { StorageExecutor } from "../ports.js";
-import { parseQuarkShareUrl, parseUcShareUrl } from "../quark-storage-executor.js";
-import { isBrandStorageAuthError } from "../storage-auth-error.js";
-import { parseTianyiShareUrl } from "../tianyi-storage-executor.js";
+import { parseGuangYaShareUrl } from "../storage/guangya-client.js";
+import { parsePan123ShareUrl } from "../storage/pan123-storage-executor.js";
+import type { StorageExecutor } from "../domain/ports.js";
+import { parseQuarkShareUrl, parseUcShareUrl } from "../storage/quark-storage-executor.js";
+import { isBrandStorageAuthError } from "../storage/storage-auth-error.js";
+import { parseTianyiShareUrl } from "../storage/tianyi-storage-executor.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import {
   deadLinkKey,

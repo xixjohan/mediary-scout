@@ -1,7 +1,7 @@
-import { ensureMediaLibraryDirectory } from "../media-library-folder.js";
+import { ensureMediaLibraryDirectory } from "../domain/media-library-folder.js";
 import type { AuditEvent } from "../domain.js";
-import type { DrivePace } from "../drive-pacer.js";
-import type { StorageExecutor } from "../ports.js";
+import type { DrivePace } from "../storage/drive-pacer.js";
+import type { StorageExecutor } from "../domain/ports.js";
 
 /**
  * Phase 7a — directory lifecycle. Before the agent runs, the system ensures the

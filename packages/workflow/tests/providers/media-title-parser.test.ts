@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseMediaFileName } from "../../src/media-title-parser.js";
+import { parseMediaFileName } from "../../src/providers/media-title-parser.js";
 
 /**
  * 任务单 S3.1（P5）：确定性文件名解析，替代让 LLM 读文件名猜集号/画质。
