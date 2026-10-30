@@ -6,6 +6,7 @@ import {
   parseTvCandidateId,
   type MediaIdParseReason,
 } from "@media-track/workflow";
+import { formatNetworkError } from "./http-proxy";
 import { isLiveSearch } from "./search-provider";
 import { createHash, randomBytes } from "node:crypto";
 import type { LanguageModel } from "ai";
@@ -116,6 +117,7 @@ import {
   type VerifiedFile,
   type WorkflowRepository,
   type StorageProvider,
+  type ConnectedStorage,
   Pan115CookieClient,
   QuarkCookieClient,
   TianyiClient,
@@ -2931,7 +2933,7 @@ export async function testConnection(
       await freezeConnectedStorage(creds.id, error instanceof Error ? error.message : String(error));
       return { ok: false, status: "frozen", message: `网盘登录已失效，请重新绑定同一个${brand.label}。` };
     }
-    return { ok: false, status: creds.status, message: `连接检测失败：${String(error)}` };
+    return { ok: false, status: creds.status, message: `连接检测失败：${formatNetworkError(error)}` };
   }
 }
 
