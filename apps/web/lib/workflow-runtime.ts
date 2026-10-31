@@ -499,3 +499,43 @@ export async function connectPan123Token(rawToken: string, explicitAccountId?: s
   const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
   return connectPan123TokenService(rawToken, accountId);
 }
+
+
+export const NOTIFICATION_WINDOW_DAYS = 7;
+
+export function notificationWindowSince(): string {
+  return new Date(Date.now() - NOTIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
+}
+
+export async function getActiveWorkspaceScope(storageId?: string): Promise<WorkflowScope> {
+  const accountId = await getCurrentAccountId();
+  const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter((s) =>
+    isRegisteredStorageProvider(s.provider),
+  );
+  return { accountId, ...resolveWorkspaceFromParam(storages, storageId) };
+}
+
+export async function resolveGlobalWorkspace(w: string | undefined) {
+  const accountId = await getCurrentAccountId();
+  const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter((s) =>
+    isRegisteredStorageProvider(s.provider),
+  );
+  return { accountId, ...resolveWorkspaceFromParam(storages, w) };
+}
+
+export async function untrackTrackedTitle(
+  tmdbId: number,
+  storageId: string | undefined,
+  mediaKind: "movie" | "tv",
+  seasonNumber?: number,
+) {
+  const scope = await getActiveWorkspaceScope(storageId);
+  return getWorkflowRepository().untrackTitle(tmdbId, scope, mediaKind, seasonNumber);
+}
+
+export async function getRegisteredDriveCount(): Promise<number> {
+  const storages = await getWorkflowRepository().listConnectedStorages(await getCurrentAccountId());
+  return storages.filter((s) => isRegisteredStorageProvider(s.provider)).length;
+}
+
+export const getForeignWorkReview = getForeignWorkReviewService;

@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
-import { changePasswordAction } from "../../../app/actions";
+import { changePasswordAction } from "../../../app/actions/auth-actions";
 import { runAction } from "../../../lib/run-action";
 
 /** Self-service password change. On success all sessions are revoked server-side,

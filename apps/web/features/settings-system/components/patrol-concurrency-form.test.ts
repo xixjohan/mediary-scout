@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../app/actions", () => ({ savePatrolConcurrencyAction: vi.fn() }));
+vi.mock("../../../app/actions/settings-system-actions", () => ({ savePatrolConcurrencyAction: vi.fn() }));
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";

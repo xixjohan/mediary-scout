@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { useRouter } from "../../../lib/use-router";
-import { connectTianyiSsonAction } from "../../../app/actions";
+import { connectTianyiSsonAction } from "../../../app/actions/storage-drives-actions";
 import { runAction } from "../../../lib/run-action";
 
 /**

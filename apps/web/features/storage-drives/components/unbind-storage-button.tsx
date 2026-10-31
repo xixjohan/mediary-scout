@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
-import { unbindStorageAction } from "../../../app/actions";
+import { unbindStorageAction } from "../../../app/actions/storage-drives-actions";
 import { runAction } from "../../../lib/run-action";
 
 /** Per-drive「取消绑定」(settings). Two-step: click → confirm. On success the

@@ -1,6 +1,6 @@
 import { LoaderCircle } from "lucide-react";
 import Link from "next/link";
-import type { RequestTrackingActionResult } from "../../../app/actions";
+import type { RequestTrackingActionResult } from "../../../app/actions/acquisition-actions";
 
 /**
  * A request is "locked" once it has been queued, is already tracked, or has an

@@ -3,7 +3,7 @@
 import { CalendarClock, Check, LoaderCircle, Plus } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
-import { requestTrackingAction, type RequestTrackingActionResult } from "../../../app/actions";
+import { requestTrackingAction, type RequestTrackingActionResult } from "../../../app/actions/acquisition-actions";
 import { runAction } from "../../../lib/run-action";
 // Import the type from the narrow subpath, NOT the root barrel: the barrel
 // is server-heavy, and Turbopack intermittently fails to erase a

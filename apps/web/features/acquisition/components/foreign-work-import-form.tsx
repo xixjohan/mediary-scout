@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Film } from "lucide-react";
-import { importForeignWorkAction, type ForeignWorkImportActionResult } from "../../../app/actions";
+import { importForeignWorkAction, type ForeignWorkImportActionResult } from "../../../app/actions/acquisition-actions";
 import { runAction } from "../../../lib/run-action";
 
 export function ForeignWorkImportForm({

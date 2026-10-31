@@ -34,3 +34,13 @@ export class UnauthenticatedAccountError extends Error {
 export type ExecutionIdentityScope =
   | { type: "http-request"; headers?: Headers; sessionCookie?: string }
   | { type: "background-worker"; accountId?: string };
+
+
+export type TestRemoteAccessResult =
+  | { ok: true; detail: "reachable" }
+  | { ok: false; detail: "instance_problem" | "unreachable" | "no_hostname" };
+
+export interface ConnectLoginActionResult {
+  ok: boolean;
+  message: string;
+}

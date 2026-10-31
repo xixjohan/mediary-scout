@@ -36,6 +36,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.."),
   transpilePackages: ["@media-track/workflow"],
   serverExternalPackages: ["better-sqlite3"],
+  allowedDevOrigins: ["127.0.0.1", "localhost"],
   // Cache Components: PPR becomes the default rendering model. "use cache"
   // builds the static shell; runtime reads live inside Suspense holes.
   cacheComponents: true,

@@ -1,5 +1,3 @@
-"use server";
-
 /**
  * Server Actions Root Facade
  * 

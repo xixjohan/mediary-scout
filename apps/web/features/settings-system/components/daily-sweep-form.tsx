@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { LoaderCircle, Plus, X } from "lucide-react";
-import { saveDailySweepTimesAction } from "../../../app/actions";
+import { saveDailySweepTimesAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 /**

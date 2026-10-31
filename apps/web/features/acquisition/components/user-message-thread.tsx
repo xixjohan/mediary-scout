@@ -16,7 +16,7 @@ import {
   processMessagesNowAction,
   restoreEpisodesToPendingAction,
   withdrawUserMessageAction,
-} from "../../../app/actions";
+} from "../../../app/actions/assistant-actions";
 import { KEEP_SAVE_FAILED, KEEP_UNDO_FAILED, createKeepUndo, type KeepToast } from "../../../lib/keep-undo";
 import { relativeDayLabel } from "../../../lib/relative-day";
 import { runAction } from "../../../lib/run-action";

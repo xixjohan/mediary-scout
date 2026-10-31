@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { Check, LoaderCircle, Trash2 } from "lucide-react";
-import { saveTmdbApiKeyAction, clearTmdbApiKeyAction } from "../../../app/actions";
+import { saveTmdbApiKeyAction, clearTmdbApiKeyAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 export function TmdbApiKeyForm({ apiKeySet }: { apiKeySet: boolean }) {

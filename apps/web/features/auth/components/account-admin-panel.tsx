@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
-import { resetUserPasswordAction } from "../../../app/actions";
+import { resetUserPasswordAction } from "../../../app/actions/auth-actions";
 import { runAction } from "../../../lib/run-action";
 
 interface ManagedAccount {

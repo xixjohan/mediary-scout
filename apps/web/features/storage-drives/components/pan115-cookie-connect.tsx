@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { useRouter } from "../../../lib/use-router";
-import { connectPan115CookieAction } from "../../../app/actions";
+import { connectPan115CookieAction } from "../../../app/actions/storage-drives-actions";
 import { runAction } from "../../../lib/run-action";
 
 /**

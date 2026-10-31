@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { Check, LoaderCircle, Trash2 } from "lucide-react";
-import { saveAssrtTokenAction, clearAssrtTokenAction } from "../../../app/actions";
+import { saveAssrtTokenAction, clearAssrtTokenAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 export function AssrtTokenForm({ tokenSet }: { tokenSet: boolean }) {

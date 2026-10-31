@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { testStorageConnectionAction } from "../../../app/actions";
+import { testStorageConnectionAction } from "../../../app/actions/storage-drives-actions";
 import { runAction } from "../../../lib/run-action";
 
 /** Per-drive "测试连接" button (settings). Probes the cookie; a dead one freezes

@@ -6,7 +6,7 @@ import {
   clearPushChannelAction,
   savePushSettingsAction,
   testPushNotificationAction,
-} from "../../../app/actions";
+} from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 const CHANNELS = [

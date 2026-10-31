@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { Check, LoaderCircle } from "lucide-react";
-import { savePanSouConfigAction } from "../../../app/actions";
+import { savePanSouConfigAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 /** 已保存的凭据状态，只用于决定输入框是「显示占位符」还是「显示已保存」——

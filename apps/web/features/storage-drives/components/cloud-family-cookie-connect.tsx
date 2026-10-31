@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Check, ExternalLink, LoaderCircle } from "lucide-react";
 import { useRouter } from "../../../lib/use-router";
-import { connectQuarkAction, connectUcAction } from "../../../app/actions";
+import { connectQuarkAction, connectUcAction } from "../../../app/actions/storage-drives-actions";
 import { runAction } from "../../../lib/run-action";
 
 /** Per-brand copy and wiring for the 阿里云盘族 cookie fallback. The two brands

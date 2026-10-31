@@ -8,7 +8,7 @@
     "exactOptionalPropertyTypes": true,
     "skipLibCheck": true,
     "declaration": true,
-    "outDir": "dist"
+    "noEmit": true
   },
   "include": [
     "packages/**/*.ts",

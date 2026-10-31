@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { runAction } from "../../../../lib/run-action";
-import { testRemoteAccessConnectionAction } from "../../../../app/actions";
+import { testRemoteAccessConnectionAction } from "../../../../app/actions/auth-actions";
 
 /**
  * 「测试连接」—— 回答用户真正的问题:"我的域名现在能不能打开"。

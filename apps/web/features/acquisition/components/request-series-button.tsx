@@ -2,7 +2,7 @@
 
 import { Check, Layers, LoaderCircle } from "lucide-react";
 import { useState, useTransition } from "react";
-import { requestSeriesAction, type RequestTrackingActionResult } from "../../../app/actions";
+import { requestSeriesAction, type RequestTrackingActionResult } from "../../../app/actions/acquisition-actions";
 import { runAction } from "../../../lib/run-action";
 import { AcquireResultNotice, isLockedResult } from "./request-state";
 import { isDemoModeClient } from "../../../lib/demo-mode";

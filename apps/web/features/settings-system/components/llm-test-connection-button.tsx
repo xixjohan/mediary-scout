@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { testLlmConnectionAction } from "../../../app/actions";
+import { testLlmConnectionAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 /**

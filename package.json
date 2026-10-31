@@ -19,6 +19,8 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "gate:layout": "node tools/gates/check-layout.mjs",
+    "gate:server-actions": "node tools/gates/check-server-actions.mjs",
+    "gate:facades": "node tools/gates/check-facades.mjs",
     "gate:style": "node tools/gates/check-style-tokens.mjs",
     "gate:assets": "node tools/gates/check-build-assets.mjs",
     "gate:http-timeout": "node tools/gates/check-http-timeout.mjs",
@@ -26,7 +28,7 @@
     "upstream:audit": "node tools/upstream/audit-upstream.mjs",
     "upstream:fetch-audit": "node tools/upstream/audit-upstream.mjs --fetch",
     "gate:deps": "depcruise --config .dependency-cruiser.cjs --ignore-known=.dependency-cruiser-known-violations.json apps packages workers",
-    "gate": "npm run gate:layout && npm run gate:deps && npm run gate:style && npm run gate:assets && npm run gate:http-timeout && npm run lint && npm run typecheck",
+    "gate": "npm run gate:layout && npm run gate:deps && npm run gate:server-actions && npm run gate:facades && npm run gate:style && npm run gate:assets && npm run gate:http-timeout && npm run lint && npm run typecheck",
     "e2e:server": "next start apps/web -p 3100",
     "e2e": "playwright test --config tests/e2e/playwright.config.ts",
     "e2e:ci": "npm run build:web && npm run e2e"

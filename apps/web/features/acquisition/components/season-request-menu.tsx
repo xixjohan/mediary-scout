@@ -7,7 +7,7 @@ import {
   requestRemainingAction,
   requestSeasonAction,
   type RequestTrackingActionResult,
-} from "../../../app/actions";
+} from "../../../app/actions/acquisition-actions";
 import { runAction } from "../../../lib/run-action";
 import { AcquireResultNotice, isLockedResult } from "./request-state";
 import { AcquireProgressBadge } from "./acquire-progress-badge";
