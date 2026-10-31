@@ -18,7 +18,7 @@
     "test:watch": "vitest",
     "test:smoke": "node tools/runner/smoke-tester.mjs",
     "smoke": "node tools/runner/smoke-tester.mjs",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --project apps/web/tsconfig.json --noEmit",
     "lint": "eslint . --max-warnings 0",
     "gate:layout": "node tools/gates/check-layout.mjs",
     "gate:server-actions": "node tools/gates/check-server-actions.mjs",

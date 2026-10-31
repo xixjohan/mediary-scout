@@ -132,7 +132,7 @@ export async function executeSearchMedia(
   storageId?: string,
 ): Promise<{ reply: string; actionCard?: ActionCardPayload | undefined; suggestedPrompts: string[] }> {
   try {
-    const { getSearchView } = await import("./search-page");
+    const { getSearchView } = await import("../../../lib/search-page");
     const view = await getSearchView(query, storageId);
     if (view.state === "empty" || view.candidates.length === 0) {
       return {
@@ -141,7 +141,7 @@ export async function executeSearchMedia(
       };
     }
 
-    const items: ActionCardMediaItem[] = view.candidates.slice(0, 4).map((c) => ({
+    const items: ActionCardMediaItem[] = (view.candidates as any[]).slice(0, 4).map((c: any) => ({
       tmdbId: c.tmdbId,
       title: c.title,
       year: c.year,
@@ -355,7 +355,7 @@ async function tryLlmChatTurn(input: ChatTurnInput): Promise<ChatTurnResult | nu
     if (process.env.MEDIA_TRACK_AGENT_ADAPTER !== "vercel-ai") {
       return null;
     }
-    const { getAgentModel } = await import("./workflow-runtime");
+    const { getAgentModel } = await import("../../../lib/workflow-runtime");
     const settings = getAccountScopedSettings(input.accountId);
     const { model } = await getAgentModel(settings);
     if (!model) return null;

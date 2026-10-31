@@ -39,7 +39,40 @@ const c = {
 // 1. 跨平台进程与网络基础设施适配器 (ProcessAdapter)
 // ============================================================================
 export class ProcessAdapter {
-  static isPortInUse(port) {
+  static findPidsOnPort(port) {
+    try {
+      if (isWindows) {
+        const out = execSync(`netstat -ano -p tcp | findstr :${port}`, { encoding: "utf8" });
+        const pids = new Set();
+        for (const line of out.split("\n")) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 5 && parts[1]?.endsWith(`:${port}`) && parts[3] === "LISTENING") {
+            const pid = parseInt(parts[4], 10);
+            if (!isNaN(pid) && pid > 0) pids.add(pid);
+          }
+        }
+        return [...pids];
+      } else {
+        const out = execSync(`lsof -t -i :${port} -sTCP:LISTEN 2>/dev/null || true`, { encoding: "utf8" });
+        return out.split("\n").map((l) => parseInt(l.trim(), 10)).filter((n) => !isNaN(n) && n > 0);
+      }
+    } catch {
+      return [];
+    }
+  }
+
+  static async isPortInUse(port) {
+    if (isWindows) {
+      try {
+        const out = execSync(`netstat -ano -p tcp | findstr :${port}`, { encoding: "utf8" });
+        for (const line of out.split("\n")) {
+          const parts = line.trim().split(/\s+/);
+          if (parts.length >= 5 && parts[1]?.endsWith(`:${port}`) && parts[3] === "LISTENING") {
+            return true;
+          }
+        }
+      } catch {}
+    }
     return new Promise((resolve) => {
       const server = http.createServer();
       server.once("error", (err) => {
@@ -50,7 +83,7 @@ export class ProcessAdapter {
         server.close();
         resolve(false);
       });
-      server.listen(port, "127.0.0.1");
+      server.listen(port, "0.0.0.0");
     });
   }
 
@@ -277,21 +310,17 @@ export async function runSmokeTest(cliArgs = []) {
     }
 
     serverMode = "ephemeral";
-    activePort = isTargetInUse ? (targetPort === 3009 ? 3010 : 3009) : targetPort;
-    console.log(`${c.cyan}⚙️  未发现健康服务或要求沙箱隔离，启动临时测试进程 (Port ${activePort})...${c.reset}`);
+    activePort = targetPort;
 
-    // 清理可能遗留的占用
-    if (await ProcessAdapter.isPortInUse(activePort)) {
-      console.log(`${c.yellow}端口 ${activePort} 存在历史占用，执行安全清理...${c.reset}`);
-      const pids = isWindows
-        ? execSync(`netstat -ano -p tcp | findstr :${activePort}`, { encoding: "utf8" })
-            .split("\n")
-            .map((l) => l.trim().split(/\s+/)[4])
-            .filter((p) => p && parseInt(p, 10) > 0)
-        : [];
-      pids.forEach((p) => ProcessAdapter.killProcessTree(parseInt(p, 10)));
-      await new Promise((r) => setTimeout(r, 600));
+    // 自愈清理：如果目标端口被僵死/不健康进程占用，主动释放，避免 Next.js 单实例锁冲突
+    if (isTargetInUse) {
+      console.log(`${c.yellow}检测到端口 ${targetPort} 上的旧实例处于异常状态，执行自动自愈清理...${c.reset}`);
+      const pids = ProcessAdapter.findPidsOnPort(targetPort);
+      pids.forEach((p) => ProcessAdapter.killProcessTree(p));
+      await new Promise((r) => setTimeout(r, 800));
     }
+
+    console.log(`${c.cyan}⚙️  启动临时测试进程 (Port ${activePort})...${c.reset}`);
 
     const smokeDbDir = join(repoRoot, "run");
     if (!existsSync(smokeDbDir)) mkdirSync(smokeDbDir, { recursive: true });

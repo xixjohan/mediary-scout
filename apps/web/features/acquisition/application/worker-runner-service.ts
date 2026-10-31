@@ -1,6 +1,5 @@
 import {
   DEFAULT_ACCOUNT_ID,
-  type TokenCredential,
 } from "@media-track/contracts";
 import {
   type WorkflowRepository,
@@ -43,6 +42,9 @@ import {
   FakeResourceProvider,
   FakeStorageExecutor,
   episodeCode,
+  formatDailyDigestPushText,
+  prepareTrackingTarget,
+  createTmdbMetadataProvider,
 } from "@media-track/workflow";
 import {
   getCurrentAccountId,
@@ -58,21 +60,26 @@ import {
   STORAGE_PROBES,
   makeTokenPersister,
   defaultDriveIdOf,
-  type AccountStorageCredentials,
+  freezeConnectedStorage,
+  testConnection,
+  workerHasConfiguredDrive,
+  getAccountDriveFileManager,
+  customDirNamesFromEnv,
 } from "../../storage-drives";
 import {
   getAccountScopedSettings,
   UpdateInProgressError,
   isUpdateInProgress,
 } from "../../settings-system/application/system-settings-service";
+import { runStartupMigrations } from "../../settings-system/application/system-settings-service";
+import { seedDemoWorkflowRepository } from "../../../lib/demo-workflow";
+import type { ForeignWorkFinding, ForeignWorkReview } from "../../catalog/contracts/catalog-types";
 import {
   ASSRT_TOKEN_SETTING_KEY,
   AUTO_UPDATE_ENABLED_SETTING_KEY,
   AUTO_UPDATE_FAIL_STREAK_SETTING_KEY,
   AUTO_UPDATE_TIME_SETTING_KEY,
   beijingDateTime,
-  DISCORD_WEBHOOK_URL_SETTING_KEY,
-  DISCORD_WEBHOOKS_SETTING_KEY,
   getAgentModel,
   getAssrtToken,
   getAutoUpdateTime,
@@ -81,16 +88,9 @@ import {
   getPatrolConcurrency,
   getPreferredLanguage,
   getProwlarrConfig,
-  getPushChannels,
   getQualityPreference,
-  getTelegramSettings,
   getTmdbAccesses,
   isAutoUpdateEnabled,
-  isDiscordEnabled,
-  isNotificationCategoryEnabled,
-  isProwlarrConfigured,
-  isTelegramEnabled,
-  isWebhookEnabled,
   JEV_BASE_URL_SETTING_KEY,
   LAST_SWEEP_CLAIMS_SETTING_KEY,
   LAST_SWEEP_COMPLETED_AT_SETTING_KEY,
@@ -1039,7 +1039,7 @@ function episodeCodes(seasonNumber: number, count: number): string[] {
   return Array.from({ length: count }, (_, index) => episodeCode(seasonNumber, index + 1));
 }
 
-function storageDirectoryIdForCandidate(_candidateId: string): string {
+export function storageDirectoryIdForCandidate(_candidateId: string): string {
   // Empty means "let the Type 2 workflow create the canonical
   // `Title (Year)/Season N` directory under the configured parent".
   return process.env.MEDIA_TRACK_DEFAULT_TV_STORAGE_DIRECTORY_ID ?? "";
