@@ -6,6 +6,7 @@ import {
   parseTvCandidateId,
   prepareMovieTarget,
   prepareSeriesTarget,
+  prepareTrackingTarget,
   createTmdbMetadataProvider,
   queueMovieAcquisition,
   queueSeriesInitialization,
@@ -13,7 +14,11 @@ import {
   reserveMovie,
   importForeignWorkAsMovie,
   llmConfigError,
+  buildTitleId,
   type MediaTitle,
+  type TrackedSeason,
+  type MediaSearchCandidate,
+  type MediaIdParseReason,
 } from "@media-track/workflow";
 import {
   getWorkflowRepository,
@@ -44,6 +49,7 @@ import {
   getWorkerStorageExecutor,
   getWorkerStorageParents,
   defaultQuality,
+  storageDirectoryIdForCandidate,
 } from "./worker-runner-service";
 
 export async function movieTargetFromTmdbId(
@@ -138,7 +144,7 @@ function targetFromSearchCandidate(
   season: TrackedSeason;
   keyword: string;
 } | null {
-  const season = candidate.seasons.find((item) => item.seasonNumber === seasonNumber);
+  const season = candidate.seasons?.find((item: { seasonNumber: number }) => item.seasonNumber === seasonNumber);
   if (!season) {
     return null;
   }
@@ -378,7 +384,7 @@ export async function queueCandidateSeries(
  *  one setting and returns, and it looks at GitHub and the updater once a day, after the
  *  set hour. The day is used up whatever the outcome (no update, offline, a state that says
  *  wait): the next look is tomorrow. */
-export { runAutoUpdateIfDue };
+export { runAutoUpdateIfDue } from "../../settings-system/application/auto-update-service";
 
 /**
  * 每日巡检（per-slot 认领 + 合并补跑）。任何触发源（worker tick / cron / 手动）都

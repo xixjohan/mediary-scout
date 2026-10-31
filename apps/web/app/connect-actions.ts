@@ -19,6 +19,7 @@ import {
   provisionConnectSlug,
   revokeInstanceLink,
   startInstanceLink,
+  type ConnectAccountView,
 } from "../lib/connect-client";
 import {
   clearConnectAccountEmail,
@@ -154,16 +155,6 @@ type ConnectAccountResult =
   | { state: "unlinked" }
   | { state: "linked"; account: ConnectAccountView }
   | { state: "error"; message: string };
-
-type ConnectAccountView = {
-  email: string;
-  active: boolean;
-  expiresAt: string | null;
-  endpoint: { slug: string; hostname: string; status: string; tunnelId?: string } | null;
-  restorable: { slug: string; hostname: string } | null;
-  checkoutOpen: boolean;
-  tiers: Array<{ id: "quarter" | "year" | "two_years"; label: string; months: number; price: string; featured: boolean }>;
-};
 
 export async function connectAccountAction(): Promise<ConnectAccountResult> {
   const refused = await commonGuard();

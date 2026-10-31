@@ -69,6 +69,8 @@ export interface ConnectAccount {
   restorable: { slug: string; hostname: string } | null;
 }
 
+export type ConnectAccountView = ConnectAccount;
+
 export type StartInstanceLinkResult =
   | ConnectFailure
   | {

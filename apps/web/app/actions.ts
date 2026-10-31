@@ -33,7 +33,6 @@ export {
 
 export {
   type PushSettingsActionResult,
-  type LlmConfigResult,
   type PanSouConfigInput,
   savePushSettingsAction,
   clearPushChannelAction,
@@ -60,19 +59,20 @@ export {
   testPushNotificationAction,
 } from "./actions/settings-system-actions";
 
+export type { ConnectLoginActionResult, TestRemoteAccessResult } from "../features/auth/contracts/auth-tokens";
 export {
-  type ConnectLoginActionResult,
-  type TestRemoteAccessResult,
   changePasswordAction,
   resetUserPasswordAction,
   requestConnectLoginAction,
   testRemoteAccessConnectionAction,
 } from "./actions/auth-actions";
 
+export type {
+  MemoryAddressInput,
+  PendingEpisodeInput,
+  ProcessMessagesNowStatus,
+} from "../features/assistant/contracts/assistant-types";
 export {
-  type MemoryAddressInput,
-  type PendingEpisodeInput,
-  type ProcessMessagesNowStatus,
   setAgentMemoryEnabledAction,
   deleteAgentMemoryAction,
   postUserMessageAction,

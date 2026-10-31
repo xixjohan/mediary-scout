@@ -28,6 +28,7 @@ credential.key
 
 node_modules/
 dist/
+*.tsbuildinfo
 .next/
 apps/**/.next/
 coverage/

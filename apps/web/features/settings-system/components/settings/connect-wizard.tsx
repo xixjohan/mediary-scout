@@ -15,9 +15,9 @@ import {
   connectSlugCheckAction,
   connectStartLinkAction,
   connectUnlinkAction,
-  type ConnectAccountView,
 } from "../../../../app/connect-actions";
-import type { TestRemoteAccessResult } from "../../../../app/actions/auth-actions";
+import type { ConnectAccountView } from "../../application/connect-client";
+import type { TestRemoteAccessResult } from "../../../../features/auth/contracts/auth-tokens";
 import { copyText } from "../../../../lib/copy-text";
 
 export type ConnectWizardPending = { email: string; verifyCode: string; expiresAt: string; interval?: number };
@@ -512,7 +512,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           setNotice({ text: "reason" in result && result.reason === "slug_taken" ? "刚被别人抢先占用了，换一个吧。" : result.message, tone: "danger" });
           return;
         }
-        setAccount((current) => current ? { ...current, restorable: null, endpoint: { slug, hostname: result.hostname, status: "active" } } : current);
+        setAccount((current: ConnectAccountView | null) => current ? { ...current, restorable: null, endpoint: { slug, hostname: result.hostname, status: "active" } } : current);
         setStep(5);
         setNotice({ text: successText(result.hostname), tone: "success" });
       } catch (error) {
@@ -751,7 +751,7 @@ export function ConnectWizard(props: ConnectWizardProps) {
           {account?.restorable ? <p className="panel-note">付款后可恢复原地址 {account.restorable.hostname}。</p> : null}
           {!account?.checkoutOpen ? <p className="panel-note" role="status">现在暂时不能购买，请稍后再试。</p> : null}
           <div style={{ display: "grid", gap: 8 }}>
-            {tiers.map((tier) => (
+            {tiers.map((tier: any) => (
               <div key={tier.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px" }}>
                 <span><strong>{tier.label}</strong><span className="panel-note"> · {tier.months} 个月 · ¥{tier.price.replace(/\.00$/, "")}</span>{tier.featured ? <span className="hub-badge tone-green" style={{ marginLeft: 8 }}>推荐</span> : null}</span>
                 <button className="primary-button" type="button" onClick={() => buy(tier.id)} disabled={busy || !account?.checkoutOpen || order !== null}>微信支付</button>

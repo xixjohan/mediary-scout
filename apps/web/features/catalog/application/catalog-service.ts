@@ -1,5 +1,6 @@
 import { getWorkflowRepository } from "../../../composition/runtime-container";
-import { ForeignWorkFinding, ForeignWorkReview } from "../contracts/catalog-types";
+import type { ForeignWorkFinding, ForeignWorkReview } from "../contracts/catalog-types";
+export type { ForeignWorkFinding, ForeignWorkReview };
 
 export async function getForeignWorkReview(
   workflowRunId: string,

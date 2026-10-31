@@ -538,4 +538,7 @@ export async function getRegisteredDriveCount(): Promise<number> {
   return storages.filter((s) => isRegisteredStorageProvider(s.provider)).length;
 }
 
-export const getForeignWorkReview = getForeignWorkReviewService;
+export async function getForeignWorkReview(workflowRunId: string, accountId?: string): Promise<ForeignWorkReview | null> {
+  const effectiveAccountId = accountId ?? (await getCurrentAccountId());
+  return getForeignWorkReviewService(workflowRunId, effectiveAccountId);
+}

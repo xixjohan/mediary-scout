@@ -25,11 +25,6 @@ export async function resetUserPasswordAction(
   return resetUserPassword(await getCurrentAccountId(), targetAccountId, newPassword);
 }
 
-export interface ConnectLoginActionResult {
-  ok: boolean;
-  message: string;
-}
-
 /**
  * 在设置页内发起 Mediary Connect 登录(发一封魔法链接邮件)。
  *
