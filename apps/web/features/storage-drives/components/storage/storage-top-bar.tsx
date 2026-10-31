@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderPlus, RefreshCw, Search } from "lucide-react";
+import { DownloadCloud, FolderPlus, RefreshCw, Search } from "lucide-react";
 import type { ConnectedStorageView } from "../../../../lib/workflow-runtime";
 
 export function formatProviderLabel(provider: string): string {
@@ -29,6 +29,7 @@ interface StorageTopBarProps {
   loading: boolean;
   actionBusy: boolean;
   onOpenCreate: () => void;
+  onOpenOffline?: () => void;
   onRefresh: () => void;
 }
 
@@ -41,6 +42,7 @@ export function StorageTopBar({
   loading,
   actionBusy,
   onOpenCreate,
+  onOpenOffline,
   onRefresh,
 }: StorageTopBarProps) {
   return (
@@ -89,6 +91,17 @@ export function StorageTopBar({
         >
           <FolderPlus size={16} /> 新建文件夹
         </button>
+        {onOpenOffline && (
+          <button
+            type="button"
+            className="storage-btn secondary"
+            onClick={onOpenOffline}
+            disabled={loading || actionBusy}
+            title="添加磁力、HTTP链接或种子文件到网盘进行离线下载"
+          >
+            <DownloadCloud size={16} /> 离线下载
+          </button>
+        )}
         <button
           type="button"
           className="storage-btn icon-only"
