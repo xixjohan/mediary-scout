@@ -1,7 +1,8 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 /**
@@ -17,10 +18,16 @@ import { describe, expect, it } from "vitest";
  * probeDefaults 也提了同一意见）。
  */
 
-const REPO_ROOT = new URL("../", import.meta.url).pathname;
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const DEPLOY = readFileSync(join(REPO_ROOT, "scripts/deploy.sh"), "utf8");
 const RUN_UPDATE = readFileSync(join(REPO_ROOT, "apps/updater/run-update.sh"), "utf8");
 const TAG = "v2026.10.02";
+
+const shBin =
+  process.platform === "win32" && existsSync("C:\\Program Files\\Git\\bin\\sh.exe")
+    ? "C:\\Program Files\\Git\\bin\\sh.exe"
+    : "sh";
+
 
 /** 抽出脚本里 [from, to] 两行之间的定义段，前面垫 TAG，末尾打印 $outVar。 */
 function probe(script, from, to, outVar, env) {
@@ -34,7 +41,7 @@ function probe(script, from, to, outVar, env) {
   const file = join(dir, "probe.sh");
   writeFileSync(file, snippet);
   chmodSync(file, 0o755);
-  return spawnSync(file, [], { env: { PATH: process.env.PATH, ...env }, encoding: "utf8" }).stdout;
+  return spawnSync(shBin, [file], { env: { PATH: process.env.PATH, ...env }, encoding: "utf8" }).stdout;
 }
 
 describe("H1：更新链四处同源（默认都指当前仓库 xixjohan/mediary-scout）", () => {

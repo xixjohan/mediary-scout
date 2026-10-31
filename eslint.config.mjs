@@ -1,7 +1,7 @@
 // @ts-check
 import tseslint from "typescript-eslint";
 import nextPlugin from "@next/eslint-plugin-next";
-import localRules from "./tools/eslint-local-rules.mjs";
+import localRules from "./tools/linter/eslint-local-rules.mjs";
 
 /**
  * 架构门禁（任务单 S4.1，治理文档 §6）：
