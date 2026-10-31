@@ -3,7 +3,7 @@
 import { Check, LoaderCircle, Trash2 } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
-import { clearHaisouConfigAction, saveHaisouConfigAction } from "../../../app/actions";
+import { clearHaisouConfigAction, saveHaisouConfigAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 /**

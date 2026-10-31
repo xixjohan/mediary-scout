@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { requestConnectLoginAction } from "../../../../app/actions";
+import { requestConnectLoginAction } from "../../../../app/actions/auth-actions";
 
 /**
  * 设置页内的 Mediary Connect 登录框。

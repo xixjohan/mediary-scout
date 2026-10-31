@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Check, LoaderCircle } from "lucide-react";
-import { savePreferredLanguageAction } from "../../../app/actions";
+import { savePreferredLanguageAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 const LANGUAGES = [

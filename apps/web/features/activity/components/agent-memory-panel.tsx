@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { X } from "lucide-react";
-import { deleteAgentMemoryAction, setAgentMemoryEnabledAction } from "../../../app/actions";
+import { deleteAgentMemoryAction, setAgentMemoryEnabledAction } from "../../../app/actions/assistant-actions";
 import { runAction } from "../../../lib/run-action";
 import { relativeDayLabel } from "../../../lib/relative-day";
 import type { MemoryItem, MemoryStats } from "../../../lib/agent-memory-server";

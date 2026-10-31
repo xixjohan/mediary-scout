@@ -7,7 +7,7 @@ import type { MessageRunView, MessageThreadView } from "../../../lib/user-messag
 import type { ThreadMessage } from "../../../lib/user-message-state";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: () => undefined }) }));
-vi.mock("../app/actions", () => ({
+vi.mock("../../../app/actions/assistant-actions", () => ({
   postUserMessageAction: vi.fn(),
   editUserMessageAction: vi.fn(),
   withdrawUserMessageAction: vi.fn(),

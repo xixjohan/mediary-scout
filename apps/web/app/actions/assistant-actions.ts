@@ -3,6 +3,7 @@
 import { assertNotDemo } from "../../lib/demo-mode";
 import type { PushSettingsActionResult } from "./settings-system-actions";
 import { acquireLlmNotConfigured } from "./acquisition-actions";
+import type { ProcessMessagesNowStatus } from "../../features/assistant/contracts/assistant-types";
 
 
 // ── Agent memory (work detail page + Settings → AI 模型) ──────────────────────
@@ -127,7 +128,7 @@ export async function withdrawUserMessageAction(input: { id: string }): Promise<
  *  queued replace run takes the messages along when it starts, otherwise they go right
  *  after the run in flight (the idle-queue scan), so the card says 「排队中 · 这次处理完
  *  接着处理」. "nothing_waiting": claimed or withdrawn since the page loaded. */
-export type ProcessMessagesNowStatus = "queued" | "already_running" | "nothing_waiting";
+
 
 /** 「现在处理」: the work's waiting messages skip the patrol. */
 export async function processMessagesNowAction(

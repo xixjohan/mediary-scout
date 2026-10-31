@@ -11,7 +11,10 @@ export async function register(): Promise<void> {
   // 锁死 IPv4 优先解析：Node 17+ 默认 verbatim (可能返回 IPv6 首位)，在容器/无 IPv6 外网路由环境下
   // 极易导致对国内网盘（如 115/夸克）的请求落入 IPv6 黑洞或触发 connect timeout。
   try {
-    const dns = await import("node:dns");
+    const dns =
+      typeof process.getBuiltinModule === "function"
+        ? (process.getBuiltinModule("node:dns") as typeof import("node:dns"))
+        : await import(/* webpackIgnore: true */ "node:dns");
     if (typeof dns.setDefaultResultOrder === "function") {
       dns.setDefaultResultOrder("ipv4first");
     }

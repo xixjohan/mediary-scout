@@ -382,11 +382,11 @@ async function run() {
 
   console.log(`${c.cyan}🚀 启动 Web 服务进程: ${command} ${cmdArgs.join(" ")} ...${c.reset}`);
 
-  const child = spawn(command, cmdArgs, {
+  const executable = isWindows ? `${command}.cmd` : command;
+  const child = spawn(executable, cmdArgs, {
     cwd: repoRoot,
     env,
     stdio: "inherit",
-    shell: isWindows,
   });
 
   if (child.pid) {

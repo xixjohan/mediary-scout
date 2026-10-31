@@ -77,7 +77,7 @@ async function credentialRejected(used: string): Promise<{ ok: false; unlinked: 
   return { ok: false, unlinked: true, message: LINK_LOST };
 }
 
-export type ConnectStartLinkResult =
+type ConnectStartLinkResult =
   | { ok: true; verifyCode: string; email: string; interval: number }
   | Refusal;
 
@@ -96,7 +96,7 @@ export async function connectStartLinkAction(email: string): Promise<ConnectStar
   return { ok: true, verifyCode: result.verifyCode, email: normalized, interval: result.interval };
 }
 
-export type ConnectPollLinkResult =
+type ConnectPollLinkResult =
   | { state: "pending" | "slow_down" | "linked" | "expired" | "none" }
   | { state: "error"; message: string };
 
@@ -150,12 +150,12 @@ export async function connectCancelLinkAction(verifyCode: string): Promise<{ ok:
   return { ok: true };
 }
 
-export type ConnectAccountResult =
+type ConnectAccountResult =
   | { state: "unlinked" }
   | { state: "linked"; account: ConnectAccountView }
   | { state: "error"; message: string };
 
-export type ConnectAccountView = {
+type ConnectAccountView = {
   email: string;
   active: boolean;
   expiresAt: string | null;
@@ -304,7 +304,7 @@ export async function connectProvisionAction(slug: string) {
   return { ok: false as const, reason: result.reason, message: clientMessage(result) };
 }
 
-export type ConnectBindResult =
+type ConnectBindResult =
   | { ok: true }
   | { ok: false; reason: "password_required" | "no_updater" | "busy" | "invalid_input" | "pull_failed" | "compose_failed" | "unlinked"; message?: string; command?: string };
 

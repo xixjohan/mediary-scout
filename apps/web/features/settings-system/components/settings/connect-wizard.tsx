@@ -17,7 +17,7 @@ import {
   connectUnlinkAction,
   type ConnectAccountView,
 } from "../../../../app/connect-actions";
-import type { TestRemoteAccessResult } from "../../../../app/actions";
+import type { TestRemoteAccessResult } from "../../../../app/actions/auth-actions";
 import { copyText } from "../../../../lib/copy-text";
 
 export type ConnectWizardPending = { email: string; verifyCode: string; expiresAt: string; interval?: number };

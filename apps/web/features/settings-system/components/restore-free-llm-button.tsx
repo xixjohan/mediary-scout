@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { LoaderCircle } from "lucide-react";
-import { restoreFreeLlmAction } from "../../../app/actions";
+import { restoreFreeLlmAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 /**

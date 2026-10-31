@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { LoaderCircle, Radar } from "lucide-react";
-import { runPatrolNowAction } from "../../../app/actions";
+import { runPatrolNowAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 /** 手动触发一次全量巡检（force：不占用定时计划）。 */

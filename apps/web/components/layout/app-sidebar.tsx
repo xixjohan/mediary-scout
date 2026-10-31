@@ -3,12 +3,12 @@ import Link from "next/link";
 import { Activity, Aperture, Bell, Bot, HardDrive, Library, Settings } from "lucide-react";
 import { resolveIsDesktop } from "../../lib/workflow-runtime";
 import { globalNavHref } from "@media-track/workflow";
-import { SearchNavLink } from "../search-memory";
-import { ActivityNavBadge } from "../activity-nav-badge";
+import { SearchNavLink } from "../../features/catalog/components/search-memory";
+import { ActivityNavBadge } from "../../features/activity/components/activity-nav-badge";
 import { NotificationsNavBadge } from "./notifications-nav-badge";
-import { SettingsAttentionBadge } from "../settings-attention-badge";
-import { WorkspaceSwitcherLoader } from "../workspace-switcher-loader";
-import { AccountIdentityLoader } from "../account-identity-loader";
+import { SettingsAttentionBadge } from "../../features/settings-system/components/settings-attention-badge";
+import { WorkspaceSwitcherLoader } from "../../features/auth/components/workspace-switcher-loader";
+import { AccountIdentityLoader } from "../../features/auth/components/account-identity-loader";
 
 export function AppSidebar({
   active,

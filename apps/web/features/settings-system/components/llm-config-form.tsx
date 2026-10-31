@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { Check, LoaderCircle } from "lucide-react";
-import { saveLlmConfigAction } from "../../../app/actions";
+import { saveLlmConfigAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 import { LlmTestConnectionButton } from "./llm-test-connection-button";
 

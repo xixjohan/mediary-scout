@@ -1,6 +1,7 @@
 "use server";
 
 import { assertNotDemo } from "../../lib/demo-mode";
+import type { ConnectLoginActionResult, TestRemoteAccessResult } from "../../features/auth/contracts/auth-tokens";
 
 /** Self-service password change (multi-user). Verifies the current password,
  *  rotates the hash, revokes all sessions (caller must re-login). */
@@ -46,9 +47,7 @@ export async function requestConnectLoginAction(email: string): Promise<ConnectL
 // tagged union 而非 { ok: boolean; detail: ... }(Copilot 意见):
 // 后者允许 { ok: true, detail: "unreachable" } 这种不可能组合编译通过。
 // 判别字段 detail 与 ok 一一对应,不可能状态在类型层面就不存在。
-export type TestRemoteAccessResult =
-  | { ok: true; detail: "reachable" }
-  | { ok: false; detail: "instance_problem" | "unreachable" | "no_hostname" };
+
 
 /**
  * 远程访问「测试连接」。

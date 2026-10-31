@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { LoaderCircle } from "lucide-react";
-import { savePatrolConcurrencyAction } from "../../../app/actions";
+import { savePatrolConcurrencyAction } from "../../../app/actions/settings-system-actions";
 import { runAction } from "../../../lib/run-action";
 
 /**
