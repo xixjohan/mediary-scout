@@ -57,3 +57,5 @@ export {
   isCredentialCryptoInitialized,
   isEncrypted,
 } from "./crypto/credential-crypto.js";
+
+export { formatNetworkError } from "./network-error.js";
