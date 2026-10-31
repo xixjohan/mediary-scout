@@ -11,6 +11,9 @@
  *     必须包含 ja|zh|ko，全面覆盖华语国漫（Donghua）与日漫韩漫。
  *  4. 【反静态流假死截断 (Anti-Static Chokehold Pagination)】：确保 shouldServeTrendingOnly 严禁拦截
  *     带有深度分页（page > 1 或 pageSize > 20）的动态发现流，防止全库被 31 条静态池锁死。
+ *  5. 【国家与地区维度策略规范 (Region Strategy Integrity)】：确保 media-filters 与 trending-service 完整导出
+ *     COUNTRY_TAGS 与 with_origin_country 映射，且在发现流和前端筛选矩阵中生效。
+ *  6. 【多维题材与年代扩充规范 (Expanded Taxonomy)】：确保题材包含剧情、恐怖、战争、武侠，年代包含 2000s、90s、80s。
  */
 
 import fs from "node:fs";
@@ -93,15 +96,56 @@ function checkTrendingService() {
       );
     }
   }
+
+  // 5. 检查国家/地区映射支持
+  if (!content.includes("with_origin_country") || !content.includes("matchesItemCountry")) {
+    reportViolation(
+      file,
+      1,
+      "trending-service.ts 缺少 with_origin_country 上游参数构建或 matchesItemCountry 内存匹配，地区过滤未生效！"
+    );
+  }
+}
+
+function checkMediaFilters() {
+  const file = path.join(repoRoot, "apps/web/lib/media-filters.ts");
+  if (!fs.existsSync(file)) {
+    reportViolation(file, 1, "未找到 media-filters.ts 过滤核心文件！");
+    return;
+  }
+
+  const content = fs.readFileSync(file, "utf8");
+
+  // 检查国家标签导出
+  if (!content.includes("export const COUNTRY_TAGS")) {
+    reportViolation(file, 1, "media-filters.ts 未导出 COUNTRY_TAGS 地区标签字典！");
+  }
+
+  // 检查扩充题材
+  const requiredGenres = ["drama", "horror", "war", "history", "wuxia"];
+  for (const g of requiredGenres) {
+    if (!content.includes(`id: "${g}"`)) {
+      reportViolation(file, 1, `GENRE_TAGS 缺少核心扩展题材：${g}`);
+    }
+  }
+
+  // 检查扩充年代
+  const requiredYears = ["2000s", "90s", "80s"];
+  for (const y of requiredYears) {
+    if (!content.includes(`id: "${y}"`)) {
+      reportViolation(file, 1, `YEAR_TAGS 缺少核心扩展年代：${y}`);
+    }
+  }
 }
 
 console.log(`${c.bold}${c.cyan}=== 巡影 · Mediary Scout 影视资源库与全量发现门禁扫描 ===${c.reset}`);
 checkTrendingService();
+checkMediaFilters();
 
 if (violations > 0) {
   console.error(`\n${c.red}${c.bold}门禁检查失败：发现 ${violations} 处架构违规，严禁缩水回归！${c.reset}\n`);
   process.exit(1);
 } else {
-  console.log(`\n${c.green}${c.bold}✔ 影视资源库全量发现门禁通过：双路召回、国漫兼容与动态分页缓冲区完整。${c.reset}\n`);
+  console.log(`\n${c.green}${c.bold}✔ 影视资源库全量发现门禁通过：双路召回、多维地区、扩充题材年代与动态缓冲区完整。${c.reset}\n`);
   process.exit(0);
 }

@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildFilterHref,
   matchesItemType,
+  matchesItemCountry,
   matchesItemGenre,
+  COUNTRY_TAGS,
+  GENRE_TAGS,
+  YEAR_TAGS,
   matchesItemYear,
   sortItems,
   applyCandidateFilters,
@@ -202,5 +206,105 @@ describe("sortItems & applyCandidateFilters 排序与复合过滤", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0]!.title).toBe("沙丘2");
+  });
+});
+
+describe("国家与地区过滤策略 (matchesItemCountry)", () => {
+  it("全部地区放行所有作品", () => {
+    expect(matchesItemCountry({ title: "任意作品", year: 2024, mediaType: "movie" }, "all")).toBe(true);
+  });
+
+  it("通过 originCountry 正确匹配中国大陆/华语", () => {
+    expect(
+      matchesItemCountry(
+        { title: "凡人修仙传", year: 2020, mediaType: "tv", originCountry: ["CN"] },
+        "cn"
+      )
+    ).toBe(true);
+  });
+
+  it("通过 originalLanguage 正确匹配日本与韩国作品", () => {
+    expect(
+      matchesItemCountry(
+        { title: "千与千寻", year: 2001, mediaType: "movie", originalLanguage: "ja" },
+        "jp"
+      )
+    ).toBe(true);
+
+    expect(
+      matchesItemCountry(
+        { title: "寄生虫", year: 2019, mediaType: "movie", originalLanguage: "ko" },
+        "kr"
+      )
+    ).toBe(true);
+  });
+
+  it("通过关键词文本兜底匹配香港与好莱坞作品", () => {
+    expect(
+      matchesItemCountry(
+        { title: "香港经典警匪风云", year: 1995, mediaType: "movie" },
+        "hk"
+      )
+    ).toBe(true);
+
+    expect(
+      matchesItemCountry(
+        { title: "好莱坞终极大战", year: 2024, mediaType: "movie" },
+        "us"
+      )
+    ).toBe(true);
+  });
+
+  it("支持其它地区排除主流代码", () => {
+    expect(
+      matchesItemCountry(
+        { title: "天才枪手", year: 2017, mediaType: "movie", originCountry: ["TH"] },
+        "other"
+      )
+    ).toBe(true);
+
+    expect(
+      matchesItemCountry(
+        { title: "好莱坞动作片", year: 2020, mediaType: "movie", originCountry: ["US"] },
+        "other"
+      )
+    ).toBe(false);
+  });
+});
+
+describe("扩充题材与年代策略 (Expanded Genres & Years)", () => {
+  it("题材字典包含剧情、恐怖、战争、历史、武侠修仙", () => {
+    const ids = GENRE_TAGS.map((g) => g.id);
+    expect(ids).toContain("drama");
+    expect(ids).toContain("horror");
+    expect(ids).toContain("war");
+    expect(ids).toContain("history");
+    expect(ids).toContain("wuxia");
+    expect(ids).toContain("music");
+  });
+
+  it("年代字典包含 2000年代、90年代、80年代前", () => {
+    const ids = YEAR_TAGS.map((y) => y.id);
+    expect(ids).toContain("2000s");
+    expect(ids).toContain("90s");
+    expect(ids).toContain("80s");
+  });
+
+  it("matchesItemYear 支持 2000年代、90年代与80年代前", () => {
+    expect(matchesItemYear({ year: 2005 }, "2000s")).toBe(true);
+    expect(matchesItemYear({ year: 2012 }, "2000s")).toBe(false);
+
+    expect(matchesItemYear({ year: 1997 }, "90s")).toBe(true);
+    expect(matchesItemYear({ year: 2001 }, "90s")).toBe(false);
+
+    expect(matchesItemYear({ year: 1986 }, "80s")).toBe(true);
+    expect(matchesItemYear({ year: 1992 }, "80s")).toBe(false);
+  });
+
+  it("buildFilterHref 联动国家与地区参数", () => {
+    const url = buildFilterHref("/", { type: "movie" }, { country: "cn", genre: "wuxia" });
+    expect(url).toContain("type=movie");
+    expect(url).toContain("country=cn");
+    expect(url).toContain("genre=wuxia");
   });
 });

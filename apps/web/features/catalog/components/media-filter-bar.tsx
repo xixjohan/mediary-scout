@@ -1,7 +1,8 @@
 import Link from "next/link";
-import { Filter, SlidersHorizontal, Sparkles } from "lucide-react";
+import { Filter, Globe, SlidersHorizontal, Sparkles } from "lucide-react";
 import {
   MEDIA_TYPES,
+  COUNTRY_TAGS,
   GENRE_TAGS,
   YEAR_TAGS,
   SORT_OPTIONS,
@@ -10,6 +11,7 @@ import {
 
 export {
   MEDIA_TYPES,
+  COUNTRY_TAGS,
   GENRE_TAGS,
   YEAR_TAGS,
   SORT_OPTIONS,
@@ -21,6 +23,7 @@ export {
   isDocumentaryItem,
   isVarietyItem,
   matchesItemType,
+  matchesItemCountry,
   matchesItemGenre,
   matchesItemYear,
   sortItems,
@@ -43,6 +46,7 @@ export function MediaFilterBar({
   basePath,
   query,
   activeType = "all",
+  activeCountry = "all",
   activeGenre = "all",
   activeYear = "all",
   activeSort = "popularity",
@@ -51,6 +55,7 @@ export function MediaFilterBar({
   basePath: string;
   query: string;
   activeType?: string;
+  activeCountry?: string;
   activeGenre?: string;
   activeYear?: string;
   activeSort?: string;
@@ -59,6 +64,7 @@ export function MediaFilterBar({
   const currentParams = {
     q: query,
     type: activeType,
+    country: activeCountry,
     genre: activeGenre,
     year: activeYear,
     sort: activeSort,
@@ -86,7 +92,26 @@ export function MediaFilterBar({
         </div>
       </div>
 
-      {/* 维度 2：题材标签 */}
+      {/* 维度 2：国家与地区 */}
+      <div className="media-filter-row">
+        <span className="media-filter-label">
+          <Globe size={13} aria-hidden /> 地区
+        </span>
+        <div className="media-filter-pills">
+          {COUNTRY_TAGS.map((c) => (
+            <Link
+              key={c.id}
+              className={`filter-pill ${activeCountry === c.id ? "is-active" : ""}`}
+              href={buildFilterHref(basePath, currentParams, { country: c.id })}
+              scroll={false}
+            >
+              {c.label}
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {/* 维度 3：题材标签 */}
       <div className="media-filter-row">
         <span className="media-filter-label">
           <Sparkles size={13} aria-hidden /> 题材
@@ -105,7 +130,7 @@ export function MediaFilterBar({
         </div>
       </div>
 
-      {/* 维度 3 & 4：年份与排序复合行 */}
+      {/* 维度 4 & 5：年份与排序复合行 */}
       <div className="media-filter-row media-filter-split-row">
         <div className="media-filter-subgroup">
           <span className="media-filter-label">年代</span>

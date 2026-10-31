@@ -2,6 +2,8 @@ import { fetchTmdbList, calculatePageWindow, normalizePageSize } from "@media-tr
 import { getTmdbAccesses, getAccountScopedSettings, getCurrentAccountId } from "../../../lib/workflow-runtime";
 import {
   TMDB_GENRE_MAP,
+  TMDB_COUNTRY_CONFIG,
+  matchesItemCountry,
   matchesItemGenre,
   matchesItemType,
   matchesItemYear,
@@ -19,10 +21,13 @@ export interface TrendingCard {
   genreIds?: number[];
   overview?: string;
   voteAverage?: number;
+  originCountry?: string[];
+  originalLanguage?: string;
 }
 
 export interface DiscoverFilterParams {
   type?: string | undefined;
+  country?: string | undefined;
   genre?: string | undefined;
   year?: string | undefined;
   sort?: string | undefined;
@@ -85,21 +90,13 @@ function yearOf(value: unknown): number | null {
   return Number.isFinite(year) ? year : null;
 }
 
-function extractCard(item: unknown, mediaType: "movie" | "tv"): TrendingCard | null {
-  if (!isRecord(item)) return null;
-  const tmdbId = typeof item.id === "number" ? item.id : null;
-  const title =
-    typeof item.title === "string" ? item.title : typeof item.name === "string" ? item.name : null;
-  if (tmdbId === null || !title) return null;
+function extractCardTitle(item: Record<string, unknown>): string | null {
+  if (typeof item.title === "string" && item.title.trim()) return item.title.trim();
+  if (typeof item.name === "string" && item.name.trim()) return item.name.trim();
+  return null;
+}
 
-  const poster = typeof item.poster_path === "string" ? item.poster_path : null;
-  const card: TrendingCard = {
-    tmdbId,
-    title,
-    year: yearOf(item.release_date) ?? yearOf(item.first_air_date),
-    posterPath: poster,
-    mediaType,
-  };
+function extractCardMetadata(card: TrendingCard, item: Record<string, unknown>): void {
   if (Array.isArray(item.genre_ids)) {
     const gids = item.genre_ids.filter((id): id is number => typeof id === "number" && Number.isFinite(id));
     if (gids.length > 0) card.genreIds = gids;
@@ -110,6 +107,30 @@ function extractCard(item: unknown, mediaType: "movie" | "tv"): TrendingCard | n
   if (typeof item.vote_average === "number" && Number.isFinite(item.vote_average)) {
     card.voteAverage = item.vote_average;
   }
+  if (Array.isArray(item.origin_country)) {
+    const countries = item.origin_country.filter((c): c is string => typeof c === "string");
+    if (countries.length > 0) card.originCountry = countries;
+  }
+  if (typeof item.original_language === "string") {
+    card.originalLanguage = item.original_language;
+  }
+}
+
+function extractCard(item: unknown, mediaType: "movie" | "tv"): TrendingCard | null {
+  if (!isRecord(item)) return null;
+  const tmdbId = typeof item.id === "number" ? item.id : null;
+  const title = extractCardTitle(item);
+  if (tmdbId === null || !title) return null;
+
+  const poster = typeof item.poster_path === "string" ? item.poster_path : null;
+  const card: TrendingCard = {
+    tmdbId,
+    title,
+    year: yearOf(item.release_date) ?? yearOf(item.first_air_date),
+    posterPath: poster,
+    mediaType,
+  };
+  extractCardMetadata(card, item);
   return card;
 }
 
@@ -189,6 +210,14 @@ function applyYearRange(query: Record<string, string>, mediaType: "movie" | "tv"
   } else if (year === "2010s") {
     query[gteKey] = "2010-01-01";
     query[lteKey] = "2019-12-31";
+  } else if (year === "2000s") {
+    query[gteKey] = "2000-01-01";
+    query[lteKey] = "2009-12-31";
+  } else if (year === "90s") {
+    query[gteKey] = "1990-01-01";
+    query[lteKey] = "1999-12-31";
+  } else if (year === "80s") {
+    query[lteKey] = "1989-12-31";
   } else {
     query[yearKey] = year;
   }
@@ -206,6 +235,14 @@ function applySortOption(
     query["sort_by"] = mediaType === "movie" ? "primary_release_date.desc" : "first_air_date.desc";
   } else {
     query["sort_by"] = "popularity.desc";
+  }
+}
+
+function applyCountryOption(query: Record<string, string>, country?: string): void {
+  if (!country || country === "all") return;
+  const cfg = TMDB_COUNTRY_CONFIG[country];
+  if (cfg && cfg.code) {
+    query["with_origin_country"] = cfg.code;
   }
 }
 
@@ -250,7 +287,9 @@ export function buildDiscoverQuery(
     query["with_genres"] = withGenres;
   }
 
-  if (params?.type === "anime") {
+  if (params?.country && params.country !== "all") {
+    applyCountryOption(query, params.country);
+  } else if (params?.type === "anime") {
     query["with_original_language"] = "ja|zh|ko";
   }
 
@@ -297,21 +336,25 @@ export async function fetchDiscoverCards(
 function hasDynamicFilter(params?: DiscoverFilterParams): boolean {
   if (!params) return false;
   return (
+    (Boolean(params.country) && params.country !== "all") ||
     (Boolean(params.year) && params.year !== "all") ||
     (Boolean(params.genre) && params.genre !== "all") ||
     (Boolean(params.sort) && params.sort !== "popularity")
   );
 }
 
+function hasCustomFilter(params: DiscoverFilterParams): boolean {
+  if (params.type && params.type !== "all") return true;
+  if (params.country && params.country !== "all") return true;
+  if (params.genre && params.genre !== "all") return true;
+  if (params.year && params.year !== "all") return true;
+  return Boolean(params.sort && params.sort !== "popularity");
+}
+
 function shouldServeTrendingOnly(params?: DiscoverFilterParams): boolean {
   if (!params) return false;
-  const page = params.page ?? 1;
-  const pageSize = normalizePageSize(params.pageSize);
-  if (page > 1 || pageSize > 20) return false;
-  if (params.type && params.type !== "all") return false;
-  if (params.genre && params.genre !== "all") return false;
-  if (params.year && params.year !== "all") return false;
-  if (params.sort && params.sort !== "popularity") return false;
+  const isFirstSmallPage = (params.page ?? 1) === 1 && normalizePageSize(params.pageSize) <= 20;
+  if (!isFirstSmallPage || hasCustomFilter(params)) return false;
   return params.trending === "tv" || params.trending === "anime";
 }
 
@@ -401,6 +444,7 @@ export async function getDiscoverFeed(
     const rawCards = await fetchRawFeedPool(accesses, filterParams);
     const filtered = rawCards.filter((card) => {
       if (filterParams?.type && !matchesItemType(card, filterParams.type)) return false;
+      if (filterParams?.country && !matchesItemCountry(card, filterParams.country)) return false;
       if (filterParams?.genre && !matchesItemGenre(card, filterParams.genre)) return false;
       if (filterParams?.year && !matchesItemYear(card, filterParams.year)) return false;
       return true;
