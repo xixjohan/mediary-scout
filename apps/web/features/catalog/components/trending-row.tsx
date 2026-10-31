@@ -16,9 +16,10 @@ function cardMediaTypeLabel(genreIds?: number[], mediaType?: string, title?: str
   return mediaType === "movie" ? "电影" : "剧集";
 }
 
-function isFilterSpecified(p?: { type?: string; genre?: string; year?: string; page?: number }): boolean {
+function isFilterSpecified(p?: { type?: string; country?: string; genre?: string; year?: string; page?: number }): boolean {
   if (!p) return false;
   if (p.type && p.type !== "all") return true;
+  if (p.country && p.country !== "all") return true;
   if (p.genre && p.genre !== "all") return true;
   if (p.year && p.year !== "all") return true;
   return Boolean(p.page && p.page > 1);
@@ -85,11 +86,12 @@ function TrendingCardItem({
 }
 
 function buildFilterQueryParams(
-  filterParams?: { type?: string; genre?: string; year?: string; sort?: string; pageSize?: number } | undefined,
+  filterParams?: { type?: string; country?: string; genre?: string; year?: string; sort?: string; pageSize?: number } | undefined,
 ) {
   if (!filterParams) return {};
   const query: Record<string, string | undefined> = {};
   if (filterParams.type && filterParams.type !== "all") query.type = filterParams.type;
+  if (filterParams.country && filterParams.country !== "all") query.country = filterParams.country;
   if (filterParams.genre && filterParams.genre !== "all") query.genre = filterParams.genre;
   if (filterParams.year && filterParams.year !== "all") query.year = filterParams.year;
   if (filterParams.sort && filterParams.sort !== "popularity") query.sort = filterParams.sort;
@@ -102,7 +104,7 @@ function TrendingRowPagination({
   count,
   basePath,
 }: {
-  filterParams?: { type?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
+  filterParams?: { type?: string; country?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
   count: number;
   basePath: string;
 }) {
@@ -135,7 +137,7 @@ export async function TrendingRow({
 }: {
   activeKind: TrendingKind;
   basePath: string;
-  filterParams?: { type?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
+  filterParams?: { type?: string; country?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
 }) {
   const pageSize = filterParams?.pageSize ?? 30;
   const cards = await getDiscoverFeed({ ...filterParams, pageSize, trending: activeKind });

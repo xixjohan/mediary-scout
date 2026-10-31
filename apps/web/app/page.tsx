@@ -114,6 +114,7 @@ function parseHomeSearchParams(params: Record<string, string | string[] | undefi
   const activeTab: "library" | "search" =
     stringParam(params.tab) === "library" ? "library" : "search";
   const mediaType = parseMediaType(stringParam(params.type), stringParam(params.trending));
+  const country = stringParam(params.country) || "all";
   const genre = stringParam(params.genre) || "all";
   const year = stringParam(params.year) || "all";
   const sort = stringParam(params.sort) || "popularity";
@@ -123,7 +124,7 @@ function parseHomeSearchParams(params: Record<string, string | string[] | undefi
   const status = parseStatus(stringParam(params.status));
   const activeTrending = resolveActiveTrending(mediaType);
 
-  return { query, activeTab, mediaType, genre, year, sort, filter, page, pageSize, status, activeTrending };
+  return { query, activeTab, mediaType, country, genre, year, sort, filter, page, pageSize, status, activeTrending };
 }
 
 async function HomeSurface({
@@ -138,6 +139,7 @@ async function HomeSurface({
     query,
     activeTab,
     mediaType,
+    country,
     genre,
     year,
     sort,
@@ -179,18 +181,19 @@ async function HomeSurface({
               basePath={basePath}
               query={query}
               activeType={mediaType}
+              activeCountry={country}
               activeGenre={genre}
               activeYear={year}
               activeSort={sort}
               activeTrending={activeTrending}
             />
-            <Suspense key={`search-${query}-${mediaType}-${genre}-${year}-${sort}-${page}-${pageSize}`} fallback={<SearchResultsSkeleton />}>
+            <Suspense key={`search-${query}-${mediaType}-${country}-${genre}-${year}-${sort}-${page}-${pageSize}`} fallback={<SearchResultsSkeleton />}>
               <SearchResults
                 query={query}
                 storageId={storageId}
                 activeTrending={activeTrending}
                 basePath={basePath}
-                filterParams={{ type: mediaType, genre, year, sort, page, pageSize }}
+                filterParams={{ type: mediaType, country, genre, year, sort, page, pageSize }}
               />
             </Suspense>
           </section>
@@ -296,11 +299,12 @@ function setQueryParamIf(
 
 function buildSearchPaginationQuery(
   query: string,
-  filterParams?: { type?: string; genre?: string; year?: string; sort?: string; pageSize?: number } | undefined,
+  filterParams?: { type?: string; country?: string; genre?: string; year?: string; sort?: string; pageSize?: number } | undefined,
 ) {
   const params: Record<string, string | undefined> = { q: query };
   if (!filterParams) return params;
   setQueryParamIf(params, "type", filterParams.type);
+  setQueryParamIf(params, "country", filterParams.country);
   setQueryParamIf(params, "genre", filterParams.genre);
   setQueryParamIf(params, "year", filterParams.year);
   setQueryParamIf(params, "sort", filterParams.sort, "popularity");
@@ -362,7 +366,7 @@ async function SearchResults({
   storageId?: string | undefined;
   activeTrending: TrendingKind;
   basePath: string;
-  filterParams?: { type?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
+  filterParams?: { type?: string; country?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
 }) {
   const pageSize = filterParams?.pageSize ?? 30;
   const searchView = await getSearchView(query, storageId, filterParams?.page, pageSize);

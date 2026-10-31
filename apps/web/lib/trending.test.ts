@@ -133,4 +133,41 @@ describe("buildDiscoverQuery 动态探索参数构建", () => {
     const releaseTv = buildDiscoverQuery("tv", { sort: "release" });
     expect(releaseTv.sort_by).toBe("first_air_date.desc");
   });
+  it("国家/地区参数正确映射到 with_origin_country", () => {
+    const qCn = buildDiscoverQuery("movie", { country: "cn" });
+    expect(qCn.with_origin_country).toBe("CN");
+
+    const qJp = buildDiscoverQuery("tv", { country: "jp" });
+    expect(qJp.with_origin_country).toBe("JP");
+
+    const qEu = buildDiscoverQuery("movie", { country: "eu" });
+    expect(qEu.with_origin_country).toBe("GB|FR|DE|IT|ES");
+  });
+
+  it("扩充年代正确映射区间参数 (2000s, 90s, 80s)", () => {
+    const q2000s = buildDiscoverQuery("movie", { year: "2000s" });
+    expect(q2000s["primary_release_date.gte"]).toBe("2000-01-01");
+    expect(q2000s["primary_release_date.lte"]).toBe("2009-12-31");
+
+    const q90s = buildDiscoverQuery("tv", { year: "90s" });
+    expect(q90s["first_air_date.gte"]).toBe("1990-01-01");
+    expect(q90s["first_air_date.lte"]).toBe("1999-12-31");
+
+    const q80s = buildDiscoverQuery("movie", { year: "80s" });
+    expect(q80s["primary_release_date.lte"]).toBe("1989-12-31");
+  });
+
+  it("扩充题材正确映射 TMDB ID (剧情、恐怖、战争、武侠)", () => {
+    const qDrama = buildDiscoverQuery("movie", { genre: "drama" });
+    expect(qDrama.with_genres).toBe("18");
+
+    const qHorror = buildDiscoverQuery("movie", { genre: "horror" });
+    expect(qHorror.with_genres).toBe("27|9648");
+
+    const qWar = buildDiscoverQuery("tv", { genre: "war" });
+    expect(qWar.with_genres).toBe("10752|10768");
+
+    const qWuxia = buildDiscoverQuery("movie", { genre: "wuxia" });
+    expect(qWuxia.with_genres).toBe("28|14|10759|10765");
+  });
 });

@@ -271,6 +271,20 @@ export const CORE_SMOKE_ROUTES = [
     expectedStatus: [200],
     validate: (res) => res.status === 200 && res.body.includes("media-filter-bar"),
   },
+  {
+    name: "国家与地区筛选流 (中国国漫专区)",
+    path: "/?type=anime&country=cn",
+    strategy: "ssr",
+    expectedStatus: [200],
+    validate: (res) => res.status === 200 && res.body.includes("media-filter-bar"),
+  },
+  {
+    name: "经典港片与年代复合流 (90年代香港电影)",
+    path: "/?type=movie&country=hk&year=90s",
+    strategy: "ssr",
+    expectedStatus: [200],
+    validate: (res) => res.status === 200 && res.body.includes("media-filter-bar"),
+  },
 ];
 
 // ============================================================================
