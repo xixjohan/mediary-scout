@@ -29,6 +29,7 @@ let demoSearchCache: InMemoryMediaSearchCache | null = null;
 let interpretationCache: SearchInterpretationCache | null = null;
 
 let doubanFallbackProvider: MediaSearchProvider | null = null;
+const sharedTmdbDeadAccesses = new Set<string>();
 
 function getDoubanFallbackProvider(): MediaSearchProvider {
   doubanFallbackProvider ??= new DoubanSearchProvider();
@@ -112,5 +113,8 @@ async function getMediaSearchProvider(): Promise<MediaSearchProvider> {
   }
   // Built per-call scoped to the current account (its TMDB key → global → proxy),
   // not module-cached — a singleton would lock to the first account's key.
-  return createTmdbSearchProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId())));
+  return createTmdbSearchProvider(
+    await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId())),
+    { deadAccesses: sharedTmdbDeadAccesses },
+  );
 }

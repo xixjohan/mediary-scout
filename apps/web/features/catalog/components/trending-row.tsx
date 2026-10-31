@@ -111,7 +111,7 @@ function TrendingRowPagination({
   if (count === 0 && page <= 1) {
     return null;
   }
-  const totalPages = count >= pageSize ? Math.min(50, page + 1) : page;
+  const totalPages = count >= pageSize ? Math.min(50, Math.max(page + 4, 5)) : page;
 
   return (
     <PaginationBar

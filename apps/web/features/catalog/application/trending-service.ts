@@ -218,7 +218,7 @@ function resolveGenreQuery(
     ids.push(99);
   } else if (params?.type === "variety" && mediaType === "tv") {
     ids.push(10764, 10767);
-  } else if (params?.type === "anime" && mediaType === "tv") {
+  } else if (params?.type === "anime") {
     ids.push(16);
   }
   if (params?.genre && params.genre !== "all") {
@@ -250,8 +250,8 @@ export function buildDiscoverQuery(
     query["with_genres"] = withGenres;
   }
 
-  if (params?.type === "anime" && mediaType === "tv") {
-    query["with_original_language"] = "ja";
+  if (params?.type === "anime") {
+    query["with_original_language"] = "ja|zh|ko";
   }
 
   if (params?.year && params.year !== "all") {
@@ -305,6 +305,9 @@ function hasDynamicFilter(params?: DiscoverFilterParams): boolean {
 
 function shouldServeTrendingOnly(params?: DiscoverFilterParams): boolean {
   if (!params) return false;
+  const page = params.page ?? 1;
+  const pageSize = normalizePageSize(params.pageSize);
+  if (page > 1 || pageSize > 20) return false;
   if (params.type && params.type !== "all") return false;
   if (params.genre && params.genre !== "all") return false;
   if (params.year && params.year !== "all") return false;
@@ -337,14 +340,14 @@ async function fetchTypedFeedCards(
   const type = filterParams?.type;
   if (!type || type === "all") return null;
 
-  if (type === "documentary") {
+  if (type === "documentary" || type === "anime") {
     const [movieCards, tvCards] = await Promise.all([
       fetchDiscoverCards(accesses, "movie", filterParams),
       fetchDiscoverCards(accesses, "tv", filterParams),
     ]);
     return interleaveFeeds([movieCards, tvCards]);
   }
-  if (type === "variety" || type === "anime") {
+  if (type === "variety") {
     return fetchDiscoverCards(accesses, "tv", filterParams);
   }
   if (type === "movie" || type === "tv") {

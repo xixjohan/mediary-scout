@@ -173,11 +173,13 @@ export interface TmdbMetadataProviderOptions {
   baseURL?: string;
   language?: string;
   fetchJson?: TmdbFetchJson;
+  deadAccesses?: Set<string>;
 }
 
 export interface TmdbSearchProviderOptions extends TmdbMetadataProviderOptions {
   maxResults?: number;
   tvDetailsLimit?: number;
+  deadAccesses?: Set<string>;
 }
 
 export interface TvTrackingTargetInput {
@@ -264,12 +266,13 @@ export class TmdbMetadataProvider {
   private readonly fetchJson: TmdbFetchJson;
   /** Per-instance memo of accesses that already failed (issue #68): skip them on
    *  later calls so a blocked direct hop isn't re-probed once per TMDB request. */
-  private readonly deadAccesses = new Set<string>();
+  private readonly deadAccesses: Set<string>;
 
   constructor(options: TmdbMetadataProviderOptions) {
     this.accesses = resolveAccesses(options);
     this.language = options.language ?? "zh-CN";
     this.fetchJson = options.fetchJson ?? defaultFetchJson;
+    this.deadAccesses = options.deadAccesses ?? new Set<string>();
   }
 
   async getTvDetails(tmdbId: number): Promise<TmdbTvDetails> {
@@ -319,7 +322,7 @@ export class TmdbSearchProvider implements MediaSearchProvider {
   private readonly fetchJson: TmdbFetchJson;
   /** Per-instance memo of accesses that already failed (issue #68): skip them on
    *  later calls so a blocked direct hop isn't re-probed once per TMDB request. */
-  private readonly deadAccesses = new Set<string>();
+  private readonly deadAccesses: Set<string>;
   private readonly maxResults: number;
   private readonly tvDetailsLimit: number;
 
@@ -327,6 +330,7 @@ export class TmdbSearchProvider implements MediaSearchProvider {
     this.accesses = resolveAccesses(options);
     this.language = options.language ?? "zh-CN";
     this.fetchJson = options.fetchJson ?? defaultFetchJson;
+    this.deadAccesses = options.deadAccesses ?? new Set<string>();
     this.maxResults = options.maxResults ?? 10;
     this.tvDetailsLimit = options.tvDetailsLimit ?? this.maxResults;
   }
@@ -372,7 +376,18 @@ export class TmdbSearchProvider implements MediaSearchProvider {
     const allResults = responses.flatMap((resp) => parseSearchResults(resp));
     const results = allResults.slice(sliceStart, sliceEnd);
     const candidates: MediaSearchCandidate[] = [];
-    let tvDetailsRequests = 0;
+    const tvResultsToFetch = results.filter((r) => r.media_type === "tv").slice(0, this.tvDetailsLimit);
+    const detailsMap = new Map<number, TmdbTvDetails | null>();
+    await Promise.all(
+      tvResultsToFetch.map(async (tv) => {
+        try {
+          const details = await this.getTvDetails(tv.id);
+          detailsMap.set(tv.id, details);
+        } catch {
+          detailsMap.set(tv.id, null);
+        }
+      }),
+    );
 
     for (const result of results) {
       if (result.media_type === "movie") {
@@ -380,9 +395,7 @@ export class TmdbSearchProvider implements MediaSearchProvider {
       }
 
       if (result.media_type === "tv") {
-        const details =
-          tvDetailsRequests < this.tvDetailsLimit ? await this.getTvDetails(result.id) : null;
-        tvDetailsRequests += details ? 1 : 0;
+        const details = detailsMap.get(result.id) ?? null;
         candidates.push(tvSearchCandidate(result, details));
       }
     }
@@ -418,14 +431,14 @@ export class TmdbSearchProvider implements MediaSearchProvider {
 
 export function createTmdbMetadataProvider(
   accesses: TmdbAccess[],
-  opts: { language?: string; fetchJson?: TmdbFetchJson } = {},
+  opts: { language?: string; fetchJson?: TmdbFetchJson; deadAccesses?: Set<string> } = {},
 ): TmdbMetadataProvider {
   return new TmdbMetadataProvider({ accesses, ...opts });
 }
 
 export function createTmdbSearchProvider(
   accesses: TmdbAccess[],
-  opts: { language?: string; fetchJson?: TmdbFetchJson; maxResults?: number; tvDetailsLimit?: number } = {},
+  opts: { language?: string; fetchJson?: TmdbFetchJson; maxResults?: number; tvDetailsLimit?: number; deadAccesses?: Set<string> } = {},
 ): TmdbSearchProvider {
   return new TmdbSearchProvider({ accesses, ...opts });
 }
