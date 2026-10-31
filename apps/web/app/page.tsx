@@ -508,7 +508,9 @@ async function LibrarySurface({
           详情页季行同一口径，见 lib/subscription-missing），这里不重算。
           category 视图及「已完成」视图下不显示——那一屏已被收窄，再叠一块全局
           待办会让人以为数字对应当前筛选。 */}
-      {category === null && status !== "completed" ? <SubscriptionTodo wallEntries={wall} storageId={storageId} /> : null}
+      {status !== "completed" ? (
+        <SubscriptionTodo wallEntries={wall} storageId={storageId} initialCategory={category} />
+      ) : null}
       <LibraryQuickFind
         wallEntries={wall}
         inProgressTitles={inProgress}
