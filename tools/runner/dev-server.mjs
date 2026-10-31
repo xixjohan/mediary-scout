@@ -382,12 +382,19 @@ async function run() {
 
   console.log(`${c.cyan}🚀 启动 Web 服务进程: ${command} ${cmdArgs.join(" ")} ...${c.reset}`);
 
-  const executable = isWindows ? `${command}.cmd` : command;
-  const child = spawn(executable, cmdArgs, {
-    cwd: repoRoot,
-    env,
-    stdio: "inherit",
-  });
+  const fullCommand = [command, ...cmdArgs].join(" ");
+  const child = isWindows
+    ? spawn(fullCommand, {
+        cwd: repoRoot,
+        env,
+        stdio: "inherit",
+        shell: true,
+      })
+    : spawn(command, cmdArgs, {
+        cwd: repoRoot,
+        env,
+        stdio: "inherit",
+      });
 
   if (child.pid) {
     fs.writeFileSync(pidFile, String(child.pid), "utf8");
