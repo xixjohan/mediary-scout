@@ -12,7 +12,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
 
 /** 根目录允许出现的文件（配置/文档/锁文件）。其余一律视为孤儿。 */
 const ROOT_ALLOWLIST = new Set([
@@ -21,7 +21,7 @@ const ROOT_ALLOWLIST = new Set([
   "eslint-suppressions.json",
   "Dockerfile", "LICENSE", "README.md", "README.en.md",
   "package.json", "package-lock.json", "tsconfig.json", "vitest.config.ts",
-  "eslint.config.mjs", "docker-compose.yml",
+  "eslint.config.mjs", "docker-compose.yml", "dev.bat",
 ]);
 const ROOT_DIR_ALLOWLIST = new Set([
   ".git", ".github", ".claude", ".next", ".venv", "node_modules",
