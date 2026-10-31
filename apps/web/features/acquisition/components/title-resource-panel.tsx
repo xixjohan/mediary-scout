@@ -1,9 +1,20 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { Search, X } from "lucide-react";
-import type { ResourceCandidateView, ResourceType } from "@media-track/workflow";
+import type { ResourceCandidateView } from "@media-track/workflow";
 import { useRouter } from "../../../lib/use-router";
+import {
+  type CandidateLinkState,
+  ResourceCandidateRow,
+  resourceTypeLabel,
+} from "./resource-candidate-row";
+import {
+  appendKeywordChip,
+  ResourceSearchBar,
+} from "./resource-search-bar";
+
+export { appendKeywordChip, resourceTypeLabel };
+export type { CandidateLinkState };
 
 /**
  * 详情页「资源」面板（批次 2 的 UI 部分 + 精准搜索与自定义关键词支持）。
@@ -13,6 +24,7 @@ import { useRouter } from "../../../lib/use-router";
  *  2. 支持在未追踪状态下进行先验探查（搜索页直达）。
  *  3. 支持自定义搜索关键词与精准按季/按集检索。
  *  4. 选定满意候选后支持「手动入库」。
+ *  5. 支持安全受控地查看和复制网盘链接与磁力地址。
  */
 
 export interface ResourcePanelProps {
@@ -78,11 +90,7 @@ export function mapResourceStreamEvent(
 }
 
 /**
- * HTTP 响应 ⇒ 面板状态。抽成导出纯函数是为了能单测——内联在事件回调里就只能测一个
- * 复本，那是假覆盖。
- *
- * 降级契约（规格 failure mode）：数据源不可用绝不抛到页面外，一律转成 error 态；
- * 429 转成可读的剩余秒数，不是一个裸错误。
+ * HTTP 响应 ⇒ 面板状态。
  */
 export function mapResourceResponse(status: number, body: unknown): PanelState {
   if (status === 429) {
@@ -109,10 +117,6 @@ export function mapResourceResponse(status: number, body: unknown): PanelState {
 
 /**
  * 入库 HTTP 响应 ⇒ 导入状态。
- *
- * 410 而不是 400：候选曾经有效、只是窗口关了（或它不属于这次搜索）。用户的下一步
- * 一样——重新查询——而 410 告诉客户端别再原样重试。
- * 200 already_running 不当成错误：什么都没新入队，报错会让用户以为失败了。
  */
 export function mapImportResponse(status: number, body: unknown): ImportState {
   if (status === 202) {
@@ -123,13 +127,12 @@ export function mapImportResponse(status: number, body: unknown): ImportState {
   }
   const parsed = body as { error?: string; reason?: string };
   const message = parsed.error ?? `入库失败（${status}）`;
-  // exactOptionalPropertyTypes：拿不准有没有 reason 时不能传 undefined，要整个键不传。
   return parsed.reason === undefined
     ? { kind: "rejected", message }
     : { kind: "rejected", message, reason: parsed.reason };
 }
 
-/** 导入子状态。与查询状态分开：查询可以被冷却挡住，导入有它自己的一套终局。 */
+/** 导入子状态。 */
 export type ImportState =
   | { kind: "idle" }
   | { kind: "submitting"; candidateId: string }
@@ -137,232 +140,17 @@ export type ImportState =
   | { kind: "already_running" }
   | { kind: "rejected"; message: string; reason?: string };
 
-/** 字节数的人类可读形式。provider 不上报体积时整块不渲染。 */
-function formatSize(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  return `${value >= 100 || unit === 0 ? Math.round(value) : value.toFixed(1)} ${units[unit]}`;
-}
-
-function formatPostedAt(iso: string): string {
-  const parsed = new Date(iso);
-  if (Number.isNaN(parsed.getTime())) return iso;
-  return parsed.toISOString().slice(0, 10);
-}
-
-/**
- * 候选的资源类型 ⇒ 用户看得懂的品牌名。与设置页、各网盘连接组件同一套叫法
- * （115/夸克/天翼/123/光鸭），磁力叫「磁力」—— pansou 的 source 字段虽然也带
- * 品牌，但一枚固定位置的标签让「网盘秒传候选」和「磁力候选」在一眼里分得开，
- * 后者要走 Prowlarr、且依赖网盘的磁力秒传能力。
- */
-export function resourceTypeLabel(type: ResourceType): string {
-  switch (type) {
-    case "115":
-      return "115";
-    case "quark":
-      return "夸克";
-    case "uc":
-      return "UC";
-    case "tianyi":
-      return "天翼";
-    case "123":
-      return "123";
-    case "guangya":
-      return "光鸭";
-    case "magnet":
-      return "磁力";
-    case "manual":
-      return "手动";
-  }
-}
-
-export function appendKeywordChip(current: string, chip: string): string {
-  const trimmed = current.trim();
-  const token = chip.trim();
-  if (!token) return current;
-  if (!trimmed) return token;
-  const tokens = trimmed.split(/\s+/);
-  if (tokens.some((t) => t.toLowerCase() === token.toLowerCase())) {
-    return trimmed;
-  }
-  return `${trimmed} ${token}`;
-}
-
-const MODIFIER_CHIPS = ["4K", "1080p", "简日内嵌", "原盘"] as const;
-
-interface QuickChipsProps {
-  customKeyword: string;
-  setCustomKeyword: (v: string) => void;
-  title?: string | undefined;
-  year?: number | undefined;
-}
-
-function ResourceQuickChips({
-  customKeyword,
-  setCustomKeyword,
-  title,
-  year,
-}: QuickChipsProps) {
-  const cleanTitle = title?.trim();
-
-  return (
-    <div className="title-resources-quick-chips">
-      <span className="title-resources-quick-label">快捷词：</span>
-      {cleanTitle ? (
-        <button
-          type="button"
-          className="title-resources-chip"
-          onClick={() => setCustomKeyword(cleanTitle)}
-          title="以原片名检索"
-        >
-          {cleanTitle}
-        </button>
-      ) : null}
-      {cleanTitle && year && Number.isInteger(year) ? (
-        <button
-          type="button"
-          className="title-resources-chip"
-          onClick={() => setCustomKeyword(`${cleanTitle} ${year}`)}
-          title="以片名+年份检索"
-        >
-          {cleanTitle} {year}
-        </button>
-      ) : null}
-      {MODIFIER_CHIPS.map((mod) => (
-        <button
-          key={mod}
-          type="button"
-          className="title-resources-chip"
-          onClick={() => setCustomKeyword(appendKeywordChip(customKeyword, mod))}
-          title={`追加 ${mod} 过滤词`}
-        >
-          + {mod}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-interface SearchBarProps {
-  customKeyword: string;
-  setCustomKeyword: (v: string) => void;
-  selectedSeason: number | undefined;
-  setSelectedSeason: (v: number | undefined) => void;
-  selectedEpisode: string;
-  setSelectedEpisode: (v: string) => void;
-  mediaType?: "movie" | "tv" | "anime" | undefined;
-  seasonNumbers?: readonly number[] | undefined;
-  title?: string | undefined;
-  year?: number | undefined;
-  busy: boolean;
-  throttled: boolean;
-  retryAfterMs?: number | undefined;
-  onSearch: () => void;
-  onKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
-}
-
-function ResourceSearchBar({
-  customKeyword,
-  setCustomKeyword,
-  selectedSeason,
-  setSelectedSeason,
-  selectedEpisode,
-  setSelectedEpisode,
-  mediaType,
-  seasonNumbers,
-  title,
-  year,
-  busy,
-  throttled,
-  retryAfterMs,
-  onSearch,
-  onKeyDown,
-}: SearchBarProps) {
-  return (
-    <div className="title-resources-search-bar">
-      <div className="title-resources-input-wrap">
-        <Search size={14} aria-hidden />
-        <input
-          type="text"
-          value={customKeyword}
-          onChange={(e) => setCustomKeyword(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="自定义搜索关键词（如：4K 喵萌奶茶屋 S01...）"
-          aria-label="自定义搜索关键词"
-        />
-        {customKeyword.trim() ? (
-          <button
-            type="button"
-            className="title-resources-input-clear"
-            aria-label="清空关键词"
-            onClick={() => setCustomKeyword("")}
-          >
-            <X size={12} aria-hidden />
-          </button>
-        ) : null}
-      </div>
-
-      {mediaType !== "movie" && seasonNumbers && seasonNumbers.length > 1 ? (
-        <select
-          className="title-resources-select"
-          value={selectedSeason ?? ""}
-          onChange={(e) => setSelectedSeason(e.target.value ? Number(e.target.value) : undefined)}
-          aria-label="选择季度"
-        >
-          <option value="">全部季</option>
-          {seasonNumbers.map((num) => (
-            <option key={num} value={num}>
-              第 {num} 季
-            </option>
-          ))}
-        </select>
-      ) : null}
-
-      {mediaType !== "movie" ? (
-        <input
-          type="number"
-          min="1"
-          className="title-resources-number-input"
-          value={selectedEpisode}
-          onChange={(e) => setSelectedEpisode(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="集数(选填)"
-          aria-label="指定集数"
-        />
-      ) : null}
-
-      <button
-        type="button"
-        className="title-resources-search"
-        onClick={onSearch}
-        disabled={busy || throttled}
-      >
-        {busy ? "查询中…" : throttled ? `请稍候 ${Math.ceil((retryAfterMs ?? 0) / 1000)}s` : "查询资源"}
-      </button>
-
-      <ResourceQuickChips
-        customKeyword={customKeyword}
-        setCustomKeyword={setCustomKeyword}
-        title={title}
-        year={year}
-      />
-    </div>
-  );
-}
-
 interface CandidatesListProps {
   state: Extract<PanelState, { kind: "ready" | "streaming" }>;
   importState: ImportState;
   busy: boolean;
   throttled: boolean;
   submitting: boolean;
+  linkStates: Record<string, CandidateLinkState>;
+  copiedId: string | null;
   onImportCandidate: (candidateId: string) => void;
+  onToggleLink: (candidateId: string) => void;
+  onCopyLink: (candidateId: string, text: string) => void;
 }
 
 function ResourceCandidatesList({
@@ -371,7 +159,11 @@ function ResourceCandidatesList({
   busy,
   throttled,
   submitting,
+  linkStates,
+  copiedId,
   onImportCandidate,
+  onToggleLink,
+  onCopyLink,
 }: CandidatesListProps) {
   if (state.candidates.length === 0) {
     if (state.kind === "streaming") {
@@ -404,34 +196,20 @@ function ResourceCandidatesList({
           const rowBusy =
             submitting && importState.kind === "submitting" && importState.candidateId === candidate.candidateId;
           return (
-            <li key={candidate.candidateId} className="title-resources-item">
-              <div className="title-resources-item-main">
-                <span className="title-resources-item-title" title={candidate.title}>
-                  {candidate.title}
-                </span>
-                <span className="title-resources-item-meta">
-                  <span className="resource-type-chip">{resourceTypeLabel(candidate.type)}</span>
-                  {candidate.sizeBytes !== undefined && ` · ${formatSize(candidate.sizeBytes)}`}
-                  {candidate.postedAt !== undefined && ` · ${formatPostedAt(candidate.postedAt)}`}
-                  {candidate.seeders !== undefined && ` · ${candidate.seeders} 做种`}
-                </span>
-              </div>
-              <button
-                type="button"
-                className="title-resources-import"
-                onClick={() => void onImportCandidate(candidate.candidateId)}
-                disabled={!importable || rowBusy || busy || throttled}
-                title={
-                  state.kind === "streaming"
-                    ? "检索全部完成生成快照后即可入库（首批结果已展示）"
-                    : importable
-                      ? undefined
-                      : "这是 30 分钟内的缓存结果，请重新查询后再入库"
-                }
-              >
-                {rowBusy ? "入库中…" : "手动入库"}
-              </button>
-            </li>
+            <ResourceCandidateRow
+              key={candidate.candidateId}
+              candidate={candidate}
+              importable={importable}
+              rowBusy={rowBusy}
+              busy={busy}
+              throttled={throttled}
+              streaming={state.kind === "streaming"}
+              linkInfo={linkStates[candidate.candidateId]}
+              copied={copiedId === candidate.candidateId}
+              onImport={() => void onImportCandidate(candidate.candidateId)}
+              onToggleLink={() => void onToggleLink(candidate.candidateId)}
+              onCopyLink={(text) => void onCopyLink(candidate.candidateId, text)}
+            />
           );
         })}
       </ul>
@@ -485,6 +263,8 @@ export function TitleResourcePanel({
 }: ResourcePanelProps) {
   const [state, setState] = useState<PanelState>({ kind: "idle" });
   const [importState, setImportState] = useState<ImportState>({ kind: "idle" });
+  const [linkStates, setLinkStates] = useState<Record<string, CandidateLinkState>>({});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [customKeyword, setCustomKeyword] = useState<string>(
     () => defaultKeyword?.trim() || title?.trim() || "",
   );
@@ -494,6 +274,7 @@ export function TitleResourcePanel({
 
   const search = useCallback(async () => {
     setState({ kind: "loading" });
+    setLinkStates({});
     try {
       const epNum = selectedEpisode.trim() ? parseInt(selectedEpisode.trim(), 10) : undefined;
       const response = await fetch("/api/titles/resources?stream=1", {
@@ -527,13 +308,105 @@ export function TitleResourcePanel({
     }
   }, [tmdbId, mediaType, customKeyword, selectedSeason, selectedEpisode, storageId]);
 
-  /**
-   * 手动入库。只递不透明句柄；分享链从头到尾没到过前端。
-   *
-   * 202 之后不自己计时——setState({kind:"queued"}) 只是把按钮换成「已入队」，
-   * 真正的进度来自 router.refresh()：服务端的 view.acquiring 已经包含 manual_import，
-   * 刷新后页面挂上 AcquiringPoller，由它轮询到 run 结束。徽章因此始终是服务端真相。
-   */
+  const handleToggleLink = useCallback(
+    async (candidateId: string) => {
+      const existing = linkStates[candidateId];
+      if (existing?.open) {
+        setLinkStates((prev) => ({
+          ...prev,
+          [candidateId]: { ...existing, open: false },
+        }));
+        return;
+      }
+      if (existing?.data) {
+        setLinkStates((prev) => ({
+          ...prev,
+          [candidateId]: { ...existing, open: true },
+        }));
+        return;
+      }
+
+      if (state.kind !== "ready" || state.snapshotId === null) {
+        const error =
+          state.kind === "streaming"
+            ? "请等待搜索完成生成快照后再查看链接"
+            : "缓存结果无链接快照，请重新查询";
+        setLinkStates((prev) => ({
+          ...prev,
+          [candidateId]: { open: true, loading: false, error },
+        }));
+        return;
+      }
+
+      setLinkStates((prev) => ({
+        ...prev,
+        [candidateId]: { open: true, loading: true },
+      }));
+
+      try {
+        const response = await fetch("/api/titles/resources/link", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            tmdbId,
+            snapshotId: state.snapshotId,
+            candidateId,
+          }),
+        });
+        const body = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          candidateId?: string;
+          title?: string;
+          type?: string;
+          link?: CandidateLinkState["data"] extends { link: infer L } ? L : never;
+        };
+        if (!response.ok) {
+          setLinkStates((prev) => ({
+            ...prev,
+            [candidateId]: {
+              open: true,
+              loading: false,
+              error: body.error ?? `获取失败 (${response.status})`,
+            },
+          }));
+          return;
+        }
+        setLinkStates((prev) => ({
+          ...prev,
+          [candidateId]: {
+            open: true,
+            loading: false,
+            data: body as CandidateLinkState["data"],
+          },
+        }));
+      } catch (err) {
+        setLinkStates((prev) => ({
+          ...prev,
+          [candidateId]: {
+            open: true,
+            loading: false,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        }));
+      }
+    },
+    [linkStates, state, tmdbId],
+  );
+
+  const handleCopyLink = useCallback(async (candidateId: string, text: string) => {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      }
+      setCopiedId(candidateId);
+      setTimeout(() => {
+        setCopiedId((curr) => (curr === candidateId ? null : curr));
+      }, 2000);
+    } catch {
+      // ignore clipboard error
+    }
+  }, []);
+
   const importCandidate = useCallback(
     async (candidateId: string) => {
       if (state.kind !== "ready" || state.snapshotId === null) return;
@@ -547,7 +420,6 @@ export function TitleResourcePanel({
         const body = await response.json().catch(() => ({}));
         const next = mapImportResponse(response.status, body);
         setImportState(next);
-        // 入队成功 ⇒ 让服务端重渲染，它才知道这部片有活儿在飞
         if (next.kind === "queued" || next.kind === "already_running") {
           router.refresh();
         }
@@ -607,7 +479,11 @@ export function TitleResourcePanel({
           busy={busy}
           throttled={throttled}
           submitting={submitting}
+          linkStates={linkStates}
+          copiedId={copiedId}
           onImportCandidate={importCandidate}
+          onToggleLink={handleToggleLink}
+          onCopyLink={handleCopyLink}
         />
       )}
 

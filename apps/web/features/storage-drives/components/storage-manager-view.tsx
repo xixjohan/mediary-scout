@@ -8,6 +8,7 @@ import type { ConnectedStorageView } from "../../../lib/workflow-runtime";
 import { StorageFileTable } from "./storage/storage-file-table";
 import { type ModalState, StorageModals } from "./storage/storage-modals";
 import { StorageNavBar } from "./storage/storage-nav-bar";
+import { StorageOfflineModal } from "./storage/storage-offline-modal";
 import { formatProviderLabel, StorageTopBar } from "./storage/storage-top-bar";
 
 export { formatProviderLabel };
@@ -93,6 +94,7 @@ export function StorageManagerView({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const [modal, setModal] = useState<ModalState>({ kind: null });
+  const [offlineModalOpen, setOfflineModalOpen] = useState<boolean>(false);
   const [inputName, setInputName] = useState<string>("");
   const [targetDir, setTargetDir] = useState<string>("");
   const [customTargetDir, setCustomTargetDir] = useState<string>("");
@@ -226,6 +228,8 @@ export function StorageManagerView({
     );
   }
 
+  const currentStorage = storages.find((s) => s.id === selectedStorageId);
+
   return (
     <div className="storage-view-container">
       <StorageTopBar
@@ -240,6 +244,7 @@ export function StorageManagerView({
         loading={loading}
         actionBusy={actionBusy}
         onOpenCreate={() => handleOpenAction("create")}
+        onOpenOffline={() => setOfflineModalOpen(true)}
         onRefresh={() => void loadFiles(selectedStorageId, currentDirId)}
       />
 
@@ -324,6 +329,14 @@ export function StorageManagerView({
         onRename={() => void handleExecuteModalAction()}
         onDelete={() => void handleExecuteModalAction()}
         onMoveOrCopy={() => void handleExecuteModalAction()}
+      />
+
+      <StorageOfflineModal
+        isOpen={offlineModalOpen}
+        onClose={() => setOfflineModalOpen(false)}
+        storage={currentStorage}
+        listing={listing ?? undefined}
+        onSuccess={() => void loadFiles(selectedStorageId, currentDirId)}
       />
     </div>
   );
