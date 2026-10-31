@@ -17,6 +17,8 @@ export type { IMediaMetadataProvider, MediaMetadata, MediaType } from "./infrast
 export const DEFAULT_ACCOUNT_ID = "acct_default";
 export const UNAUTHENTICATED_ACCOUNT_ID = "acct_unauthenticated";
 
+export type TokenCredential = Record<string, unknown>;
+
 export class UnauthenticatedAccountError extends Error {
   constructor(message = "未登录，请先登录后再操作。") {
     super(message);

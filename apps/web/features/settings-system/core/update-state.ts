@@ -1,4 +1,4 @@
-import type { CommitRelation, DesktopRelease, ReleaseEntry } from "./release-feed-server";
+import type { CommitRelation, DesktopRelease, ReleaseEntry } from "../../../lib/release-feed-server";
 import { compareReleaseTags } from "../../../lib/release-version";
 import type { UpdaterPhase, UpdaterStatus } from "../../../lib/updater-client";
 

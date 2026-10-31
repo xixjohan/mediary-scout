@@ -1,4 +1,4 @@
-import type { UpdaterStatus } from "./updater-client";
+import type { UpdaterStatus } from "../../../lib/updater-client";
 import { ACTIVE_UPDATER_PHASES } from "./update-state";
 
 export const DEFAULT_AUTO_UPDATE_TIME = "04:00";

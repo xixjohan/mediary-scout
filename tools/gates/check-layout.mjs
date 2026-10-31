@@ -21,7 +21,7 @@ const ROOT_ALLOWLIST = new Set([
   "eslint-suppressions.json",
   "Dockerfile", "LICENSE", "README.md", "README.en.md",
   "package.json", "package-lock.json", "tsconfig.json", "vitest.config.ts",
-  "eslint.config.mjs", "docker-compose.yml", "dev.bat",
+  "eslint.config.mjs", "docker-compose.yml", "dev.bat", "smoke.bat",
 ]);
 const ROOT_DIR_ALLOWLIST = new Set([
   ".git", ".github", ".claude", ".next", ".venv", "node_modules",

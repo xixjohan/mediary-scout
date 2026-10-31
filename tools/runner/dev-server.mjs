@@ -167,7 +167,7 @@ class ProcessAdapter {
         this.killProcessTree(pid);
         killed = true;
       }
-      fs.unlinkSync(pidFile);
+      try { fs.unlinkSync(pidFile); } catch {}
     }
 
     // 2. 查端口上存活的实际 PID
