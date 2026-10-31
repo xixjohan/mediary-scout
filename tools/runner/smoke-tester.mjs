@@ -250,6 +250,27 @@ export const CORE_SMOKE_ROUTES = [
     expectedStatus: [200, 302, 307, 404],
     validate: (res) => res.status !== 500,
   },
+  {
+    name: "动漫全量发现流 (全部题材·全部年份)",
+    path: "/?type=anime&genre=all&year=all",
+    strategy: "ssr",
+    expectedStatus: [200],
+    validate: (res) => res.status === 200 && (res.body.includes("trending-card") || res.body.includes("candidate-card")),
+  },
+  {
+    name: "动漫深度分页流 (第 2 页防截断)",
+    path: "/?type=anime&page=2",
+    strategy: "ssr",
+    expectedStatus: [200],
+    validate: (res) => res.status === 200 && !res.body.includes("未找到符合筛选条件的作品"),
+  },
+  {
+    name: "多维复合分类筛选流 (科幻电影 2024)",
+    path: "/?type=movie&genre=scifi&year=2024",
+    strategy: "ssr",
+    expectedStatus: [200],
+    validate: (res) => res.status === 200 && res.body.includes("media-filter-bar"),
+  },
 ];
 
 // ============================================================================

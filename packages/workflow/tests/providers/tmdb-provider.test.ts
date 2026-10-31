@@ -1144,4 +1144,83 @@ describe("per-access timeout + timeout retry (2026-07-02 压测发现:软路由�
     await provider.getMovieDetails(278); // healed memo → single straight call
     expect(calls).toBe(3);
   });
+
+  it("fetches multiple TV details in parallel instead of serial waterfall", async () => {
+    let simultaneousTvCalls = 0;
+    let maxSimultaneous = 0;
+    const provider = new TmdbSearchProvider({
+      accesses: [{ baseURL: "https://proxy.example", readToken: "k" }],
+      tvDetailsLimit: 5,
+      fetchJson: async (url) => {
+        if (url.includes("search/multi")) {
+          return {
+            page: 1,
+            total_results: 3,
+            total_pages: 1,
+            results: [
+              { id: 101, media_type: "tv", name: "Show 1", first_air_date: "2024-01-01", origin_country: ["CN"], genre_ids: [] },
+              { id: 102, media_type: "tv", name: "Show 2", first_air_date: "2024-01-01", origin_country: ["JP"], genre_ids: [] },
+              { id: 103, media_type: "tv", name: "Show 3", first_air_date: "2024-01-01", origin_country: ["US"], genre_ids: [] },
+            ],
+          };
+        }
+        if (url.includes("/tv/")) {
+          simultaneousTvCalls++;
+          maxSimultaneous = Math.max(maxSimultaneous, simultaneousTvCalls);
+          await new Promise((r) => setTimeout(r, 20));
+          simultaneousTvCalls--;
+          const id = Number(url.match(/\/tv\/(\d+)/)?.[1]);
+          return {
+            id,
+            name: `Show ${id}`,
+            original_name: `Original ${id}`,
+            first_air_date: "2024-01-01",
+            number_of_episodes: 12,
+            overview: "overview",
+            poster_path: null,
+            backdrop_path: null,
+            genres: [],
+            origin_country: ["CN"],
+            seasons: [{ season_number: 1, episode_count: 12 }],
+          };
+        }
+        return {};
+      },
+    });
+
+    const res = await provider.searchMediaPage({ query: "Show" });
+    expect(res.candidates).toHaveLength(3);
+    expect(maxSimultaneous).toBeGreaterThan(1); // Proves parallel execution!
+  });
+
+  it("shares deadAccesses across provider instances to skip failed hops immediately", async () => {
+    const sharedDead = new Set<string>();
+    let directProbed = 0;
+    const makeProvider = () =>
+      new TmdbSearchProvider({
+        accesses: [
+          { baseURL: "https://api.themoviedb.org/3", readToken: "tok" },
+          { baseURL: "https://proxy.example", readToken: "tok" },
+        ],
+        deadAccesses: sharedDead,
+        fetchJson: async (url) => {
+          if (url.includes("api.themoviedb.org")) {
+            directProbed++;
+            throw Object.assign(new Error("connect timeout"), { name: "TimeoutError" });
+          }
+          return { page: 1, total_results: 0, results: [] };
+        },
+      });
+
+    const p1 = makeProvider();
+    await p1.searchMediaPage({ query: "Test" });
+    // First query probes direct hop and marks it dead
+    expect(directProbed).toBeGreaterThanOrEqual(1);
+    const probesAfterFirst = directProbed;
+
+    // Second provider instance sharing the same deadAccesses should skip direct hop!
+    const p2 = makeProvider();
+    await p2.searchMediaPage({ query: "Test 2" });
+    expect(directProbed).toBe(probesAfterFirst); // No new direct probes!
+  });
 });

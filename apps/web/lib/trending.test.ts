@@ -118,7 +118,11 @@ describe("buildDiscoverQuery 动态探索参数构建", () => {
 
     const anime = buildDiscoverQuery("tv", { type: "anime" });
     expect(anime.with_genres).toBe("16");
-    expect(anime.with_original_language).toBe("ja");
+    expect(anime.with_original_language).toBe("ja|zh|ko");
+
+    const animeMovie = buildDiscoverQuery("movie", { type: "anime" });
+    expect(animeMovie.with_genres).toBe("16");
+    expect(animeMovie.with_original_language).toBe("ja|zh|ko");
   });
 
   it("排序维度正确映射到 TMDB Discover 参数", () => {
