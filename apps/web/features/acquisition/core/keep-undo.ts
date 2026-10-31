@@ -20,7 +20,7 @@
  * episode stays kept, as the server has it — nothing is lost without a word.
  * Design: docs/superpowers/specs/2026-09-26-user-message-replace-design.md §6.
  */
-import type { PendingRow } from "./user-message-state";
+import type { PendingRow } from "../../assistant/core/user-message-state";
 
 export interface KeepToast {
   id: number;

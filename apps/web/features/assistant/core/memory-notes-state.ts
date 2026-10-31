@@ -1,4 +1,10 @@
-import type { MemoryItem } from "./agent-memory-server";
+export interface MemoryItem {
+  name: string;
+  text: string;
+  verdict: "works" | "avoid" | null;
+  driveLabel: string | null;
+  updatedAt: string;
+}
 
 /** Fresh server props for the notes list, minus every note the user deleted whose
  *  server delete has not resolved yet (waiting out the undo window, or in flight). */

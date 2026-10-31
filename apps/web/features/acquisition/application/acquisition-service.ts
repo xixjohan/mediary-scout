@@ -1,4 +1,4 @@
-import { DEFAULT_ACCOUNT_ID, type MediaTitle } from "@media-track/contracts";
+import { DEFAULT_ACCOUNT_ID } from "@media-track/contracts";
 import {
   buildMovieCandidateId,
   buildTvCandidateId,
@@ -13,7 +13,7 @@ import {
   reserveMovie,
   importForeignWorkAsMovie,
   llmConfigError,
-  type CandidateTrackingRequest,
+  type MediaTitle,
 } from "@media-track/workflow";
 import {
   getWorkflowRepository,

@@ -9,6 +9,8 @@ import {
   resolveSessionAccountId,
 } from "../../lib/workflow-runtime";
 
+export { isMultiUserEnabled };
+
 /**
  * /api 认证责任链：解析请求的账号；无法认证返回 null。永不抛异常。
  */
