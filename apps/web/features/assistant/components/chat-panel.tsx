@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Bot,
+  Cpu,
   PanelLeftOpen,
   Send,
   Sparkles,
 } from "lucide-react";
 import type { ActionCardPayload, ToolCallItem } from "../../../lib/chat-agent-service";
 import { ChatMessageItem, type ChatMessage } from "./chat-cards";
+import { McpServerDrawer } from "./mcp-server-drawer";
 import type { PersistedChatMessage } from "../../../lib/chat-types";
 
 interface ServerChatResponse {
@@ -68,6 +70,7 @@ export function ChatPanel({
   const [busy, setBusy] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>(DEFAULT_PROMPTS);
+  const [showMcpDrawer, setShowMcpDrawer] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -253,9 +256,19 @@ export function ChatPanel({
             <p className="chat-subtitle">Mediary Copilot · 影视检索与管理</p>
           </div>
         </div>
-        <div className="chat-status-pill">
-          <Sparkles size={13} aria-hidden />
-          <span>全能调度模式</span>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-sm"
+            onClick={() => setShowMcpDrawer(true)}
+            style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
+          >
+            <Cpu size={14} /> MCP 工具编排
+          </button>
+          <div className="chat-status-pill">
+            <Sparkles size={13} aria-hidden />
+            <span>全能调度模式</span>
+          </div>
         </div>
       </header>
 
@@ -330,6 +343,7 @@ export function ChatPanel({
           </button>
         </div>
       </div>
+      <McpServerDrawer isOpen={showMcpDrawer} onClose={() => setShowMcpDrawer(false)} />
     </div>
   );
 }

@@ -259,6 +259,7 @@ docker compose exec web node scripts/reset-password.mjs <你的用户名>
 ## 📚 详细文档索引
 
 - [📖 完整部署指南（NAS、软路由、代理穿透）](docs/deploy.md)
+- [⚙️ 环境变量全景与治理指南](docs/environment-variables.md)
 - [🧩 架构设计与分层速览](docs/architecture.md)
 - [🔬 全流程审计与设计模式架构优化方案（网盘添加/搜索/入库/整理）](docs/full-pipeline-audit-and-design-pattern-architecture.md)
 - [🗂️ 115 网盘目录自动建树与多网盘原地自愈治理](docs/pan115-directory-provisioning-and-multi-drive-governance.md)

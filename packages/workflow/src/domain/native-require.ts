@@ -43,3 +43,37 @@ export function createNativeRequire(from: string): NodeJS.Require {
   }
   return nodeModule.createRequire(from);
 }
+
+let cachedPath: typeof import("node:path") | undefined;
+export function getNativePath(): typeof import("node:path") {
+  if (!cachedPath) {
+    const fromGet = process.getBuiltinModule?.(["node", "path"].join(":")) as typeof import("node:path") | undefined;
+    cachedPath = fromGet ?? (createNativeRequire(import.meta.url)(["node", "path"].join(":")) as typeof import("node:path"));
+  }
+  return cachedPath;
+}
+
+let cachedFs: typeof import("node:fs") | undefined;
+export function getNativeFs(): typeof import("node:fs") {
+  if (!cachedFs) {
+    const fromGet = process.getBuiltinModule?.(["node", "fs"].join(":")) as typeof import("node:fs") | undefined;
+    cachedFs = fromGet ?? (createNativeRequire(import.meta.url)(["node", "fs"].join(":")) as typeof import("node:fs"));
+  }
+  return cachedFs;
+}
+
+export const nativePath: typeof import("node:path") = new Proxy({} as typeof import("node:path"), {
+  get(_target, prop) {
+    const p = getNativePath();
+    const val = (p as any)[prop];
+    return typeof val === "function" ? val.bind(p) : val;
+  },
+});
+
+export const nativeFs: typeof import("node:fs") = new Proxy({} as typeof import("node:fs"), {
+  get(_target, prop) {
+    const f = getNativeFs();
+    const val = (f as any)[prop];
+    return typeof val === "function" ? val.bind(f) : val;
+  },
+});

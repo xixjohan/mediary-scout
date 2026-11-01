@@ -35,12 +35,23 @@ export async function unbindStorageAction(storageId: string): Promise<UnbindStor
     requireAuthenticatedAccountId,
     getWorkflowRepository,
     clearPan115GlobalMirrorForUnboundDrive,
+    isSharedResourceMode,
+    getCurrentAccountSummary,
   } = await import("../../lib/workflow-runtime");
   let accountId: string;
   try {
     accountId = await requireAuthenticatedAccountId();
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+
+  if (isSharedResourceMode()) {
+    const summary = await getCurrentAccountSummary();
+    if (!summary?.isOwner) {
+      return { ok: false, message: "共用资源模式下，只有站长有权解除绑定公共网盘。" };
+    }
+    const { DEFAULT_ACCOUNT_ID } = await import("@media-track/contracts");
+    accountId = DEFAULT_ACCOUNT_ID;
   }
   const repository = getWorkflowRepository();
 

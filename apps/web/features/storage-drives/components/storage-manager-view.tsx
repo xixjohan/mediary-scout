@@ -9,6 +9,7 @@ import { StorageFileTable } from "./storage/storage-file-table";
 import { type ModalState, StorageModals } from "./storage/storage-modals";
 import { StorageNavBar } from "./storage/storage-nav-bar";
 import { StorageOfflineModal } from "./storage/storage-offline-modal";
+import { VideoPreviewModal } from "./storage/video-preview-modal";
 import { formatProviderLabel, StorageTopBar } from "./storage/storage-top-bar";
 
 export { formatProviderLabel };
@@ -92,6 +93,8 @@ export function StorageManagerView({
   const [error, setError] = useState<string | null>(null);
   const [actionBusy, setActionBusy] = useState<boolean>(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [previewItem, setPreviewItem] = useState<DriveFileItem | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   const [modal, setModal] = useState<ModalState>({ kind: null });
   const [offlineModalOpen, setOfflineModalOpen] = useState<boolean>(false);
@@ -176,6 +179,19 @@ export function StorageManagerView({
     if (next.has(id)) next.delete(id);
     else next.add(id);
     setSelectedIds(next);
+  };
+
+
+  const handlePlay = (item: DriveFileItem) => {
+    setPreviewItem(item);
+  };
+
+  const handleCopyPlayLink = (item: DriveFileItem) => {
+    const url = `${window.location.origin}/api/strm/play/${selectedStorageId}/${item.id}?name=${encodeURIComponent(item.name)}`;
+    void navigator.clipboard.writeText(url).then(() => {
+      setSuccessMessage(`已复制播放链: ${item.name}`);
+      setTimeout(() => setSuccessMessage(null), 3000);
+    });
   };
 
   const handleOpenAction = (kind: ModalState["kind"], single?: DriveFileItem) => {
@@ -299,6 +315,19 @@ export function StorageManagerView({
         </div>
       )}
 
+      {successMessage && (
+        <div className="storage-error-banner" style={{ background: "rgba(34, 197, 94, 0.15)", borderColor: "rgba(34, 197, 94, 0.3)", color: "var(--accent)" }}>
+          <span>{successMessage}</span>
+          <button
+            type="button"
+            className="storage-error-dismiss"
+            onClick={() => setSuccessMessage(null)}
+          >
+            ×
+          </button>
+        </div>
+      )}
+
       <StorageFileTable
         loading={loading}
         items={filteredItems}
@@ -311,8 +340,17 @@ export function StorageManagerView({
         onMove={(item) => handleOpenAction("move", item)}
         onCopy={(item) => handleOpenAction("copy", item)}
         onDelete={(item) => handleOpenAction("delete", item)}
+        onPlay={handlePlay}
+        onCopyPlayLink={handleCopyPlayLink}
       />
 
+      {previewItem && (
+        <VideoPreviewModal
+          item={previewItem}
+          storageId={selectedStorageId}
+          onClose={() => setPreviewItem(null)}
+        />
+      )}
       <StorageModals
         modal={modal}
         listing={listing}

@@ -49,6 +49,31 @@ import type {
 import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "../domain/workflow-scope.js";
 import type { StoredSubscriptionPolicy, SubscriptionPolicyWrite } from "./subscription-policy-store.js";
 import type {
+  CreateMediaRequestInput,
+  MediaRequest,
+  MediaRequestStatus,
+  MediaRequestStore,
+} from "../domain/media-request.js";
+import type {
+  CreateMediaServerConfigInput,
+  CreateMediaServerRefreshRecordInput,
+  MediaServerConfig,
+  MediaServerRefreshRecord,
+  MediaServerStore,
+  UpdateMediaServerConfigInput,
+  UpdateMediaServerRefreshRecordInput,
+} from "../mediaserver/mediaserver-types.js";
+import type {
+  CreateStrmExecutionRecordInput,
+  CreateStrmTaskInput,
+  StrmExecutionRecord,
+  StrmLinkCacheItem,
+  StrmStore,
+  StrmTask,
+  UpdateStrmExecutionRecordInput,
+  UpdateStrmTaskInput,
+} from "../strm/strm-types.js";
+import type {
   ChatConversationStore,
   ChatConversationSummary,
   CreateConversationInput,
@@ -260,7 +285,7 @@ export type WorkflowRunReservationResult =
       status: "not_tracked";
     };
 
-export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore, ChatConversationStore {
+export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore, ChatConversationStore, MediaRequestStore, StrmStore, MediaServerStore {
   saveWorkflowRunSnapshot(
     input: PersistWorkflowRunSnapshotInput & {
       /** Write the run only. The season's episode bucket stays as stored.
@@ -496,6 +521,12 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   private readonly episodeSources = new Map<string, EpisodeSource>();
   private readonly chatConversations = new Map<string, ChatConversationSummary>();
   private readonly chatMessages = new Map<string, PersistedChatMessage>();
+  private readonly mediaRequests = new Map<string, MediaRequest>();
+  private readonly strmTasks = new Map<string, StrmTask>();
+  private readonly strmLinkCache = new Map<string, StrmLinkCacheItem>();
+  private readonly strmExecutionRecords = new Map<string, StrmExecutionRecord>();
+  private readonly mediaServerConfigs = new Map<string, MediaServerConfig>();
+  private readonly mediaServerRefreshRecords = new Map<string, MediaServerRefreshRecord>();
 
   async getSetting(key: string): Promise<string | null> {
     return this.settings.get(key) ?? null;
@@ -1905,6 +1936,391 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     }
     return structuredClone(row);
   }
+
+  async createMediaRequest(input: CreateMediaRequestInput): Promise<MediaRequest> {
+    const id = input.id ?? `mr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const now = input.createdAt ?? new Date().toISOString();
+    const row: MediaRequest = {
+      id,
+      accountId: input.accountId,
+      mediaTitleId: input.mediaTitleId,
+      seasonNumber: input.seasonNumber ?? null,
+      status: input.status ?? "queued",
+      rejectionReason: input.rejectionReason ?? null,
+      workflowRunId: input.workflowRunId ?? null,
+      createdAt: now,
+      updatedAt: input.updatedAt ?? now,
+    };
+    this.mediaRequests.set(id, structuredClone(row));
+    return structuredClone(row);
+  }
+
+  async getMediaRequest(id: string): Promise<MediaRequest | null> {
+    const row = this.mediaRequests.get(id);
+    return row ? structuredClone(row) : null;
+  }
+
+  async listMediaRequests(filter?: {
+    accountId?: string;
+    mediaTitleId?: string;
+    status?: MediaRequestStatus;
+  }): Promise<MediaRequest[]> {
+    return Array.from(this.mediaRequests.values())
+      .filter((r) => {
+        if (filter?.accountId && r.accountId !== filter.accountId) return false;
+        if (filter?.mediaTitleId && r.mediaTitleId !== filter.mediaTitleId) return false;
+        if (filter?.status && r.status !== filter.status) return false;
+        return true;
+      })
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map((r) => structuredClone(r));
+  }
+
+  async findActiveMediaRequest(
+    mediaTitleId: string,
+    seasonNumber?: number | null,
+  ): Promise<MediaRequest | null> {
+    const active = ["pending_approval", "queued", "acquiring"];
+    for (const r of this.mediaRequests.values()) {
+      if (
+        r.mediaTitleId === mediaTitleId &&
+        (seasonNumber === undefined || r.seasonNumber === seasonNumber) &&
+        active.includes(r.status)
+      ) {
+        return structuredClone(r);
+      }
+    }
+    return null;
+  }
+
+  async updateMediaRequestStatus(
+    id: string,
+    status: MediaRequestStatus,
+    input?: { rejectionReason?: string | null; workflowRunId?: string | null; now?: string },
+  ): Promise<MediaRequest | null> {
+    const r = this.mediaRequests.get(id);
+    if (!r) return null;
+    const now = input?.now ?? new Date().toISOString();
+    const updated: MediaRequest = {
+      ...r,
+      status,
+      rejectionReason: input?.rejectionReason !== undefined ? input.rejectionReason : r.rejectionReason,
+      workflowRunId: input?.workflowRunId !== undefined ? input.workflowRunId : r.workflowRunId,
+      updatedAt: now,
+    };
+    this.mediaRequests.set(id, structuredClone(updated));
+    return structuredClone(updated);
+  }
+
+  async attachWorkflowRunToRequests(
+    mediaTitleId: string,
+    seasonNumber: number | null,
+    workflowRunId: string,
+  ): Promise<number> {
+    let count = 0;
+    const now = new Date().toISOString();
+    for (const [id, r] of this.mediaRequests.entries()) {
+      if (
+        r.mediaTitleId === mediaTitleId &&
+        (seasonNumber === null || r.seasonNumber === seasonNumber) &&
+        (r.status === "queued" || r.status === "pending_approval")
+      ) {
+        this.mediaRequests.set(id, {
+          ...r,
+          workflowRunId,
+          status: "acquiring",
+          updatedAt: now,
+        });
+        count++;
+      }
+    }
+    return count;
+  }
+
+  async completeMediaRequestsForRun(
+    workflowRunId: string,
+    status: "ready" | "failed",
+    rejectionReason?: string | null,
+  ): Promise<number> {
+    let count = 0;
+    const now = new Date().toISOString();
+    for (const [id, r] of this.mediaRequests.entries()) {
+      if (r.workflowRunId === workflowRunId && (r.status === "queued" || r.status === "acquiring")) {
+        this.mediaRequests.set(id, {
+          ...r,
+          status,
+          rejectionReason: rejectionReason ?? r.rejectionReason,
+          updatedAt: now,
+        });
+        count++;
+      }
+    }
+    return count;
+  }
+
+  async listStrmTasks(accountId: string): Promise<StrmTask[]> {
+    return Array.from(this.strmTasks.values())
+      .filter((t) => t.accountId === accountId)
+      .map((t) => structuredClone(t));
+  }
+
+  async getStrmTask(id: string, accountId: string): Promise<StrmTask | null> {
+    const t = this.strmTasks.get(id);
+    return t && t.accountId === accountId ? structuredClone(t) : null;
+  }
+
+  async createStrmTask(input: CreateStrmTaskInput): Promise<StrmTask> {
+    const id = input.id ?? `strm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    const task: StrmTask = {
+      id,
+      accountId: input.accountId,
+      name: input.name,
+      storageId: input.storageId,
+      remoteFolderId: input.remoteFolderId,
+      remotePath: input.remotePath,
+      localOutputDir: input.localOutputDir,
+      scanIntervalMinutes: input.scanIntervalMinutes ?? 360,
+      scanMode: input.scanMode ?? "incremental_missing",
+      extensions: input.extensions ?? "mkv,mp4,iso",
+      minFileSizeMb: input.minFileSizeMb ?? 50,
+      excludeKeywords: input.excludeKeywords ?? null,
+      scheduleMode: input.scheduleMode ?? "interval",
+      status: "idle",
+      deliveryMode: input.deliveryMode ?? "redirect",
+      isActive: input.isActive ?? true,
+      lastScanAt: null,
+      lastScanStatus: null,
+      lastErrorMessage: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.strmTasks.set(id, structuredClone(task));
+    return structuredClone(task);
+  }
+
+  async updateStrmTask(input: UpdateStrmTaskInput): Promise<StrmTask | null> {
+    const t = this.strmTasks.get(input.id);
+    if (!t || t.accountId !== input.accountId) return null;
+    const now = new Date().toISOString();
+    const updated: StrmTask = {
+      ...t,
+      name: input.name ?? t.name,
+      storageId: input.storageId ?? t.storageId,
+      remoteFolderId: input.remoteFolderId ?? t.remoteFolderId,
+      remotePath: input.remotePath ?? t.remotePath,
+      localOutputDir: input.localOutputDir ?? t.localOutputDir,
+      scanIntervalMinutes: input.scanIntervalMinutes ?? t.scanIntervalMinutes,
+      scanMode: input.scanMode ?? t.scanMode,
+      extensions: input.extensions ?? t.extensions,
+      minFileSizeMb: input.minFileSizeMb ?? t.minFileSizeMb,
+      excludeKeywords: input.excludeKeywords !== undefined ? input.excludeKeywords : t.excludeKeywords,
+      scheduleMode: input.scheduleMode ?? t.scheduleMode,
+      status: input.status ?? t.status,
+      deliveryMode: input.deliveryMode ?? t.deliveryMode,
+      isActive: input.isActive !== undefined ? input.isActive : t.isActive,
+      lastScanAt: input.lastScanAt !== undefined ? input.lastScanAt : t.lastScanAt,
+      lastScanStatus: input.lastScanStatus !== undefined ? input.lastScanStatus : t.lastScanStatus,
+      lastErrorMessage: input.lastErrorMessage !== undefined ? input.lastErrorMessage : t.lastErrorMessage,
+      updatedAt: now,
+    };
+    this.strmTasks.set(input.id, structuredClone(updated));
+    return structuredClone(updated);
+  }
+
+  async deleteStrmTask(id: string, accountId: string): Promise<boolean> {
+    const t = this.strmTasks.get(id);
+    if (!t || t.accountId !== accountId) return false;
+    return this.strmTasks.delete(id);
+  }
+
+  async getStrmLinkCache(cacheKey: string): Promise<StrmLinkCacheItem | null> {
+    const item = this.strmLinkCache.get(cacheKey);
+    return item ? structuredClone(item) : null;
+  }
+
+  async setStrmLinkCache(item: StrmLinkCacheItem): Promise<void> {
+    this.strmLinkCache.set(item.cacheKey, structuredClone(item));
+  }
+
+  async pruneExpiredStrmLinkCache(): Promise<number> {
+    const now = Math.floor(Date.now() / 1000);
+    let count = 0;
+    for (const [k, v] of this.strmLinkCache.entries()) {
+      if (v.expiresAt <= now) {
+        this.strmLinkCache.delete(k);
+        count++;
+      }
+    }
+    return count;
+  }
+
+  async createStrmExecutionRecord(input: CreateStrmExecutionRecordInput): Promise<StrmExecutionRecord> {
+    const id = input.id ?? `rec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const rec: StrmExecutionRecord = {
+      id,
+      taskId: input.taskId,
+      taskName: input.taskName,
+      accountId: input.accountId,
+      triggerSource: input.triggerSource,
+      status: input.status ?? "running",
+      scannedCount: input.scannedCount ?? 0,
+      generatedCount: input.generatedCount ?? 0,
+      updatedCount: input.updatedCount ?? 0,
+      removedCount: input.removedCount ?? 0,
+      currentProgressPercent: input.currentProgressPercent ?? 0,
+      currentStepMessage: input.currentStepMessage ?? null,
+      errorMessage: input.errorMessage ?? null,
+      startedAt: input.startedAt ?? new Date().toISOString(),
+      finishedAt: null,
+      durationMs: null,
+    };
+    this.strmExecutionRecords.set(id, structuredClone(rec));
+    return structuredClone(rec);
+  }
+
+  async updateStrmExecutionRecord(input: UpdateStrmExecutionRecordInput): Promise<StrmExecutionRecord | null> {
+    const r = this.strmExecutionRecords.get(input.id);
+    if (!r) return null;
+    const updated: StrmExecutionRecord = {
+      ...r,
+      status: input.status ?? r.status,
+      scannedCount: input.scannedCount ?? r.scannedCount,
+      generatedCount: input.generatedCount ?? r.generatedCount,
+      updatedCount: input.updatedCount ?? r.updatedCount,
+      removedCount: input.removedCount ?? r.removedCount,
+      currentProgressPercent: input.currentProgressPercent ?? r.currentProgressPercent,
+      currentStepMessage: input.currentStepMessage !== undefined ? input.currentStepMessage : r.currentStepMessage,
+      errorMessage: input.errorMessage !== undefined ? input.errorMessage : r.errorMessage,
+      finishedAt: input.finishedAt !== undefined ? input.finishedAt : r.finishedAt,
+      durationMs: input.durationMs !== undefined ? input.durationMs : r.durationMs,
+    };
+    this.strmExecutionRecords.set(input.id, structuredClone(updated));
+    return structuredClone(updated);
+  }
+
+  async listStrmExecutionRecords(taskId: string, accountId: string, limit?: number): Promise<StrmExecutionRecord[]> {
+    const list = Array.from(this.strmExecutionRecords.values())
+      .filter((r) => r.taskId === taskId && r.accountId === accountId)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    return (limit ? list.slice(0, limit) : list).map((r) => structuredClone(r));
+  }
+
+  async getLatestStrmExecutionRecord(taskId: string, accountId: string): Promise<StrmExecutionRecord | null> {
+    const list = await this.listStrmExecutionRecords(taskId, accountId, 1);
+    return list[0] ?? null;
+  }
+
+  async listMediaServerConfigs(accountId: string): Promise<MediaServerConfig[]> {
+    return Array.from(this.mediaServerConfigs.values())
+      .filter((c) => c.accountId === accountId)
+      .map((c) => structuredClone(c));
+  }
+
+  async getMediaServerConfig(id: string, accountId: string): Promise<MediaServerConfig | null> {
+    const c = this.mediaServerConfigs.get(id);
+    return c && c.accountId === accountId ? structuredClone(c) : null;
+  }
+
+  async createMediaServerConfig(input: CreateMediaServerConfigInput): Promise<MediaServerConfig> {
+    const id = input.id ?? `ms_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    const config: MediaServerConfig = {
+      id,
+      accountId: input.accountId,
+      name: input.name,
+      serverType: input.serverType,
+      hostUrl: input.hostUrl,
+      apiTokenEncrypted: input.apiToken,
+      pathMappings: input.pathMappings ?? [],
+      isActive: input.isActive ?? true,
+      lastSyncAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.mediaServerConfigs.set(id, structuredClone(config));
+    return structuredClone(config);
+  }
+
+  async updateMediaServerConfig(input: UpdateMediaServerConfigInput): Promise<MediaServerConfig | null> {
+    const c = this.mediaServerConfigs.get(input.id);
+    if (!c || c.accountId !== input.accountId) return null;
+    const now = new Date().toISOString();
+    const updated: MediaServerConfig = {
+      ...c,
+      name: input.name ?? c.name,
+      serverType: input.serverType ?? c.serverType,
+      hostUrl: input.hostUrl ?? c.hostUrl,
+      apiTokenEncrypted: input.apiToken ? input.apiToken : c.apiTokenEncrypted,
+      pathMappings: input.pathMappings ?? c.pathMappings,
+      isActive: input.isActive !== undefined ? input.isActive : c.isActive,
+      lastSyncAt: input.lastSyncAt !== undefined ? input.lastSyncAt : c.lastSyncAt,
+      updatedAt: now,
+    };
+    this.mediaServerConfigs.set(input.id, structuredClone(updated));
+    return structuredClone(updated);
+  }
+
+  async deleteMediaServerConfig(id: string, accountId: string): Promise<boolean> {
+    const c = this.mediaServerConfigs.get(id);
+    if (!c || c.accountId !== accountId) return false;
+    return this.mediaServerConfigs.delete(id);
+  }
+
+  async createMediaServerRefreshRecord(input: CreateMediaServerRefreshRecordInput): Promise<MediaServerRefreshRecord> {
+    const id = input.id ?? `msr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const rec: MediaServerRefreshRecord = {
+      id,
+      configId: input.configId,
+      serverName: input.serverName,
+      serverType: input.serverType,
+      accountId: input.accountId,
+      triggerSource: input.triggerSource,
+      targetPath: input.targetPath ?? null,
+      status: input.status ?? "running",
+      sectionsRefreshed: input.sectionsRefreshed ?? [],
+      refreshedCount: input.refreshedCount ?? 0,
+      currentProgressPercent: input.currentProgressPercent ?? 0,
+      currentStepMessage: input.currentStepMessage ?? null,
+      errorMessage: input.errorMessage ?? null,
+      startedAt: input.startedAt ?? new Date().toISOString(),
+      finishedAt: null,
+      durationMs: null,
+    };
+    this.mediaServerRefreshRecords.set(id, structuredClone(rec));
+    return structuredClone(rec);
+  }
+
+  async updateMediaServerRefreshRecord(input: UpdateMediaServerRefreshRecordInput): Promise<MediaServerRefreshRecord | null> {
+    const r = this.mediaServerRefreshRecords.get(input.id);
+    if (!r) return null;
+    const updated: MediaServerRefreshRecord = {
+      ...r,
+      status: input.status ?? r.status,
+      sectionsRefreshed: input.sectionsRefreshed ?? r.sectionsRefreshed,
+      refreshedCount: input.refreshedCount ?? r.refreshedCount,
+      currentProgressPercent: input.currentProgressPercent ?? r.currentProgressPercent,
+      currentStepMessage: input.currentStepMessage !== undefined ? input.currentStepMessage : r.currentStepMessage,
+      errorMessage: input.errorMessage !== undefined ? input.errorMessage : r.errorMessage,
+      finishedAt: input.finishedAt !== undefined ? input.finishedAt : r.finishedAt,
+      durationMs: input.durationMs !== undefined ? input.durationMs : r.durationMs,
+    };
+    this.mediaServerRefreshRecords.set(input.id, structuredClone(updated));
+    return structuredClone(updated);
+  }
+
+  async listMediaServerRefreshRecords(configId: string, accountId: string, limit?: number): Promise<MediaServerRefreshRecord[]> {
+    const list = Array.from(this.mediaServerRefreshRecords.values())
+      .filter((r) => r.configId === configId && r.accountId === accountId)
+      .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
+    return (limit ? list.slice(0, limit) : list).map((r) => structuredClone(r));
+  }
+
+  async getLatestMediaServerRefreshRecord(configId: string, accountId: string): Promise<MediaServerRefreshRecord | null> {
+    const list = await this.listMediaServerRefreshRecords(configId, accountId, 1);
+    return list[0] ?? null;
+  }
+
 }
 
 export function validateWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): void {

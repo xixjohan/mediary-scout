@@ -196,12 +196,14 @@ async function handleResourceResult(
   }
 
   const resolvedSnapshotId = result.snapshot?.id ?? result.snapshotId;
+  const sourceHealth = result.sourceHealth ?? result.snapshot?.sourceHealth;
   return NextResponse.json(
     {
       tmdbId: context.tmdbId,
       cached: result.cached,
       count: result.candidates.length,
       candidates: result.candidates,
+      ...(sourceHealth ? { sourceHealth } : {}),
       ...(resolvedSnapshotId === undefined ? {} : { snapshotId: resolvedSnapshotId }),
     },
     { headers: NO_STORE },
@@ -307,6 +309,7 @@ export async function POST(request: NextRequest) {
                   cached: result.cached,
                   count: result.candidates.length,
                   candidates: result.candidates,
+                  ...(result.sourceHealth ?? result.snapshot?.sourceHealth ? { sourceHealth: result.sourceHealth ?? result.snapshot?.sourceHealth } : {}),
                   ...(snapshotId ? { snapshotId } : {}),
                 }) + "\n",
               ),

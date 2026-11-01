@@ -25,6 +25,7 @@ playwright-report/
 *.db-shm
 # 凭据加密密钥（与数据库同目录；绝不入库，备份时须与库一起拷贝）
 credential.key
+/data/
 
 node_modules/
 dist/

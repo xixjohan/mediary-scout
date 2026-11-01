@@ -16,17 +16,24 @@ import {
  * 这正是 VACUUM INTO（而非裸拷贝）存在的理由，也是本测试钉死的东西。
  */
 const dirs: string[] = [];
+const openDbs: Database.Database[] = [];
 function tmp(): string {
   const d = mkdtempSync(join(tmpdir(), "sqlite-backup-"));
   dirs.push(d);
   return d;
 }
 afterEach(() => {
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+  for (const db of openDbs.splice(0)) {
+    try { db.close(); } catch {}
+  }
+  for (const d of dirs.splice(0)) {
+    try { rmSync(d, { recursive: true, force: true }); } catch {}
+  }
 });
 
 function seed(path: string, rows: number): void {
   const db = new Database(path);
+  openDbs.push(db);
   db.pragma("journal_mode = WAL");
   db.exec("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, v TEXT)");
   const insert = db.prepare("INSERT INTO t (v) VALUES (?)");

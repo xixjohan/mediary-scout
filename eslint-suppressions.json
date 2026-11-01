@@ -99,11 +99,6 @@
       "count": 1
     }
   },
-  "apps/web/features/settings-system/components/settings/remote-access-section.tsx": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "apps/web/features/settings-system/components/settings/update-section.tsx": {
     "complexity": {
       "count": 1

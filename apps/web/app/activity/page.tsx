@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { ActivityFeed } from "../../features/activity/components/activity-feed";
+import { MediaRequestPanel } from "../../features/acquisition/components/media-request-panel";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import { resolveGlobalWorkspace } from "../../lib/workflow-runtime";
 
@@ -46,6 +47,7 @@ async function ActivitySurface({ searchParams }: { searchParams: Promise<{ w?: s
             Suspense'd async server component — those don't hydrate, which froze the
             live poll). It self-fetches /api/activity on mount and polls. */}
         <ActivityFeed storageId={workspace.activeStorageId} />
+        <MediaRequestPanel />
         <GitHubNameplate />
       </main>
     </div>

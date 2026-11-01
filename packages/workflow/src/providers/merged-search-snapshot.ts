@@ -1,4 +1,5 @@
 import type { ResourceCandidate, ResourceSnapshot } from "../domain/domain.js";
+import type { MergedSourceHealth } from "../domain/resource-source-health.js";
 
 /**
  * Merge the per-keyword snapshots of one resource search into the ONE snapshot the
@@ -39,6 +40,28 @@ export function buildMergedSearchSnapshot(input: {
     }
   }
   const candidates = [...byId.values()].map((candidate, index) => ({ ...candidate, index }));
+
+  const healthList = input.snapshots
+    .map((s) => s.sourceHealth)
+    .filter((h): h is MergedSourceHealth => Boolean(h));
+
+  let mergedHealth: MergedSourceHealth | undefined;
+  if (healthList.length > 0) {
+    const allUnhealthy = Array.from(new Set(healthList.flatMap((h) => h.unhealthySources)));
+    const allUnreachable = healthList.every((h) => h.status === "unreachable");
+    const anyUnreachable = healthList.some((h) => h.status === "unreachable");
+    const anyDegraded = healthList.some((h) => h.status === "degraded");
+    const anyProtocol = healthList.some((h) => h.status === "protocol_error");
+    const status = anyProtocol
+      ? "protocol_error"
+      : allUnreachable
+      ? "unreachable"
+      : anyUnreachable || anyDegraded
+      ? "degraded"
+      : "healthy";
+    mergedHealth = { status, unhealthySources: allUnhealthy };
+  }
+
   return {
     id: input.id,
     provider: input.provider,
@@ -47,5 +70,6 @@ export function buildMergedSearchSnapshot(input: {
     keyword: input.keywords.join(" | "),
     candidates,
     createdAt: input.createdAt,
+    ...(mergedHealth ? { sourceHealth: mergedHealth } : {}),
   };
 }

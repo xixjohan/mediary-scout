@@ -13,6 +13,7 @@ import {
 } from "../../../../lib/workflow-runtime";
 import { DEFAULT_ACCOUNT_ID } from "@media-track/workflow";
 import { issueToken, resolveApiKey, API_KEY_SETTING_KEY, maskApiKey } from "@media-track/shared";
+import { getApiKeyV2Store } from "../../../../composition/runtime-container";
 
 /** API key 无效的**唯一**对外文案。「未配置」与「key 错」同文案——否则攻击者
  *  能用一个不存在的 key 探出实例有没有开 API 访问（枚举）。 */
@@ -23,7 +24,7 @@ const JWT_DEFAULT_TTL_SECONDS = 12 * 60 * 60;
  * S5.3（需求 #2）：API key 换 JWT。
  *
  * POST /api/auth/token  { apiKey }
- *   → 200 { token, expiresIn, accountId }
+ *   → 200 { token, expiresIn, accountId, tokenType, permissions }
  *   → 401 { error:"api key 无效" }         （未配置/错 key/非字符串，统一）
  *   → 429 { error, retryAfterSec }          （限流锁定中）
  *
@@ -47,16 +48,51 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const accountId = DEFAULT_ACCOUNT_ID;
+  const secret = await getJwtSecret();
+  const ttl = getJwtTtlSeconds() ?? JWT_DEFAULT_TTL_SECONDS;
+
+  // 1. 优先尝试 V2 API Key 树状钥匙库比对
+  try {
+    const keyStore = getApiKeyV2Store();
+    const keyEntity = await keyStore.findKeyByPlainToken(presented);
+    if (keyEntity) {
+      recordLoginSuccess(throttleKey);
+      await keyStore.touchLastUsed(keyEntity.id);
+      const token = await issueToken(
+        {
+          sub: accountId,
+          tokenType: "ApiKey",
+          keyId: keyEntity.id,
+          permissions: keyEntity.permissions,
+        },
+        secret,
+        ttl
+      );
+
+      return NextResponse.json({
+        token,
+        tokenType: "Bearer",
+        expiresIn: ttl,
+        accountId,
+        masked: keyEntity.maskedKey,
+        origin: "db",
+        permissions: keyEntity.permissions,
+      });
+    }
+  } catch {
+    // 降级继续检查
+  }
+
+  // 2. 回落到系统环境变量/旧版单枚 API Key 检查
   const { getWorkflowRepository } = await import("../../../../lib/workflow-runtime");
   const repository = getWorkflowRepository();
-  // 端口适配：SQLite 读写在 app_settings（值由 SECRET_SETTING_KEYS 透明加密）。
   const resolved = await resolveApiKey(process.env, {
     get: () => repository.getSetting(API_KEY_SETTING_KEY),
     set: (value) => repository.setSetting(API_KEY_SETTING_KEY, value),
     clear: () => repository.setSetting(API_KEY_SETTING_KEY, ""),
   });
 
-  // 恒定时间比较：key 是长期凭据，时序侧信道能让攻击者逐字符猜出来。
   const ok =
     resolved.value !== null &&
     presented.length === resolved.value.length &&
@@ -64,35 +100,33 @@ export async function POST(request: NextRequest) {
 
   if (!ok) {
     recordLoginFailure(throttleKey, Date.now());
-    // 不区分「未配置」与「key 错」；不回显 masked key（那也是信息）。
     return NextResponse.json({ error: INVALID_KEY_MESSAGE }, { status: 401 });
   }
 
-  // API key 是**实例级**凭据（不是 per-account）：单用户与多用户模式都落到
-  // 默认账号。将来若要 per-account key，在设置页创建时记录 owner 即可——
-  // resolveApiKey 的 IApiKeyStore 端口已为此留好位置。
-  const accountId = DEFAULT_ACCOUNT_ID;
-  // 成功换到 JWT 就清掉这个身份的失败计数：5 次错 key 之后用**正确** key 重试
-  // 不该还被前几次的失败拖着（L5 复核：成功路径不清桶，等于把一次误操作锁在
-  // 限流里，直到窗口自然过期）。清桶放在验签通过之后——错 key 仍然累计。
   recordLoginSuccess(throttleKey);
-  const secret = await getJwtSecret();
-  const ttl = getJwtTtlSeconds() ?? JWT_DEFAULT_TTL_SECONDS;
-  const token = await issueToken({ sub: accountId }, secret, ttl);
+  const token = await issueToken(
+    {
+      sub: accountId,
+      tokenType: "ApiKey",
+      keyId: "root_legacy_key",
+      permissions: ["*"],
+    },
+    secret,
+    ttl
+  );
 
   return NextResponse.json({
     token,
     tokenType: "Bearer",
     expiresIn: ttl,
     accountId,
-    // 仅供设置页确认「当前哪个 key 生效」的掩码；完整值只在创建时出现。
     masked: maskApiKey(resolved.value),
     origin: resolved.origin,
+    permissions: ["*"],
   });
 }
 
 function timingSafeEqualStr(a: string, b: string): boolean {
-  // 长度已在调用前比对；这里逐字符恒定时间比较。
   const ab = Buffer.from(a, "utf8");
   const bb = Buffer.from(b, "utf8");
   let diff = 0;

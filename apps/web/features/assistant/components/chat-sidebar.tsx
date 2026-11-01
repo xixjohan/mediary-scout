@@ -10,6 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { AppConfirmDialog } from "../../../components/ui/app-confirm-dialog";
 import {
   groupConversationsByDate,
   type ChatConversationSummary,
@@ -38,6 +39,7 @@ export function ChatSidebar({
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState("");
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const editInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -68,9 +70,7 @@ export function ChatSidebar({
 
   const handleDeleteClick = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (window.confirm("确定要删除此会话记录吗？删除后将无法恢复。")) {
-      onDelete(id);
-    }
+    setDeleteConfirmId(id);
   };
 
   if (collapsed) {
@@ -213,6 +213,25 @@ export function ChatSidebar({
           ))
         )}
       </div>
+      <AppConfirmDialog
+        spec={
+          deleteConfirmId
+            ? {
+                title: "删除对话记录",
+                description: "确定要删除此会话记录吗？删除后所有历史对话将无法恢复。",
+                confirmLabel: "确认删除",
+                isDanger: true,
+              }
+            : null
+        }
+        onConfirm={() => {
+          if (deleteConfirmId) {
+            onDelete(deleteConfirmId);
+            setDeleteConfirmId(null);
+          }
+        }}
+        onCancel={() => setDeleteConfirmId(null)}
+      />
     </aside>
   );
 }

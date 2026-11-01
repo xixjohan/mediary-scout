@@ -16,6 +16,31 @@ import {
   type StoredSubscriptionPolicy,
 } from "./subscription-policy-store.js";
 import type { MediaryDatabase } from "./db-schema.js";
+import type { SqliteDbContext } from "./sqlite-context.js";
+import type {
+  CreateMediaRequestInput,
+  MediaRequest,
+  MediaRequestStatus,
+} from "../domain/media-request.js";
+import { SqliteStrmRepository } from "./sqlite/sqlite-strm.js";
+import { SqliteMediaServerRepository } from "./sqlite/sqlite-mediaserver.js";
+import type {
+  CreateMediaServerConfigInput,
+  CreateMediaServerRefreshRecordInput,
+  MediaServerConfig,
+  MediaServerRefreshRecord,
+  UpdateMediaServerConfigInput,
+  UpdateMediaServerRefreshRecordInput,
+} from "../mediaserver/mediaserver-types.js";
+import type {
+  CreateStrmExecutionRecordInput,
+  CreateStrmTaskInput,
+  StrmExecutionRecord,
+  StrmLinkCacheItem,
+  StrmTask,
+  UpdateStrmExecutionRecordInput,
+  UpdateStrmTaskInput,
+} from "../strm/strm-types.js";
 import {
   CredentialStore,
   connectedStorageFromRecord,
@@ -137,248 +162,8 @@ import type {
  * inline: a fresh SQLite database needs the FINAL shape up front, not migration
  * steps. The acct_default seed row matches what the old twin produced.
  */
-export const SQLITE_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS media_titles (
-    id text PRIMARY KEY,
-    payload text NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS tracked_seasons (
-    id text NOT NULL,
-    media_title_id text NOT NULL,
-    account_id text NOT NULL DEFAULT 'acct_default',
-    connected_storage_id text NOT NULL,
-    payload text NOT NULL,
-    PRIMARY KEY (id, connected_storage_id)
-  );
-  CREATE INDEX IF NOT EXISTS idx_tracked_seasons_title
-    ON tracked_seasons (media_title_id);
-  CREATE TABLE IF NOT EXISTS workflow_runs (
-    id text PRIMARY KEY,
-    tracked_season_id text NOT NULL,
-    account_id text NOT NULL DEFAULT 'acct_default',
-    connected_storage_id text NOT NULL,
-    payload text NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_workflow_runs_scope_season
-    ON workflow_runs (account_id, connected_storage_id, tracked_season_id);
-  CREATE INDEX IF NOT EXISTS idx_workflow_runs_season_storage
-    ON workflow_runs (tracked_season_id, connected_storage_id);
-  CREATE INDEX IF NOT EXISTS idx_workflow_runs_queue_claim
-    ON workflow_runs (json_extract(payload, '$.status'), json_extract(payload, '$.kind'), json_extract(payload, '$.startedAt'));
-  CREATE TABLE IF NOT EXISTS episode_states (
-    tracked_season_id text NOT NULL,
-    connected_storage_id text NOT NULL,
-    episode_code text NOT NULL,
-    payload text NOT NULL,
-    PRIMARY KEY (tracked_season_id, connected_storage_id, episode_code)
-  );
-  CREATE TABLE IF NOT EXISTS resource_snapshots (
-    id text PRIMARY KEY,
-    workflow_run_id text NOT NULL,
-    ordinal integer NOT NULL,
-    payload text NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_resource_snapshots_run
-    ON resource_snapshots (workflow_run_id, ordinal);
-  CREATE TABLE IF NOT EXISTS agent_decisions (
-    workflow_run_id text NOT NULL,
-    ordinal integer NOT NULL,
-    snapshot_id text NOT NULL,
-    payload text NOT NULL,
-    PRIMARY KEY (workflow_run_id, ordinal)
-  );
-  CREATE TABLE IF NOT EXISTS agent_steps (
-    workflow_run_id text NOT NULL,
-    ordinal integer NOT NULL,
-    payload text NOT NULL,
-    PRIMARY KEY (workflow_run_id, ordinal)
-  );
-  CREATE TABLE IF NOT EXISTS transfer_attempts (
-    id text PRIMARY KEY,
-    workflow_run_id text NOT NULL,
-    ordinal integer NOT NULL,
-    candidate_id text NOT NULL,
-    payload text NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_transfer_attempts_run
-    ON transfer_attempts (workflow_run_id, ordinal);
-  CREATE TABLE IF NOT EXISTS notifications (
-    id text PRIMARY KEY,
-    workflow_run_id text NOT NULL,
-    ordinal integer NOT NULL,
-    payload text NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_notifications_run
-    ON notifications (workflow_run_id, ordinal);
-  CREATE TABLE IF NOT EXISTS app_settings (
-    key text PRIMARY KEY,
-    value text NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS account_settings (
-    account_id text NOT NULL,
-    key text NOT NULL,
-    value text NOT NULL,
-    PRIMARY KEY (account_id, key)
-  );
-  CREATE TABLE IF NOT EXISTS dead_links (
-    key text PRIMARY KEY,
-    kind text NOT NULL,
-    reason text NOT NULL,
-    permanent integer NOT NULL DEFAULT 1,
-    expires_at text,
-    recorded_at text NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS agent_memories (
-    id text PRIMARY KEY,
-    account_id text NOT NULL,
-    scope text NOT NULL,
-    title_key text NOT NULL DEFAULT '',
-    name text NOT NULL,
-    description text NOT NULL,
-    kind text NOT NULL,
-    body text NOT NULL,
-    provider text,
-    created_at text NOT NULL,
-    updated_at text NOT NULL,
-    last_used_at text,
-    source_run_id text,
-    UNIQUE (account_id, scope, title_key, name)
-  );
-  CREATE TABLE IF NOT EXISTS user_messages (
-    id text PRIMARY KEY,
-    account_id text NOT NULL,
-    drive text NOT NULL DEFAULT '',
-    title_key text NOT NULL,
-    body text NOT NULL,
-    episode_tags text NOT NULL DEFAULT '[]',
-    status text NOT NULL,
-    urgent integer NOT NULL DEFAULT 0,
-    run_id text,
-    reply text,
-    created_at text NOT NULL,
-    updated_at text NOT NULL,
-    processed_at text
-  );
-  CREATE INDEX IF NOT EXISTS user_messages_work ON user_messages (account_id, drive, title_key, status);
-  CREATE INDEX IF NOT EXISTS user_messages_pending ON user_messages (status, urgent);
-  CREATE INDEX IF NOT EXISTS user_messages_run ON user_messages (run_id);
-  CREATE TABLE IF NOT EXISTS pending_replacements (
-    account_id text NOT NULL,
-    drive text NOT NULL DEFAULT '',
-    title_key text NOT NULL,
-    episode text NOT NULL,
-    message_id text NOT NULL,
-    requested_at text NOT NULL,
-    PRIMARY KEY (account_id, drive, title_key, episode)
-  );
-  CREATE TABLE IF NOT EXISTS rejected_resources (
-    id text PRIMARY KEY,
-    account_id text NOT NULL,
-    title_key text NOT NULL,
-    episode text NOT NULL,
-    link_key text,
-    label text NOT NULL,
-    size_bytes integer,
-    reason text NOT NULL,
-    message_id text,
-    created_at text NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS rejected_resources_work ON rejected_resources (account_id, title_key);
-  -- 批次 5：订阅策略层（plan §4.1 四件套 ③「独立策略表」）。**刻意不加 status 列**——
-  -- 一个策略是偏好，不是状态机。词表存 JSON（一行一条策略）；use_regex 存 0/1
-  -- （SQLite 无布尔量）。
-  CREATE TABLE IF NOT EXISTS subscription_policies (
-    account_id text NOT NULL,
-    title_key text NOT NULL,
-    must_contain text NOT NULL DEFAULT '[]',
-    must_not_contain text NOT NULL DEFAULT '[]',
-    episode_filter text NOT NULL DEFAULT '',
-    use_regex integer NOT NULL DEFAULT 0,
-    cooldown_days integer NOT NULL DEFAULT 0,
-    created_at text NOT NULL,
-    updated_at text NOT NULL,
-    -- cooldownDays 的水位线：这条策略最后一次被采纳的时间。刻意与 updated_at 分开——
-    -- 后者是用户改规则的时间，拿它当水位线会让每次编辑都看起来像刚匹配过。
-    last_taken_at text,
-    custom_keywords text NOT NULL DEFAULT '[]',
-    PRIMARY KEY (account_id, title_key)
-  );
-  CREATE TABLE IF NOT EXISTS episode_sources (
-    account_id text NOT NULL,
-    drive text NOT NULL DEFAULT '',
-    title_key text NOT NULL,
-    episode text NOT NULL,
-    link_key text,
-    label text NOT NULL,
-    size_bytes integer,
-    run_id text NOT NULL,
-    recorded_at text NOT NULL,
-    PRIMARY KEY (account_id, drive, title_key, episode)
-  );
-  CREATE TABLE IF NOT EXISTS accounts (
-    id text PRIMARY KEY,
-    username text UNIQUE NOT NULL,
-    password_hash text NOT NULL DEFAULT '',
-    group_id text,
-    is_owner integer NOT NULL DEFAULT 0,
-    created_at text NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS sessions (
-    id text PRIMARY KEY,
-    account_id text NOT NULL,
-    expires_at text NOT NULL,
-    created_at text NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_sessions_account_expires
-    ON sessions (account_id, expires_at);
-  CREATE TABLE IF NOT EXISTS connected_storages (
-    id text PRIMARY KEY,
-    account_id text NOT NULL,
-    provider text NOT NULL,
-    provider_uid text NOT NULL,
-    label text,
-    payload text NOT NULL,
-    root_cid text,
-    movies_cid text,
-    tv_cid text,
-    anime_cid text,
-    status text NOT NULL DEFAULT 'active',
-    frozen_reason text,
-    frozen_at text,
-    created_at text NOT NULL,
-    UNIQUE (provider, provider_uid)
-  );
-  CREATE INDEX IF NOT EXISTS idx_connected_storages_account
-    ON connected_storages (account_id, created_at);
-  CREATE TABLE IF NOT EXISTS chat_conversations (
-    id text PRIMARY KEY,
-    account_id text NOT NULL,
-    title text NOT NULL,
-    storage_id text,
-    created_at text NOT NULL,
-    updated_at text NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_chat_conversations_account
-    ON chat_conversations (account_id, updated_at DESC);
-  CREATE TABLE IF NOT EXISTS chat_messages (
-    id text PRIMARY KEY,
-    conversation_id text NOT NULL,
-    account_id text NOT NULL,
-    role text NOT NULL,
-    content text NOT NULL,
-    thinking text,
-    tools_used text,
-    action_card text,
-    created_at text NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS idx_chat_messages_conversation
-    ON chat_messages (conversation_id, created_at ASC);
-  CREATE INDEX IF NOT EXISTS idx_chat_messages_account
-    ON chat_messages (account_id);
-  INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
-    VALUES ('acct_default', 'default', '', 1, '1970-01-01T00:00:00.000Z')
-    ON CONFLICT (id) DO NOTHING;
-`;
+import { SQLITE_SCHEMA } from "./sqlite/sqlite-schema.js";
+export { SQLITE_SCHEMA };
 
 // Lazy-load the native better-sqlite3 at CALL time (the desktop path), NOT at module
 // evaluation time. This keeps `import "@media-track/workflow"` (container, Vercel
@@ -435,9 +220,37 @@ export function createSqliteWorkflowRepository(options: { path: string }): Sqlit
   return new SqliteWorkflowRepository(new DatabaseCtor(options.path));
 }
 
+interface MediaRequestRow {
+  id: string;
+  account_id: string;
+  media_title_id: string;
+  season_number: number | null;
+  status: string;
+  rejection_reason: string | null;
+  workflow_run_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function mediaRequestFromRow(row: MediaRequestRow): MediaRequest {
+  return {
+    id: row.id,
+    accountId: row.account_id,
+    mediaTitleId: row.media_title_id,
+    seasonNumber: row.season_number,
+    status: row.status as MediaRequestStatus,
+    rejectionReason: row.rejection_reason,
+    workflowRunId: row.workflow_run_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 export class SqliteWorkflowRepository implements WorkflowRepository {
   /** 凭据相关持久化切片（Kysely 类型安全查询，任务单 S1.6）。 */
   private readonly credentials: CredentialStore;
+  private readonly strmStore: SqliteStrmRepository;
+  private readonly mediaServerStore: SqliteMediaServerRepository;
 
   constructor(private readonly db: Database.Database) {
     // 凭据加密（任务单 S1.5）：工厂已按密钥文件初始化；直接 new（:memory: 测试等）
@@ -448,6 +261,13 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.credentials = new CredentialStore(
       new Kysely<MediaryDatabase>({ dialect: new SqliteDialect({ database: db }) }),
     );
+    const ctx: SqliteDbContext = {
+      db,
+      now: () => new Date().toISOString(),
+      transaction: <T>(fn: () => T) => db.transaction(fn),
+    };
+    this.strmStore = new SqliteStrmRepository(ctx);
+    this.mediaServerStore = new SqliteMediaServerRepository(ctx);
     // 黄金 PRAGMA（规约见 docs/architecture-remediation-and-governance.md §1.3，
     // 测试见 tests/sqlite-pragmas.test.ts）：WAL 读写互不阻塞；synchronous=NORMAL
     // 在 WAL 下兼顾极速与断电安全；busy_timeout 让写锁冲突退避等待而非直接报错。
@@ -2586,4 +2406,212 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       };
     })();
   }
+
+  async createMediaRequest(input: CreateMediaRequestInput): Promise<MediaRequest> {
+    const id = input.id ?? `mr_${globalThis.crypto.randomUUID()}`;
+    const now = input.createdAt ?? new Date().toISOString();
+    const updatedAt = input.updatedAt ?? now;
+    const status = input.status ?? "queued";
+    this.db
+      .prepare(
+        "INSERT INTO media_requests (id, account_id, media_title_id, season_number, status, rejection_reason, workflow_run_id, created_at, updated_at) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      )
+      .run(
+        id,
+        input.accountId,
+        input.mediaTitleId,
+        input.seasonNumber ?? null,
+        status,
+        input.rejectionReason ?? null,
+        input.workflowRunId ?? null,
+        now,
+        updatedAt,
+      );
+    const row = this.db.prepare("SELECT * FROM media_requests WHERE id = ?").get(id) as MediaRequestRow;
+    return mediaRequestFromRow(row);
+  }
+
+  async getMediaRequest(id: string): Promise<MediaRequest | null> {
+    const row = this.db.prepare("SELECT * FROM media_requests WHERE id = ?").get(id) as MediaRequestRow | undefined;
+    return row ? mediaRequestFromRow(row) : null;
+  }
+
+  async listMediaRequests(filter?: {
+    accountId?: string;
+    mediaTitleId?: string;
+    status?: MediaRequestStatus;
+  }): Promise<MediaRequest[]> {
+    let sql = "SELECT * FROM media_requests WHERE 1=1";
+    const params: unknown[] = [];
+    if (filter?.accountId) {
+      sql += " AND account_id = ?";
+      params.push(filter.accountId);
+    }
+    if (filter?.mediaTitleId) {
+      sql += " AND media_title_id = ?";
+      params.push(filter.mediaTitleId);
+    }
+    if (filter?.status) {
+      sql += " AND status = ?";
+      params.push(filter.status);
+    }
+    sql += " ORDER BY created_at DESC";
+    const rows = this.db.prepare(sql).all(...params) as MediaRequestRow[];
+    return rows.map(mediaRequestFromRow);
+  }
+
+  async findActiveMediaRequest(
+    mediaTitleId: string,
+    seasonNumber?: number | null,
+  ): Promise<MediaRequest | null> {
+    let sql = "SELECT * FROM media_requests WHERE media_title_id = ? AND status IN ('pending_approval', 'queued', 'acquiring')";
+    const params: unknown[] = [mediaTitleId];
+    if (seasonNumber !== undefined) {
+      if (seasonNumber === null) {
+        sql += " AND season_number IS NULL";
+      } else {
+        sql += " AND season_number = ?";
+        params.push(seasonNumber);
+      }
+    }
+    sql += " ORDER BY created_at DESC LIMIT 1";
+    const row = this.db.prepare(sql).get(...params) as MediaRequestRow | undefined;
+    return row ? mediaRequestFromRow(row) : null;
+  }
+
+  async updateMediaRequestStatus(
+    id: string,
+    status: MediaRequestStatus,
+    input?: { rejectionReason?: string | null; workflowRunId?: string | null; now?: string },
+  ): Promise<MediaRequest | null> {
+    const now = input?.now ?? new Date().toISOString();
+    let sql = "UPDATE media_requests SET status = ?, updated_at = ?";
+    const params: unknown[] = [status, now];
+    if (input?.rejectionReason !== undefined) {
+      sql += ", rejection_reason = ?";
+      params.push(input.rejectionReason);
+    }
+    if (input?.workflowRunId !== undefined) {
+      sql += ", workflow_run_id = ?";
+      params.push(input.workflowRunId);
+    }
+    sql += " WHERE id = ?";
+    params.push(id);
+    const result = this.db.prepare(sql).run(...params);
+    if (result.changes === 0) return null;
+    return this.getMediaRequest(id);
+  }
+
+  async attachWorkflowRunToRequests(
+    mediaTitleId: string,
+    seasonNumber: number | null,
+    workflowRunId: string,
+  ): Promise<number> {
+    const now = new Date().toISOString();
+    let sql = "UPDATE media_requests SET workflow_run_id = ?, status = 'acquiring', updated_at = ? WHERE media_title_id = ? AND status IN ('queued', 'pending_approval')";
+    const params: unknown[] = [workflowRunId, now, mediaTitleId];
+    if (seasonNumber !== null) {
+      sql += " AND season_number = ?";
+      params.push(seasonNumber);
+    }
+    const result = this.db.prepare(sql).run(...params);
+    return result.changes;
+  }
+
+  async completeMediaRequestsForRun(
+    workflowRunId: string,
+    status: "ready" | "failed",
+    rejectionReason?: string | null,
+  ): Promise<number> {
+    const now = new Date().toISOString();
+    const sql = "UPDATE media_requests SET status = ?, rejection_reason = COALESCE(?, rejection_reason), updated_at = ? WHERE workflow_run_id = ? AND status IN ('queued', 'acquiring')";
+    const result = this.db.prepare(sql).run(status, rejectionReason ?? null, now, workflowRunId);
+    return result.changes;
+  }
+
+  async listStrmTasks(accountId: string): Promise<StrmTask[]> {
+    return this.strmStore.listStrmTasks(accountId);
+  }
+
+  async getStrmTask(id: string, accountId: string): Promise<StrmTask | null> {
+    return this.strmStore.getStrmTask(id, accountId);
+  }
+
+  async createStrmTask(input: CreateStrmTaskInput): Promise<StrmTask> {
+    return this.strmStore.createStrmTask(input);
+  }
+
+  async updateStrmTask(input: UpdateStrmTaskInput): Promise<StrmTask | null> {
+    return this.strmStore.updateStrmTask(input);
+  }
+
+  async deleteStrmTask(id: string, accountId: string): Promise<boolean> {
+    return this.strmStore.deleteStrmTask(id, accountId);
+  }
+
+  async getStrmLinkCache(cacheKey: string): Promise<StrmLinkCacheItem | null> {
+    return this.strmStore.getStrmLinkCache(cacheKey);
+  }
+
+  async setStrmLinkCache(item: StrmLinkCacheItem): Promise<void> {
+    return this.strmStore.setStrmLinkCache(item);
+  }
+
+  async pruneExpiredStrmLinkCache(): Promise<number> {
+    return this.strmStore.pruneExpiredStrmLinkCache();
+  }
+
+  async createStrmExecutionRecord(input: CreateStrmExecutionRecordInput): Promise<StrmExecutionRecord> {
+    return this.strmStore.createStrmExecutionRecord(input);
+  }
+
+  async updateStrmExecutionRecord(input: UpdateStrmExecutionRecordInput): Promise<StrmExecutionRecord | null> {
+    return this.strmStore.updateStrmExecutionRecord(input);
+  }
+
+  async listStrmExecutionRecords(taskId: string, accountId: string, limit?: number): Promise<StrmExecutionRecord[]> {
+    return this.strmStore.listStrmExecutionRecords(taskId, accountId, limit);
+  }
+
+  async getLatestStrmExecutionRecord(taskId: string, accountId: string): Promise<StrmExecutionRecord | null> {
+    return this.strmStore.getLatestStrmExecutionRecord(taskId, accountId);
+  }
+
+  async listMediaServerConfigs(accountId: string): Promise<MediaServerConfig[]> {
+    return this.mediaServerStore.listMediaServerConfigs(accountId);
+  }
+
+  async getMediaServerConfig(id: string, accountId: string): Promise<MediaServerConfig | null> {
+    return this.mediaServerStore.getMediaServerConfig(id, accountId);
+  }
+
+  async createMediaServerConfig(input: CreateMediaServerConfigInput): Promise<MediaServerConfig> {
+    return this.mediaServerStore.createMediaServerConfig(input);
+  }
+
+  async updateMediaServerConfig(input: UpdateMediaServerConfigInput): Promise<MediaServerConfig | null> {
+    return this.mediaServerStore.updateMediaServerConfig(input);
+  }
+
+  async deleteMediaServerConfig(id: string, accountId: string): Promise<boolean> {
+    return this.mediaServerStore.deleteMediaServerConfig(id, accountId);
+  }
+
+  async createMediaServerRefreshRecord(input: CreateMediaServerRefreshRecordInput): Promise<MediaServerRefreshRecord> {
+    return this.mediaServerStore.createMediaServerRefreshRecord(input);
+  }
+
+  async updateMediaServerRefreshRecord(input: UpdateMediaServerRefreshRecordInput): Promise<MediaServerRefreshRecord | null> {
+    return this.mediaServerStore.updateMediaServerRefreshRecord(input);
+  }
+
+  async listMediaServerRefreshRecords(configId: string, accountId: string, limit?: number): Promise<MediaServerRefreshRecord[]> {
+    return this.mediaServerStore.listMediaServerRefreshRecords(configId, accountId, limit);
+  }
+
+  async getLatestMediaServerRefreshRecord(configId: string, accountId: string): Promise<MediaServerRefreshRecord | null> {
+    return this.mediaServerStore.getLatestMediaServerRefreshRecord(configId, accountId);
+  }
+
 }

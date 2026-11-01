@@ -100,6 +100,8 @@ const SELF_GUARDED_ROUTES = new Set([
   "agent/patrol",
 ]);
 
+const MCP_ROUTES = new Set(["mcp"]);
+
 function routeFiles(dir: string = API_ROOT): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = `${dir}/${entry}`;
@@ -115,20 +117,22 @@ const routes = routeFiles().map((full) => ({
 
 describe("S5.4 /api 路由鉴权清单", () => {
   it("枚举到的路由数量与分类稳定（新增路由必须显式归类）", () => {
-    expect(routes.length).toBe(62);
+    expect(routes.length).toBe(105);
     const open = routes.filter((r) => OPEN_ROUTES.has(r.path));
     const selfGuarded = routes.filter((r) => SELF_GUARDED_ROUTES.has(r.path));
+    const mcpGuarded = routes.filter((r) => MCP_ROUTES.has(r.path));
     const guarded = routes.filter(
-      (r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path),
+      (r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path),
     );
     expect(open.length).toBe(OPEN_ROUTES.size);
     expect(selfGuarded.length).toBe(SELF_GUARDED_ROUTES.size);
-    expect(guarded.length).toBe(45);
+    expect(mcpGuarded.length).toBe(MCP_ROUTES.size);
+    expect(guarded.length).toBe(87);
   });
 
-  it("45 个非白名单路由全部引用 requireApiAccount 登录链", () => {
+  it("87 个非白名单路由全部引用 requireApiAccount 登录链", () => {
     const missing = routes
-      .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path))
+      .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path))
       .filter((r) => !usesImportedFunction(r.source, "requireApiAccount"))
       .map((r) => r.path);
     expect(missing).toEqual([]);

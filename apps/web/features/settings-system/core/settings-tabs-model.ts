@@ -34,7 +34,7 @@ export type ObservedSettingsTabId = (typeof OBSERVED_SETTINGS_TABS)[number];
 export type SettingsTabVisibility = Partial<Record<ObservedSettingsTabId, boolean>>;
 
 /** legacy 深链锚点（account-identity 菜单）→ 账号 tab。 */
-const ACCOUNT_HASHES = new Set(["#password", "#accounts"]);
+const ACCOUNT_HASHES = new Set(["#password", "#accounts", "#roles"]);
 
 /**
  * @param visible 受观察 tab 的可见性。为兼容旧调用点，传布尔时只表示

@@ -249,3 +249,48 @@ describe("mapResourceStreamEvent — 流式事件映射", () => {
   });
 });
 
+
+
+describe("mapResourceResponse and mapResourceStreamEvent - sourceHealth 透传与保留", () => {
+  it("HTTP 响应带 sourceHealth 时透传到 ready 状态", () => {
+    const state = mapResourceResponse(200, {
+      candidates: [],
+      cached: false,
+      snapshotId: "snap-1",
+      sourceHealth: { status: "unreachable", unhealthySources: ["pansou"] },
+    });
+    if (state.kind !== "ready") throw new Error("unexpected");
+    expect(state.sourceHealth).toEqual({ status: "unreachable", unhealthySources: ["pansou"] });
+  });
+
+  it("流式 done 事件透传 sourceHealth", () => {
+    const state = mapResourceStreamEvent({
+      type: "done",
+      candidates: [],
+      cached: false,
+      snapshotId: "snap-2",
+      sourceHealth: { status: "degraded", unhealthySources: ["prowlarr"] },
+    });
+    if (state.kind !== "ready") throw new Error("unexpected");
+    expect(state.sourceHealth).toEqual({ status: "degraded", unhealthySources: ["prowlarr"] });
+  });
+
+  it("流式 chunk 事件保留上一轮 sourceHealth", () => {
+    const prev = mapResourceStreamEvent({
+      type: "chunk",
+      allCandidates: [],
+      progress: { done: 1, total: 2 },
+      sourceHealth: { status: "unreachable", unhealthySources: ["pansou"] },
+    });
+    const next = mapResourceStreamEvent(
+      {
+        type: "chunk",
+        allCandidates: [],
+        progress: { done: 2, total: 2 },
+      },
+      prev,
+    );
+    if (next.kind !== "streaming") throw new Error("unexpected");
+    expect(next.sourceHealth?.status).toBe("unreachable");
+  });
+});

@@ -15,6 +15,7 @@ import {
   importForeignWorkAsMovie,
   llmConfigError,
   buildTitleId,
+  isSharedResourceMode,
   type MediaTitle,
   type TrackedSeason,
   type MediaSearchCandidate,
@@ -196,16 +197,58 @@ export async function queueCandidateTracking(
       message: error instanceof Error ? error.message : "未登录，无法获取。",
     };
   }
-  const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+
+  const sharedMode = isSharedResourceMode();
+  const executionAccountId = sharedMode ? DEFAULT_ACCOUNT_ID : accountId;
+
+  const workspace = await resolveQueueStorage(executionAccountId, connectedStorageId);
   if (workspace.unknown) {
-    return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
+    return {
+      status: "unsupported",
+      message: sharedMode
+        ? "公共网盘工作区不可用（站长尚未配置公共网盘或暂时无法访问），请联系站长。"
+        : "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。",
+    };
   }
   if (workspace.frozen) {
     return { status: "unsupported", message: frozenDriveMessage(workspace.provider, "获取") };
   }
+
+  const repo = getWorkflowRepository();
+
   const movieParsed = parseMovieCandidateId(candidateId);
   if (movieParsed.ok) {
     const movieTmdbId = movieParsed.value.id;
+    const titleKey = buildTitleId({ source: "tmdb", mediaKind: "movie", id: movieTmdbId });
+
+    if (sharedMode) {
+      const existingUserReq = (await repo.listMediaRequests({ accountId, mediaTitleId: titleKey }))
+        .find((r) => r.status === "queued" || r.status === "acquiring" || r.status === "pending_approval");
+      if (existingUserReq) {
+        return {
+          status: "queued",
+          workflowRunId: existingUserReq.workflowRunId ?? null,
+          trackedSeasonId: `${titleKey}_movie`,
+        };
+      }
+
+      const activeRequest = await repo.findActiveMediaRequest(titleKey, null);
+      if (activeRequest && activeRequest.workflowRunId) {
+        await repo.createMediaRequest({
+          accountId,
+          mediaTitleId: titleKey,
+          seasonNumber: null,
+          status: "acquiring",
+          workflowRunId: activeRequest.workflowRunId,
+        });
+        return {
+          status: "queued",
+          workflowRunId: activeRequest.workflowRunId,
+          trackedSeasonId: `${titleKey}_movie`,
+        };
+      }
+    }
+
     const movie = await movieTargetFromTmdbId(movieTmdbId);
     if (!movie) {
       return { status: "unsupported", message: "无法获取该电影的信息。" };
@@ -213,10 +256,21 @@ export async function queueCandidateTracking(
     const request = await queueMovieAcquisition({
       title: movie.title,
       keyword: movie.keyword,
-      repository: getWorkflowRepository(),
-      accountId,
+      repository: repo,
+      accountId: executionAccountId,
       connectedStorageId: workspace.id,
     });
+
+    if (sharedMode) {
+      await repo.createMediaRequest({
+        accountId,
+        mediaTitleId: movie.title.id,
+        seasonNumber: null,
+        status: request.status === "queued" ? "queued" : "ready",
+        workflowRunId: request.workflowRunId ?? null,
+      });
+    }
+
     return {
       status: request.status === "queued" ? "queued" : request.status,
       workflowRunId: request.workflowRunId,
@@ -232,15 +286,57 @@ export async function queueCandidateTracking(
     };
   }
 
+  if (sharedMode) {
+    const titleKey = target.title.id;
+    const seasonNumber = target.season.seasonNumber;
+
+    const existingUserReq = (await repo.listMediaRequests({ accountId, mediaTitleId: titleKey }))
+      .find((r) => (r.seasonNumber === seasonNumber || r.seasonNumber === null) &&
+        (r.status === "queued" || r.status === "acquiring" || r.status === "pending_approval"));
+    if (existingUserReq) {
+      return {
+        status: "queued",
+        workflowRunId: existingUserReq.workflowRunId ?? null,
+        trackedSeasonId: `${titleKey}_s${seasonNumber}`,
+      };
+    }
+
+    const activeRequest = await repo.findActiveMediaRequest(titleKey, seasonNumber);
+    if (activeRequest && activeRequest.workflowRunId) {
+      await repo.createMediaRequest({
+        accountId,
+        mediaTitleId: titleKey,
+        seasonNumber,
+        status: "acquiring",
+        workflowRunId: activeRequest.workflowRunId,
+      });
+      return {
+        status: "queued",
+        workflowRunId: activeRequest.workflowRunId,
+        trackedSeasonId: `${titleKey}_s${seasonNumber}`,
+      };
+    }
+  }
+
   const request = await queueTrackingInitialization({
     title: target.title,
     season: target.season,
     keyword: target.keyword,
-    repository: getWorkflowRepository(),
-    accountId,
+    repository: repo,
+    accountId: executionAccountId,
     connectedStorageId: workspace.id,
   });
   const status = request.status === "completed" ? "queued" : request.status;
+
+  if (sharedMode) {
+    await repo.createMediaRequest({
+      accountId,
+      mediaTitleId: target.title.id,
+      seasonNumber: target.season.seasonNumber,
+      status: status === "queued" ? "queued" : "ready",
+      workflowRunId: request.workflowRunId ?? null,
+    });
+  }
 
   return {
     status,
@@ -281,9 +377,17 @@ export async function reserveCandidate(
   if (!movie) {
     return { status: "unsupported", message: "无法获取该电影的信息。" };
   }
-  const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+  const sharedMode = isSharedResourceMode();
+  const executionAccountId = sharedMode ? DEFAULT_ACCOUNT_ID : accountId;
+
+  const workspace = await resolveQueueStorage(executionAccountId, connectedStorageId);
   if (workspace.unknown) {
-    return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
+    return {
+      status: "unsupported",
+      message: sharedMode
+        ? "公共网盘工作区不可用（站长尚未配置公共网盘或暂时无法访问），请联系站长。"
+        : "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。",
+    };
   }
   if (workspace.frozen) {
     return { status: "unsupported", message: frozenDriveMessage(workspace.provider, "预定") };
@@ -291,7 +395,7 @@ export async function reserveCandidate(
   const request = await reserveMovie({
     title: movie.title,
     repository: getWorkflowRepository(),
-    accountId,
+    accountId: executionAccountId,
     connectedStorageId: workspace.id,
   });
   return { status: request.status, trackedSeasonId: `${movie.title.id}_movie` };
@@ -320,27 +424,79 @@ export async function queueCandidateSeries(
       message: error instanceof Error ? error.message : "未登录，无法获取。",
     };
   }
-  const workspace = await resolveQueueStorage(accountId, connectedStorageId);
+
+  const sharedMode = isSharedResourceMode();
+  const executionAccountId = sharedMode ? DEFAULT_ACCOUNT_ID : accountId;
+
+  const workspace = await resolveQueueStorage(executionAccountId, connectedStorageId);
   if (workspace.unknown) {
-    return { status: "unsupported", message: "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。" };
+    return {
+      status: "unsupported",
+      message: sharedMode
+        ? "公共网盘工作区不可用（站长尚未配置公共网盘或暂时无法访问），请联系站长。"
+        : "网盘工作区不可用（未找到或暂时无法访问），请刷新后重试。",
+    };
   }
   if (workspace.frozen) {
     return { status: "unsupported", message: frozenDriveMessage(workspace.provider, "获取") };
   }
+
+  const repo = getWorkflowRepository();
+  const titleKey = buildTitleId({ source: "tmdb", mediaKind: "tv", id: parsed.value.id });
+
+  if (sharedMode) {
+    const existingUserReq = (await repo.listMediaRequests({ accountId, mediaTitleId: titleKey }))
+      .find((r) => r.status === "queued" || r.status === "acquiring" || r.status === "pending_approval");
+    if (existingUserReq) {
+      return {
+        status: "queued",
+        workflowRunId: existingUserReq.workflowRunId ?? null,
+        trackedSeasonId: `${titleKey}_s1`,
+      };
+    }
+
+    const activeRequest = await repo.findActiveMediaRequest(titleKey, null);
+    if (activeRequest && activeRequest.workflowRunId) {
+      await repo.createMediaRequest({
+        accountId,
+        mediaTitleId: titleKey,
+        seasonNumber: null,
+        status: "acquiring",
+        workflowRunId: activeRequest.workflowRunId,
+      });
+      return {
+        status: "queued",
+        workflowRunId: activeRequest.workflowRunId,
+        trackedSeasonId: `${titleKey}_s1`,
+      };
+    }
+  }
+
   if (isLiveSearch()) {
     const target = await prepareSeriesTarget({
       tmdbId: parsed.value.id,
       qualityPreference: defaultQuality(),
-      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(accountId))),
+      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(executionAccountId))),
     });
     const request = await queueSeriesInitialization({
       title: target.title,
       seasons: target.seasons,
       keyword: target.keyword,
-      repository: getWorkflowRepository(),
-      accountId,
+      repository: repo,
+      accountId: executionAccountId,
       connectedStorageId: workspace.id,
     });
+
+    if (sharedMode) {
+      await repo.createMediaRequest({
+        accountId,
+        mediaTitleId: target.title.id,
+        seasonNumber: null,
+        status: request.status === "queued" ? "queued" : "ready",
+        workflowRunId: request.workflowRunId ?? null,
+      });
+    }
+
     return {
       status: request.status === "queued" ? "queued" : request.status,
       workflowRunId: request.workflowRunId,

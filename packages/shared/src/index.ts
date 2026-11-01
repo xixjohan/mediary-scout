@@ -59,3 +59,48 @@ export {
 } from "./crypto/credential-crypto.js";
 
 export { formatNetworkError } from "./network-error.js";
+
+export {
+  MediaStreamCoordinator,
+  type ActiveStreamSession,
+} from "./tunnel/media-stream-coordinator.js";
+
+export {
+  TunnelFrameSerializer,
+  isAllowedLanTarget,
+  isSinglePacketDispatch,
+  rewriteLanLocationToVirtualRoute,
+  parseVirtualLanRoute,
+  sanitizeHeaders,
+} from "./tunnel/tunnel-frame-serializer.js";
+
+export {
+  FrpTunnelClient,
+} from "./tunnel/frp-tunnel-client.js";
+
+export {
+  FrpTunnelManager,
+  InMemoryFrpTunnelStorage,
+  type IFrpTunnelStorage,
+} from "./tunnel/tunnel-store.js";
+
+export type {
+  TunnelFrameType,
+  TunnelRequestFrame,
+  TunnelResponseFrame,
+  TunnelStreamStartFrame,
+  TunnelStreamChunkFrame,
+  TunnelStreamEndFrame,
+  TunnelAbortFrame,
+  TunnelAckFrame,
+  AnyTunnelFrame,
+  FrpTunnelLineEntity,
+  FrpTunnelLineState,
+  FrpTunnelLineStatus,
+  FrpTunnelLogItem,
+} from "./tunnel/tunnel-protocol.js";
+
+export * from "./auth/api-key-matrix.js";
+export * from "./auth/rbac-matrix.js";
+
+

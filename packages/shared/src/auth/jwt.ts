@@ -20,6 +20,9 @@ export interface TokenClaims {
   sub: string;
   iat?: number;
   exp?: number;
+  tokenType?: "AdminSession" | "ApiKey";
+  keyId?: string;
+  permissions?: string[];
 }
 
 function keyOf(secret: string): Uint8Array {
@@ -29,7 +32,12 @@ function keyOf(secret: string): Uint8Array {
 /** 签发 token。ttlSeconds 由调用方给（默认 12h 在 apps/web 的常量里）。 */
 export async function issueToken(claims: TokenClaims, secret: string, ttlSeconds: number): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  return new SignJWT({})
+  const customPayload: Record<string, unknown> = {};
+  if (claims.tokenType) customPayload.tokenType = claims.tokenType;
+  if (claims.keyId) customPayload.keyId = claims.keyId;
+  if (claims.permissions) customPayload.permissions = claims.permissions;
+
+  return new SignJWT(customPayload)
     .setProtectedHeader({ alg: JWT_ALG })
     .setSubject(claims.sub)
     .setIssuedAt(now)
@@ -49,5 +57,12 @@ export async function verifyToken(token: string, secret: string): Promise<TokenC
   const claims: TokenClaims = { sub: payload.sub };
   if (typeof payload.iat === "number") claims.iat = payload.iat;
   if (typeof payload.exp === "number") claims.exp = payload.exp;
+  if (payload.tokenType === "AdminSession" || payload.tokenType === "ApiKey") {
+    claims.tokenType = payload.tokenType;
+  }
+  if (typeof payload.keyId === "string") claims.keyId = payload.keyId;
+  if (Array.isArray(payload.permissions)) {
+    claims.permissions = payload.permissions.filter((p): p is string => typeof p === "string");
+  }
   return claims;
 }

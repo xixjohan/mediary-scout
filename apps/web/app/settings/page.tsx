@@ -34,15 +34,20 @@ import { PatrolConcurrencyForm } from "../../features/settings-system/components
 import { PatrolNowButton } from "../../features/settings-system/components/patrol-now-button";
 import { SettingsTabs } from "../../features/settings-system/components/settings-tabs";
 import { PasswordChangeForm } from "../../features/settings-system/components/password-change-form";
-import { AccountAdminPanel } from "../../features/auth/components/account-admin-panel";
+import { AccountManagementSection } from "../../features/settings-system/components/settings/account-management-section";
+import { RoleManagementSection } from "../../features/settings-system/components/settings/role-management-section";
 import { RemoteAccessSection } from "../../features/settings-system/components/settings/remote-access-section";
 import { ApiKeySection } from "../../features/settings-system/components/settings/api-key-section";
 import { UpdateSection } from "../../features/settings-system/components/settings/update-section";
+import { MediaServerSection } from "../../features/settings-system/components/settings/mediaserver-section";
+import { ExtensionsSection } from "../../features/settings-system/components/settings/extensions-section";
+import { McpSection } from "../../features/settings-system/components/settings/mcp-section";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import { SettingsActionInbox } from "../../features/settings-system/components/settings-action-inbox";
-import { loadSettingsAttentionSummary, markSettingsAttentionSeen } from "../../lib/settings-attention-server";
+import { loadSettingsAttentionSummary, markSettingsAttentionSeen, resolveCurrentIsOwner } from "../../lib/settings-attention-server";
 import {
   getAccountConnectedStorages,
+  isSharedResourceMode,
   getAccountScopedSettings,
   getCurrentAccountId,
   getCurrentAccountSummary,
@@ -86,7 +91,7 @@ import {
   PANSOU_PASSWORD_SETTING_KEY,
   PANSOU_TOKEN_SETTING_KEY,
 } from "../../lib/pansou-chain";
-import { brandSupportsProwlarr, brandsSupportingProwlarr, brandsSupportingSubtitleDirectLink, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
+import { brandSupportsProwlarr, DEFAULT_ACCOUNT_ID, brandsSupportingProwlarr, brandsSupportingSubtitleDirectLink, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
 
 function SettingsPageInner({
@@ -146,6 +151,15 @@ function SettingsPageInner({
                   <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                     <SubtitleSourceSection />
                   </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <MediaServerSection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <ExtensionsSection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <McpSection />
+                  </Suspense>
                 </>
               }
               preferences={
@@ -181,6 +195,12 @@ function SettingsPageInner({
                   <Suspense fallback={null}>
                     <AccountManagementSection />
                   </Suspense>
+                  <Suspense fallback={null}>
+                    <RoleManagementSection />
+                  </Suspense>
+                  <Suspense fallback={null}>
+                    <ApiKeySection />
+                  </Suspense>
                 </>
               }
               // Fallback is null, not a skeleton: a skeleton element would stream
@@ -192,7 +212,6 @@ function SettingsPageInner({
                 resolveIsDesktop() ? null : (
                   <Suspense fallback={null}>
                     <RemoteAccessSection searchParams={searchParams} />
-                    <ApiKeySection />
                   </Suspense>
                 )
               }
@@ -229,18 +248,12 @@ async function SettingsAttentionSection({
 }
 
 async function PasswordChangeSection() {
-  // connection() FIRST: cacheComponents would otherwise prerender this at build time
-  // (multi-user off) and bake it as null → never shows in production multi-user.
   await connection();
-  if (!isMultiUserEnabled()) return null;
   return (
     <section id="password" className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
       <div className="panel-header">
         <div>
-          <h2 className="panel-title">
-            <KeyRound size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
-            修改密码
-          </h2>
+          <h2 className="panel-title"><KeyRound size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />修改密码</h2>
           <p className="panel-note">修改后所有登录会话失效，需用新密码重新登录</p>
         </div>
       </div>
@@ -249,42 +262,15 @@ async function PasswordChangeSection() {
   );
 }
 
-async function AccountManagementSection() {
-  await connection();
-  if (!isMultiUserEnabled()) return null;
-  const me = await getCurrentAccountSummary();
-  if (!me?.isOwner) return null;
-  const accounts = await listManagedAccounts(await getCurrentAccountId());
-  if (!accounts) return null;
-  return (
-    <section id="accounts" className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
-      <div className="panel-header">
-        <div>
-          <h2 className="panel-title">
-            <Users size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
-            账号管理
-          </h2>
-          <p className="panel-note">作为站主，你可以为忘记密码的用户重置密码（不影响他们的网盘和媒体库）</p>
-        </div>
-      </div>
-      <AccountAdminPanel accounts={accounts} />
-    </section>
-  );
-}
-
 async function PreferredLanguageSection() {
   await connection();
   const repository = getAccountScopedSettings(await getCurrentAccountId());
   const initial = (await repository.getSetting(PREFERRED_LANGUAGE_SETTING_KEY)) ?? "中文";
-
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
       <div className="panel-header">
         <div>
-          <h2 className="panel-title">
-            <Languages size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
-            偏好语言
-          </h2>
+          <h2 className="panel-title"><Languages size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />偏好语言</h2>
           <p className="panel-note">搜索资源时优先你偏好的字幕语言，避免拿到看不了的版本</p>
         </div>
       </div>
@@ -297,15 +283,11 @@ async function QualityPreferenceSection() {
   await connection();
   const repository = getAccountScopedSettings(await getCurrentAccountId());
   const initial = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY)) ?? "any";
-
   return (
     <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
       <div className="panel-header">
         <div>
-          <h2 className="panel-title">
-            <Gauge size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />
-            偏好画质
-          </h2>
+          <h2 className="panel-title"><Gauge size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />偏好画质</h2>
           <p className="panel-note">优先获取的画质档位（覆盖优先，找不到不留缺）</p>
         </div>
       </div>
@@ -718,6 +700,9 @@ async function SubtitleSourceSection() {
   );
 }
 
+
+
+
 /** 品牌显示名直读 workflow 注册表(单一事实源,与 workspace-switcher 一致),
  *  未注册品牌兜底显示原始 provider 串。盘卡与解绑确认共用。 */
 function providerLabel(provider: string): string {
@@ -728,6 +713,8 @@ async function Pan115Section() {
   await connection();
   const status = await getPan115ConnectionStatus();
   const drives = await getAccountConnectedStorages();
+  const isShared = isSharedResourceMode();
+  const isOwner = await resolveCurrentIsOwner();
 
   return (
     <section className="panel" style={{ maxWidth: 720 }}>
@@ -800,7 +787,9 @@ async function Pan115Section() {
                 </div>
                 <div className="drive-card-actions">
                   <TestConnectionButton storageId={drive.id} />
-                  <UnbindStorageButton storageId={drive.id} label={providerLabel(drive.provider)} />
+                  {(!isShared || isOwner) ? (
+                    <UnbindStorageButton storageId={drive.id} label={providerLabel(drive.provider)} />
+                  ) : null}
                 </div>
               </div>
             );
@@ -808,18 +797,26 @@ async function Pan115Section() {
         </div>
       ) : null}
 
-      <p className="panel-note drive-add-heading">
-        {drives.length > 0 ? "添加网盘 · 选择品牌开始连接" : "添加你的第一块网盘"}
-        {drives.length > 0 ? (
-          <span className="drive-add-hint">不同账号即新增一块独立工作区；绑已连的同一账号会自动刷新登录</span>
-        ) : null}
-      </p>
-      <AddDriveBrandTabs defaultBrand={drives.length > 0 ? null : "pan115"} />
+      {(!isShared || isOwner) ? (
+        <>
+          <p className="panel-note drive-add-heading">
+            {drives.length > 0 ? "添加网盘 · 选择品牌开始连接" : "添加你的第一块网盘"}
+            {drives.length > 0 ? (
+              <span className="drive-add-hint">不同账号即新增一块独立工作区；绑已连的同一账号会自动刷新登录</span>
+            ) : null}
+          </p>
+          <AddDriveBrandTabs defaultBrand={drives.length > 0 ? null : "pan115"} />
 
-      <p className="panel-note drive-risk-note">
-        <TriangleAlert size={12} aria-hidden style={{ verticalAlign: "-2px", marginRight: 4 }} />
-        同一网盘账号勿在多个账号或多个实例绑定，易触发风控；每个网盘账号在本实例内只能归属一个用户。
-      </p>
+          <p className="panel-note drive-risk-note">
+            <TriangleAlert size={12} aria-hidden style={{ verticalAlign: "-2px", marginRight: 4 }} />
+            同一网盘账号勿在多个账号或多个实例绑定，易触发风控；每个网盘账号在本实例内只能归属一个用户。
+          </p>
+        </>
+      ) : (
+        <p className="panel-note" style={{ marginTop: 14 }}>
+          共用资源模式：公共网盘由站长统一管理维护，成员可直接点播并共享资源。
+        </p>
+      )}
     </section>
   );
 }

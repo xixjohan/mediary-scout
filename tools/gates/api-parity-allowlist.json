@@ -1,0 +1,23 @@
+{
+  "description": "API 路由消费豁免白名单：定义供外部探针、移动端扫码或内部后台 Worker 消费而无需前端视图调用的端点",
+  "allowedOrphans": [
+    { "prefix": "/api/health", "reason": "Docker 容器存活与就绪度健康检查探针" },
+    { "prefix": "/api/agent", "reason": "供外部 CLI / Agent 调用的标准化 API 接口" },
+    { "prefix": "/api/auth/token", "reason": "供外部脚本或第三方下载器用 API Key 换取短期 JWT 凭据" },
+    { "prefix": "/api/workflows/run-next", "reason": "后台定时器调度与执行工作流内部队列端点" },
+    { "prefix": "/api/workflows/run-type3", "reason": "后台定时器调度与执行工作流内部队列端点" },
+    { "prefix": "/api/update/busy", "reason": "Updater 原生后台守护进程状态交互端点" },
+    { "prefix": "/api/update/hold", "reason": "Updater 原生后台守护进程状态交互端点" },
+    { "prefix": "/api/update/status", "reason": "Updater 原生后台守护进程状态交互端点" },
+    { "prefix": "/api/115/qrcode", "reason": "网盘扫码底层通道" },
+    { "prefix": "/api/quark/qrcode", "reason": "网盘扫码底层通道" },
+    { "prefix": "/api/pan123/qrcode", "reason": "网盘扫码底层通道" },
+    { "prefix": "/api/tianyi/qrcode", "reason": "网盘扫码底层通道" },
+    { "prefix": "/api/uc/qrcode", "reason": "网盘扫码底层通道" },
+    { "prefix": "/api/cloud-family/qrcode", "reason": "网盘扫码底层通道" },
+    { "prefix": "/api/guangya/qrcode", "reason": "网盘扫码底层通道" },
+    { "prefix": "/api/mcp", "reason": "供外部 MCP Client (Cursor, Claude, Windsurf 等) 接入的模型上下文协议标准端点" },
+    { "prefix": "/api/mediaserver/probe-libraries", "reason": "媒体服务器未保存配置时的连通性与资料库探针测试端点" },
+    { "prefix": "/api/system/fs-browse", "reason": "底层本地文件系统目录结构浏览探针端点" }
+  ]
+}

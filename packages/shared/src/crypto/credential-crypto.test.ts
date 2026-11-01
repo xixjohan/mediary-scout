@@ -72,8 +72,10 @@ describe("credential-crypto", () => {
     initCredentialCrypto({ keyFilePath: keyFile });
     const stored = encryptSecret("cookie-A");
 
-    const mode = statSync(keyFile).mode & 0o777;
-    expect(mode).toBe(0o600);
+    if (process.platform !== "win32") {
+      const mode = statSync(keyFile).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
     expect(readFileSync(keyFile, "utf8").trim()).toMatch(/^[0-9a-f]{64}$/);
 
     // 重新 init（模拟进程重启）：必须复用盘上的密钥，否则历史数据全丢

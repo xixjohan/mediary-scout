@@ -107,7 +107,7 @@ export function ResourceSearchBar({
   return (
     <div className="title-resources-search-bar">
       <div className="title-resources-input-wrap">
-        <Search size={14} aria-hidden />
+        <Search size={15} className="title-resources-search-icon" aria-hidden />
         <input
           type="text"
           value={customKeyword}
@@ -122,6 +122,7 @@ export function ResourceSearchBar({
             className="title-resources-input-clear"
             aria-label="清空关键词"
             onClick={() => setCustomKeyword("")}
+            title="清空关键词"
           >
             <X size={12} aria-hidden />
           </button>

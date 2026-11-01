@@ -16,6 +16,10 @@ export * from "./execution/index.js";
 // Auth & Acquisition V2
 export * from "./auth/password.js";
 export * from "./auth/session.js";
+export * from "./auth/api-key-v2-store.js";
+export * from "./auth/api-key-touch-buffer.js";
+export * from "./auth/role-store.js";
+export * from "./auth/user-management-service.js";
 export * from "./acquisition-v2/storage-115-simulator.js";
 export * from "./acquisition-v2/fake-provider.js";
 export * from "./acquisition-v2/sandbox.js";
@@ -42,6 +46,21 @@ export * from "./acquisition-v2/search-source-fault.js";
 export * from "./acquisition-v2/workflow-v2-bridge.js";
 export * from "./acquisition-v2/run-tv-v2.js";
 export * from "./acquisition-v2/stub-model.js";
+
+// Tunnel
+export * from "./tunnel/app-setting-tunnel-storage.js";
+
+// STRM Streaming & Generation Engine
+export * from "./strm/index.js";
+
+// Media Server Integration (Plex/Emby/Jellyfin)
+export * from "./mediaserver/index.js";
+
+// External MCP Assistant Integration
+export * from "./mcp/index.js";
+
+// Dynamic Extensions
+export * from "./extensions/index.js";
 
 // Shared & Contracts Foundation Re-exports
 export { formatNetworkError } from "@media-track/shared";

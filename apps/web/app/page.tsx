@@ -24,6 +24,7 @@ import {
   getActiveWorkspaceScope,
   getRegisteredDriveCount,
   getWorkflowRepository,
+  isSharedResourceMode,
 } from "../lib/workflow-runtime";
 import { showHref } from "@media-track/workflow";
 import type { SearchCandidateCard, TrackedSeasonState } from "@media-track/workflow";
@@ -172,7 +173,7 @@ async function HomeSurface({
               </div>
               <SearchForm basePath={basePath} defaultQuery={query} />
             </div>
-            {driveCount >= 2 ? (
+            {!isSharedResourceMode() && driveCount >= 2 ? (
               <p className="panel-note" style={{ marginTop: -4, marginBottom: 4 }}>
                 搜索与获取按网盘隔离 —— 想为某块盘获取资源，请切到该盘后在它的搜索页操作。
               </p>

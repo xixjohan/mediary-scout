@@ -90,15 +90,28 @@ export function storageParentForTitle(
  * globally-passed deps. Per-account fields (115 storage + landing CIDs) win;
  * everything else falls through to the base. No resolver → base unchanged.
  */
+export interface BaseWorkerDeps {
+  storage: StorageExecutor;
+  resourceProvider: ResourceProvider;
+  model: LanguageModel;
+  llmConfig?: { baseURL?: string; modelId?: string };
+  preferredLanguage?: string;
+  qualityPreference?: "high" | "medium";
+  storageProvider?: string;
+  assrtToken?: string;
+  jevJudge?: JevJudge;
+  agentMemory?: boolean;
+  titleResearch?: TitleResearchOptions;
+  storageParentDirectoryId?: string;
+  animeStorageParentDirectoryId?: string;
+  moviesParentDirectoryId?: string;
+}
+
 export async function resolveWorkerDeps(
   resolve: ResolveAccountWorkerContext | undefined,
   accountId: string,
   connectedStorageId: string | null,
-  base: AccountWorkerContext & {
-    storage: StorageExecutor;
-    resourceProvider: ResourceProvider;
-    model: LanguageModel;
-  },
+  base: BaseWorkerDeps,
 ): Promise<{
   storage: StorageExecutor;
   resourceProvider: ResourceProvider;
@@ -170,32 +183,7 @@ export type SeasonMetadataSync = (input: {
  *  queued. Absent = always allowed. */
 export type MayStartRun = () => boolean;
 
-export interface AccountWorkerContext {
-  storage?: StorageExecutor;
-  resourceProvider?: ResourceProvider;
-  model?: LanguageModel;
-  /** The config (baseURL/modelId only, never the key) that built `model`.
-   *  Informational: the worker consults it only for free-preset-gated
-   *  presentation/recovery (isFreeLlmPreset — failure copy, and the HTTP-status
-   *  transient layer of the free pool's backoff, Copilot r5 M) — it never
-   *  affects execution. Absent → agnostic copy. */
-  llmConfig?: { baseURL?: string; modelId?: string };
-  preferredLanguage?: string;
-  qualityPreference?: "high" | "medium";
-  /** The run's drive brand ("pan115" | "quark") — selects brand-specific skill. */
-  storageProvider?: string;
-  /** assrt token (Settings → 字幕来源). Undefined = 字幕流程不触发。 */
-  assrtToken?: string;
-  /** Optional Jev candidate prefilter, resolved per account from Settings. */
-  jevJudge?: JevJudge;
-  /** Agent memory on/off, resolved per account from Settings (absent = on). */
-  agentMemory?: boolean;
-  /** Web-reference tools, resolved from the account's LLM endpoint. */
-  titleResearch?: TitleResearchOptions;
-  storageParentDirectoryId?: string;
-  animeStorageParentDirectoryId?: string;
-  moviesParentDirectoryId?: string;
-}
+export interface AccountWorkerContext extends Partial<BaseWorkerDeps> {}
 
 export type ResolveAccountWorkerContext = (
   accountId: string,

@@ -10,7 +10,9 @@ import {
   FileImage,
   Film,
   Folder,
+  Link2,
   Move,
+  Play,
   RefreshCw,
   Square,
   Subtitles,
@@ -70,6 +72,8 @@ interface StorageFileTableProps {
   onMove: (item: DriveFileItem) => void;
   onCopy: (item: DriveFileItem) => void;
   onDelete: (item: DriveFileItem) => void;
+  onPlay?: (item: DriveFileItem) => void;
+  onCopyPlayLink?: (item: DriveFileItem) => void;
 }
 
 export function StorageFileTable({
@@ -84,6 +88,8 @@ export function StorageFileTable({
   onMove,
   onCopy,
   onDelete,
+  onPlay,
+  onCopyPlayLink,
 }: StorageFileTableProps) {
   const isAllSelected = items.length > 0 && items.every((item) => selectedIds.has(item.id));
 
@@ -166,6 +172,27 @@ export function StorageFileTable({
                   <td className="col-size">{formatBytes(item.sizeBytes)}</td>
                   <td className="col-actions">
                     <div className="storage-row-actions">
+                      {onPlay && (item.type === "video" || item.type === "audio") && (
+                        <button
+                          type="button"
+                          className="storage-action-icon-btn"
+                          title="在线播放"
+                          onClick={() => onPlay(item)}
+                          style={{ color: "var(--accent, #22c55e)" }}
+                        >
+                          <Play size={14} />
+                        </button>
+                      )}
+                      {onCopyPlayLink && (item.type === "video" || item.type === "audio") && (
+                        <button
+                          type="button"
+                          className="storage-action-icon-btn"
+                          title="复制 STRM 播放直链"
+                          onClick={() => onCopyPlayLink(item)}
+                        >
+                          <Link2 size={14} />
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="storage-action-icon-btn"

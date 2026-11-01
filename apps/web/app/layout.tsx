@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { isDemoMode } from "../lib/demo-mode";
+import { AuthProvider } from "../features/auth/components/auth-context";
 
 export const metadata: Metadata = {
   title: "巡影 · Mediary Scout",
@@ -29,7 +30,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             </a>
           </div>
         ) : null}
-        {children}
+        <AuthProvider>{children}</AuthProvider>
         {/* Vercel Web Analytics — DEMO deploy only: gated on isDemoMode() so a
             self-hosted instance never loads the Vercel insights script (no 404 /
             no third-party beacon off-Vercel). */}

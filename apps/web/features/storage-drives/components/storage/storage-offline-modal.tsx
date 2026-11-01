@@ -337,15 +337,15 @@ export function StorageOfflineModal({
   const isSupported = capability?.supported ?? false;
 
   return (
-    <div className="storage-modal-backdrop" onClick={onClose} role="presentation">
+    <div className="storage-offline-modal-overlay" onClick={onClose} role="presentation">
       <div
-        className="storage-modal-card storage-offline-modal"
+        className="storage-offline-modal-card"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-modal="true"
         aria-labelledby="offline-modal-title"
       >
-        <header className="storage-modal-head">
+        <header className="storage-offline-modal-header">
           <div className="storage-offline-title-row">
             <DownloadCloud size={20} className="storage-offline-head-icon" />
             <h2 id="offline-modal-title">新建网盘离线下载</h2>
@@ -353,12 +353,17 @@ export function StorageOfflineModal({
               {formatProviderLabel(storage.provider)}
             </span>
           </div>
-          <button type="button" className="storage-modal-close" onClick={onClose} aria-label="关闭">
+          <button
+            type="button"
+            className="storage-offline-modal-close"
+            onClick={onClose}
+            aria-label="关闭"
+          >
             <X size={18} />
           </button>
         </header>
 
-        <div className="storage-offline-body">
+        <div className="storage-offline-modal-body">
           <OfflineCapabilityBar loading={capLoading} capability={capability} />
 
           <div className="storage-offline-tabs" role="tablist">
@@ -366,7 +371,7 @@ export function StorageOfflineModal({
               type="button"
               role="tab"
               aria-selected={activeTab === "links"}
-              className={`storage-offline-tab-btn ${activeTab === "links" ? "is-active" : ""}`}
+              className={`storage-offline-tab ${activeTab === "links" ? "active" : ""}`}
               onClick={() => setActiveTab("links")}
             >
               <LinkIcon size={14} />
@@ -376,7 +381,7 @@ export function StorageOfflineModal({
               type="button"
               role="tab"
               aria-selected={activeTab === "torrent"}
-              className={`storage-offline-tab-btn ${activeTab === "torrent" ? "is-active" : ""}`}
+              className={`storage-offline-tab ${activeTab === "torrent" ? "active" : ""}`}
               onClick={() => setActiveTab("torrent")}
               disabled={capability !== null && !capability.supportsTorrent}
             >
@@ -412,13 +417,13 @@ export function StorageOfflineModal({
           )}
 
           {statusMsg && (
-            <div className={`storage-offline-status-bar ${statusMsg.type}`}>
+            <div className={`storage-offline-status-banner is-${statusMsg.type}`}>
               <span>{statusMsg.text}</span>
             </div>
           )}
         </div>
 
-        <footer className="storage-modal-foot">
+        <footer className="storage-offline-modal-footer">
           <button type="button" className="storage-btn" onClick={onClose} disabled={submitting}>
             取消
           </button>

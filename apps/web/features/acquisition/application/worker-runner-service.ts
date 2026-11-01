@@ -309,6 +309,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     ...claimOption,
   });
   if (type2.status !== "idle") {
+    await repository.completeMediaRequestsForRun(type2.workflowRunId, type2.status === "ran" ? "ready" : "failed");
     await pushNotificationsSince(repository, startedAt, { workflowRunId: type2.workflowRunId });
     return type2;
   }
@@ -331,6 +332,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     ...claimOption,
   });
   if (series.status !== "idle") {
+    await repository.completeMediaRequestsForRun(series.workflowRunId, series.status === "ran" ? "ready" : "failed");
     await pushNotificationsSince(repository, startedAt, { workflowRunId: series.workflowRunId });
     return series;
   }
@@ -352,6 +354,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     ...claimOption,
   });
   if (movie.status !== "idle") {
+    await repository.completeMediaRequestsForRun(movie.workflowRunId, movie.status === "ran" ? "ready" : "failed");
     await pushNotificationsSince(repository, startedAt, { workflowRunId: movie.workflowRunId });
     return movie;
   }
@@ -458,6 +461,19 @@ async function pushNotificationsSince(
       const list = byAccount.get(accountId) ?? [];
       list.push({ connectedStorageId, notification });
       byAccount.set(accountId, list);
+    }
+
+    if (opts.workflowRunId) {
+      const requests = await targetRepository.listMediaRequests();
+      const runRequests = requests.filter((r) => r.workflowRunId === opts.workflowRunId);
+      for (const req of runRequests) {
+        if (!byAccount.has(req.accountId)) {
+          const primaryEntries = Array.from(byAccount.values())[0];
+          if (primaryEntries && primaryEntries.length > 0) {
+            byAccount.set(req.accountId, [...primaryEntries]);
+          }
+        }
+      }
     }
 
     for (const [accountId, entries] of byAccount) {
@@ -1042,7 +1058,7 @@ function episodeCodes(seasonNumber: number, count: number): string[] {
 export function storageDirectoryIdForCandidate(_candidateId: string): string {
   // Empty means "let the Type 2 workflow create the canonical
   // `Title (Year)/Season N` directory under the configured parent".
-  return process.env.MEDIA_TRACK_DEFAULT_TV_STORAGE_DIRECTORY_ID ?? "";
+  return "";
 }
 
 function storageParentDirectoryId(): string {

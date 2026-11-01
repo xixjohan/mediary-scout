@@ -20,3 +20,6 @@ export * from "./agent-memory.js";
 export * from "./agent-step-view.js";
 export * from "./agent-step-redaction.js";
 export * from "./chat-conversations.js";
+export * from "./media-request.js";
+export * from "./storage-scope-strategy.js";
+export * from "./user-capability-adapter.js";

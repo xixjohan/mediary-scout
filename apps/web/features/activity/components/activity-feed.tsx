@@ -11,6 +11,7 @@ import type {
   RetryRefusalReason,
 } from "../../../lib/activity-view";
 import { AgentTimeline } from "./agent-timeline";
+import { AppConfirmDialog, type ConfirmDialogSpec } from "../../../components/ui/app-confirm-dialog";
 // The run kind via the view type, NOT the workflow root barrel: the barrel `export *`s
 // is server-heavy, and a type-only barrel import can drag server-only code into this client bundle
 // (see request-track-button.tsx).
@@ -272,6 +273,7 @@ function CompletedRow({ item }: { item: ActivityCompletedItem }) {
 
 function RetryButton({ runId, title }: { runId: string; title: string }) {
   const [busy, setBusy] = useState(false);
+  const [dialogSpec, setDialogSpec] = useState<ConfirmDialogSpec | null>(null);
 
   const retry = async () => {
     setBusy(true);
@@ -286,36 +288,46 @@ function RetryButton({ runId, title }: { runId: string; title: string }) {
         reason?: RetryRefusalReason;
       };
       if (result.status !== "retried") {
-        // Distinguish the two refusal causes. "可能已在处理" is wrong — and
-        // misleading — for a patrol run: patrols are not queue-claimable, so they
-        // can never be retried this way; the user should re-trigger a patrol.
-        window.alert(
-          result.reason === "kind_not_retriable"
-            ? `「${title}」是巡检任务，不能单独重试。请在设置里触发一次巡检，或等待下一次自动巡检。`
-            : `「${title}」无法重试（可能已在处理）。`,
-        );
+        setDialogSpec({
+          title: "无法重试",
+          description:
+            result.reason === "kind_not_retriable"
+              ? `「${title}」是巡检任务，不能单独重试。请在设置里触发一次巡检，或等待下一次自动巡检。`
+              : `「${title}」无法重试（可能已在处理）。`,
+          confirmLabel: "知道了",
+          hideCancel: true,
+        });
       }
-      // The next poll reconciles: the run re-appears in 排队中/获取中.
     } catch {
-      window.alert("重试失败，请稍后再试。");
+      setDialogSpec({
+        title: "重试失败",
+        description: "重试失败，请稍后再试。",
+        confirmLabel: "知道了",
+        hideCancel: true,
+        isDanger: true,
+      });
     } finally {
-      // Always release the spinner — a "not_retriable" (or any non-error) response
-      // must not leave the button stuck busy until a full page refresh.
       setBusy(false);
     }
   };
 
-  if (busy) {
-    return (
-      <span className="act-cancel act-cancel-busy">
-        <Loader2 size={14} className="act-spin" aria-hidden />
-      </span>
-    );
-  }
   return (
-    <button type="button" className="act-retry" aria-label={`重试获取 ${title}`} onClick={retry}>
-      <RotateCcw size={13} aria-hidden /> 重试
-    </button>
+    <>
+      {busy ? (
+        <span className="act-cancel act-cancel-busy">
+          <Loader2 size={14} className="act-spin" aria-hidden />
+        </span>
+      ) : (
+        <button type="button" className="act-retry" aria-label={`重试获取 ${title}`} onClick={retry}>
+          <RotateCcw size={13} aria-hidden /> 重试
+        </button>
+      )}
+      <AppConfirmDialog
+        spec={dialogSpec}
+        onConfirm={() => setDialogSpec(null)}
+        onCancel={() => setDialogSpec(null)}
+      />
+    </>
   );
 }
 
@@ -332,6 +344,7 @@ export function cancelCopy(kind: RunKind): { action: string; confirm: string; no
 function CancelButton({ runId, title, kind }: { runId: string; title: string; kind: RunKind }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [dialogSpec, setDialogSpec] = useState<ConfirmDialogSpec | null>(null);
   const copy = cancelCopy(kind);
 
   const cancel = async () => {
@@ -344,32 +357,49 @@ function CancelButton({ runId, title, kind }: { runId: string; title: string; ki
       });
       const result = (await res.json()) as { status?: string };
       if (result.status !== "cancelled") {
-        window.alert(`未能取消「${title}」，请稍后再试。`);
+        setDialogSpec({
+          title: "取消未成功",
+          description: `未能取消「${title}」，请稍后再试。`,
+          confirmLabel: "知道了",
+          hideCancel: true,
+        });
       }
     } catch {
-      window.alert("取消失败，请重试。");
+      setDialogSpec({
+        title: "取消失败",
+        description: "取消失败，请重试。",
+        confirmLabel: "知道了",
+        hideCancel: true,
+        isDanger: true,
+      });
+    } finally {
+      setBusy(false);
     }
-    // The next poll reconciles the list (removed if cancelled, or shown running).
   };
 
-  if (busy) {
-    return <span className="act-cancel act-cancel-busy"><Loader2 size={14} className="act-spin" aria-hidden /></span>;
-  }
-  if (confirming) {
-    return (
-      <span className="act-confirm">
-        {copy.note ? <span className="act-confirm-note">{copy.note}</span> : null}
-        <span className="act-confirm-buttons">
-          <button type="button" className="act-confirm-yes" onClick={cancel}>{copy.confirm}</button>
-          <button type="button" className="act-confirm-no" onClick={() => setConfirming(false)}>留着</button>
-        </span>
-      </span>
-    );
-  }
   return (
-    <button type="button" className="act-cancel" aria-label={`${copy.action} ${title}`} onClick={() => setConfirming(true)}>
-      <X size={15} aria-hidden />
-    </button>
+    <>
+      {busy ? (
+        <span className="act-cancel act-cancel-busy"><Loader2 size={14} className="act-spin" aria-hidden /></span>
+      ) : confirming ? (
+        <span className="act-confirm">
+          {copy.note ? <span className="act-confirm-note">{copy.note}</span> : null}
+          <span className="act-confirm-buttons">
+            <button type="button" className="act-confirm-yes" onClick={cancel}>{copy.confirm}</button>
+            <button type="button" className="act-confirm-no" onClick={() => setConfirming(false)}>留着</button>
+          </span>
+        </span>
+      ) : (
+        <button type="button" className="act-cancel" aria-label={`${copy.action} ${title}`} onClick={() => setConfirming(true)}>
+          <X size={15} aria-hidden />
+        </button>
+      )}
+      <AppConfirmDialog
+        spec={dialogSpec}
+        onConfirm={() => setDialogSpec(null)}
+        onCancel={() => setDialogSpec(null)}
+      />
+    </>
   );
 }
 

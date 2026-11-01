@@ -7,13 +7,15 @@
  *      声明池中存在，彻底杜绝拼写错误与幽灵变量（如历史上的 `var(--bg)`、`var(--bg-elevated)`）；
  *   2. 【网盘与新组件硬编码色值检查】：扫描 `.storage-` 等新开发组件样式，严禁出现未经封装的
  *      裸 Hex 色值（`#xxxxxx`）或非令牌 RGBA（必须使用三层语义设计令牌）；
- *   3. 【关键语义令牌完整性检查】：校验 `:root` 中必须声明完整的表面色、品牌色、语义状态与分类色。
+ *   3. 【关键语义令牌完整性检查】：校验 `:root` 中必须声明完整的表面色、品牌色、语义状态与分类色；
+ *   4. 【弹窗浮层与核心表单布局约束检查】：校验网盘弹窗等核心浮层容器具备 `position: fixed`、
+ *      `inset: 0`、全宽文本框约束等，防止因选择器脱节退化为页面底部内联块。
  *
  * 退出码：0 = 全部通过；1 = 发现违规项（打印违规文件、行号与建议）。
  */
 
-import { readFileSync, existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -114,6 +116,48 @@ for (let i = 0; i < lines.length; i++) {
 }
 
 // ============================================================================
+// 2b. 扫描 apps/web 下所有 TSX/TS 组件中的 var(--xxx) 引用，拦截未定义幽灵令牌
+// ============================================================================
+function scanTsxFiles(dir) {
+  const fileList = [];
+  if (!existsSync(dir)) return fileList;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name !== "node_modules" && entry.name !== ".next" && entry.name !== "dist") {
+        fileList.push(...scanTsxFiles(full));
+      }
+    } else if (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts")) {
+      fileList.push(full);
+    }
+  }
+  return fileList;
+}
+
+const webTsxFiles = scanTsxFiles(join(root, "apps/web"));
+let totalTsxVarReferences = 0;
+
+for (const file of webTsxFiles) {
+  const content = readFileSync(file, "utf8");
+  const fileLines = content.split("\n");
+  const relPath = relative(root, file).replace(/\\/g, "/");
+
+  for (let i = 0; i < fileLines.length; i++) {
+    const line = fileLines[i];
+    let match;
+    while ((match = varRegex.exec(line)) !== null) {
+      totalTsxVarReferences++;
+      const tokenName = match[1];
+      if (!declaredTokens.has(tokenName) && !ALLOWED_EXTERNAL_VARS.has(tokenName)) {
+        problems.push(
+          `${relPath}:${i + 1}: 前端组件内联样式引用了未在 globals.css 中声明的设计令牌 -> ${tokenName}`,
+        );
+      }
+    }
+  }
+}
+
+// ============================================================================
 // 3. 扫描 .storage- 组件样式块，严禁裸色值 (No Raw Color Literals in Storage)
 // ============================================================================
 // 检查处于 storage 区域的 CSS 行（从网盘文件管理页面注释开始到结束）
@@ -155,7 +199,83 @@ for (let i = 0; i < lines.length; i++) {
 }
 
 // ============================================================================
-// 4. 汇总与输出
+// 4. 弹窗浮层与核心表单布局约束检查 (Modal Overlay & Form Constraints Check)
+// ============================================================================
+const REQUIRED_MODAL_SELECTORS = [
+  {
+    name: ".storage-offline-modal-overlay",
+    requiredProps: ["position: fixed", "inset: 0", "display: flex"],
+  },
+  {
+    name: ".storage-offline-textarea",
+    requiredProps: ["width: 100%", "box-sizing: border-box"],
+  },
+  {
+    name: ".storage-offline-modal-header",
+    requiredProps: ["display: flex", "justify-content: space-between"],
+  },
+  {
+    name: ".title-resources-input-clear",
+    requiredProps: ["position: absolute", "right: 10px", "border-radius: var(--radius-pill)"],
+  },
+  {
+    name: ".title-resources-input-wrap input",
+    requiredProps: ["padding: 8px 38px 8px 36px", "box-sizing: border-box"],
+  },
+  {
+    name: ".title-resources-empty-card",
+    requiredProps: ["background: var(--bg-surface)", "border-radius: var(--radius-lg)"],
+  },
+];
+
+for (const req of REQUIRED_MODAL_SELECTORS) {
+  const selectorIndex = cssContent.indexOf(req.name);
+  if (selectorIndex === -1) {
+    problems.push(`globals.css 缺少核心弹窗类选择器: ${req.name}`);
+    continue;
+  }
+  const blockStart = cssContent.indexOf("{", selectorIndex);
+  const blockEnd = cssContent.indexOf("}", blockStart);
+  if (blockStart !== -1 && blockEnd !== -1) {
+    const blockContent = cssContent.slice(blockStart, blockEnd);
+    for (const prop of req.requiredProps) {
+      if (!blockContent.includes(prop)) {
+        problems.push(`globals.css 选择器 "${req.name}" 缺少关键布局约束属性: "${prop}"`);
+      }
+    }
+  }
+}
+
+// ============================================================================
+// 4b. 设置页面板块面板一致性检查 (Settings Panel Wrapper Consistency)
+// ============================================================================
+const settingsSectionsDir = join(root, "apps/web/features/settings-system/components/settings");
+if (existsSync(settingsSectionsDir)) {
+  for (const entry of readdirSync(settingsSectionsDir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".tsx")) {
+      const filePath = join(settingsSectionsDir, entry.name);
+      const content = readFileSync(filePath, "utf8");
+      const relPath = relative(root, filePath).replace(/\\/g, "/");
+
+      // 严禁使用无背景边框的裸 section-heading 或 settings-section 伪容器
+      if (content.includes('className="settings-section"') || content.includes("className='settings-section'")) {
+        problems.push(
+          `${relPath}: 设置板块严禁使用裸 .settings-section 伪容器，必须包裹 <section className="panel"> 与 <div className="panel-header">，保持 Spotify 暗黑卡片规范统一。`,
+        );
+      }
+
+      // 如果有包含 h2 或 ServiceBlock 的板块，必须具有 panel 容器包裹
+      if (content.includes("<ServiceBlock") && !content.includes('className="panel"')) {
+        problems.push(
+          `${relPath}: 包含 <ServiceBlock> 的设置板块缺少外层 <section className="panel"> 容器。`,
+        );
+      }
+    }
+  }
+}
+
+// ============================================================================
+// 5. 汇总与输出
 // ============================================================================
 if (problems.length > 0) {
   console.error("\n❌ [Style Gate] 样式门禁质检未通过，发现以下违规项：\n");
@@ -166,5 +286,5 @@ if (problems.length > 0) {
   process.exit(1);
 }
 
-console.log(`✔ [Style Gate] 样式门禁质检通过（已校验 ${declaredTokens.size} 个设计令牌，0 处未定义变量引用，网盘管理样式 100% 令牌化）`);
+console.log(`✔ [Style Gate] 样式门禁质检通过（已校验 ${declaredTokens.size} 个设计令牌，${webTsxFiles.length} 个前端组件、${totalTsxVarReferences} 处变量引用，0 处未定义变量引用，样式与浮层约束 100% 令牌化）`);
 process.exit(0);

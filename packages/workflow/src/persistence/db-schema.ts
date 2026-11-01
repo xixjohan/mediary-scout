@@ -62,10 +62,110 @@ export interface ChatMessagesTable {
   created_at: string;
 }
 
+export interface StrmTasksTable {
+  id: string;
+  account_id: string;
+  name: string;
+  storage_id: string;
+  remote_folder_id: string;
+  remote_path: string;
+  local_output_dir: string;
+  scan_interval_minutes: number;
+  scan_mode: string;
+  extensions: string;
+  min_file_size_mb: number;
+  exclude_keywords: string | null;
+  schedule_mode: string;
+  status: string;
+  last_scan_at: string | null;
+  last_scan_status: string | null;
+  last_error_message: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MediaServerConfigsTable {
+  id: string;
+  account_id: string;
+  name: string;
+  server_type: string;
+  host_url: string;
+  api_token_encrypted: string;
+  path_mappings_json: string;
+  is_active: number;
+  last_sync_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface StrmLinkCacheTable {
+  cache_key: string;
+  download_url: string;
+  delivery_mode: string;
+  headers_json: string | null;
+  expires_at: number;
+}
+
+export interface StrmExecutionRecordsTable {
+  id: string;
+  task_id: string;
+  task_name: string;
+  account_id: string;
+  trigger_source: string;
+  status: string;
+  scanned_count: number;
+  generated_count: number;
+  updated_count: number;
+  removed_count: number;
+  current_progress_percent: number;
+  current_step_message: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface MediaServerRefreshRecordsTable {
+  id: string;
+  config_id: string;
+  server_name: string;
+  server_type: string;
+  account_id: string;
+  trigger_source: string;
+  target_path: string | null;
+  status: string;
+  sections_refreshed: string;
+  refreshed_count: number;
+  current_progress_percent: number;
+  current_step_message: string | null;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface MediaRequestsTable {
+  id: string;
+  account_id: string;
+  media_title_id: string;
+  season_number: number | null;
+  status: string;
+  rejection_reason: string | null;
+  workflow_run_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface MediaryDatabase {
   app_settings: AppSettingsTable;
   account_settings: AccountSettingsTable;
   connected_storages: ConnectedStoragesTable;
   chat_conversations: ChatConversationsTable;
   chat_messages: ChatMessagesTable;
+  strm_tasks: StrmTasksTable;
+  mediaserver_configs: MediaServerConfigsTable;
+  strm_link_cache: StrmLinkCacheTable;
+  strm_execution_records: StrmExecutionRecordsTable;
+  mediaserver_refresh_records: MediaServerRefreshRecordsTable;
+  media_requests: MediaRequestsTable;
 }

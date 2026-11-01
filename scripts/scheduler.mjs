@@ -19,10 +19,10 @@
 //   MEDIA_TRACK_TYPE3_PING_INTERVAL_MS  default 600000  (ping the gated sweep, 10m)
 //   MEDIA_TRACK_SCHEDULER_ONCE          "1" → run both once and exit (cron-friendly)
 
-const BASE = (process.env.MEDIA_TRACK_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+const BASE = (process.env.MEDIA_TRACK_WEB_BASE ?? process.env.MEDIA_TRACK_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
 const SECRET = process.env.MEDIA_TRACK_WORKER_SECRET;
-const NEXT_INTERVAL = Number(process.env.MEDIA_TRACK_RUN_NEXT_INTERVAL_MS ?? 15_000);
-const TYPE3_PING_INTERVAL = Number(process.env.MEDIA_TRACK_TYPE3_PING_INTERVAL_MS ?? 10 * 60_000);
+const NEXT_INTERVAL = Number(process.env.MEDIA_TRACK_WORKER_POLL_MS ?? process.env.MEDIA_TRACK_RUN_NEXT_INTERVAL_MS ?? 15_000);
+const TYPE3_PING_INTERVAL = Number(process.env.MEDIA_TRACK_WORKER_SWEEP_MS ?? process.env.MEDIA_TRACK_TYPE3_PING_INTERVAL_MS ?? 10 * 60_000);
 const ONCE = process.env.MEDIA_TRACK_SCHEDULER_ONCE === "1";
 
 const headers = SECRET ? { "x-media-track-worker-secret": SECRET } : {};

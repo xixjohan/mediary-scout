@@ -1,4 +1,6 @@
 import { Suspense } from "react";
+import Link from "next/link";
+import { FolderSync } from "lucide-react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
@@ -51,11 +53,18 @@ async function StorageSurface({
         activeStorageId={workspace.activeStorageId}
       />
       <main className="main product-main">
-        <div className="section-heading library-heading">
+        <div className="section-heading library-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div>
             <h1>网盘管理</h1>
             <p>直接浏览、整理和管理已绑定的云网盘文件与目录</p>
           </div>
+          <Link
+            href="/storage/strm"
+            className="btn btn-secondary"
+            style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+          >
+            <FolderSync size={16} /> STRM 任务计划
+          </Link>
         </div>
         <StorageManagerView
           storages={storages}

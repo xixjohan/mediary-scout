@@ -63,21 +63,23 @@ function recoveryCategoryDirectoryIds(
  * Claim one queued staging_recovery and run it through the normal TV path with
  * the leftover dir as staging. No notification, no push (the caller must not push).
  */
+export interface RunQueuedStagingRecoveryInput extends AccountWorkerContext {
+  repository: WorkflowRepository;
+  resourceProvider: ResourceProvider;
+  storage: StorageExecutor;
+  model: LanguageModel;
+  now?: () => string;
+  resolveAccountContext?: ResolveAccountWorkerContext;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
+  mayStartRun?: MayStartRun;
+  /** Paces the drive calls made before the agent starts. Tests pass a fake one. */
+  clock?: DriveClock;
+  /** The worker's drive filter and claim callback when queued runs go side by side. */
+  claim?: QueueClaimOptions;
+}
+
 export async function runQueuedStagingRecovery(
-  input: AccountWorkerContext & {
-    repository: WorkflowRepository;
-    resourceProvider: ResourceProvider;
-    storage: StorageExecutor;
-    model: LanguageModel;
-    now?: () => string;
-    resolveAccountContext?: ResolveAccountWorkerContext;
-    onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
-    mayStartRun?: MayStartRun;
-    /** Paces the drive calls made before the agent starts. Tests pass a fake one. */
-    clock?: DriveClock;
-    /** The worker's drive filter and claim callback when queued runs go side by side. */
-    claim?: QueueClaimOptions;
-  },
+  input: RunQueuedStagingRecoveryInput,
 ): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   if (input.mayStartRun && !input.mayStartRun()) return { status: "idle" };

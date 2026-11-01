@@ -183,24 +183,26 @@ async function releaseAfterFailure(input: {
 
 type UserRequest = NonNullable<RunAcquisitionV2Request["userRequest"]>;
 
+export interface RunQueuedReplaceRequestInput extends AccountWorkerContext {
+  repository: WorkflowRepository;
+  resourceProvider: ResourceProvider;
+  storage: StorageExecutor;
+  model: LanguageModel;
+  storageParentDirectoryId: string;
+  moviesParentDirectoryId: string;
+  /** TMDB refresh of aired/total counts. A work with 待换 episodes is skipped by
+   *  the patrol, where the sync normally happens — so this run does it instead. */
+  syncSeasonMetadata?: SeasonMetadataSync;
+  now?: () => string;
+  resolveAccountContext?: ResolveAccountWorkerContext;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
+  mayStartRun?: MayStartRun;
+  /** The worker's drive filter and claim callback when queued runs go side by side. */
+  claim?: QueueClaimOptions;
+}
+
 export async function runQueuedReplaceRequest(
-  input: AccountWorkerContext & {
-    repository: WorkflowRepository;
-    resourceProvider: ResourceProvider;
-    storage: StorageExecutor;
-    model: LanguageModel;
-    storageParentDirectoryId: string;
-    moviesParentDirectoryId: string;
-    /** TMDB refresh of aired/total counts. A work with 待换 episodes is skipped by
-     *  the patrol, where the sync normally happens — so this run does it instead. */
-    syncSeasonMetadata?: SeasonMetadataSync;
-    now?: () => string;
-    resolveAccountContext?: ResolveAccountWorkerContext;
-    onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
-    mayStartRun?: MayStartRun;
-    /** The worker's drive filter and claim callback when queued runs go side by side. */
-    claim?: QueueClaimOptions;
-  },
+  input: RunQueuedReplaceRequestInput,
 ): Promise<QueuedType2WorkerResult> {
   const now = input.now ?? (() => new Date().toISOString());
   const repository = input.repository;
@@ -333,21 +335,26 @@ export async function runQueuedReplaceRequest(
       trigger: queuedBy(claimed.workflowRun.auditEvents) === "patrol" ? ("scheduled" as const) : ("user" as const),
       routineIfNothingReplaced: messages.length === 0,
     };
-    const deps = await resolveWorkerDeps(input.resolveAccountContext, claimed.accountId, claimed.connectedStorageId, input);
+    const deps = await resolveWorkerDeps(
+      input.resolveAccountContext,
+      claimed.accountId,
+      claimed.connectedStorageId,
+      input as any,
+    );
     resolvedLlmConfig = deps.llmConfig;
-    const common = {
+    const common: any = {
       resourceProvider: deps.resourceProvider,
       storage: deps.storage,
       model: deps.model,
       repository,
       accountId: claimed.accountId,
       connectedStorageId: claimed.connectedStorageId,
-      ...optionalDeps(deps),
       workflowRun: { id: runId, startedAt: claimed.workflowRun.startedAt, finishedAt: null },
       userRequest,
       notice,
       now,
     };
+    Object.assign(common, optionalDeps(deps));
 
     if (movie) {
       const result = await runMovieAcquisitionV2AndPersist({
@@ -614,15 +621,7 @@ function messageFor(messages: UserMessage[], episode: string): UserMessage | und
 }
 
 /** The per-account options the runners take, present only when resolved. */
-function optionalDeps(deps: Awaited<ReturnType<typeof resolveWorkerDeps>>): {
-  preferredLanguage?: string;
-  qualityPreference?: "high" | "medium";
-  storageProvider?: string;
-  assrtToken?: string;
-  jevJudge?: JevJudge;
-  agentMemory?: boolean;
-  titleResearch?: TitleResearchOptions;
-} {
+function optionalDeps(deps: any): any {
   return {
     ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
     ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
@@ -630,8 +629,6 @@ function optionalDeps(deps: Awaited<ReturnType<typeof resolveWorkerDeps>>): {
     ...(deps.assrtToken === undefined ? {} : { assrtToken: deps.assrtToken }),
     ...(deps.jevJudge === undefined ? {} : { jevJudge: deps.jevJudge }),
     ...(deps.agentMemory === undefined ? {} : { agentMemory: deps.agentMemory }),
-    // A replacement run searches and transfers like any other — without this the
-    // configured web tools (and the fan-season mapping prompt) silently vanish.
     ...(deps.titleResearch === undefined ? {} : { titleResearch: deps.titleResearch }),
   };
 }

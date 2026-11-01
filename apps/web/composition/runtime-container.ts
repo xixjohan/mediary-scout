@@ -1,14 +1,27 @@
+import path from "node:path";
 import {
   DEFAULT_ACCOUNT_ID,
   UNAUTHENTICATED_ACCOUNT_ID,
   UnauthenticatedAccountError,
 } from "@media-track/contracts";
 import {
+  FrpTunnelManager,
+} from "@media-track/shared";
+import {
+  AppSettingTunnelStorage,
+  ApiKeyV2Store,
+  ExternalMcpServerStore,
+  ExtensionManager,
+  MediaServerCoordinator,
+  SingleFlight,
+  type ResolvedStream,
   createSqliteWorkflowRepository,
   sqliteDbPathFromEnv,
   type ResourceProvider,
   type StorageExecutor,
   type WorkflowRepository,
+  RoleStore,
+  UserManagementService,
 } from "@media-track/workflow";
 
 const PAN115_COOKIE_KEY = "pan115.cookie";
@@ -23,8 +36,32 @@ let pan115CookieHydrated = false;
 let inProcessWorkerLoop = false;
 let currentAccountIdProvider: () => Promise<string> = async () => DEFAULT_ACCOUNT_ID;
 const lastRecordedPanSouHealth = new Map<string, { ok: boolean; checkedAt: number }>();
+let frpTunnelManager: FrpTunnelManager | null = null;
+let apiKeyV2Store: ApiKeyV2Store | null = null;
+let externalMcpServerStore: ExternalMcpServerStore | null = null;
+let roleStore: RoleStore | null = null;
+let userManagementService: UserManagementService | null = null;
+let extensionManager: ExtensionManager | null = null;
+let mediaServerCoordinator: MediaServerCoordinator | null = null;
+let strmSingleFlight: SingleFlight<ResolvedStream> | null = null;
 
 export function resetRuntimeContainerForTests(): void {
+  if (frpTunnelManager) {
+    void frpTunnelManager.stopAll();
+    frpTunnelManager = null;
+  }
+  if (mediaServerCoordinator) {
+    if (typeof mediaServerCoordinator.dispose === "function") {
+      mediaServerCoordinator.dispose();
+    }
+    mediaServerCoordinator = null;
+  }
+  strmSingleFlight = null;
+  apiKeyV2Store = null;
+  externalMcpServerStore = null;
+  roleStore = null;
+  userManagementService = null;
+  extensionManager = null;
   repository = null;
   demoSeedPromise = null;
   fakeResourceProvider = null;
@@ -64,6 +101,102 @@ export function getWorkflowRepository(): WorkflowRepository {
 
 export function setWorkflowRepositoryForTest(repo: WorkflowRepository | null): void {
   repository = repo;
+}
+
+export function getApiKeyV2Store(): ApiKeyV2Store {
+  if (!apiKeyV2Store) {
+    apiKeyV2Store = new ApiKeyV2Store(getWorkflowRepository());
+  }
+  return apiKeyV2Store;
+}
+
+export function setApiKeyV2StoreForTest(store: ApiKeyV2Store | null): void {
+  apiKeyV2Store = store;
+}
+
+export function getExternalMcpServerStore(): ExternalMcpServerStore {
+  if (!externalMcpServerStore) {
+    externalMcpServerStore = new ExternalMcpServerStore(getWorkflowRepository());
+  }
+  return externalMcpServerStore;
+}
+
+export function setExternalMcpServerStoreForTest(store: ExternalMcpServerStore | null): void {
+  externalMcpServerStore = store;
+}
+
+export function getRoleStore(): RoleStore {
+  if (!roleStore) {
+    roleStore = new RoleStore(getWorkflowRepository());
+  }
+  return roleStore;
+}
+
+export function setRoleStoreForTest(store: RoleStore | null): void {
+  roleStore = store;
+}
+
+export function getUserManagementService(): UserManagementService {
+  if (!userManagementService) {
+    userManagementService = new UserManagementService(getWorkflowRepository());
+  }
+  return userManagementService;
+}
+
+export function setUserManagementServiceForTest(service: UserManagementService | null): void {
+  userManagementService = service;
+}
+
+export function getExtensionManager(): ExtensionManager {
+  if (!extensionManager) {
+    const baseDir = path.resolve(process.env.MEDIA_TRACK_EXTENSIONS_DIR || "data/extensions");
+    extensionManager = new ExtensionManager(baseDir);
+  }
+  return extensionManager;
+}
+
+export function setExtensionManagerForTest(manager: ExtensionManager | null): void {
+  extensionManager = manager;
+}
+
+export function getFrpTunnelManager(): FrpTunnelManager {
+  if (!frpTunnelManager) {
+    const storage = new AppSettingTunnelStorage(getWorkflowRepository());
+    frpTunnelManager = new FrpTunnelManager(storage);
+  }
+  return frpTunnelManager;
+}
+
+export function setFrpTunnelManagerForTest(manager: FrpTunnelManager | null): void {
+  frpTunnelManager = manager;
+}
+
+export function getMediaServerCoordinator(): MediaServerCoordinator {
+  if (!mediaServerCoordinator) {
+    mediaServerCoordinator = new MediaServerCoordinator({
+      store: getWorkflowRepository(),
+    });
+  }
+  return mediaServerCoordinator;
+}
+
+export function setMediaServerCoordinatorForTest(
+  coordinator: MediaServerCoordinator | null,
+): void {
+  mediaServerCoordinator = coordinator;
+}
+
+export function getStrmSingleFlight(): SingleFlight<ResolvedStream> {
+  if (!strmSingleFlight) {
+    strmSingleFlight = new SingleFlight<ResolvedStream>();
+  }
+  return strmSingleFlight;
+}
+
+export function setStrmSingleFlightForTest(
+  singleFlight: SingleFlight<ResolvedStream> | null,
+): void {
+  strmSingleFlight = singleFlight;
 }
 
 export async function hydratePan115CookieFromDb(): Promise<void> {

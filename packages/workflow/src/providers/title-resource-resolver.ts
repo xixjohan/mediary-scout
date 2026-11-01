@@ -1,5 +1,6 @@
 import { CooldownLimiter } from "./cooldown-limiter.js";
 import type { ResourceCandidate, ResourceSnapshot } from "../domain/domain.js";
+import type { MergedSourceHealth } from "../domain/resource-source-health.js";
 import { toCandidateViews, type ResourceCandidateView } from "./resource-candidate-view.js";
 import { TitleResourceCache } from "./title-resource-cache.js";
 import { buildMergedSearchSnapshot } from "./merged-search-snapshot.js";
@@ -60,6 +61,7 @@ export type TitleResourceResult =
       snapshot: ResourceSnapshot | null;
       /** Authoritative snapshotId for manual import (present on both cache miss and cache hit). */
       snapshotId?: string | undefined;
+      sourceHealth?: MergedSourceHealth | undefined;
     };
 
 export async function resolveTitleResources(deps: TitleResourceDeps): Promise<TitleResourceResult> {
@@ -91,6 +93,7 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
       cached: true,
       snapshot: null,
       ...(cachedSnapshotId === undefined ? {} : { snapshotId: cachedSnapshotId }),
+      sourceHealth: { status: "healthy", unhealthySources: [] },
     };
   }
 
@@ -137,7 +140,14 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
       createdAt: new Date().toISOString(),
     });
     deps.cache.put(scopeKey, views, snapshot.id);
-    return { kind: "ok", candidates: views, cached: false, snapshot, snapshotId: snapshot.id };
+    return {
+      kind: "ok",
+      candidates: views,
+      cached: false,
+      snapshot,
+      snapshotId: snapshot.id,
+      ...(snapshot.sourceHealth ? { sourceHealth: snapshot.sourceHealth } : {}),
+    };
   } catch (error) {
     // A failed search must not leave the user throttled for the next 60s — they did
     // not get a result, so charging them the cooldown would punish them for our error.

@@ -52,7 +52,7 @@ export function PasswordChangeForm() {
           className="setting-control"
           value={current}
           onChange={(e) => setCurrent(e.target.value)}
-          placeholder="当前密码"
+          placeholder="当前密码（首次设密可留空）"
           aria-label="当前密码"
           autoComplete="current-password"
         />

@@ -43,6 +43,8 @@ import {
   getDailySweepTimes,
   getWorkflowRepository,
   resolveGlobalWorkspace,
+  isSharedResourceMode,
+  getCurrentAccountSummary,
 } from "../../../lib/workflow-runtime";
 
 const aggregateBadge = {
@@ -141,6 +143,9 @@ async function ShowContent({
   const backHref =
     from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`;
 
+  const summary = await getCurrentAccountSummary();
+  const canManageMedia = !isSharedResourceMode() || (summary?.isOwner ?? false);
+
   return (
     <ShowShell
       active={from ?? "none"}
@@ -156,6 +161,7 @@ async function ShowContent({
             backLabel={backLabel}
             backHref={backHref}
             searchQuery={searchQuery}
+            canManageMedia={canManageMedia}
           />
         ) : (
           <TvHub
@@ -165,6 +171,7 @@ async function ShowContent({
             backLabel={backLabel}
             backHref={backHref}
             searchQuery={searchQuery}
+            canManageMedia={canManageMedia}
           />
         )
       ) : (
@@ -187,6 +194,7 @@ function TvHub({
   backLabel,
   backHref,
   searchQuery,
+  canManageMedia = true,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
@@ -194,6 +202,7 @@ function TvHub({
   backLabel: string;
   backHref: string;
   searchQuery?: string | undefined;
+  canManageMedia?: boolean;
 }) {
   const badge = aggregateBadge[view.aggregate];
   // The message card's episode picker: every episode of a tracked season in the library.
@@ -282,7 +291,7 @@ function TvHub({
                 }}
               />
             ) : null}
-            {view.aggregate !== "untracked" ? (
+            {canManageMedia && view.aggregate !== "untracked" ? (
               <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="tv" basePath={basePath} />
             ) : null}
           </div>
@@ -296,7 +305,7 @@ function TvHub({
 
       <section className="hub-seasons" aria-label="季列表">
         <ul className="hub-season-list">
-          <SeasonRowsWithSwap view={view} storageId={storageId} basePath={basePath} />
+          <SeasonRowsWithSwap view={view} storageId={storageId} basePath={basePath} canManageMedia={canManageMedia} />
         </ul>
       </section>
 
@@ -312,7 +321,7 @@ function TvHub({
 
       <OrganizePanel tmdbId={view.tmdbId} seasonNumber={view.seasons[0]?.seasonNumber} />
 
-      <SubscriptionPolicyPanel tmdbId={view.tmdbId} />
+      {canManageMedia ? <SubscriptionPolicyPanel tmdbId={view.tmdbId} /> : null}
       {view.aggregate !== "untracked" ? (
         <TitleMessageSection
           tmdbId={view.tmdbId}
@@ -345,6 +354,7 @@ function MovieHub({
   backLabel,
   backHref,
   searchQuery,
+  canManageMedia = true,
 }: {
   view: MovieHubView;
   storageId: string | undefined;
@@ -352,6 +362,7 @@ function MovieHub({
   backLabel: string;
   backHref: string;
   searchQuery?: string | undefined;
+  canManageMedia?: boolean;
 }) {
   const meta = movieStateMeta[view.state];
   const activityHref = storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity";
@@ -428,7 +439,7 @@ function MovieHub({
                     </Link>
                   </>
                 ) : null}
-                {view.state !== "untracked" ? (
+                {canManageMedia && view.state !== "untracked" ? (
                   <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />
                 ) : null}
               </div>
@@ -457,6 +468,7 @@ function MovieHub({
           title={view.title}
           year={view.year}
           storageId={storageId}
+          releaseDate={view.releaseDate}
         />
         {view.state !== "untracked" ? (
           <>
@@ -524,6 +536,7 @@ function SeasonRow({
   acquiring,
   swap,
   demoEntry,
+  canManageMedia = true,
 }: {
   season: TitleHubSeason;
   tmdbId: number;
@@ -535,6 +548,7 @@ function SeasonRow({
   /** Episodes a user asked to replace that are still 待换 (their old file stays). */
   swap: ReadonlySet<string>;
   demoEntry?: DemoAcquisitionEntry | undefined;
+  canManageMedia?: boolean;
 }) {
   const total = season.totalEpisodes;
   const aired = Math.min(season.latestAiredEpisode, total);
@@ -614,16 +628,18 @@ function SeasonRow({
             );
           })}
         </div>
-        <div className="season-untrack-row">
-          <UntrackButton
-            tmdbId={tmdbId}
-            storageId={storageId}
-            mediaKind="tv"
-            seasonNumber={season.seasonNumber}
-            basePath={basePath}
-            label={`取消第 ${season.seasonNumber} 季追踪`}
-          />
-        </div>
+        {canManageMedia ? (
+          <div className="season-untrack-row">
+            <UntrackButton
+              tmdbId={tmdbId}
+              storageId={storageId}
+              mediaKind="tv"
+              seasonNumber={season.seasonNumber}
+              basePath={basePath}
+              label={`取消第 ${season.seasonNumber} 季追踪`}
+            />
+          </div>
+        ) : null}
       </SeasonDetails>
     </li>
   );
@@ -704,10 +720,12 @@ async function SeasonRowsWithSwap({
   view,
   storageId,
   basePath,
+  canManageMedia = true,
 }: {
   view: TitleHubView;
   storageId: string | undefined;
   basePath: string;
+  canManageMedia?: boolean;
 }) {
   const messages = view.aggregate === "untracked" ? null : await loadTitleMessages(view.tmdbId, "tv", storageId);
   const swap = new Set(messages?.thread.pendingReplacements ?? []);
@@ -729,6 +747,7 @@ async function SeasonRowsWithSwap({
             type: "tv",
             posterPath: view.posterPath,
           }}
+          canManageMedia={canManageMedia}
         />
       ))}
     </>

@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import type { ResourceCandidateView } from "@media-track/workflow";
+import type {
+  MergedSourceHealth,
+  ResourceCandidateView,
+} from "@media-track/workflow";
 import { useRouter } from "../../../lib/use-router";
 import {
   type CandidateLinkState,
@@ -12,9 +15,13 @@ import {
   appendKeywordChip,
   ResourceSearchBar,
 } from "./resource-search-bar";
+import {
+  ResourceEmptyDiagnostic,
+  type ResourceEmptyDiagnosticProps,
+} from "./resource-empty-diagnostic";
 
-export { appendKeywordChip, resourceTypeLabel };
-export type { CandidateLinkState };
+export { appendKeywordChip, resourceTypeLabel, ResourceEmptyDiagnostic };
+export type { CandidateLinkState, ResourceEmptyDiagnosticProps };
 
 /**
  * 详情页「资源」面板（批次 2 的 UI 部分 + 精准搜索与自定义关键词支持）。
@@ -35,6 +42,7 @@ export interface ResourcePanelProps {
   title?: string | undefined;
   year?: number | undefined;
   storageId?: string | undefined;
+  releaseDate?: string | null | undefined;
 }
 
 export type PanelState =
@@ -44,6 +52,7 @@ export type PanelState =
       kind: "streaming";
       candidates: ResourceCandidateView[];
       progress: { done: number; total: number; currentKeyword?: string };
+      sourceHealth?: MergedSourceHealth | undefined;
     }
   | {
       kind: "ready";
@@ -51,12 +60,22 @@ export type PanelState =
       cached: boolean;
       /** 这次查询落库的快照句柄。null = 缓存命中（DB 才是权威，不重推导）。 */
       snapshotId: string | null;
+      sourceHealth?: MergedSourceHealth | undefined;
     }
   | { kind: "throttled"; retryAfterMs: number }
   | { kind: "error"; message: string };
 
 /** 默认冷却：后端没给 retryAfterMs 时按 60s 保守等待（与端点常量一致）。 */
 const DEFAULT_RETRY_AFTER_MS = 60_000;
+
+function resolveSourceHealth(
+  eventHealth: unknown,
+  prevState?: PanelState,
+): MergedSourceHealth | undefined {
+  if (eventHealth) return eventHealth as MergedSourceHealth;
+  if (prevState && "sourceHealth" in prevState) return prevState.sourceHealth;
+  return undefined;
+}
 
 /**
  * 流式 NDJSON 事件 ⇒ 面板状态纯函数映射。
@@ -70,6 +89,7 @@ export function mapResourceStreamEvent(
       kind: "streaming",
       candidates: (event.allCandidates as ResourceCandidateView[]) ?? [],
       progress: (event.progress as { done: number; total: number; currentKeyword?: string }) ?? { done: 0, total: 1 },
+      sourceHealth: resolveSourceHealth(event.sourceHealth, prevState),
     };
   }
   if (event.type === "done") {
@@ -78,6 +98,7 @@ export function mapResourceStreamEvent(
       candidates: (event.candidates as ResourceCandidateView[]) ?? [],
       cached: Boolean(event.cached),
       snapshotId: typeof event.snapshotId === "string" ? event.snapshotId : null,
+      sourceHealth: resolveSourceHealth(event.sourceHealth, prevState),
     };
   }
   if (event.type === "error") {
@@ -105,6 +126,7 @@ export function mapResourceResponse(status: number, body: unknown): PanelState {
     candidates: ResourceCandidateView[];
     cached: boolean;
     snapshotId?: string;
+    sourceHealth?: MergedSourceHealth;
   };
   return {
     kind: "ready",
@@ -112,6 +134,7 @@ export function mapResourceResponse(status: number, body: unknown): PanelState {
     cached: parsed.cached,
     // 缓存命中时后端不回 snapshotId：那一份快照的归属要以 DB 为准，前端不重推导。
     snapshotId: typeof parsed.snapshotId === "string" ? parsed.snapshotId : null,
+    sourceHealth: parsed.sourceHealth,
   };
 }
 
@@ -148,6 +171,10 @@ interface CandidatesListProps {
   submitting: boolean;
   linkStates: Record<string, CandidateLinkState>;
   copiedId: string | null;
+  releaseDate?: string | null | undefined;
+  baseTitle?: string | undefined;
+  customKeyword?: string | undefined;
+  onResetKeyword?: (() => void) | undefined;
   onImportCandidate: (candidateId: string) => void;
   onToggleLink: (candidateId: string) => void;
   onCopyLink: (candidateId: string, text: string) => void;
@@ -161,20 +188,24 @@ function ResourceCandidatesList({
   submitting,
   linkStates,
   copiedId,
+  releaseDate,
+  baseTitle,
+  customKeyword,
+  onResetKeyword,
   onImportCandidate,
   onToggleLink,
   onCopyLink,
 }: CandidatesListProps) {
   if (state.candidates.length === 0) {
-    if (state.kind === "streaming") {
-      return (
-        <p className="title-resources-empty">
-          正在检索资源（{state.progress.done}/{state.progress.total}
-          {state.progress.currentKeyword ? `·${state.progress.currentKeyword}` : ""}）…
-        </p>
-      );
-    }
-    return <p className="title-resources-empty">没有找到可获取的资源。</p>;
+    return (
+      <ResourceEmptyDiagnostic
+        state={state}
+        releaseDate={releaseDate}
+        baseTitle={baseTitle}
+        customKeyword={customKeyword}
+        onResetKeyword={onResetKeyword}
+      />
+    );
   }
 
   return (
@@ -260,6 +291,7 @@ export function TitleResourcePanel({
   title,
   year,
   storageId,
+  releaseDate,
 }: ResourcePanelProps) {
   const [state, setState] = useState<PanelState>({ kind: "idle" });
   const [importState, setImportState] = useState<ImportState>({ kind: "idle" });
@@ -271,6 +303,11 @@ export function TitleResourcePanel({
   const [selectedSeason, setSelectedSeason] = useState<number | undefined>(undefined);
   const [selectedEpisode, setSelectedEpisode] = useState<string>("");
   const router = useRouter();
+
+  const handleResetKeyword = useCallback(() => {
+    const base = defaultKeyword?.trim() || title?.trim() || "";
+    setCustomKeyword(base);
+  }, [defaultKeyword, title]);
 
   const search = useCallback(async () => {
     setState({ kind: "loading" });
@@ -481,6 +518,10 @@ export function TitleResourcePanel({
           submitting={submitting}
           linkStates={linkStates}
           copiedId={copiedId}
+          releaseDate={releaseDate}
+          baseTitle={title || defaultKeyword}
+          customKeyword={customKeyword}
+          onResetKeyword={handleResetKeyword}
           onImportCandidate={importCandidate}
           onToggleLink={handleToggleLink}
           onCopyLink={handleCopyLink}

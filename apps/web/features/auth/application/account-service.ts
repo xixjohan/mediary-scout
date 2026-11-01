@@ -292,8 +292,9 @@ export async function changeOwnPassword(
   if (newPassword.length < 6) return { ok: false, error: "新密码至少 6 位。" };
   const repo = getWorkflowRepository();
   const acct = await repo.getAccountById(accountId);
+  const isFirstPassword = Boolean(acct && (!acct.passwordHash || acct.passwordHash.length === 0));
   const valid = Boolean(
-    acct && acct.passwordHash.length > 0 && (await verifyPassword(currentPassword, acct.passwordHash)),
+    acct && (isFirstPassword || (await verifyPassword(currentPassword, acct.passwordHash))),
   );
   if (!acct || !valid) return { ok: false, error: "当前密码不正确。" };
 

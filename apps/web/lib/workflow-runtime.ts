@@ -160,6 +160,8 @@ import {
   type QueueClaimOptions,
   type ResolveAccountWorkerContext,
   DEFAULT_ACCOUNT_ID,
+  isSharedResourceMode,
+  getMultiUserMode,
   pickWorkspaceStorageId,
   resolveQueueStorageChoice,
   resolveWorkspaceFromParam,
@@ -398,6 +400,7 @@ export async function getWorkflowStatusView(
 // Acquisition & worker runner facade (delegating to features/acquisition)
 export { resolveIsDesktop } from "./desktop-flag";
 export { DEFAULT_PANSOU_BASE_URL } from "./pansou-chain";
+export { isSharedResourceMode } from "@media-track/workflow";
 export { runAutoUpdateIfDue } from "../features/settings-system/application/auto-update-service";
 export {
   queueCandidateTracking,
@@ -427,80 +430,34 @@ export {
 };
 
 export async function getAccountConnectedStorages(explicitAccountId?: string): Promise<ConnectedStorageView[]> {
-  const accountId = explicitAccountId ?? (await getCurrentAccountId());
+  const accountId = explicitAccountId ?? (isSharedResourceMode() ? DEFAULT_ACCOUNT_ID : (await getCurrentAccountId()));
   return getAccountConnectedStoragesService(accountId);
 }
 
-export async function completePan115QrLogin(
-  input: { session: { uid: string; time: number; sign: string; qrcodeContent: string }; app?: string },
-  explicitAccountId?: string,
-): Promise<{ userName: string; app: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return completePan115QrLoginService(input, accountId);
+
+async function resolveStorageBindingAccountId(explicitAccountId?: string): Promise<string> {
+  if (explicitAccountId) return explicitAccountId;
+  if (isSharedResourceMode()) {
+    const summary = await getCurrentAccountSummary();
+    if (!summary?.isOwner) {
+      throw new Error("共用资源模式下，只有站长有权添加或修改公共网盘。");
+    }
+    return DEFAULT_ACCOUNT_ID;
+  }
+  return requireAuthenticatedAccountId();
 }
 
-export async function connectPan115Cookie(
-  rawCookie: string,
-  explicitAccountId?: string,
-): Promise<{ providerUid: string; userName: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return connectPan115CookieService(rawCookie, accountId);
-}
-
-export async function connectQuarkCookie(rawCookie: string, explicitAccountId?: string): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return connectQuarkCookieService(rawCookie, accountId);
-}
-
-export async function connectUcCookie(rawCookie: string, explicitAccountId?: string): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return connectUcCookieService(rawCookie, accountId);
-}
-
-export async function completeQuarkQrLogin(serviceTicket: string, explicitAccountId?: string): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return completeQuarkQrLoginService(serviceTicket, accountId);
-}
-
-export async function completeUcQrLogin(serviceTicket: string, explicitAccountId?: string): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return completeUcQrLoginService(serviceTicket, accountId);
-}
-
-export async function connectGuangYa(
-  rawAccessToken: string,
-  rawRefreshToken: string,
-  explicitAccountId?: string,
-): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return connectGuangYaService(rawAccessToken, rawRefreshToken, accountId);
-}
-
-export async function completeTianyiQrLogin(
-  session: TianyiQrSession,
-  redirectUrl: string,
-  explicitAccountId?: string,
-): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return completeTianyiQrLoginService(session, redirectUrl, accountId);
-}
-
-export async function connectTianyiSson(sson: string, explicitAccountId?: string): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return connectTianyiSsonService(sson, accountId);
-}
-
-export async function completePan123QrLogin(token: string, explicitAccountId?: string): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return completePan123QrLoginService(token, accountId);
-}
-
-export async function connectPan123Token(rawToken: string, explicitAccountId?: string): Promise<{ providerUid: string }> {
-  const accountId = explicitAccountId ?? (await requireAuthenticatedAccountId());
-  return connectPan123TokenService(rawToken, accountId);
-}
-
-
+export async function completePan115QrLogin(input: { session: { uid: string; time: number; sign: string; qrcodeContent: string }; app?: string }, explicitAccountId?: string): Promise<{ userName: string; app: string }> { return completePan115QrLoginService(input, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function connectPan115Cookie(rawCookie: string, explicitAccountId?: string): Promise<{ providerUid: string; userName: string }> { return connectPan115CookieService(rawCookie, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function connectQuarkCookie(rawCookie: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return connectQuarkCookieService(rawCookie, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function connectUcCookie(rawCookie: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return connectUcCookieService(rawCookie, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function completeQuarkQrLogin(serviceTicket: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return completeQuarkQrLoginService(serviceTicket, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function completeUcQrLogin(serviceTicket: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return completeUcQrLoginService(serviceTicket, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function connectGuangYa(rawAccessToken: string, rawRefreshToken: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return connectGuangYaService(rawAccessToken, rawRefreshToken, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function completeTianyiQrLogin(session: TianyiQrSession, redirectUrl: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return completeTianyiQrLoginService(session, redirectUrl, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function connectTianyiSson(sson: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return connectTianyiSsonService(sson, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function completePan123QrLogin(token: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return completePan123QrLoginService(token, await resolveStorageBindingAccountId(explicitAccountId)); }
+export async function connectPan123Token(rawToken: string, explicitAccountId?: string): Promise<{ providerUid: string }> { return connectPan123TokenService(rawToken, await resolveStorageBindingAccountId(explicitAccountId)); }
 export const NOTIFICATION_WINDOW_DAYS = 7;
 
 export function notificationWindowSince(): string {
@@ -529,12 +486,19 @@ export async function untrackTrackedTitle(
   mediaKind: "movie" | "tv",
   seasonNumber?: number,
 ) {
+  if (isSharedResourceMode()) {
+    const summary = await getCurrentAccountSummary();
+    if (!summary?.isOwner) {
+      throw new Error("共用资源模式下，只有站长有权从公共媒体库中移除或取消追剧。");
+    }
+  }
   const scope = await getActiveWorkspaceScope(storageId);
   return getWorkflowRepository().untrackTitle(tmdbId, scope, mediaKind, seasonNumber);
 }
 
 export async function getRegisteredDriveCount(): Promise<number> {
-  const storages = await getWorkflowRepository().listConnectedStorages(await getCurrentAccountId());
+  const accountId = isSharedResourceMode() ? DEFAULT_ACCOUNT_ID : (await getCurrentAccountId());
+  const storages = await getWorkflowRepository().listConnectedStorages(accountId);
   return storages.filter((s) => isRegisteredStorageProvider(s.provider)).length;
 }
 
