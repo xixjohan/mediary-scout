@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { DownloadCloud, FileUp, Film, Folder, Link as LinkIcon, LoaderCircle, Tv, X } from "lucide-react";
 import type { DriveDirectoryListing } from "@media-track/workflow";
 import type { ConnectedStorageView } from "../../../../lib/workflow-runtime";
+import type { OfflineCapabilities } from "../../../../app/api/storage/offline/route";
 import { formatProviderLabel } from "./storage-top-bar";
 
 interface StorageOfflineModalProps {
@@ -16,13 +17,7 @@ interface StorageOfflineModalProps {
 
 type TabType = "links" | "torrent";
 
-interface OfflineCapability {
-  supported: boolean;
-  provider: string;
-  schemes: string[];
-  supportsTorrent: boolean;
-  message?: string;
-}
+export type OfflineCapability = OfflineCapabilities;
 
 async function fileToBase64(file: File): Promise<string> {
   const arrayBuf = await file.arrayBuffer();

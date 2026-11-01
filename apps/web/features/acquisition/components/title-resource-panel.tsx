@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { FolderSearch } from "lucide-react";
 import type {
   MergedSourceHealth,
   ResourceCandidateView,
@@ -19,6 +20,19 @@ import {
   ResourceEmptyDiagnostic,
   type ResourceEmptyDiagnosticProps,
 } from "./resource-empty-diagnostic";
+import {
+  type CandidateFacets,
+  DEFAULT_FILTER_CRITERIA,
+  extractFacets,
+  filterCandidates,
+  paginateCandidates,
+  type PaginatedResult,
+  type ResourceFilterCriteria,
+  sortCandidates,
+} from "../contracts/resource-filter-model";
+import { ResourceFilterBar } from "./resource-filter-bar";
+import { ResourcePaginationBar } from "./resource-pagination-bar";
+import { ResourceResultsModal } from "./resource-results-modal";
 
 export { appendKeywordChip, resourceTypeLabel, ResourceEmptyDiagnostic };
 export type { CandidateLinkState, ResourceEmptyDiagnosticProps };
@@ -155,16 +169,15 @@ export function mapImportResponse(status: number, body: unknown): ImportState {
     : { kind: "rejected", message, reason: parsed.reason };
 }
 
-/** 导入子状态。 */
-export type ImportState =
-  | { kind: "idle" }
-  | { kind: "submitting"; candidateId: string }
-  | { kind: "queued" }
-  | { kind: "already_running" }
-  | { kind: "rejected"; message: string; reason?: string };
+import type { ImportState } from "../contracts/acquisition-types";
+export type { ImportState };
 
 interface CandidatesListProps {
   state: Extract<PanelState, { kind: "ready" | "streaming" }>;
+  criteria: ResourceFilterCriteria;
+  facets: CandidateFacets;
+  paginatedResult: PaginatedResult<ResourceCandidateView>;
+  isModalOpen: boolean;
   importState: ImportState;
   busy: boolean;
   throttled: boolean;
@@ -173,8 +186,15 @@ interface CandidatesListProps {
   copiedId: string | null;
   releaseDate?: string | null | undefined;
   baseTitle?: string | undefined;
+  year?: number | undefined;
   customKeyword?: string | undefined;
   onResetKeyword?: (() => void) | undefined;
+  onCriteriaChange: (updater: (prev: ResourceFilterCriteria) => ResourceFilterCriteria) => void;
+  onResetCriteria: () => void;
+  onPageChange: (page: number) => void;
+  onPageSizeChange: (pageSize: number) => void;
+  onOpenModal: () => void;
+  onCloseModal: () => void;
   onImportCandidate: (candidateId: string) => void;
   onToggleLink: (candidateId: string) => void;
   onCopyLink: (candidateId: string, text: string) => void;
@@ -182,6 +202,10 @@ interface CandidatesListProps {
 
 function ResourceCandidatesList({
   state,
+  criteria,
+  facets,
+  paginatedResult,
+  isModalOpen,
   importState,
   busy,
   throttled,
@@ -190,8 +214,15 @@ function ResourceCandidatesList({
   copiedId,
   releaseDate,
   baseTitle,
+  year,
   customKeyword,
   onResetKeyword,
+  onCriteriaChange,
+  onResetCriteria,
+  onPageChange,
+  onPageSizeChange,
+  onOpenModal,
+  onCloseModal,
   onImportCandidate,
   onToggleLink,
   onCopyLink,
@@ -208,6 +239,8 @@ function ResourceCandidatesList({
     );
   }
 
+  const importable = state.kind === "ready" && state.snapshotId !== null;
+
   return (
     <>
       <div className="title-resources-summary">
@@ -221,29 +254,92 @@ function ResourceCandidatesList({
           <span className="title-resources-cached">30 分钟内的缓存结果</span>
         ) : null}
       </div>
-      <ul className="title-resources-list">
-        {state.candidates.map((candidate) => {
-          const importable = state.kind === "ready" && state.snapshotId !== null;
-          const rowBusy =
-            submitting && importState.kind === "submitting" && importState.candidateId === candidate.candidateId;
-          return (
-            <ResourceCandidateRow
-              key={candidate.candidateId}
-              candidate={candidate}
-              importable={importable}
-              rowBusy={rowBusy}
-              busy={busy}
-              throttled={throttled}
-              streaming={state.kind === "streaming"}
-              linkInfo={linkStates[candidate.candidateId]}
-              copied={copiedId === candidate.candidateId}
-              onImport={() => void onImportCandidate(candidate.candidateId)}
-              onToggleLink={() => void onToggleLink(candidate.candidateId)}
-              onCopyLink={(text) => void onCopyLink(candidate.candidateId, text)}
-            />
-          );
-        })}
-      </ul>
+
+      {/* 客户端分面过滤栏 */}
+      <ResourceFilterBar
+        criteria={criteria}
+        facets={facets}
+        totalCandidates={state.candidates.length}
+        filteredCount={paginatedResult.totalItems}
+        isModal={false}
+        onCriteriaChange={onCriteriaChange}
+        onReset={onResetCriteria}
+        onOpenModal={onOpenModal}
+      />
+
+      {/* 结果列表或过滤空态 */}
+      {paginatedResult.items.length === 0 ? (
+        <div className="resource-results-filtered-empty">
+          <FolderSearch size={28} className="resource-results-empty-icon" aria-hidden />
+          <h4>未找到匹配的候选资源</h4>
+          <p>当前筛选条件没有命中任何资源，请尝试清除过滤或更换关键字。</p>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={onResetCriteria}
+          >
+            清除所有过滤条件
+          </button>
+        </div>
+      ) : (
+        <ul className="title-resources-list">
+          {paginatedResult.items.map((candidate) => {
+            const rowBusy =
+              submitting && importState.kind === "submitting" && importState.candidateId === candidate.candidateId;
+            return (
+              <ResourceCandidateRow
+                key={candidate.candidateId}
+                candidate={candidate}
+                importable={importable}
+                rowBusy={rowBusy}
+                busy={busy}
+                throttled={throttled}
+                streaming={state.kind === "streaming"}
+                linkInfo={linkStates[candidate.candidateId]}
+                copied={copiedId === candidate.candidateId}
+                onImport={() => void onImportCandidate(candidate.candidateId)}
+                onToggleLink={() => void onToggleLink(candidate.candidateId)}
+                onCopyLink={(text) => void onCopyLink(candidate.candidateId, text)}
+              />
+            );
+          })}
+        </ul>
+      )}
+
+      {/* 客户端分页导航条 */}
+      <ResourcePaginationBar
+        pagination={paginatedResult}
+        onPageChange={onPageChange}
+        onPageSizeChange={onPageSizeChange}
+      />
+
+      {/* 弹窗全屏专注浏览模式 (Modal via Portal) */}
+      {isModalOpen ? (
+        <ResourceResultsModal
+          title={baseTitle}
+          year={year}
+          candidates={state.candidates}
+          paginatedResult={paginatedResult}
+          facets={facets}
+          criteria={criteria}
+          importState={importState}
+          busy={busy}
+          throttled={throttled}
+          submitting={submitting}
+          linkStates={linkStates}
+          copiedId={copiedId}
+          cached={state.kind === "ready" ? state.cached : false}
+          snapshotId={state.kind === "ready" ? state.snapshotId : null}
+          onCriteriaChange={onCriteriaChange}
+          onResetCriteria={onResetCriteria}
+          onPageChange={onPageChange}
+          onPageSizeChange={onPageSizeChange}
+          onImportCandidate={onImportCandidate}
+          onToggleLink={onToggleLink}
+          onCopyLink={onCopyLink}
+          onClose={onCloseModal}
+        />
+      ) : null}
 
       {importState.kind === "queued" && (
         <p className="title-resources-import-queued">已加入队列，正在转存到网盘。可以离开这个页面。</p>
@@ -302,7 +398,32 @@ export function TitleResourcePanel({
   );
   const [selectedSeason, setSelectedSeason] = useState<number | undefined>(undefined);
   const [selectedEpisode, setSelectedEpisode] = useState<string>("");
+  const [criteria, setCriteria] = useState<ResourceFilterCriteria>(DEFAULT_FILTER_CRITERIA);
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const router = useRouter();
+
+  const handleCriteriaChange = useCallback(
+    (updater: (prev: ResourceFilterCriteria) => ResourceFilterCriteria) => {
+      setCriteria(updater);
+      setPage(1); // 筛选条件变更自动重置到第 1 页
+    },
+    [],
+  );
+
+  const handleResetCriteria = useCallback(() => {
+    setCriteria(DEFAULT_FILTER_CRITERIA);
+    setPage(1);
+  }, []);
+
+  const handlePageSizeChange = useCallback((newSize: number) => {
+    setPageSize(newSize);
+    setPage(1);
+  }, []);
+
+  const handleOpenModal = useCallback(() => setIsModalOpen(true), []);
+  const handleCloseModal = useCallback(() => setIsModalOpen(false), []);
 
   const handleResetKeyword = useCallback(() => {
     const base = defaultKeyword?.trim() || title?.trim() || "";
@@ -474,6 +595,21 @@ export function TitleResourcePanel({
   const throttled = state.kind === "throttled";
   const submitting = importState.kind === "submitting";
 
+  const activeCandidates =
+    state.kind === "ready" || state.kind === "streaming" ? state.candidates : [];
+
+  const facets = useMemo(() => extractFacets(activeCandidates), [activeCandidates]);
+
+  const filteredAndSortedCandidates = useMemo(() => {
+    if (activeCandidates.length === 0) return [];
+    const filtered = filterCandidates(activeCandidates, criteria);
+    return sortCandidates(filtered, criteria.sortBy);
+  }, [activeCandidates, criteria]);
+
+  const paginatedResult = useMemo(() => {
+    return paginateCandidates(filteredAndSortedCandidates, page, pageSize);
+  }, [filteredAndSortedCandidates, page, pageSize]);
+
   const onKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
     if (event.key === "Enter" && !busy && !throttled) {
@@ -512,6 +648,10 @@ export function TitleResourcePanel({
       {(state.kind === "ready" || state.kind === "streaming") && (
         <ResourceCandidatesList
           state={state}
+          criteria={criteria}
+          facets={facets}
+          paginatedResult={paginatedResult}
+          isModalOpen={isModalOpen}
           importState={importState}
           busy={busy}
           throttled={throttled}
@@ -520,8 +660,15 @@ export function TitleResourcePanel({
           copiedId={copiedId}
           releaseDate={releaseDate}
           baseTitle={title || defaultKeyword}
+          year={year}
           customKeyword={customKeyword}
           onResetKeyword={handleResetKeyword}
+          onCriteriaChange={handleCriteriaChange}
+          onResetCriteria={handleResetCriteria}
+          onPageChange={setPage}
+          onPageSizeChange={handlePageSizeChange}
+          onOpenModal={handleOpenModal}
+          onCloseModal={handleCloseModal}
           onImportCandidate={importCandidate}
           onToggleLink={handleToggleLink}
           onCopyLink={handleCopyLink}

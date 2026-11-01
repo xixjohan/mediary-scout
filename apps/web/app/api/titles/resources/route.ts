@@ -10,6 +10,7 @@ import {
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import {
+  getAccountScopedSettings,
   getWorkflowRepository,
   getWorkerResourceProvider,
   movieTargetFromTmdbId,
@@ -248,7 +249,7 @@ export async function POST(request: NextRequest) {
   ].filter(Boolean);
   const cacheKeySuffix = cacheKeyParts.length > 0 ? cacheKeyParts.join(":") : undefined;
 
-  const provider = await getWorkerResourceProvider();
+  const provider = await getWorkerResourceProvider(getAccountScopedSettings(accountId), undefined, accountId);
 
   const wantsStream =
     request.nextUrl.searchParams.get("stream") === "1" ||

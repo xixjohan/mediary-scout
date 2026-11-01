@@ -12,9 +12,11 @@ const API_KEYS_V2_SETTING_KEY = "api_keys_v2";
 export interface CreateApiKeyV2Input {
   name: string;
   permissions: string[];
-  expiresAt?: number | null;
-  userId?: string;
-  ownerSecurityVersion?: number;
+  allowApi?: boolean | undefined;
+  allowMcp?: boolean | undefined;
+  expiresAt?: number | null | undefined;
+  userId?: string | undefined;
+  ownerSecurityVersion?: number | undefined;
 }
 
 export class ApiKeyV2Store {
@@ -71,6 +73,8 @@ export class ApiKeyV2Store {
       keyPrefix,
       maskedKey,
       permissions: [...input.permissions],
+      allowApi: input.allowApi !== false,
+      allowMcp: input.allowMcp !== false,
       createdAt: Date.now(),
       expiresAt: input.expiresAt ?? null,
       lastUsedAt: null,

@@ -1,6 +1,6 @@
 /**
  * Pure decision logic for §7 multi-account storage binding + category directory
- * provisioning. No I/O here — the repository (binding) and the real 115
+ * provisioning. No I/O here �?the repository (binding) and the real 115
  * storage adapter (dir provisioning) inject their effects. Keeping the rules pure
  * keeps the instance-wide uniqueness invariant and the idempotent find-or-create
  * testable without a database or a live 网盘.
@@ -46,7 +46,7 @@ export interface ConnectedStorage {
   moviesCid: string | null;
   tvCid: string | null;
   animeCid: string | null;
-  /** active = usable; frozen = cookie died (e.g. logged in elsewhere) → no
+  /** active = usable; frozen = cookie died (e.g. logged in elsewhere) �?no
    *  acquisition and no patrol run for this drive until re-bound to the same uid.
    *  Data is never lost while frozen. */
   status: "active" | "frozen";
@@ -55,7 +55,7 @@ export interface ConnectedStorage {
   createdAt: string;
 }
 
-/** Upsert payload — nullable directory CIDs are optional at call sites. */
+/** Upsert payload �?nullable directory CIDs are optional at call sites. */
 export interface UpsertConnectedStorageInput {
   id: string;
   accountId: string;
@@ -77,9 +77,9 @@ export type StorageBindingDecision =
 
 /**
  * Enforce instance-wide UNIQUE(provider, provider_uid):
- * - unseen (provider, uid)        → insert a new connection
- * - already owned by this account → refresh (re-scan updates the cookie payload)
- * - owned by another account      → reject (never let two accounts bind one 网盘)
+ * - unseen (provider, uid)        �?insert a new connection
+ * - already owned by this account �?refresh (re-scan updates the cookie payload)
+ * - owned by another account      �?reject (never let two accounts bind one 网盘)
  */
 export function resolveStorageBinding(input: {
   provider: string;
@@ -115,17 +115,17 @@ export interface ProvisionedCids {
  * second run finds every dir and creates nothing).
  *
  * Directory names are customisable (rootName / moviesName / tvName / animeName).
- * A blank or whitespace-only name falls back to its brand default — in
+ * A blank or whitespace-only name falls back to its brand default �?in
  * particular the root ALWAYS resolves to a real container folder, never to the
  * account root, so the drive's write scope can never widen to the whole account.
  */
 export async function provisionCategoryDirs(input: {
   storage: DirProvisionStorage;
   baseParentId: string;
-  rootName?: string;
-  moviesName?: string;
-  tvName?: string;
-  animeName?: string;
+  rootName?: string | undefined;
+  moviesName?: string | undefined;
+  tvName?: string | undefined;
+  animeName?: string | undefined;
 }): Promise<ProvisionedCids> {
   const named = (value: string | undefined, fallback: string) => value?.trim() || fallback;
   const rootName = named(input.rootName, "Mediary Scout");

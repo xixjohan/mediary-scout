@@ -327,4 +327,49 @@ describe("resolveTitleResources — 合并快照（批次 3：import 的取回�
     expect(chunks[chunks.length - 1]?.totalCount).toBe(4);
     expect(chunks[chunks.length - 1]?.done).toBe(2);
   });
+
+  it("空结果绝不缓存 30 分钟（防止缓存毒化）", async () => {
+    const d = deps({
+      search: async () => ({
+        id: "snap_empty",
+        provider: "pansou",
+        keyword: "k",
+        candidates: [],
+        createdAt: "2024-01-01T00:00:00Z",
+      }),
+    });
+    const result = await resolveTitleResources(d);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("unexpected");
+    expect(result.candidates).toHaveLength(0);
+    // 缓存中不应存入空结果条目
+    expect(d.cache.get(TitleResourceCache.key("acct_a", "title_1"))).toBeNull();
+  });
+
+  it("因检索源故障导致的空结果自动退还 60s 冷却额度", async () => {
+    const d = deps({
+      search: async () => ({
+        id: "snap_unreachable",
+        provider: "pansou",
+        keyword: "k",
+        candidates: [],
+        createdAt: "2024-01-01T00:00:00Z",
+        sourceHealth: { status: "unreachable", unhealthySources: ["pansou"] },
+      }),
+    });
+    const result = await resolveTitleResources(d);
+    expect(result.kind).toBe("ok");
+    if (result.kind !== "ok") throw new Error("unexpected");
+    expect(result.candidates).toHaveLength(0);
+
+    // 冷却已自动退还：立即再次发起请求不被 throttled
+    const retry = await resolveTitleResources({
+      ...d,
+      search: async () => snapshotOf(["recovered_c1"]),
+    });
+    expect(retry.kind).toBe("ok");
+    if (retry.kind === "ok") {
+      expect(retry.candidates).toHaveLength(1);
+    }
+  });
 });

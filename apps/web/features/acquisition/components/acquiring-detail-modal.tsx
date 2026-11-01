@@ -5,6 +5,12 @@ import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { X, Loader2, AlertTriangle, Clock3 } from "lucide-react";
 import type { InProgressTitle } from "../../../lib/title-hub";
+import type { AgentStepView } from "@media-track/workflow";
+import type {
+  AcquiringStatusActiveResponse,
+  AcquiringStatusResponse,
+} from "../contracts/acquiring-status-contract";
+import { toAcquiringTimelineItems } from "../contracts/acquiring-status-contract";
 
 export interface AcquiringDetailModalProps {
   title: InProgressTitle;
@@ -13,16 +19,7 @@ export interface AcquiringDetailModalProps {
   onCancelled?: () => void;
 }
 
-interface LiveStatus {
-  runId: string;
-  runStatus: "queued" | "running";
-  queuePosition: number | null;
-  phase: string;
-  percent: number;
-  activity: string;
-  steps: Array<{ time: string; tool: string; headline: string }>;
-  auditEvents: Array<{ type: string; message: string }>;
-}
+type LiveStatus = AcquiringStatusActiveResponse;
 
 function mediaTypeLabel(type: "movie" | "tv" | "anime"): string {
   if (type === "movie") return "电影";
@@ -100,30 +97,27 @@ function AcquiringTimelineSection({
   steps,
   auditEvents,
 }: {
-  steps: Array<{ time: string; tool: string; headline: string }>;
+  steps: AgentStepView[];
   auditEvents: Array<{ type: string; message: string }>;
 }) {
-  const hasSteps = steps.length > 0;
-  const hasAudit = auditEvents.length > 0;
-  if (!hasSteps && !hasAudit) return null;
+  const items = toAcquiringTimelineItems(steps, auditEvents);
+  if (items.length === 0) return null;
 
   return (
     <div className="acquiring-timeline">
       <span className="acquiring-timeline-title">执行记录</span>
       <ul className="acquiring-steps-list">
-        {hasSteps
-          ? steps.map((s, idx) => (
-              <li key={idx} className={`acquiring-step-item ${idx === steps.length - 1 ? "is-latest" : ""}`}>
-                <span className="acquiring-step-dot" />
-                <span>{s.headline}</span>
-              </li>
-            ))
-          : auditEvents.map((a, idx) => (
-              <li key={idx} className={`acquiring-step-item ${idx === auditEvents.length - 1 ? "is-latest" : ""}`}>
-                <span className="acquiring-step-dot" />
-                <span>{a.message}</span>
-              </li>
-            ))}
+        {items.map((item) => (
+          <li key={item.id} className={`acquiring-step-item ${item.isLatest ? "is-latest" : ""}`}>
+            <span className="acquiring-step-dot" />
+            <span style={{ flex: 1, wordBreak: "break-all" }}>{item.text}</span>
+            {item.time ? (
+              <span style={{ fontSize: 11, color: "var(--text-muted)", opacity: 0.8, flexShrink: 0, marginLeft: 6 }}>
+                {item.time}
+              </span>
+            ) : null}
+          </li>
+        ))}
       </ul>
     </div>
   );
@@ -146,24 +140,13 @@ function useAcquiringLiveStatus(
 
       const res = await fetch(`/api/activity/status?${q.toString()}`);
       if (!res.ok) return;
-      const data = (await res.json()) as { active?: boolean } & Partial<LiveStatus>;
-      if (data.active === false) {
+      const data = (await res.json()) as AcquiringStatusResponse;
+      if (!data || data.active === false) {
         onCancelled?.();
         router.refresh();
         return;
       }
-      if (data.runId) {
-        setLive({
-          runId: data.runId,
-          runStatus: data.runStatus ?? "running",
-          queuePosition: data.queuePosition ?? null,
-          phase: data.phase ?? "transfer",
-          percent: data.percent ?? 45,
-          activity: data.activity ?? "正在获取...",
-          steps: data.steps ?? [],
-          auditEvents: data.auditEvents ?? [],
-        });
-      }
+      setLive(data);
     } catch {
       // 忽略轮询网络失败
     }

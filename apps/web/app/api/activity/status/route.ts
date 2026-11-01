@@ -3,6 +3,10 @@ import { getWorkflowRepository, resolveGlobalWorkspace } from "../../../../lib/w
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import { isUserVisibleWorkflowKind, tailAgentStepViews } from "@media-track/workflow";
 import { inferActivityText } from "../../../../lib/title-hub";
+import type {
+  AcquiringStatusActiveResponse,
+  AcquiringStatusIdleResponse,
+} from "../../../../features/acquisition/contracts/acquiring-status-contract";
 
 function parseStatusQueryParams(url: URL): { runId: string | null; tmdbId: number | null } | null {
   const searchParams = url.searchParams;
@@ -29,7 +33,7 @@ interface FormatRunInput {
   repository: ReturnType<typeof getWorkflowRepository>;
 }
 
-async function formatMatchedRunResponse(input: FormatRunInput): Promise<NextResponse> {
+async function formatMatchedRunResponse(input: FormatRunInput): Promise<NextResponse<AcquiringStatusActiveResponse>> {
   const { matched, queuedOrder, scope, repository } = input;
   const runStatus = matched.workflowRun.status === "running" ? "running" : "queued";
   const queueIndex = queuedOrder.indexOf(matched.workflowRun.id);
@@ -97,7 +101,7 @@ export async function GET(request: NextRequest) {
   );
 
   if (!matched) {
-    return NextResponse.json({
+    return NextResponse.json<AcquiringStatusIdleResponse>({
       status: "idle",
       active: false,
     });

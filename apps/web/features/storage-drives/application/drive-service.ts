@@ -42,7 +42,7 @@ import {
   StorageOwnedByOtherAccountError,
   TestConnectionResult,
 } from "../contracts/storage-types";
-import { customDirNamesFromEnv } from "../core/dir-naming";
+import { customDirNamesFromEnv, resolveCategoryDirNames, type CustomDirNames } from "../core/dir-naming";
 import { extractStorageCredential } from "../core/credentials";
 
 export const PAN115_COOKIE_KEY = "pan115.cookie";
@@ -207,17 +207,26 @@ export async function bindTokenConnectedStorage(input: {
   return { providerUid };
 }
 
+export async function getResolvedCategoryDirNames(
+  accountId?: string,
+  storageOverride?: Partial<CustomDirNames>,
+): Promise<CustomDirNames> {
+  return resolveCategoryDirNames(getWorkflowRepository, accountId, storageOverride);
+}
+
 export async function provisionPan115CategoryDirs(
   cookie: string,
+  options?: { accountId?: string; dirNaming?: Partial<CustomDirNames> },
 ): Promise<{ rootCid: string | null; moviesCid: string | null; tvCid: string | null; animeCid: string | null }> {
   if (process.env.MEDIA_TRACK_STORAGE_ADAPTER === "fake") {
     return { rootCid: null, moviesCid: null, tvCid: null, animeCid: null };
   }
   try {
+    const dirNaming = await getResolvedCategoryDirNames(options?.accountId, options?.dirNaming);
     const executor = createBootstrapPan115CookieStorageExecutor({ cookie });
     return await provisionCategoryDirs({
       baseParentId: "0",
-      ...customDirNamesFromEnv(process.env),
+      ...dirNaming,
       storage: {
         listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
         createDirectory: (dir) => executor.createDirectory(dir),
@@ -738,6 +747,7 @@ export async function provisionDriveCategoryDirs(
   provider: string,
   cookie: string,
   credential: TokenCredential | null,
+  options?: { accountId?: string; dirNaming?: Partial<CustomDirNames> },
 ): Promise<{ rootCid: string; moviesCid: string; tvCid: string; animeCid: string }> {
   const brand = getStorageBrand(provider);
   const baseParentId = brand.provisionRootId;
@@ -747,9 +757,10 @@ export async function provisionDriveCategoryDirs(
       : brand.provider.startsWith("pan115")
         ? createBootstrapPan115CookieStorageExecutor({ cookie, env: process.env })
         : buildBootstrapExecutorForBrand(brand, { cookie, credential, env: process.env });
+  const dirNaming = await getResolvedCategoryDirNames(options?.accountId, options?.dirNaming);
   return provisionCategoryDirs({
     baseParentId,
-    ...customDirNamesFromEnv(process.env),
+    ...dirNaming,
     storage: {
       listChildDirs: (parentId: string) => executor.listChildDirectories(parentId),
       createDirectory: (dir) => executor.createDirectory(dir),

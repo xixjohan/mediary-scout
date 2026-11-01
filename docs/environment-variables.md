@@ -205,3 +205,19 @@
 - **`AB_SQL`**：仅在 `tests/live-probes/providers/jev-ab-run.mts` 脚本中通过 SSH/Docker Exec 传递 SQL 探针。
 - **`E2E_BASE_URL`** / **`E2E_SQLITE_PATH`**：Playwright 端到端集成测试专用。
 - **`UPSTREAM_REPO_URL`**：开发工具 `tools/upstream/audit-upstream.mjs` 代码同步审计专用。
+
+---
+
+## 四、运行时配置治理与 UI 设置页迁移演进
+
+随着系统功能的演进与多网盘多用户架构的成熟，我们正在推进将业务运行时配置全面从 `.env` 移入 Web 设置页面，并精简废弃环境变量。
+
+详细调研、头脑风暴方案、设计模式应用与落地路线图已完整收录于：
+👉 [运行时配置下放与系统架构治理方案](file:///e:/WorkProject/Node/_Project/mediary-scout/docs/architecture/runtime-configuration-ui-migration-and-multi-user-governance.md)
+
+### 核心演进方向速览：
+1. **配置下放设置页**：网盘媒体库根目录/分类子目录命名偏好、网盘安全频控与防风控调用阈值、出站代理（HTTP_PROXY 热生效）、推送通知渠道等，全面由设置页面可视化管理并落库 SQLite。
+2. **彻底移除 `MEDIA_TRACK_MULTI_USER`**：系统全面默认原生多用户体系，首个注册者即站主（Owner），老单用户数据自动无损继承；消除近百处双轨分支逻辑。
+3. **消除 `MEDIA_TRACK_WORKER_SECRET` 手动配置**：Web 与 Worker 容器通过共享卷自动签发并读取通信 Secret，消除 401 队列卡死隐患。
+4. **适配器生产默认化**：生产环境下四大适配器默认启用真实实现（TMDB、PanSou、网盘驱动注册表、Vercel AI），仅在测试时激活 Fake。
+

@@ -168,6 +168,7 @@ git merge --no-ff upstream/main                    # 上游合进你；别 reset
 
 | 时间 | 任务 | 动作与证据 |
 |---|---|---|
+| 2026-11-01 23:15 | S5.0 | **标准研发闭环确立与配置治理全链路交付**：① 运行时配置下放 UI（媒体库目录级联策略、出站代理热重载与连接池销毁、Worker 内部密钥自愈与多用户模式适配）；② 16 级质量门禁全绿（修复裸 Hex 色值与圈复杂度违规）；③ 联动 Chrome DevTools MCP 执行本地自愈启动与浏览器全流程实机交互走查与截图存证；④ 总结并沉淀终极工程规范 [standard-engineering-workflow-dev-test-and-browser-acceptance.md](standard-engineering-workflow-dev-test-and-browser-acceptance.md) 作为后续功能开发与优化的标准范式。 |
 | 2026-10-23 03:11 | S0.1 | `npm ci`（441 包）+ `build:workflow` 通过；首跑 46 文件因缺 dist 失败，构建后 **357 文件 / 4919 用例全绿**（67s） |
 | 2026-10-23 03:13 | S0.2 | 基线快照与流程文档建立（本文） |
 | 2026-10-23 03:16 | S1.1 | 新建 `packages/contracts`（4 个基础设施端口：IStorageDriver / ISearchProvider / IMediaMetadataProvider / IJobQueue）+ `packages/shared` 骨架；workspace 链接就位；contracts tsc 与根 typecheck 均过 |

@@ -369,6 +369,9 @@ async function defaultFetchJson(url: string, init: PanSouFetchInit): Promise<unk
     body: init.body,
     signal: AbortSignal.timeout(init.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS),
   });
+  if (response.status === 401 || response.status === 403) {
+    throw new PanSouAuthError(`PanSou 认证失败 (HTTP ${response.status})：请检查搜索源用户名、密码或访问令牌`);
+  }
   if (!response.ok) {
     throw new Error(`PanSou search failed with HTTP ${response.status}`);
   }

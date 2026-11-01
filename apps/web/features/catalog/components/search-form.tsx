@@ -1,7 +1,8 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { Search, X } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 
 /**
  * The search box. Submitting used to be a NATIVE `<form action>` GET — which is a
@@ -20,6 +21,25 @@ export function SearchForm({
   defaultQuery?: string;
 }) {
   const router = useRouter();
+  const [query, setQuery] = useState(defaultQuery);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    setQuery(defaultQuery);
+  }, [defaultQuery]);
+
+  const handleClear = () => {
+    setQuery("");
+    inputRef.current?.focus();
+  };
+
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+    if (event.key === "Escape") {
+      handleClear();
+    }
+  };
+
   return (
     <form
       className="search-form"
@@ -27,24 +47,34 @@ export function SearchForm({
       action={basePath}
       onSubmit={(event) => {
         event.preventDefault();
-        const value = String(new FormData(event.currentTarget).get("q") ?? "");
+        const value = query.trim();
         router.push(`${basePath}?tab=search&q=${encodeURIComponent(value)}`);
       }}
     >
       <input type="hidden" name="tab" value="search" />
-      <label className="search-box search-box-large">
+      <div className="search-box search-box-large">
         <Search size={18} aria-hidden />
-        {/* key forces a remount when the URL query changes (back/forward, or a
-            restored remembered query) so the uncontrolled input reflects it,
-            while staying uncontrolled (no re-render churn) during typing. */}
         <input
-          key={defaultQuery}
+          ref={inputRef}
           name="q"
           aria-label="搜索媒体"
           placeholder="片名 / 剧名，也可以描述剧情"
-          defaultValue={defaultQuery}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={onKeyDown}
         />
-      </label>
+        {query.trim() ? (
+          <button
+            type="button"
+            className="search-box-clear"
+            aria-label="清空关键词"
+            onClick={handleClear}
+            title="清空关键词"
+          >
+            <X size={12} aria-hidden />
+          </button>
+        ) : null}
+      </div>
       <button className="primary-button" type="submit">
         <Search size={16} aria-hidden />
         搜索

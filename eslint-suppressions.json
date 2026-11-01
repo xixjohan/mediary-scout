@@ -4,6 +4,11 @@
       "count": 1
     }
   },
+  "apps/web/app/api/mcp/route.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
   "apps/web/app/connect-actions.ts": {
     "complexity": {
       "count": 1
@@ -35,9 +40,14 @@
       "count": 1
     }
   },
+  "apps/web/features/acquisition/application/acquisition-service.ts": {
+    "complexity": {
+      "count": 2
+    }
+  },
   "apps/web/features/acquisition/application/worker-runner-service.ts": {
     "complexity": {
-      "count": 1
+      "count": 2
     },
     "max-lines": {
       "count": 1
@@ -53,11 +63,26 @@
       "count": 1
     }
   },
+  "apps/web/features/acquisition/components/title-resource-panel.tsx": {
+    "max-lines": {
+      "count": 1
+    }
+  },
   "apps/web/features/acquisition/components/user-message-thread.tsx": {
     "complexity": {
       "count": 1
     },
     "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/features/assistant/components/mcp-server-drawer.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/auth/components/user-profile-modal.tsx": {
+    "complexity": {
       "count": 1
     }
   },
@@ -91,6 +116,24 @@
       "count": 1
     }
   },
+  "apps/web/features/settings-system/components/api-key-guide-modal.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/components/api-key-v2-manager.tsx": {
+    "complexity": {
+      "count": 1
+    },
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/components/frp-tunnel-manager-view.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
   "apps/web/features/settings-system/components/settings/connect-wizard.tsx": {
     "complexity": {
       "count": 3
@@ -100,6 +143,16 @@
     }
   },
   "apps/web/features/settings-system/components/settings/update-section.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/components/user-management-view.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/settings-system/components/user-row-item.tsx": {
     "complexity": {
       "count": 1
     }
@@ -267,7 +320,7 @@
   },
   "packages/workflow/src/persistence/repository.ts": {
     "complexity": {
-      "count": 3
+      "count": 4
     },
     "max-lines": {
       "count": 1
@@ -304,6 +357,11 @@
     }
   },
   "packages/workflow/src/providers/subtitle-provider.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/providers/title-resource-resolver.ts": {
     "complexity": {
       "count": 1
     }

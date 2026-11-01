@@ -152,4 +152,53 @@ describe("API Keys V2 Management API Routes", () => {
     const data = await res.json();
     expect(data.error).toContain("权限越界");
   });
+
+  it("validates channel protocol scopes allowApi and allowMcp", async () => {
+    // 1. Rejects when both allowApi and allowMcp are false
+    const resReject = await createKey(
+      new NextRequest("http://localhost:3000/api/settings/api-keys", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Invalid Key",
+          allowApi: false,
+          allowMcp: false,
+        }),
+      })
+    );
+    expect(resReject.status).toBe(400);
+    const err = await resReject.json();
+    expect(err.error).toContain("必须至少启用 REST API 或 MCP 中的一个访问通道");
+
+    // 2. Accepts dedicated MCP-only key
+    const resMcpOnly = await createKey(
+      new NextRequest("http://localhost:3000/api/settings/api-keys", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Cursor Agent Key",
+          allowApi: false,
+          allowMcp: true,
+        }),
+      })
+    );
+    expect(resMcpOnly.status).toBe(201);
+    const mcpData = await resMcpOnly.json();
+    expect(mcpData.entity.allowApi).toBe(false);
+    expect(mcpData.entity.allowMcp).toBe(true);
+
+    // 3. Accepts dedicated REST API-only key
+    const resApiOnly = await createKey(
+      new NextRequest("http://localhost:3000/api/settings/api-keys", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Webhook REST Key",
+          allowApi: true,
+          allowMcp: false,
+        }),
+      })
+    );
+    expect(resApiOnly.status).toBe(201);
+    const apiData = await resApiOnly.json();
+    expect(apiData.entity.allowApi).toBe(true);
+    expect(apiData.entity.allowMcp).toBe(false);
+  });
 });

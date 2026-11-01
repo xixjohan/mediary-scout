@@ -271,7 +271,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   ] = await Promise.all([
     getAgentModel(getAccountScopedSettings(accountId)),
     getAccountStorageCredentials(accountId),
-    getWorkerResourceProvider(),
+    getWorkerResourceProvider(getAccountScopedSettings(accountId), undefined, accountId),
   ]);
   const language = preferredLanguage === undefined ? {} : { preferredLanguage };
   const quality = qualityPreference === undefined ? {} : { qualityPreference };
@@ -627,7 +627,7 @@ async function runScheduledType3Now(options?: { force?: boolean }): Promise<Sche
     const parents = await getWorkerStorageParents(accountId);
     result = await runScheduledType3Monitoring({
       repository,
-      resourceProvider: await getWorkerResourceProvider(),
+      resourceProvider: await getWorkerResourceProvider(getAccountScopedSettings(accountId), undefined, accountId),
       storage: await getWorkerStorageExecutor(accountId),
       model,
       llmConfig,
@@ -779,15 +779,12 @@ async function seedDemoIfEmpty(targetRepository: WorkflowRepository): Promise<vo
 
 
 export async function getWorkerResourceProvider(
-  settings: { getSetting(key: string): Promise<string | null> } = getWorkflowRepository(),
+  settings?: { getSetting(key: string): Promise<string | null> },
   provider: string = "pan115",
   accountId?: string,
 ): Promise<ResourceProvider> {
-  // accountId 仅用于健康结论回写(recordPanSouHealth)。多账户场景下,worker 在
-  // claim 后按 run 所属账号重建 provider(resolveWorkerDeps: ctx.resourceProvider
-  // ?? base),走的是 buildAccountContextResolver 那条带 accountId 的路径;这里的
-  // base provider 只在无 resolver(单用户/兜底)时被实际使用,此时 getCurrentAccountId()
-  // 正确地返回 default 账号,所以两处都不丢账号作用域。
+  const effectiveAccountId = accountId ?? (await getCurrentAccountId());
+  const effectiveSettings = settings ?? getAccountScopedSettings(effectiveAccountId);
   if (process.env.MEDIA_TRACK_WORKFLOW_ADAPTER === "pansou") {
     // Per-brand assembly: a quark drive gets PanSou restricted to quark links and
     // NO Prowlarr (磁力 115-only); a 115 drive gets PanSou(115/magnet) + Prowlarr.
@@ -803,25 +800,25 @@ export async function getWorkerResourceProvider(
         // 退到官方源续命,并把结果标 degraded —— 而不是像事故里那样静默报「没找到」。
         provider: buildPanSouProviderChain({
           userBaseURL: resolveUserPanSouBaseUrl(
-            await settings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
+            await effectiveSettings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
           ),
           allowedTypes,
           // 自建源开了认证就把凭据带进去。官方源那一侧由 buildPanSouProviderChain
           // 决定不带（把用户令牌送到第三方既无用又泄露），这里只负责把库里的
           // 凭据解析成 auth 形态。
-          auth: await getPanSouAuth(settings),
+          auth: await getPanSouAuth(effectiveSettings),
           // 把每次真实搜索观察到的结论回写,设置页徽章才有东西可读。缺了这条,
           // 告警在生产中永远不触发:保存时探活只写 "ok",而本次事故恰恰是
           // 「保存时好的、之后才挂」。写失败不能影响搜索本身,所以 catch 后
           // 只记日志——但**不静默**,否则又是本 PR 要消灭的那个毛病。
           onSourceHealth: (healthy) => {
-            void recordPanSouHealth(healthy, accountId);
+            void recordPanSouHealth(healthy, effectiveAccountId);
           },
         }),
       },
     ];
     if (kinds.includes("prowlarr")) {
-      const prowlarr = await getProwlarrConfig(settings);
+      const prowlarr = await getProwlarrConfig(effectiveSettings);
       if (prowlarr.baseURL && prowlarr.apiKey) {
         providers.push({
           name: "prowlarr",
@@ -829,7 +826,7 @@ export async function getWorkerResourceProvider(
         });
       }
     }
-    const haisouApiKey = await getHaisouApiKey(settings);
+    const haisouApiKey = await getHaisouApiKey(effectiveSettings);
     if (haisouApiKey) {
       providers.push({
         name: "haisou",

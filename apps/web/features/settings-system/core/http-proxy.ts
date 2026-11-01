@@ -1,4 +1,4 @@
-import { EnvHttpProxyAgent, setGlobalDispatcher, type Dispatcher } from "undici";
+import { Agent, EnvHttpProxyAgent, setGlobalDispatcher, type Dispatcher } from "undici";
 
 /**
  * Opt-in outbound proxy for the server's global `fetch`.
@@ -27,6 +27,84 @@ export interface ConfigureProxyResult {
    *  user:pass, which must never reach application logs. */
   proxyDisplay?: string;
 }
+
+export const HTTP_PROXY_SETTING_KEY = "http_proxy";
+export const HTTPS_PROXY_SETTING_KEY = "https_proxy";
+export const NO_PROXY_SETTING_KEY = "no_proxy";
+
+export interface ProxySettings {
+  httpProxy?: string;
+  httpsProxy?: string;
+  noProxy?: string;
+}
+
+async function safeDestroyAgent(agent: Dispatcher | null): Promise<void> {
+  if (!agent) return;
+  try {
+    const target = agent as unknown as { destroy?: () => Promise<void> };
+    if (typeof target.destroy === "function") {
+      await target.destroy();
+    }
+  } catch {
+    // ignore
+  }
+}
+
+export class ProxyManager {
+  private currentAgent: Dispatcher | null = null;
+
+  public async reload(config: ProxySettings): Promise<ConfigureProxyResult> {
+    const proxyUrl = config.httpProxy?.trim() || config.httpsProxy?.trim() || "";
+    if (!proxyUrl) {
+      await safeDestroyAgent(this.currentAgent);
+      this.currentAgent = null;
+      setGlobalDispatcher(new Agent());
+      return { enabled: false };
+    }
+
+    const mergedNoProxy = resolveMergedNoProxy(config.noProxy);
+    process.env.NO_PROXY = mergedNoProxy;
+    process.env.no_proxy = mergedNoProxy;
+    if (config.httpProxy?.trim()) process.env.HTTP_PROXY = config.httpProxy.trim();
+    if (config.httpsProxy?.trim()) process.env.HTTPS_PROXY = config.httpsProxy.trim();
+
+    const oldAgent = this.currentAgent;
+    const newAgent = new EnvHttpProxyAgent();
+    this.currentAgent = newAgent;
+    setGlobalDispatcher(newAgent);
+
+    await safeDestroyAgent(oldAgent);
+
+    return { enabled: true, proxyUrl, proxyDisplay: redactProxy(proxyUrl) };
+  }
+}
+
+export const proxyManager = new ProxyManager();
+
+export async function testProxyConnectivity(
+  testUrl = "https://api.themoviedb.org/3/configuration",
+): Promise<{ ok: boolean; latencyMs: number; message: string }> {
+  const start = Date.now();
+  try {
+    const res = await fetch(testUrl, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(6000),
+    });
+    const latencyMs = Date.now() - start;
+    return {
+      ok: res.ok || res.status === 401,
+      latencyMs,
+      message: res.ok || res.status === 401 ? `连通正常 (${latencyMs}ms)` : `HTTP ${res.status}`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      latencyMs: Date.now() - start,
+      message: formatNetworkError(error),
+    };
+  }
+}
+
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"] as const;
 

@@ -139,7 +139,18 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
       snapshots: perKeyword,
       createdAt: new Date().toISOString(),
     });
-    deps.cache.put(scopeKey, views, snapshot.id);
+    // 只有查到有效候选时才存入 30 分钟缓存。空结果（尤其是源故障、网络断链或暂无资源）绝不缓存 30 分钟，
+    // 避免产生「一次查空、半小时死锁」的缓存毒化事故。
+    if (views.length > 0) {
+      deps.cache.put(scopeKey, views, snapshot.id);
+    }
+    // 若因检索源故障（unreachable / protocol_error）导致结果为空，退还冷却额度，避免用户因后端故障被罚 60s 冷却
+    if (
+      views.length === 0 &&
+      (snapshot.sourceHealth?.status === "unreachable" || snapshot.sourceHealth?.status === "protocol_error")
+    ) {
+      deps.limiter.reset(baseKey);
+    }
     return {
       kind: "ok",
       candidates: views,

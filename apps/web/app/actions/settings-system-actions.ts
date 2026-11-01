@@ -378,13 +378,28 @@ export async function savePanSouConfigAction(
 ): Promise<PushSettingsActionResult> {
   assertNotDemo();
   try {
-    const parsed = parsePanSouCredentials(credentials);
-    if (!parsed.ok) {
-      return { success: false, message: parsed.message };
-    }
     const { getWorkflowRepository, getCurrentAccountId, PANSOU_BASE_URL_SETTING_KEY, PANSOU_HEALTH_SETTING_KEY } = await import("../../lib/workflow-runtime");
     const repository = getWorkflowRepository();
     const accountId = await getCurrentAccountId();
+
+    let effectiveCreds = { ...credentials };
+    if (credentials.username && !credentials.password && !credentials.token) {
+      const { PANSOU_USERNAME_SETTING_KEY, PANSOU_PASSWORD_SETTING_KEY } = await import("../../lib/pansou-chain");
+      const existingUser = await repository.getAccountSetting(accountId, PANSOU_USERNAME_SETTING_KEY);
+      const existingEnc = await repository.getAccountSetting(accountId, PANSOU_PASSWORD_SETTING_KEY);
+      if (existingUser === credentials.username.trim() && existingEnc) {
+        try {
+          const { decryptSecret } = await import("@media-track/shared");
+          const plain = decryptSecret(existingEnc).trim();
+          if (plain) effectiveCreds.password = plain;
+        } catch {}
+      }
+    }
+
+    const parsed = parsePanSouCredentials(effectiveCreds);
+    if (!parsed.ok) {
+      return { success: false, message: parsed.message };
+    }
     const trimmed = baseURL.trim();
     // Empty = clear the override → falls back to env / public default.
     // 清空是正当操作,不必探活;顺手把上次的探活结论也清掉,否则设置页会对着一个

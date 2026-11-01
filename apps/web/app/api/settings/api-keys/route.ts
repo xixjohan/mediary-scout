@@ -33,11 +33,17 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as {
     name?: string;
     permissions?: string[];
+    allowApi?: boolean;
+    allowMcp?: boolean;
     expiresAt?: number | null;
   } | null;
 
   if (!body || !body.name || typeof body.name !== "string" || !body.name.trim()) {
     return NextResponse.json({ error: "必须提供有效的 API Key 名称" }, { status: 400 });
+  }
+
+  if (body.allowApi === false && body.allowMcp === false) {
+    return NextResponse.json({ error: "必须至少启用 REST API 或 MCP 中的一个访问通道" }, { status: 400 });
   }
 
   const permissions = Array.isArray(body.permissions)
@@ -55,6 +61,8 @@ export async function POST(request: NextRequest) {
       {
         name: body.name.trim(),
         permissions,
+        allowApi: body.allowApi,
+        allowMcp: body.allowMcp,
         expiresAt: typeof body.expiresAt === "number" ? body.expiresAt : null,
         userId: gate,
         ownerSecurityVersion: securityVersion,

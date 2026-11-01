@@ -9,13 +9,9 @@ import {
   UNAUTHENTICATED_ACCOUNT_ID,
   UnauthenticatedAccountError,
 } from "../../features/auth/contracts/auth-tokens";
-import {
-  isRemoteRequest,
-  resolveSingleUserAccountId,
-} from "../../features/auth/core/identity-resolver";
+import { isRemoteRequest } from "../../features/auth/core/identity-resolver";
 import {
   hasLoginPassword,
-  isMultiUserEnabled,
   resolveBearerAccountId,
   resolveSessionAccountId,
 } from "../../features/auth/application/account-service";
@@ -41,44 +37,35 @@ async function bearerAccountFromRequestScope(): Promise<string | null> {
 }
 
 export async function getCurrentAccountId(): Promise<string> {
-  if (!isMultiUserEnabled()) {
-    const hasPassword = await hasLoginPassword();
-    let hdrs: Headers;
-    let sessionCookie: string | undefined;
-    try {
-      const { cookies, headers } = await import("next/headers");
-      hdrs = await headers();
-      sessionCookie = (await cookies()).get(SESSION_COOKIE_NAME)?.value;
-    } catch {
-      return DEFAULT_ACCOUNT_ID;
-    }
-    const sessionAccountId = await readSessionAccountId(sessionCookie);
-    if (!isRemoteRequest(hdrs)) {
-      return resolveSingleUserAccountId({ hasPassword, isRemote: false, sessionAccountId });
-    }
-    const bearerAccountId = await resolveBearerAccountId(hdrs);
-    if (bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
-    return resolveSingleUserAccountId({ hasPassword, isRemote: true, sessionAccountId });
-  }
-
-  let store: Awaited<ReturnType<typeof import("next/headers").cookies>>;
+  let store: Awaited<ReturnType<typeof import("next/headers").cookies>> | undefined;
+  let hdrs: Headers | undefined;
   try {
-    const { cookies } = await import("next/headers");
+    const { cookies, headers } = await import("next/headers");
     store = await cookies();
+    hdrs = await headers();
   } catch {
     return DEFAULT_ACCOUNT_ID;
   }
 
+  // 1. Session Cookie 解析
   try {
-    const raw = store.get(SESSION_COOKIE_NAME)?.value;
+    const raw = store?.get(SESSION_COOKIE_NAME)?.value;
     if (raw) {
       const sessionAccountId = await readSessionAccountId(raw);
       if (sessionAccountId) return sessionAccountId;
     }
-    return (await bearerAccountFromRequestScope()) ?? UNAUTHENTICATED_ACCOUNT_ID;
-  } catch {
-    return UNAUTHENTICATED_ACCOUNT_ID;
+  } catch {}
+
+  // 2. Bearer Token 解析
+  const bearerAccount = await bearerAccountFromRequestScope();
+  if (bearerAccount) return bearerAccount;
+
+  // 3. 局域网开箱免密自适应（内网且未设密时，默认对标站长默认账号）
+  if (hdrs && !isRemoteRequest(hdrs) && !(await hasLoginPassword())) {
+    return DEFAULT_ACCOUNT_ID;
   }
+
+  return UNAUTHENTICATED_ACCOUNT_ID;
 }
 
 export async function requireAuthenticatedAccountId(): Promise<string> {
@@ -91,8 +78,10 @@ export async function requireAuthenticatedAccountId(): Promise<string> {
 
 export const getCurrentAccountSummary = cache(
   async (): Promise<{ username: string; isOwner: boolean } | null> => {
-    const acct = await getWorkflowRepository().getAccountById(await getCurrentAccountId());
-    return acct ? { username: acct.username, isOwner: acct.isOwner } : null;
+    const accountId = await getCurrentAccountId();
+    if (accountId === UNAUTHENTICATED_ACCOUNT_ID) return null;
+    const acct = await getWorkflowRepository().getAccountById(accountId);
+    return acct ? { username: acct.username, isOwner: Boolean(acct.isOwner) } : null;
   },
 );
 

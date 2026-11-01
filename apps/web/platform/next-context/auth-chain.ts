@@ -25,6 +25,8 @@ export interface SecurityContext {
   roleId: string;
   permissions: Set<string>;
   apiKeyId?: string;
+  allowApi?: boolean;
+  allowMcp?: boolean;
 }
 
 /**
@@ -32,7 +34,14 @@ export interface SecurityContext {
  */
 async function resolveDirectV2KeyContext(
   request: NextRequest,
-): Promise<{ accountId: string; apiKeyId: string; permissions: Set<string>; roleId: string } | null> {
+): Promise<{
+  accountId: string;
+  apiKeyId: string;
+  permissions: Set<string>;
+  roleId: string;
+  allowApi: boolean;
+  allowMcp: boolean;
+} | null> {
   const authHeader = request.headers.get("authorization");
   if (!authHeader) return null;
 
@@ -78,17 +87,27 @@ async function resolveDirectV2KeyContext(
       apiKeyId: keyEntity.id,
       roleId: role.id,
       permissions: new Set(effectivePerms),
+      allowApi: keyEntity.allowApi !== false,
+      allowMcp: keyEntity.allowMcp !== false,
     };
   } catch {
     return null;
   }
 }
 
-async function resolveCookieContext(cookie: string): Promise<SecurityContext | null> {
+async function resolveCookieContext(cookie: string, headers: Headers): Promise<SecurityContext | null> {
   try {
-    const accountId = await resolveSessionAccountId(cookie);
-    if (!accountId || (!isMultiUserEnabled() && accountId !== DEFAULT_ACCOUNT_ID)) {
+    const rawAccountId = await resolveSessionAccountId(cookie);
+    if (!rawAccountId) {
       return null;
+    }
+    let accountId = rawAccountId;
+    if (!isMultiUserEnabled()) {
+      if (isRemoteRequest(headers)) {
+        if (rawAccountId !== DEFAULT_ACCOUNT_ID) return null;
+      } else {
+        accountId = DEFAULT_ACCOUNT_ID;
+      }
     }
     const userSvc = getUserManagementService();
     const [role, isActive] = await Promise.all([
@@ -110,9 +129,17 @@ async function resolveCookieContext(cookie: string): Promise<SecurityContext | n
 }
 
 async function resolveBearerContext(headers: Headers): Promise<SecurityContext | null> {
-  const bearerAccountId = await resolveBearerAccountId(headers);
-  if (!bearerAccountId || (!isMultiUserEnabled() && bearerAccountId !== DEFAULT_ACCOUNT_ID)) {
+  const rawAccountId = await resolveBearerAccountId(headers);
+  if (!rawAccountId) {
     return null;
+  }
+  let bearerAccountId = rawAccountId;
+  if (!isMultiUserEnabled()) {
+    if (isRemoteRequest(headers)) {
+      if (rawAccountId !== DEFAULT_ACCOUNT_ID) return null;
+    } else {
+      bearerAccountId = DEFAULT_ACCOUNT_ID;
+    }
   }
   const userSvc = getUserManagementService();
   const role = await userSvc.getUserRole(bearerAccountId);
@@ -149,13 +176,15 @@ export async function resolveSecurityContext(request: NextRequest): Promise<Secu
       roleId: v2Ctx.roleId,
       permissions: v2Ctx.permissions,
       apiKeyId: v2Ctx.apiKeyId,
+      allowApi: v2Ctx.allowApi,
+      allowMcp: v2Ctx.allowMcp,
     };
   }
 
   // 2. Cookie 会话校验 (Web 端登录用户)
   const cookie = request.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (cookie) {
-    const cookieCtx = await resolveCookieContext(cookie);
+    const cookieCtx = await resolveCookieContext(cookie, request.headers);
     if (cookieCtx) return cookieCtx;
   }
 
@@ -180,11 +209,14 @@ const UNAUTHORIZED_MESSAGE = "未登录，请先登录后再操作。";
 export async function requireApiAccount(
   request: NextRequest,
 ): Promise<string | NextResponse> {
-  const accountId = await resolveApiAccount(request);
-  if (!accountId) {
+  const sec = await resolveSecurityContext(request);
+  if (!sec) {
     return NextResponse.json({ error: UNAUTHORIZED_MESSAGE }, { status: 401 });
   }
-  return accountId;
+  if (sec.apiKeyId && sec.allowApi === false) {
+    return NextResponse.json({ error: "Forbidden: 当前 API Key 未开放 REST API 访问通道。" }, { status: 403 });
+  }
+  return sec.accountId;
 }
 
 /**
@@ -197,6 +229,10 @@ export async function requirePermission(
   const sec = await resolveSecurityContext(request);
   if (!sec) {
     return NextResponse.json({ error: UNAUTHORIZED_MESSAGE }, { status: 401 });
+  }
+
+  if (sec.apiKeyId && sec.allowApi === false) {
+    return NextResponse.json({ error: "Forbidden: 当前 API Key 未开放 REST API 访问通道。" }, { status: 403 });
   }
 
   if (sec.isMaster || sec.permissions.has("*") || sec.permissions.has(requiredPermission)) {

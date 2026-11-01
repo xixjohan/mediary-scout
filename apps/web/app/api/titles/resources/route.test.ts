@@ -33,6 +33,7 @@ vi.mock("../../../../lib/auth-chain", () => ({
 
 vi.mock("../../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: () => repo,
+  getAccountScopedSettings: () => repo,
   getWorkerResourceProvider: async () => provider,
   movieTargetFromTmdbId: (tmdbId: number) => movieTargetFromTmdbId(tmdbId),
   resolveGlobalWorkspace: vi.fn().mockResolvedValue({

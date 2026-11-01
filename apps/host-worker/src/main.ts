@@ -11,17 +11,45 @@
  *   MEDIA_TRACK_WORKER_POLL_MS  idle 轮询间隔（默认 3000，对齐原进程内循环）
  *   MEDIA_TRACK_WORKER_SWEEP_MS 巡检 poke 最小间隔（默认 900000 = 15 分钟）
  */
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createWorkerPoker } from "./poker.js";
 
+function discoverWorkerSecret(): string | undefined {
+  const envSecret = process.env.MEDIA_TRACK_WORKER_SECRET?.trim();
+  if (envSecret) return envSecret;
+
+  const candidateDirs = [
+    "/app/data",
+    join(process.cwd(), "data"),
+    join(process.cwd(), "..", "..", "data"),
+  ];
+
+  for (const dir of candidateDirs) {
+    try {
+      const file = join(dir, ".worker_secret");
+      if (existsSync(file)) {
+        const val = readFileSync(file, "utf-8").trim();
+        if (val) {
+          console.log(`[host-worker] Auto-discovered internal worker secret from ${file}`);
+          return val;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
+}
+
 const baseUrl = (process.env.MEDIA_TRACK_WEB_BASE ?? "http://127.0.0.1:3000").replace(/\/+$/, "");
-const workerSecret = process.env.MEDIA_TRACK_WORKER_SECRET?.trim() || undefined;
+const workerSecret = discoverWorkerSecret();
 const pollMs = Number(process.env.MEDIA_TRACK_WORKER_POLL_MS ?? 3000);
 const sweepEveryMs = Number(process.env.MEDIA_TRACK_WORKER_SWEEP_MS ?? 900_000);
 
 if (process.env.MEDIA_TRACK_MULTI_USER === "1" && !workerSecret) {
   console.warn(
-    "[host-worker] WARNING: MEDIA_TRACK_MULTI_USER=1 but MEDIA_TRACK_WORKER_SECRET is unset — " +
-      "every poke will be rejected with 401. Set the same secret on web and here.",
+    "[host-worker] WARNING: MEDIA_TRACK_MULTI_USER=1 but MEDIA_TRACK_WORKER_SECRET is unset and no .worker_secret file found.",
   );
 }
 

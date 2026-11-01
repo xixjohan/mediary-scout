@@ -494,3 +494,54 @@ export function parseAutoUpdateFailStreak(raw: string | null): AutoUpdateFailStr
   }
   return null;
 }
+
+export const LIBRARY_ROOT_DIR_SETTING_KEY = "library_root_dir";
+export const LIBRARY_MOVIES_DIR_SETTING_KEY = "library_movies_dir";
+export const LIBRARY_TV_DIR_SETTING_KEY = "library_tv_dir";
+export const LIBRARY_ANIME_DIR_SETTING_KEY = "library_anime_dir";
+
+export const DEFAULT_LIBRARY_ROOT_DIR = "Mediary Scout";
+export const DEFAULT_LIBRARY_MOVIES_DIR = "Movies";
+export const DEFAULT_LIBRARY_TV_DIR = "TV";
+export const DEFAULT_LIBRARY_ANIME_DIR = "Anime";
+
+export interface LibraryDirNamingConfig {
+  rootName: string;
+  moviesName: string;
+  tvName: string;
+  animeName: string;
+}
+
+/**
+ * Resolve directory naming preferences by cascading:
+ * Storage Entity Override -> Account Setting -> Global App Setting -> Env Fallback -> Defaults
+ */
+export async function resolveLibraryDirNaming(
+  repository: {
+    getSetting(key: string): Promise<string | null>;
+    getAccountSetting?(accountId: string, key: string): Promise<string | null>;
+  },
+  accountId?: string,
+  env: Record<string, string | undefined> = process.env,
+  storageOverride?: Partial<LibraryDirNamingConfig>,
+): Promise<LibraryDirNamingConfig> {
+  const readKey = async (key: string, envKey: string, fallback: string): Promise<string> => {
+    if (accountId && repository.getAccountSetting) {
+      const own = (await repository.getAccountSetting(accountId, key))?.trim();
+      if (own) return own;
+    }
+    const globalVal = (await repository.getSetting(key))?.trim();
+    if (globalVal) return globalVal;
+    const envVal = env[envKey]?.trim();
+    if (envVal) return envVal;
+    return fallback;
+  };
+
+  return {
+    rootName: storageOverride?.rootName?.trim() || await readKey(LIBRARY_ROOT_DIR_SETTING_KEY, "MEDIA_TRACK_LIBRARY_ROOT_DIR", DEFAULT_LIBRARY_ROOT_DIR),
+    moviesName: storageOverride?.moviesName?.trim() || await readKey(LIBRARY_MOVIES_DIR_SETTING_KEY, "MEDIA_TRACK_LIBRARY_MOVIES_DIR", DEFAULT_LIBRARY_MOVIES_DIR),
+    tvName: storageOverride?.tvName?.trim() || await readKey(LIBRARY_TV_DIR_SETTING_KEY, "MEDIA_TRACK_LIBRARY_TV_DIR", DEFAULT_LIBRARY_TV_DIR),
+    animeName: storageOverride?.animeName?.trim() || await readKey(LIBRARY_ANIME_DIR_SETTING_KEY, "MEDIA_TRACK_LIBRARY_ANIME_DIR", DEFAULT_LIBRARY_ANIME_DIR),
+  };
+}
+

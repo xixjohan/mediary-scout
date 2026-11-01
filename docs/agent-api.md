@@ -47,3 +47,16 @@ skill 用 `curl` 和 `jq` 调接口。Git Bash 不带 `jq`，Windows 上先装�
 | `GET` | `/api/agent/activity` | 正在跑的任务和最近的通知 |
 
 全部要带 `Authorization: Bearer <token>`。没配 token 时这些接口返回 404（等于不存在）；token 不对或没带返回 401。
+
+---
+
+## 协同开发与工程验收规范
+
+若您作为 AI Agent 参与巡影代码库的功能开发、重构或缺陷修复，必须遵守巡影团队的标准化研发闭环：
+- **设计模式优先**：策略模式用于级联回退、适配器模式用于外部协议、有限状态机用于任务生命周期；
+- **16 级完整工程门禁**：改动后必须执行 `npm run gate` 并全绿通过；
+- **内置浏览器实机交互验收**：利用 Chrome DevTools MCP 执行真实 DOM 探测、表单输入、模态弹窗挂载与视口截图存证。
+
+详细全流程指引与最佳实践请参见：  
+👉 [`docs/architecture/standard-engineering-workflow-dev-test-and-browser-acceptance.md`](architecture/standard-engineering-workflow-dev-test-and-browser-acceptance.md)
+

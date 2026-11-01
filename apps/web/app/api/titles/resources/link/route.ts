@@ -5,17 +5,8 @@ import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-export interface ResourceLinkResponse {
-  ok: boolean;
-  candidateId: string;
-  type: string;
-  source: string;
-  url: string;
-  password: string | null;
-  formatted: string;
-  isMagnet: boolean;
-  isHttp: boolean;
-}
+import type { ResourceLinkResponse } from "../../../../../features/acquisition/contracts/acquisition-types";
+export type { ResourceLinkResponse };
 
 export function parseLinkRequestBody(
   value: unknown

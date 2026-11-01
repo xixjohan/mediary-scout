@@ -423,4 +423,27 @@ flowchart TD
 | **Phase 4 & Audit L2** | 运行时采集 Agent Prompt 快速路径优化 | [`packages/workflow/src/acquisition-v2/task-agents.ts`](file:///e:/WorkProject/Node/_Project/mediary-scout/packages/workflow/src/acquisition-v2/task-agents.ts) | 在不破坏 75 项契约单测断言的前提下，在 `skillMandate` 注入 `⚡ FAST-PATH EFFICIENCY` 指令，禁止重复 `readSkill` 已读章节与同义词盲搜。 |
 | **Audit P1 / P2 / P3** | SQLite 核心二级索引与查询下推 + Worker 并行预热 + Vitest 源码级 Alias & Subpath Exports | [`packages/workflow/src/sqlite.ts`](file:///e:/WorkProject/Node/_Project/mediary-scout/packages/workflow/src/sqlite.ts)、[`vitest.config.ts`](file:///e:/WorkProject/Node/_Project/mediary-scout/vitest.config.ts)、[`packages/workflow/package.json`](file:///e:/WorkProject/Node/_Project/mediary-scout/packages/workflow/package.json) | 新增 8 条 SQLite 二级索引（含 JSON 表达式索引 `idx_workflow_runs_queue_claim`）；将 `scopedRunRows`、`requeueRunningWorkflowRuns`、`pruneFinishedWorkflowRuns`、`findActiveWorkflowRun`、`listActiveWorkflowRuns` 下推至 SQL 索引过滤；`vitest.config.ts` 直连源码消除 `dist/` 构建断层，222 项核心单测 3.4s 全部通过。 |
 
+---
+
+## 11. 终极工程实战规范：功能开发、功能测试与浏览器实机验收闭环范式 (The Golden Paradigm)
+
+在推进「环境变量下放 UI 与系统配置治理」的过程中，巡影工程体系沉淀并固化了统一的端到端研发测试闭环规程。所有后续参与本仓库开发的 AI Agent 与研发人员必须强制参照此规程执行：
+
+> 详细工程实施指南参见专属架构文档：  
+> 👉 [**`docs/architecture/standard-engineering-workflow-dev-test-and-browser-acceptance.md`**](file:///e:/WorkProject/Node/_Project/mediary-scout/docs/architecture/standard-engineering-workflow-dev-test-and-browser-acceptance.md)
+
+### 11.1 三维一体标准 SOP 概要
+1. **规范化功能开发（Feature Development）**：
+   - **架构设计模式优先**：级联回退使用**策略模式**，连接池生命周期使用**适配器模式**，任务流转使用**有限状态机 (FSM)**，仓储解耦使用**门面模式**；
+   - **精确行数棘轮门禁（The Ratchet Principle）**：单文件物理行严格 $< 600$、函数复杂度 $\le 15$，严禁再向既有大文件填充新代码；
+   - **设计令牌三层架构**：样式 100% 绑定 `var(--...)` 语义变量，严禁裸色值与脱节样式。
+2. **多层级质量门禁（Feature Testing & 16 Gates）**：
+   - 编写带隔离清理机制的专用单元测试（如 `configuration-governance.test.ts`）；
+   - 执行 `npm run gate`，确保 16 级完整架构与质量门禁（limits, parity, blocking-routes, modals, contracts, layout, deps, server-actions, acquisition, catalog, facades, style, assets, http-timeout, lint, typecheck）全绿通过。
+3. **内置浏览器实机交互验收（Browser Acceptance）**：
+   - 使用守护进程启动测试环境：`node tools/runner/dev-server.mjs --no-open --port 3001`；
+   - 联动 `chrome-devtools-mcp` 协议工具执行真实页面加载、A11y 树定位、真实表单输入、按钮点击与全屏模态弹窗 Portal 挂载检验；
+   - 对操作结果、状态变更与网络测速进行截图落盘与事实存证，杜绝假象闭环。
+
+
 

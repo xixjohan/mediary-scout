@@ -163,6 +163,8 @@ export interface ApiKeyV2Entity {
   keyPrefix: string; // "msk_live_xxxx"
   maskedKey: string; // "msk_live_abc...xyz"
   permissions: string[]; // List of permitted leaf IDs, e.g. ["media:search", "media:detail"]
+  allowApi?: boolean | undefined; // 协议通道：是否允许 REST API 访问 (默认 true)
+  allowMcp?: boolean | undefined; // 协议通道：是否允许 MCP 协议访问 (默认 true)
   createdAt: number;
   expiresAt: number | null; // null = never expires
   lastUsedAt: number | null;

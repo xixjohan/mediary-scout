@@ -135,6 +135,8 @@ services:
       MEDIA_TRACK_WEB_BASE: http://web:3000
       # 与 web 侧一致；多用户模式必配（见 .env.example）
       MEDIA_TRACK_WORKER_SECRET: ${MEDIA_TRACK_WORKER_SECRET:-}
+    volumes:
+      - mediaray-data:/app/data:ro
     depends_on:
       web:
         condition: service_started

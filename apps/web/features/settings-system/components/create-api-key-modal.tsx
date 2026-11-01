@@ -22,10 +22,18 @@ export function CreateApiKeyModal({
 }: {
   catalog: ApiKeyPermissionModule[];
   onClose: () => void;
-  onSuccess: (plainTextKey: string, keyName: string) => void;
+  onSuccess: (
+    plainTextKey: string,
+    keyName: string,
+    permissions: string[],
+    allowApi?: boolean,
+    allowMcp?: boolean
+  ) => void;
 }) {
   const [createName, setCreateName] = useState("");
   const [createExpiresDays, setCreateExpiresDays] = useState<string>("30");
+  const [allowApi, setAllowApi] = useState(true);
+  const [allowMcp, setAllowMcp] = useState(true);
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(() => {
     const leaves = ApiKeyPermissionPreset.applyStrategy("safe_automation", catalog);
     const allowed = new Set(
@@ -91,6 +99,11 @@ export function CreateApiKeyModal({
       return;
     }
 
+    if (!allowApi && !allowMcp) {
+      setError("请至少开启一种协议通道权限（REST API 或 MCP 服务）");
+      return;
+    }
+
     startTransition(async () => {
       try {
         let expiresAt: number | null = null;
@@ -108,6 +121,8 @@ export function CreateApiKeyModal({
             name: createName.trim(),
             permissions: selectedPermissions,
             expiresAt,
+            allowApi,
+            allowMcp,
           }),
         });
 
@@ -117,7 +132,7 @@ export function CreateApiKeyModal({
           return;
         }
 
-        onSuccess(data.plainTextKey, createName.trim());
+        onSuccess(data.plainTextKey, createName.trim(), selectedPermissions, allowApi, allowMcp);
       } catch (err) {
         setError(String(err));
       }
@@ -196,6 +211,108 @@ export function CreateApiKeyModal({
                 <option value="never">永久有效</option>
               </select>
             </div>
+          </div>
+
+          {/* 协议通道权限 (Channel Scope) */}
+          <div
+            style={{
+              background: "var(--bg-hover)",
+              border: "1px solid var(--border-subtle)",
+              borderRadius: "8px",
+              padding: "0.75rem 1rem",
+            }}
+          >
+            <label style={{ display: "block", fontSize: "0.85rem", fontWeight: 600, marginBottom: "0.4rem" }}>
+              协议通道权限 (Channel Scope)
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.75rem" }}>
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "0.5rem",
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                  padding: "0.35rem 0.5rem",
+                  borderRadius: "6px",
+                  background: allowApi ? "var(--bg-surface)" : "transparent",
+                  border: `1px solid ${allowApi ? "var(--border)" : "transparent"}`,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={allowApi}
+                  onChange={(e) => setAllowApi(e.target.checked)}
+                  style={{ marginTop: "0.2rem" }}
+                />
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <strong>REST API 访问</strong>
+                    <span
+                      className="badge"
+                      style={{
+                        fontSize: "0.7rem",
+                        padding: "0.05rem 0.35rem",
+                        background: "rgba(59, 130, 246, 0.15)",
+                        color: "#3b82f6",
+                        border: "1px solid rgba(59, 130, 246, 0.3)",
+                      }}
+                    >
+                      HTTP API
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                    允许调用 <code>/api/*</code> 标准 HTTP REST 接口 (供第三方程序、脚本自动化使用)
+                  </div>
+                </div>
+              </label>
+
+              <label
+                style={{
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "0.5rem",
+                  cursor: "pointer",
+                  fontSize: "0.85rem",
+                  padding: "0.35rem 0.5rem",
+                  borderRadius: "6px",
+                  background: allowMcp ? "var(--bg-surface)" : "transparent",
+                  border: `1px solid ${allowMcp ? "var(--border)" : "transparent"}`,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={allowMcp}
+                  onChange={(e) => setAllowMcp(e.target.checked)}
+                  style={{ marginTop: "0.2rem" }}
+                />
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                    <strong>MCP 协议服务</strong>
+                    <span
+                      className="badge"
+                      style={{
+                        fontSize: "0.7rem",
+                        padding: "0.05rem 0.35rem",
+                        background: "rgba(168, 85, 247, 0.15)",
+                        color: "#a855f7",
+                        border: "1px solid rgba(168, 85, 247, 0.3)",
+                      }}
+                    >
+                      Agent MCP
+                    </span>
+                  </div>
+                  <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+                    允许通过 <code>/api/mcp</code> 接入 AI Agent (Cursor, Claude, Cline, Antigravity)
+                  </div>
+                </div>
+              </label>
+            </div>
+            {!allowApi && !allowMcp && (
+              <div style={{ color: "var(--color-danger, #ef4444)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
+                ⚠️ 必须至少保留一个协议通道，否则外部客户端将无法调用任何接口。
+              </div>
+            )}
           </div>
 
           {/* 策略模式预设按钮 */}

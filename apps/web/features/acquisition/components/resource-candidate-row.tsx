@@ -2,18 +2,13 @@
 
 import { Link as LinkIcon } from "lucide-react";
 import type { ResourceCandidateView, ResourceType } from "@media-track/workflow";
+import type { ResourceLinkResponse } from "../contracts/acquisition-types";
 
 export interface CandidateLinkState {
   open: boolean;
   loading: boolean;
   data?:
-    | {
-        candidateId: string;
-        type?: string;
-        source?: string;
-        url?: string;
-        password?: string | null;
-        formatted?: string;
+    | (Partial<ResourceLinkResponse> & {
         accessKind?: string;
         link?: {
           url: string;
@@ -21,7 +16,7 @@ export interface CandidateLinkState {
           accessKind: string;
           displayUrl: string;
         };
-      }
+      })
     | undefined;
   error?: string | undefined;
 }

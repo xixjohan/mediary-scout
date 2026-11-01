@@ -11,6 +11,8 @@ import { UnbindStorageButton } from "../../features/storage-drives/components/un
 import { PushNotificationForm } from "../../features/settings-system/components/push-notification-form";
 import { PreferredLanguageForm } from "../../features/settings-system/components/preferred-language-form";
 import { QualityPreferenceForm } from "../../features/settings-system/components/quality-preference-form";
+import { LibraryDirNamingSection } from "../../features/settings-system/components/settings/library-dir-naming-section";
+import { ProxyConfigSection } from "../../features/settings-system/components/settings/proxy-config-section";
 import { LlmConfigForm } from "../../features/settings-system/components/llm-config-form";
 import { RestoreFreeLlmButton } from "../../features/settings-system/components/restore-free-llm-button";
 import { TmdbApiKeyForm } from "../../features/settings-system/components/tmdb-api-key-form";
@@ -111,7 +113,7 @@ function SettingsPageInner({
         <div className="section-heading library-heading">
           <div>
             <h1>设置</h1>
-            <p>网盘连接与系统配置</p>
+            <p>网盘连接、媒体库与系统配置</p>
           </div>
         </div>
         {isDemoMode() ? (
@@ -160,10 +162,16 @@ function SettingsPageInner({
                   <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                     <McpSection />
                   </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <ProxyConfigSection />
+                  </Suspense>
                 </>
               }
               preferences={
                 <>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <LibraryDirNamingSection />
+                  </Suspense>
                   <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                     <PreferredLanguageSection />
                   </Suspense>

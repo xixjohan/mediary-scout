@@ -1,5 +1,7 @@
 // Contracts
 export * from "./contracts/acquisition-types";
+export * from "./contracts/acquiring-status-contract";
+export * from "./contracts/resource-filter-model";
 
 // Core
 export * from "./core/subscription-missing";

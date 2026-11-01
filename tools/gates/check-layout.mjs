@@ -20,7 +20,7 @@ const ROOT_ALLOWLIST = new Set([
   ".dependency-cruiser.cjs", ".dependency-cruiser-known-violations.json",
   "eslint-suppressions.json",
   "Dockerfile", "LICENSE", "README.md", "README.en.md",
-  "package.json", "package-lock.json", "tsconfig.json", "vitest.config.ts",
+  "package.json", "package-lock.json", "pnpm-lock.yaml", "tsconfig.json", "vitest.config.ts",
   "eslint.config.mjs", "docker-compose.yml", "dev.bat", "smoke.bat",
 ]);
 const ROOT_DIR_ALLOWLIST = new Set([
