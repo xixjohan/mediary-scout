@@ -143,5 +143,6 @@ export function buildManualImportReservation(input: {
     // A manual import writes into the title's directories; two concurrent ones would
     // race on staging and dedup exactly as two agent acquisitions would.
     blockIfTitleHasActiveRun: true,
+    keepCurrentEpisodes: true,
   };
 }

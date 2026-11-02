@@ -3,6 +3,7 @@ import {
   isStagingJanitorId,
   isUserVisibleNotificationKind,
   isUserVisibleWorkflowKind,
+  isEpisodePreservingWorkflowKind,
   type AgentDecision,
   type AgentStep,
   type EpisodeState,
@@ -195,6 +196,8 @@ export interface PersistWorkflowRunSnapshotInput {
   decisions: AgentDecision[];
   transferAttempts: TransferAttempt[];
   notifications: NotificationEvent[];
+  /** Write the run only. The season's episode bucket stays as stored. */
+  keepCurrentEpisodes?: boolean;
 }
 
 export interface PersistedWorkflowRunSnapshot extends PersistWorkflowRunSnapshotInput {
@@ -458,6 +461,8 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   >;
   /** Instance-wide lookup enforcing UNIQUE(provider, provider_uid) ownership. */
   findConnectedStorageByUid(provider: string, providerUid: string): Promise<ConnectedStorage | null>;
+  /** Instance-wide lookup by connected storage id (primary key). */
+  getConnectedStorageById(storageId: string): Promise<ConnectedStorage | null>;
   /** Set a drive's status. `frozen` (cookie died → no acquisition/patrol) carries
    *  a reason + timestamp; `active` (re-bound/healthy) clears them. No-op if the
    *  storage id is unknown. */
@@ -670,6 +675,15 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     }
     this.connectedStorages.delete(foundKey);
     return { ok: true, storage: { ...found } };
+  }
+
+  async getConnectedStorageById(storageId: string): Promise<ConnectedStorage | null> {
+    for (const storage of this.connectedStorages.values()) {
+      if (storage.id === storageId) {
+        return { ...storage };
+      }
+    }
+    return null;
   }
 
   async findConnectedStorageByUid(
@@ -1197,18 +1211,23 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const existing = this.workflowRuns.get(cloned.workflowRun.id);
     cloned.connectedStorageId =
       cloned.connectedStorageId ?? existing?.connectedStorageId ?? null;
+    const isAuxiliary = isEpisodePreservingWorkflowKind(cloned.workflowRun.kind);
+    const shouldKeepEpisodes = keepCurrentEpisodes === true || isAuxiliary;
+
     // Synchronous with the write below: no await, so an untrack cannot land between them.
+    const isSearchRecord = cloned.workflowRun.kind === "resource_search";
     if (
+      !isSearchRecord &&
       reservationRequiresTrackedSeason({
         ...(input.requireTrackedSeason === true ? { requireTrackedSeason: true } : {}),
-        ...(keepCurrentEpisodes === true ? { keepCurrentEpisodes: true } : {}),
+        ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}),
       }) &&
       !this.isSeasonTracked(cloned.season.id, cloned.connectedStorageId)
     ) {
       return;
     }
     const bucketKey = seasonScopeKey(cloned.season.id, cloned.connectedStorageId);
-    if (keepCurrentEpisodes === true) {
+    if (shouldKeepEpisodes) {
       const current = this.episodesBySeason.get(bucketKey);
       if (current) cloned.episodes = cloneWorkflowValue(current);
       this.workflowRuns.set(cloned.workflowRun.id, cloned);
@@ -1286,15 +1305,20 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     cloned.accountId = cloned.accountId ?? DEFAULT_ACCOUNT_ID;
     cloned.connectedStorageId = storageValue;
     const bucketKey = seasonScopeKey(cloned.season.id, storageValue);
-    if (input.keepCurrentEpisodes === true) {
+    const isAuxiliary = isEpisodePreservingWorkflowKind(snapshot.workflowRun.kind);
+    const shouldKeepEpisodes = input.keepCurrentEpisodes === true || isAuxiliary;
+
+    if (shouldKeepEpisodes) {
       // Tracking here is the latest run record of the (season, drive) plus its episode
       // bucket: this run's record carries the CURRENT title, season and episodes (not the
       // copies it was handed) and the bucket is left alone, so the season reads exactly
       // as before. The tracked check above guarantees a record exists.
-      const current = this.latestSeasonRecordSync(cloned.season.id, storageValue)!;
-      cloned.title = cloneWorkflowValue(current.title);
-      cloned.season = cloneWorkflowValue(current.season);
-      cloned.episodes = cloneWorkflowValue(this.episodesBySeason.get(bucketKey) ?? current.episodes);
+      const current = this.latestSeasonRecordSync(cloned.season.id, storageValue);
+      if (current) {
+        cloned.title = cloneWorkflowValue(current.title);
+        cloned.season = cloneWorkflowValue(current.season);
+        cloned.episodes = cloneWorkflowValue(this.episodesBySeason.get(bucketKey) ?? current.episodes);
+      }
       this.workflowRuns.set(cloned.workflowRun.id, cloned);
     } else {
       this.workflowRuns.set(cloned.workflowRun.id, cloned);
@@ -2069,6 +2093,11 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return t && t.accountId === accountId ? structuredClone(t) : null;
   }
 
+  async findStrmTaskById(id: string): Promise<StrmTask | null> {
+    const t = this.strmTasks.get(id);
+    return t ? structuredClone(t) : null;
+  }
+
   async createStrmTask(input: CreateStrmTaskInput): Promise<StrmTask> {
     const id = input.id ?? `strm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = new Date().toISOString();
@@ -2103,27 +2132,16 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const t = this.strmTasks.get(input.id);
     if (!t || t.accountId !== input.accountId) return null;
     const now = new Date().toISOString();
-    const updated: StrmTask = {
-      ...t,
-      name: input.name ?? t.name,
-      storageId: input.storageId ?? t.storageId,
-      remoteFolderId: input.remoteFolderId ?? t.remoteFolderId,
-      remotePath: input.remotePath ?? t.remotePath,
-      localOutputDir: input.localOutputDir ?? t.localOutputDir,
-      scanIntervalMinutes: input.scanIntervalMinutes ?? t.scanIntervalMinutes,
-      scanMode: input.scanMode ?? t.scanMode,
-      extensions: input.extensions ?? t.extensions,
-      minFileSizeMb: input.minFileSizeMb ?? t.minFileSizeMb,
-      excludeKeywords: input.excludeKeywords !== undefined ? input.excludeKeywords : t.excludeKeywords,
-      scheduleMode: input.scheduleMode ?? t.scheduleMode,
-      status: input.status ?? t.status,
-      deliveryMode: input.deliveryMode ?? t.deliveryMode,
-      isActive: input.isActive !== undefined ? input.isActive : t.isActive,
-      lastScanAt: input.lastScanAt !== undefined ? input.lastScanAt : t.lastScanAt,
-      lastScanStatus: input.lastScanStatus !== undefined ? input.lastScanStatus : t.lastScanStatus,
-      lastErrorMessage: input.lastErrorMessage !== undefined ? input.lastErrorMessage : t.lastErrorMessage,
-      updatedAt: now,
-    };
+    const updated = { ...t, updatedAt: now };
+    for (const [key, val] of Object.entries(input)) {
+      if (val !== undefined && key !== "id" && key !== "accountId") {
+        (updated as any)[key] = val;
+      }
+    }
+    if (input.isActive !== undefined && input.status === undefined) {
+      updated.status = input.isActive ? "idle" : "paused";
+    }
+    updated.isActive = updated.status !== "paused";
     this.strmTasks.set(input.id, structuredClone(updated));
     return structuredClone(updated);
   }
@@ -2416,7 +2434,11 @@ export function isActiveWorkflowStatus(status: WorkflowStatus): boolean {
 
 /** Hides rows the previous janitor wrote. */
 function isVisibleTrackedSnapshot(snapshot: PersistWorkflowRunSnapshotInput): boolean {
-  return !isStagingJanitorId(snapshot.workflowRun.id) && !isStagingJanitorId(snapshot.season.id);
+  return (
+    !isStagingJanitorId(snapshot.workflowRun.id) &&
+    !isStagingJanitorId(snapshot.season.id) &&
+    snapshot.workflowRun.kind !== "resource_search"
+  );
 }
 
 /** The leftover dir id carried on a queued staging_recovery, or null. */

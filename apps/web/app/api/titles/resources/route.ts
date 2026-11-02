@@ -181,8 +181,8 @@ async function handleResourceResult(
 
   if (result.snapshot !== null) {
     try {
-      await getWorkflowRepository().saveWorkflowRunSnapshot(
-        buildResourceSearchRun({
+      await getWorkflowRepository().saveWorkflowRunSnapshot({
+        ...buildResourceSearchRun({
           snapshot: result.snapshot,
           title: context.title,
           season: context.season,
@@ -190,7 +190,8 @@ async function handleResourceResult(
           connectedStorageId: context.connectedStorageId,
           now: result.snapshot.createdAt,
         }),
-      );
+        keepCurrentEpisodes: true,
+      });
     } catch (error) {
       console.error("[titles/resources] snapshot persist failed", error);
     }
@@ -287,8 +288,8 @@ export async function POST(request: NextRequest) {
             let snapshotId: string | undefined = result.snapshotId;
             if (result.snapshot !== null) {
               try {
-                await getWorkflowRepository().saveWorkflowRunSnapshot(
-                  buildResourceSearchRun({
+                await getWorkflowRepository().saveWorkflowRunSnapshot({
+                  ...buildResourceSearchRun({
                     snapshot: result.snapshot,
                     title,
                     season,
@@ -296,7 +297,8 @@ export async function POST(request: NextRequest) {
                     connectedStorageId,
                     now: result.snapshot.createdAt,
                   }),
-                );
+                  keepCurrentEpisodes: true,
+                });
                 snapshotId = result.snapshot.id;
               } catch (error) {
                 console.error("[titles/resources] snapshot persist failed", error);

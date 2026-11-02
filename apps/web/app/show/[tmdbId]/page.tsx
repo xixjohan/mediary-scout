@@ -16,12 +16,11 @@ import { OrganizePanel } from "../../../features/acquisition/components/title-or
 import { SubscriptionPolicyPanel } from "../../../features/acquisition/components/subscription-policy-panel";
 import { MovieSynopsis } from "../../../features/catalog/components/movie-synopsis";
 import { RequestTrackButton } from "../../../features/acquisition/components/request-track-button";
-import { SeasonDetails } from "../../../features/catalog/components/season-details";
-import { SwapBadgeLive, SwapEpisodeCell, SwapKeepProvider } from "../../../features/acquisition/components/swap-keep";
-import {
-  RequestRemainingButton,
-  RequestSeasonButton,
-} from "../../../features/catalog/components/title-action-buttons";
+import { SwapBadgeLive, SwapKeepProvider } from "../../../features/acquisition/components/swap-keep";
+import { EpisodeTargetProvider } from "../../../features/acquisition/components/episode-target-context";
+import { MissingEpisodesDeck } from "../../../features/acquisition/components/missing-episodes-deck";
+import { SeasonRow } from "../../../features/acquisition/components/season-row";
+import { RequestRemainingButton } from "../../../features/catalog/components/title-action-buttons";
 import { UntrackButton } from "../../../features/acquisition/components/untrack-button";
 import { AcquiringStatusTrigger } from "../../../features/acquisition/components/acquiring-status-trigger";
 import { AgentMemoryNotes } from "../../../features/activity/components/agent-memory-panel";
@@ -34,7 +33,6 @@ import {
   type TitleHubSeason,
   type TitleHubView,
 } from "../../../lib/title-hub";
-import { seasonBadgeState } from "../../../lib/title-aggregate";
 import { nextPatrolLabel, readTitleMessages } from "../../../lib/user-message-server";
 import { showsMessageCard } from "../../../lib/user-message-state";
 import {
@@ -52,13 +50,6 @@ const aggregateBadge = {
   tracking: { label: "追更中", tone: "indigo" },
   partial: { label: "部分入库", tone: "amber" },
   complete: { label: "已全部入库", tone: "green" },
-} as const;
-
-const seasonBadge = {
-  untracked: null,
-  missing: { label: "缺集", tone: "amber" },
-  airing: { label: "追更中", tone: "indigo" },
-  complete: { label: "已完结", tone: "green" },
 } as const;
 
 function ShowPageInner({
@@ -212,6 +203,7 @@ function TvHub({
   return (
     <AcquisitionLockProvider>
     <SwapKeepProvider key={`tv:${view.tmdbId}:${storageId ?? ""}`}>
+    <EpisodeTargetProvider>
     {view.acquiring ? <AcquiringPoller /> : null}
     <section className="title-hub title-hub-immersive">
       {/* Backdrop clipped to hub-hero only — seasons stay on plain page bg. */}
@@ -304,6 +296,7 @@ function TvHub({
       </div>
 
       <section className="hub-seasons" aria-label="季列表">
+        <MissingEpisodesDeck seasons={view.seasons} title={view.title} />
         <ul className="hub-season-list">
           <SeasonRowsWithSwap view={view} storageId={storageId} basePath={basePath} canManageMedia={canManageMedia} />
         </ul>
@@ -333,6 +326,7 @@ function TvHub({
       ) : null}
       {view.aggregate !== "untracked" ? <TitleMemorySection mediaType="tv" tmdbId={view.tmdbId} /> : null}
     </section>
+    </EpisodeTargetProvider>
     </SwapKeepProvider>
     </AcquisitionLockProvider>
   );
@@ -380,6 +374,7 @@ function MovieHub({
   return (
     <AcquisitionLockProvider>
     <SwapKeepProvider key={`movie:${view.tmdbId}:${storageId ?? ""}`}>
+    <EpisodeTargetProvider>
       {view.acquiring ? <AcquiringPoller /> : null}
       <section className="title-hub title-hub-immersive">
         {/* Backdrop lives inside hub-hero only — must NOT cover synopsis body. */}
@@ -481,6 +476,7 @@ function MovieHub({
         ) : null}
         {view.state !== "untracked" ? <TitleMemorySection mediaType="movie" tmdbId={view.tmdbId} /> : null}
       </section>
+    </EpisodeTargetProvider>
     </SwapKeepProvider>
     </AcquisitionLockProvider>
   );
@@ -516,132 +512,6 @@ function HubSkeleton({ backLabel, backHref }: { backLabel: string; backHref: str
         <div className="skeleton skeleton-hub-line short" />
       </div>
     </section>
-  );
-}
-
-/** What an episode cell says for its state. */
-const EPISODE_STATE_LABEL: Record<EpisodeDisplayState, string> = {
-  obtained: "已获取",
-  missing_aired: "缺集",
-  provider_ahead: "超前",
-  unaired: "未播",
-  unknown: "未知",
-};
-
-function SeasonRow({
-  season,
-  tmdbId,
-  storageId,
-  basePath,
-  acquiring,
-  swap,
-  demoEntry,
-  canManageMedia = true,
-}: {
-  season: TitleHubSeason;
-  tmdbId: number;
-  /** Tree model: the active workspace drive — acquisition lands HERE. */
-  storageId: string | undefined;
-  /** Library path to return to after a whole-show untrack. */
-  basePath: string;
-  acquiring: boolean;
-  /** Episodes a user asked to replace that are still 待换 (their old file stays). */
-  swap: ReadonlySet<string>;
-  demoEntry?: DemoAcquisitionEntry | undefined;
-  canManageMedia?: boolean;
-}) {
-  const total = season.totalEpisodes;
-  const aired = Math.min(season.latestAiredEpisode, total);
-  // Obtained never exceeds aired for bar purposes (resource-ahead caps at aired).
-  const obtained = Math.min(season.obtainedCount, aired);
-  const airedPct = total > 0 ? (aired / total) * 100 : 0;
-  const obtainedPct = total > 0 ? (obtained / total) * 100 : 0;
-
-  const badge = seasonBadge[seasonBadgeState(season)];
-
-  const rowBody = (
-    <>
-      <span className="season-cell-name">第 {season.seasonNumber} 季</span>
-      <span className="season-cell-count">{total} 集</span>
-      {badge ? (
-        <span className={`hub-badge tone-${badge.tone}`}>{badge.label}</span>
-      ) : (
-        <span className="hub-badge tone-muted">未追踪</span>
-      )}
-      <span className="season-cell-progress" aria-hidden>
-        {season.tracked ? (
-          <>
-            <span className="seg-aired" style={{ width: `${airedPct}%` }} />
-            <span className="seg-obtained" style={{ width: `${obtainedPct}%` }} />
-          </>
-        ) : null}
-      </span>
-      {/* 已获取 / 已播 / 总集数 — so 6/6 of a 9-ep season isn't read as complete. */}
-      <span className="season-cell-obtained">
-        {season.tracked ? `${season.obtainedCount}/${aired}/${total}` : "—"}
-      </span>
-    </>
-  );
-
-  if (!season.tracked) {
-    return (
-      <li className="hub-season-row untracked">
-        {rowBody}
-        <RequestSeasonButton
-          tmdbId={tmdbId}
-          seasonNumber={season.seasonNumber}
-          storageId={storageId}
-          titleAcquiring={acquiring}
-          demoEntry={demoEntry}
-        />
-      </li>
-    );
-  }
-
-  return (
-    <li>
-      <SeasonDetails initiallyOpen={season.episodes.some((episode) => swap.has(episode.episodeCode))}>
-        <summary className="hub-season-row">{rowBody}</summary>
-        <div className="episode-grid hub-episode-grid">
-          {season.episodes.map((episode) => {
-            const stateClass = episode.displayState.replace("_", "-");
-            const stateLabel = EPISODE_STATE_LABEL[episode.displayState];
-            // A 待换 cell is a client piece: 「不换了」 on the message card restores it at once.
-            const isMissing = episode.displayState === "missing_aired";
-            return swap.has(episode.episodeCode) ? (
-              <SwapEpisodeCell key={episode.episodeCode} code={episode.episodeCode} stateClass={stateClass} stateLabel={stateLabel} />
-            ) : isMissing ? (
-              <a
-                href="#title-resources"
-                className={`episode-cell ${stateClass} episode-cell-link`}
-                key={episode.episodeCode}
-                title={`${episode.episodeCode} 缺集 · 点击前往下方检索资源`}
-              >
-                <strong>{episode.episodeCode.replace(/^S\d+/, "")}</strong>
-                <span>{stateLabel}</span>
-              </a>
-            ) : (
-              <div className={`episode-cell ${stateClass}`} key={episode.episodeCode}>
-                <strong>{episode.episodeCode.replace(/^S\d+/, "")}</strong>
-                <span>{stateLabel}</span>
-              </div>
-            );
-          })}
-        </div>
-        {canManageMedia ? (
-          <div className="season-untrack-row">
-            <UntrackButton
-              tmdbId={tmdbId}
-              storageId={storageId}
-              mediaKind="tv"
-              seasonNumber={season.seasonNumber}
-              basePath={basePath}
-              label={`取消第 ${season.seasonNumber} 季追踪`}
-            />
-          </div>
-        ) : null}
-      </SeasonDetails>
-    </li>
   );
 }
 

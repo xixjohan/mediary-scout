@@ -1,0 +1,292 @@
+/* Tier 3: Spotify Utility & Control Classes (Compatibility & Design System) */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease, border-color 0.15s ease;
+  border: 1px solid transparent;
+  text-decoration: none;
+  white-space: nowrap;
+  gap: 6px;
+  box-sizing: border-box;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: #121212;
+  border: none;
+  font-weight: 700;
+  height: 38px;
+  padding: 0 20px;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #3be477;
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  height: 36px;
+  padding: 0 16px;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  height: 32px;
+  padding: 0 10px;
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.btn-sm {
+  height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
+  gap: 4px;
+}
+
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 20px;
+}
+
+.input {
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 8px 12px;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  box-sizing: border-box;
+}
+
+.input:focus {
+  border-color: var(--accent);
+  background: var(--bg-surface);
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.badge.is-on,
+.badge-success {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  border-color: var(--accent-subtle-border);
+}
+
+.badge.is-warn {
+  background: var(--warning-subtle);
+  color: var(--warning);
+  border-color: var(--warning-border);
+}
+
+.badge.is-error {
+  background: var(--color-danger-subtle);
+  color: var(--color-danger);
+  border-color: var(--color-danger-border);
+}
+
+.badge-neutral {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  border-color: var(--border-subtle);
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+.season-menu-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.menu-spacer {
+  display: inline-block;
+  width: 13px;
+}
+
+/* Split button: both halves light up as one control */
+.season-menu .primary-button,
+.season-menu-toggle {
+  transition: background 0.15s ease;
+}
+
+.season-menu:hover .primary-button:not(:disabled),
+.season-menu:hover .season-menu-toggle:not(:disabled) {
+  background: #3be477;
+}
+
+.season-menu .primary-button:active:not(:disabled),
+.season-menu-toggle:active:not(:disabled) {
+  background: var(--accent-press);
+}
+
+.season-menu-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.season-menu-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+/* Push notification settings form */
+.push-form {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  padding: 0;
+}
+
+/* Stacked label + control (used by the LLM 三件套 form). */
+.push-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.push-label {
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.push-channel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.push-channel label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+
+.push-channel label strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Connect 通知横幅(两态:已开通确认 / 未开通推广)。
+   项目是自定义 CSS 体系(globals.css,无 Tailwind)—— 组件一律用这里的类——曾有组件误用
+   Tailwind 类导致裸奔(真实事故:软路由上看到一个无样式的大闪电图标)。 */
+
+
+
+.push-help {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.push-help a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.push-help a:hover {
+  text-decoration: underline;
+}
+
+.push-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.push-input {
+  width: 100%;
+  padding: 10px 14px;
+  font-size: 13.5px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-md);
+  transition: border-color 0.15s ease;
+}
+
+.push-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.push-clear:hover {
+  color: var(--warning);
+  border-color: var(--warning);
+}
+
+.push-clear:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.push-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.push-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.push-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-top: 8px;
+}
+
+.push-result {
+  font-size: 13px;
+  color: var(--text-muted);
+}

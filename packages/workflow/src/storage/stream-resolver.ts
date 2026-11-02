@@ -1,4 +1,5 @@
 import { SingleFlight } from "../strm/single-flight.js";
+import { Pan115CookieClient } from "./pan115-cookie-client.js";
 
 /**
  * StorageStreamResolver (网盘流媒体直链与反代解析器)
@@ -45,6 +46,77 @@ export class SingleFlightStreamResolver implements StorageStreamResolver {
   async resolveStream(input: ResolveStreamInput): Promise<ResolvedStream> {
     const key = `${input.storageId}:${input.fileId}`;
     return this._flight.do(key, () => this._inner.resolveStream(input));
+  }
+}
+
+export interface StorageCredentialsInfo {
+  provider: string;
+  cookie?: string;
+  credential?: Record<string, unknown> | null;
+  status?: string;
+}
+
+export type StorageCredentialLookup = (storageId: string) => Promise<StorageCredentialsInfo | null>;
+
+/**
+ * 生产环境真实网盘流媒体解析器：
+ * 具备各网盘驱动能力，将媒体请求映射为真实 CDN 302 重定向直链。
+ */
+export class ProductionStorageStreamResolver implements StorageStreamResolver {
+  private readonly _pan115Clients = new Map<string, Pan115CookieClient>();
+
+  constructor(
+    private readonly _lookup: StorageCredentialLookup,
+    private readonly _fallback?: StorageStreamResolver,
+  ) {}
+
+  async resolveStream(input: ResolveStreamInput): Promise<ResolvedStream> {
+    const creds = await this._lookup(input.storageId);
+    if (!creds) {
+      if (this._fallback) {
+        return this._fallback.resolveStream(input);
+      }
+      throw new Error(`STORAGE_NOT_FOUND: 存储驱动 ${input.storageId} 未绑定或不存在`);
+    }
+
+    if (creds.status === "frozen") {
+      throw new Error(`STORAGE_FROZEN: 存储驱动 ${input.storageId} 凭据已失效或处于冻结状态`);
+    }
+
+    if (creds.provider === "pan115") {
+      const cookie = creds.cookie?.trim();
+      if (!cookie) {
+        throw new Error(`PAN115_CREDENTIAL_MISSING: 存储驱动 ${input.storageId} 缺少有效 Cookie 凭据`);
+      }
+
+      let client = this._pan115Clients.get(input.storageId);
+      if (!client) {
+        client = new Pan115CookieClient({ cookie });
+        this._pan115Clients.set(input.storageId, client);
+      }
+
+      const res = await client.getDownloadUrl({
+        fileId: input.fileId,
+        ...(input.pickCode !== undefined ? { pickCode: input.pickCode } : {}),
+        ...(input.userAgent !== undefined ? { userAgent: input.userAgent } : {}),
+      });
+
+      return {
+        url: res.url,
+        deliveryMode: "redirect",
+        headers: {
+          "User-Agent":
+            input.userAgent ||
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        },
+        expirationSeconds: 7200,
+      };
+    }
+
+    if (this._fallback) {
+      return this._fallback.resolveStream(input);
+    }
+    throw new Error(`PROVIDER_NOT_SUPPORTED: 暂不支持网盘提供商 ${creds.provider} 的流媒体直链解析`);
   }
 }
 

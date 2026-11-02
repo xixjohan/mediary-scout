@@ -1,4 +1,5 @@
 import type { ResourceCandidate, ResourceType } from "../domain/domain.js";
+import { defaultResourceMetaExtractor } from "../domain/resource-meta-enricher.js";
 
 /**
  * Candidate view model for the human-facing resource panel (W2).
@@ -25,12 +26,14 @@ export interface ResourceCandidateView {
   type: ResourceType;
   /** Indexer / source label ("pansou-115", an indexer name, …). */
   source: string;
-  /** Bytes, when the provider reports it (Prowlarr does; PanSou does not). */
+  /** Bytes, when the provider reports it or parsed deterministically from title. */
   sizeBytes?: number;
-  /** ISO-8601 publish time, when the provider reports it (PanSou does). */
+  /** ISO-8601 publish time, when the provider reports it or parsed from title. */
   postedAt?: string;
   /** Swarm health, Prowlarr only. */
   seeders?: number;
+  /** File or episode count, when reported or parsed deterministically from title. */
+  fileCount?: number;
 }
 
 /** Read a finite number, else undefined. Never coerces a string that looks numeric. */
@@ -38,29 +41,24 @@ function finiteNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-/** Read a non-empty string, else undefined. */
-function nonEmptyString(value: unknown): string | undefined {
-  return typeof value === "string" && value.length > 0 ? value : undefined;
-}
-
 /** Project one candidate. Unknown payload keys are dropped by construction. */
 export function toCandidateView(candidate: ResourceCandidate): ResourceCandidateView {
-  const payload = candidate.providerPayload;
+  const payload = candidate.providerPayload ?? {};
   const view: ResourceCandidateView = {
     candidateId: candidate.id,
     title: candidate.title,
     type: candidate.type,
     source: candidate.source,
   };
-  // Only these four scalar facts cross the boundary. Everything else in the payload
-  // — url, password, magnet, downloadUrl, infoHash, rawType, indexer internals — is
-  // deliberately left behind.
-  const sizeBytes = finiteNumber(payload.sizeBytes);
-  if (sizeBytes !== undefined) view.sizeBytes = sizeBytes;
+  // Only safe scalar facts cross the boundary. Unknown keys in payload are discarded.
+  const enriched = defaultResourceMetaExtractor.resolve(candidate.title, payload);
+  if (enriched.sizeBytes !== undefined) view.sizeBytes = enriched.sizeBytes;
+  if (enriched.postedAt !== undefined) view.postedAt = enriched.postedAt;
+  if (enriched.fileCount !== undefined) view.fileCount = enriched.fileCount;
+
   const seeders = finiteNumber(payload.seeders);
   if (seeders !== undefined) view.seeders = seeders;
-  const postedAt = nonEmptyString(payload.datetime);
-  if (postedAt !== undefined) view.postedAt = postedAt;
+
   return view;
 }
 

@@ -8,7 +8,9 @@ describe("movie synopsis mobile contract", () => {
     existsSync(componentPath) ? componentPath : resolve(__dirname, "../components/movie-synopsis.tsx"),
     "utf8",
   );
-  const css = readFileSync(resolve(__dirname, "../app/globals.css"), "utf8");
+  const globalsCss = readFileSync(resolve(__dirname, "../app/globals.css"), "utf8");
+  const hubCssPath = resolve(__dirname, "../features/catalog/styles/title-hub.css");
+  const css = globalsCss + (existsSync(hubCssPath) ? "\n" + readFileSync(hubCssPath, "utf8") : "");
 
   it("renders a button only on the mobile branch (desktop is static markup)", () => {
     expect(component).toContain('matchMedia("(max-width: 860px)")');

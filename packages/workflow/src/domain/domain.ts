@@ -50,6 +50,18 @@ export function isUserVisibleWorkflowKind(kind: WorkflowKind): boolean {
   return kind !== "staging_recovery" && kind !== "resource_search";
 }
 
+/**
+ * Workflow kinds that are auxiliary records, searches, or reservations and DO NOT
+ * manage or mutate the aggregate season episode states.
+ *
+ * For these kinds, persisting a run snapshot must NEVER wipe the existing
+ * episode bucket in storage — they carry `episodes: []` by design as they
+ * do not perform acquisitions.
+ */
+export function isEpisodePreservingWorkflowKind(kind: WorkflowKind): boolean {
+  return kind === "resource_search" || kind === "title_organize" || kind === "manual_import";
+}
+
 /** Notice kinds a user must never see. Applied inside the notification queries,
  *  before the limit, so a leftover row cannot crowd out a real one. */
 export const HIDDEN_NOTIFICATION_KINDS = ["staging_leftover", "staging_recovery"] as const;
@@ -319,6 +331,8 @@ export interface VerifiedFile {
    */
   episodeCode: string | null;
   providerFileId: string;
+  /** Relative path under the root folder when scanned hierarchically */
+  relativePath?: string | undefined;
 }
 
 /** Where a notification's run was triggered from — drives feed grouping. */

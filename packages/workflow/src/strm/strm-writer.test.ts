@@ -35,15 +35,15 @@ describe("strm-writer", () => {
     expect(safeDirSegments("TV/Show: 1/Season 01")).toEqual(["TV", "Show_ 1", "Season 01"]);
   });
 
-  it("builds correct play path and play url", () => {
-    const p1 = buildPlayPath("cs_115", "file_123");
-    expect(p1).toBe("/api/strm/play/cs_115/file_123");
+  it("builds correct play path and play url based on taskId without mode pollution", () => {
+    const p1 = buildPlayPath("strm_task_1", "file_123");
+    expect(p1).toBe("/api/strm/play/strm_task_1/file_123");
 
-    const p2 = buildPlayPath("cs_115", "file_123", "Episode 01.mp4");
-    expect(p2).toBe("/api/strm/play/cs_115/file_123?name=Episode%2001.mp4");
+    const p2 = buildPlayPath("strm_task_1", "file_123", "Episode 01.mp4");
+    expect(p2).toBe("/api/strm/play/strm_task_1/file_123?name=Episode%2001.mp4");
 
-    const url = buildPlayUrl("http://192.168.1.100:3000/", "cs_115", "f1", "test.mkv");
-    expect(url).toBe("http://192.168.1.100:3000/api/strm/play/cs_115/f1?name=test.mkv");
+    const url = buildPlayUrl("http://192.168.1.100:3000/", "strm_task_1", "f1", "test.mkv");
+    expect(url).toBe("http://192.168.1.100:3000/api/strm/play/strm_task_1/f1?name=test.mkv");
   });
 
   it("writes .strm file with proper directory creation and trailing newline", async () => {

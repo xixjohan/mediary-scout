@@ -79,6 +79,59 @@ describe("StrmStore & MediaServerStore", () => {
       expect(await repo.getStrmTask(task.id, "acct_test")).toBeNull();
     });
 
+    it("persists deliveryMode ('redirect' vs 'proxy') and supports dynamic schema upgrade", async () => {
+      const path = tmpDb();
+      const repo = createRepo(path);
+
+      // 1. 创建带 proxy 模式的任务
+      const proxyTask = await repo.createStrmTask({
+        accountId: "acct_mode",
+        name: "Quark Proxy Task",
+        storageId: "cs_quark",
+        remoteFolderId: "f_quark",
+        remotePath: "/Quark/Movies",
+        localOutputDir: "/data/strm/quark",
+        deliveryMode: "proxy",
+      });
+      expect(proxyTask.deliveryMode).toBe("proxy");
+
+      const fetchedProxy = await repo.getStrmTask(proxyTask.id, "acct_mode");
+      expect(fetchedProxy?.deliveryMode).toBe("proxy");
+
+      // 2. 修改模式为 redirect
+      const updatedToRedirect = await repo.updateStrmTask({
+        id: proxyTask.id,
+        accountId: "acct_mode",
+        deliveryMode: "redirect",
+      });
+      expect(updatedToRedirect?.deliveryMode).toBe("redirect");
+
+      const fetchedRedirect = await repo.getStrmTask(proxyTask.id, "acct_mode");
+      expect(fetchedRedirect?.deliveryMode).toBe("redirect");
+
+      // 3. 修改模式为 proxy
+      const updatedBackToProxy = await repo.updateStrmTask({
+        id: proxyTask.id,
+        accountId: "acct_mode",
+        deliveryMode: "proxy",
+      });
+      expect(updatedBackToProxy?.deliveryMode).toBe("proxy");
+
+      const fetchedFinal = await repo.getStrmTask(proxyTask.id, "acct_mode");
+      expect(fetchedFinal?.deliveryMode).toBe("proxy");
+
+      // 4. 验证默认值回落为 redirect
+      const defaultTask = await repo.createStrmTask({
+        accountId: "acct_mode",
+        name: "Default Mode Task",
+        storageId: "cs_115",
+        remoteFolderId: "f_115",
+        remotePath: "/115/Movies",
+        localOutputDir: "/data/strm/115",
+      });
+      expect(defaultTask.deliveryMode).toBe("redirect");
+    });
+
     it("handles STRM link caching with TTL and prune", async () => {
       const path = tmpDb();
       const repo = createRepo(path);

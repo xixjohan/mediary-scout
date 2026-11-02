@@ -117,7 +117,7 @@ const routes = routeFiles().map((full) => ({
 
 describe("S5.4 /api 路由鉴权清单", () => {
   it("枚举到的路由数量与分类稳定（新增路由必须显式归类）", () => {
-    expect(routes.length).toBe(105);
+    expect(routes.length).toBe(106);
     const open = routes.filter((r) => OPEN_ROUTES.has(r.path));
     const selfGuarded = routes.filter((r) => SELF_GUARDED_ROUTES.has(r.path));
     const mcpGuarded = routes.filter((r) => MCP_ROUTES.has(r.path));
@@ -127,10 +127,10 @@ describe("S5.4 /api 路由鉴权清单", () => {
     expect(open.length).toBe(OPEN_ROUTES.size);
     expect(selfGuarded.length).toBe(SELF_GUARDED_ROUTES.size);
     expect(mcpGuarded.length).toBe(MCP_ROUTES.size);
-    expect(guarded.length).toBe(87);
+    expect(guarded.length).toBe(88);
   });
 
-  it("87 个非白名单路由全部引用 requireApiAccount 登录链", () => {
+  it("88 个非白名单路由全部引用 requireApiAccount 登录链", () => {
     const missing = routes
       .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path))
       .filter((r) => !usesImportedFunction(r.source, "requireApiAccount"))

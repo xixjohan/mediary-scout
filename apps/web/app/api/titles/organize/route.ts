@@ -198,7 +198,7 @@ export async function POST(request: NextRequest) {
 
   if (plan.kind !== "deterministic") {
     // Nothing was touched. Persist the review so the user can see what was ambiguous.
-    await getWorkflowRepository().saveWorkflowRunSnapshot(run);
+    await getWorkflowRepository().saveWorkflowRunSnapshot({ ...run, keepCurrentEpisodes: true });
     return NextResponse.json(
       { status: "manual_review", ...reviewPayload(plan) },
       { status: 200, headers: NO_STORE },
@@ -219,6 +219,7 @@ export async function POST(request: NextRequest) {
           ...run.workflowRun,
           auditEvents: [...recordedEvents],
         },
+        keepCurrentEpisodes: true,
       });
     },
   });
@@ -239,6 +240,7 @@ export async function POST(request: NextRequest) {
         status: "failed",
         auditEvents: [...recordedEvents],
       },
+      keepCurrentEpisodes: true,
     });
     return NextResponse.json(
       {
@@ -255,6 +257,7 @@ export async function POST(request: NextRequest) {
       ...run.workflowRun,
       auditEvents: [...recordedEvents],
     },
+    keepCurrentEpisodes: true,
   });
   return NextResponse.json(
     {

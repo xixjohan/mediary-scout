@@ -1,0 +1,782 @@
+/* =========================================================================
+   资源结果分面筛选、客户端分页与大屏专注弹窗模式 (Resource Filter & Modal)
+   ========================================================================= */
+
+.resource-filter-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.resource-filter-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.resource-filter-search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 240px;
+}
+
+.resource-filter-search-input {
+  width: 100%;
+  height: 32px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 30px;
+  font-size: 13px;
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.resource-filter-search-input:focus {
+  border-color: var(--accent);
+}
+
+.resource-filter-search-icon {
+  position: absolute;
+  left: 9px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.resource-filter-clear-btn {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: 50%;
+  transition: color var(--transition-fast);
+}
+
+.resource-filter-clear-btn:hover {
+  color: var(--text);
+}
+
+.resource-filter-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.resource-filter-sort-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.resource-filter-sort-select {
+  height: 32px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 10px 0 28px;
+  font-size: 12px;
+  color: var(--text-soft);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.resource-filter-sort-select:hover,
+.resource-filter-sort-select:focus {
+  border-color: var(--border-soft);
+  color: var(--text);
+}
+
+.resource-filter-sort-icon {
+  position: absolute;
+  left: 8px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.resource-filter-reset-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.resource-filter-reset-action:hover {
+  background: var(--bg-raised);
+  color: var(--text);
+  border-color: var(--border-soft);
+}
+
+.resource-filter-modal-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--info-subtle);
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-md);
+  color: var(--info);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.resource-filter-modal-trigger:hover {
+  background: var(--info-subtle);
+  border-color: var(--info-hover);
+  color: var(--info-hover);
+}
+
+.resource-filter-chips-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.resource-filter-facet-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  flex-shrink: 0;
+  min-width: 60px;
+  font-weight: 500;
+}
+
+.resource-filter-chips-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.resource-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.resource-filter-chip:hover {
+  border-color: var(--border-soft);
+  color: var(--text);
+}
+
+.resource-filter-chip.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #ffffff;
+  font-weight: 500;
+}
+
+.resource-filter-chip.is-active .resource-filter-chip-count {
+  background: rgba(255, 255, 255, 0.25);
+  color: #ffffff;
+}
+
+.resource-filter-chip.tone-resolution.is-active {
+  background: var(--file-video);
+  border-color: var(--file-video);
+}
+
+.resource-filter-chip.tone-spec.is-active {
+  background: var(--file-image);
+  border-color: var(--file-image);
+}
+
+.resource-filter-chip.tone-size.is-active {
+  background: var(--file-archive);
+  border-color: var(--file-archive);
+}
+
+.resource-filter-chip-count {
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  line-height: 14px;
+}
+
+.resource-filter-chips-divider {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  margin: 0 4px;
+}
+
+.resource-filter-stat-line {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.resource-filter-stat-line strong {
+  color: var(--text-primary);
+}
+
+/* 分页条控制 */
+.resource-pagination-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 4px 4px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.resource-pagination-info strong {
+  color: var(--text-primary);
+}
+
+.resource-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.resource-pagination-size-select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resource-pagination-size-select select {
+  height: 28px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 12px;
+  padding: 0 6px;
+  cursor: pointer;
+  outline: none;
+}
+
+.resource-pagination-buttons {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.resource-pagination-nav-btn,
+.resource-pagination-page-btn {
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.resource-pagination-nav-btn:hover:not(:disabled),
+.resource-pagination-page-btn:hover:not(.is-active) {
+  background: var(--bg-raised);
+  color: var(--text);
+  border-color: var(--border-soft);
+}
+
+.resource-pagination-page-btn.is-active {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
+.resource-pagination-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.resource-pagination-ellipsis {
+  padding: 0 4px;
+  color: var(--text-muted);
+}
+
+/* 资源弹窗专注视图 */
+.resource-results-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.resource-results-modal {
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  width: 100%;
+  max-width: 960px;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 25px 50px rgba(0, 0, 0, 0.6);
+}
+
+.resource-results-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.resource-results-modal-title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.resource-results-modal-icon {
+  color: var(--info);
+  flex-shrink: 0;
+}
+
+.resource-results-modal-title-group h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-results-modal-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--info-subtle);
+  border: 1px solid var(--info-border);
+  color: var(--info);
+  white-space: nowrap;
+}
+
+.resource-results-modal-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.resource-results-modal-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.resource-results-modal-body {
+  padding: 20px 22px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+}
+
+.resource-results-modal-footer {
+  padding: 10px 22px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.resource-results-filtered-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 16px;
+  text-align: center;
+  gap: 10px;
+  color: var(--text-muted);
+}
+
+.resource-results-empty-icon {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.resource-results-filtered-empty h4 {
+  margin: 0;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.resource-results-filtered-empty p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+  max-width: 400px;
+}
+
+/* =============================================================================
+   全部缺集看板 (MissingEpisodesDeck) 与 单集定向检索联动体系
+   ============================================================================= */
+
+.missing-episodes-deck {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.missing-episodes-deck.is-complete {
+  background: rgba(30, 215, 96, 0.04);
+  border: 1px dashed rgba(30, 215, 96, 0.3);
+  padding: 10px 14px;
+}
+
+.missing-deck-complete-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.missing-deck-complete-icon {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.missing-deck-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.missing-deck-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.missing-deck-alert-icon {
+  color: var(--warning);
+  flex-shrink: 0;
+}
+
+.missing-deck-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.missing-deck-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--warning-subtle);
+  color: var(--warning);
+  border: 1px solid var(--warning-border);
+}
+
+.missing-deck-season-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.missing-deck-tab-btn {
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.missing-deck-tab-btn:hover {
+  background: var(--bg-card);
+  color: var(--text);
+  border-color: var(--border-soft);
+}
+
+.missing-deck-tab-btn.is-active {
+  background: var(--warning-subtle);
+  border-color: var(--warning-border);
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.missing-deck-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.missing-episode-card {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: all var(--transition-fast);
+}
+
+.missing-episode-card:hover {
+  border-color: var(--warning-border);
+  transform: translateY(-1px);
+}
+
+.missing-episode-card.is-targeted {
+  border-color: var(--accent);
+  background: rgba(30, 215, 96, 0.08);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.missing-episode-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.missing-episode-code {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+.missing-episode-tag {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(243, 114, 127, 0.15);
+  color: var(--negative);
+  font-weight: 600;
+}
+
+.missing-episode-card-body {
+  display: flex;
+  align-items: center;
+}
+
+.missing-episode-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.missing-episode-search-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 6px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text-soft);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.missing-episode-search-btn:hover {
+  background: var(--warning-subtle);
+  border-color: var(--warning-border);
+  color: var(--warning);
+}
+
+.missing-episode-search-btn.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #000;
+  font-weight: 700;
+}
+
+.missing-deck-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.missing-deck-page-info {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.missing-deck-page-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.missing-deck-page-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.missing-deck-page-btn:hover:not(:disabled) {
+  background: var(--bg-card);
+  border-color: var(--border-soft);
+}
+
+.missing-deck-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* 资源搜索栏外层容器与定向药丸 */
+.title-resources-search-bar-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.title-resources-target-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  background: rgba(30, 215, 96, 0.12);
+  border: 1px solid rgba(30, 215, 96, 0.4);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+  align-self: flex-start;
+  box-shadow: 0 0 10px rgba(30, 215, 96, 0.1);
+  animation: fadeIn 0.2s ease-in-out;
+}
+
+.target-pill-icon {
+  font-size: 13px;
+}
+
+.target-pill-text {
+  color: var(--text);
+}
+
+.target-pill-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  padding: 0;
+}
+
+.target-pill-clear-btn:hover {
+  background: rgba(243, 114, 127, 0.3);
+  color: var(--negative);
+}
+
+.title-resources-chip.tone-targeted {
+  background: rgba(30, 215, 96, 0.12);
+  border-color: rgba(30, 215, 96, 0.4);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.title-resources-chip.tone-targeted:hover {
+  background: rgba(30, 215, 96, 0.2);
+  border-color: var(--accent);
+}
+
+.title-resources-select.is-targeted,
+.title-resources-number-input.is-targeted {
+  border-color: var(--accent);
+  background: rgba(30, 215, 96, 0.06);
+  box-shadow: 0 0 0 1px rgba(30, 215, 96, 0.3);
+}
+
+.episode-cell.is-targeted {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 2px var(--accent) !important;
+  transform: scale(1.05);
+}

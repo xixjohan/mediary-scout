@@ -132,7 +132,7 @@ export async function queueTrackingInitialization(input: {
   };
 }
 
-function staleStartedBefore(nowIso: string, timeoutMs: number | undefined): string | null {
+export function staleStartedBefore(nowIso: string, timeoutMs: number | undefined): string | null {
   if (timeoutMs === undefined) {
     return null;
   }

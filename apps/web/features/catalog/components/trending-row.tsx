@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Film, RefreshCw, Search } from "lucide-react";
+import { showHref } from "@media-track/workflow";
 import { getDiscoverFeed, type TrendingKind } from "../../../lib/trending";
 import { getDoubanRatings } from "../../../lib/douban-rating";
 import { PaginationBar } from "../../../components/ui/pagination-bar";
@@ -61,11 +62,16 @@ function TrendingCardItem({
   douban?: { score: number } | undefined;
 }) {
   const typeLabel = cardMediaTypeLabel(card.genreIds, card.mediaType, card.title);
+  // 海报直达优化：持有 tmdbId 时直接直达详情页，避免按片名二次重新搜索的冗余跳转与混淆
+  const href = card.tmdbId
+    ? showHref(card.tmdbId, "search", undefined, card.mediaType)
+    : `${basePath}?q=${encodeURIComponent(card.title)}`;
+
   return (
     <Link
       key={`${card.mediaType}_${card.tmdbId}`}
       className="trending-card"
-      href={`${basePath}?q=${encodeURIComponent(card.title)}`}
+      href={href}
     >
       <div className="trending-poster">
         {card.posterPath ? (
@@ -126,10 +132,6 @@ function TrendingRowPagination({
   );
 }
 
-/** The search page's empty-state discovery feed. When getDiscoverFeed yields []
- *  (proxy/network down or strict filter with no matches) it falls back to an
- *  informative placeholder so search is never blocked. Poster clicks navigate
- *  to `?q=<title>` so the pick lands in the normal results flow. */
 export async function TrendingRow({
   activeKind,
   basePath,

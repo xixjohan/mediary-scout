@@ -74,16 +74,20 @@ function StrmDeleteConfirmDialog({
 }
 
 function StrmReplaceBaseUrlModal({
+  tasks,
   onClose,
   onSuccess,
 }: {
+  tasks: StrmTask[];
   onClose: () => void;
   onSuccess: (resultMsg: string) => void;
 }) {
-  const [form, setForm] = useState({
-    directoryPath: "/data/strm/movies",
-    newBaseUrl: "http://192.168.1.100:3000",
-  });
+  const taskDirs = Array.from(new Set(tasks.map((t) => t.localOutputDir?.trim()).filter(Boolean) as string[]));
+  const defaultUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+
+  const [newBaseUrl, setNewBaseUrl] = useState(defaultUrl);
+  const [useCustomDir, setUseCustomDir] = useState(false);
+  const [customDirectory, setCustomDirectory] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -93,14 +97,22 @@ function StrmReplaceBaseUrlModal({
     setError(null);
 
     try {
+      const payload: { newBaseUrl: string; directoryPath?: string } = {
+        newBaseUrl: newBaseUrl.trim(),
+      };
+      if (useCustomDir && customDirectory.trim()) {
+        payload.directoryPath = customDirectory.trim();
+      }
+
       const res = await fetch("/api/strm/replace-base-url", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(form),
+        body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "替换基址失败");
-      onSuccess(`替换完成：已扫描 ${data.total} 个 .strm 文件，秒级更新 ${data.updated} 个，失败 ${data.errors?.length || 0} 个（0 网盘 API 调用）`);
+      const dirCount = data.directories?.length ?? (useCustomDir ? 1 : taskDirs.length);
+      onSuccess(`替换完成：已扫描 ${dirCount} 个任务目录下的 ${data.total} 个 .strm 文件，秒级更新 ${data.updated} 个，失败 ${data.errors?.length || 0} 个（0 网盘 API 调用）`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -110,7 +122,7 @@ function StrmReplaceBaseUrlModal({
 
   return createPortal(
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", backdropFilter: "blur(6px)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999 }}>
-      <div style={{ background: "var(--bg-base, #18181b)", border: "1px solid var(--border, #333)", borderRadius: "12px", padding: "1.5rem", width: "100%", maxWidth: "520px" }}>
+      <div style={{ background: "var(--bg-base, #18181b)", border: "1px solid var(--border, #333)", borderRadius: "12px", padding: "1.5rem", width: "100%", maxWidth: "540px" }}>
         <h3 style={{ margin: "0 0 0.5rem", fontSize: "1.2rem", fontWeight: 600 }}>极速批量修改播放基址</h3>
         <p style={{ color: "#888", fontSize: "0.85rem", marginBottom: "1rem" }}>
           当内网 IP 变动或启用公网域名 / FRP 穿透时，使用正则秒级重写本地所有 .strm 文件前缀。不发起任何网盘 API 请求，纯本地磁盘毫秒级完成。
@@ -122,38 +134,109 @@ function StrmReplaceBaseUrlModal({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "0.85rem" }}>
+        <form onSubmit={handleSubmit} style={{ display: "grid", gap: "0.95rem" }}>
           <div>
-            <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "0.25rem", color: "#ccc" }}>本地 STRM 根目录</label>
-            <input
-              type="text"
-              required
-              className="input"
-              value={form.directoryPath}
-              onChange={(e) => setForm({ ...form, directoryPath: e.target.value })}
-              placeholder="如 /data/strm/movies"
-              style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff" }}
-            />
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.35rem" }}>
+              <label style={{ fontSize: "0.85rem", color: "#ccc", fontWeight: 500 }}>
+                目标 STRM 输出目录
+              </label>
+              <button
+                type="button"
+                onClick={() => setUseCustomDir(!useCustomDir)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "#60a5fa",
+                  fontSize: "0.75rem",
+                  cursor: "pointer",
+                  textDecoration: "underline",
+                  padding: 0,
+                }}
+              >
+                {useCustomDir ? "切换回全部任务目录" : "自定义特定目录"}
+              </button>
+            </div>
+
+            {!useCustomDir ? (
+              <div style={{ padding: "0.75rem", background: "rgba(255, 255, 255, 0.04)", border: "1px solid #333", borderRadius: "8px" }}>
+                <div style={{ fontSize: "0.78rem", color: "#9ca3af", marginBottom: "0.4rem" }}>
+                  ⚡ 已自动汇聚当前全部任务输出路径（共 {taskDirs.length} 个目录）：
+                </div>
+                {taskDirs.length > 0 ? (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+                    {taskDirs.map((dir) => (
+                      <div
+                        key={dir}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: "0.4rem",
+                          fontSize: "0.8rem",
+                          color: "#60a5fa",
+                          background: "rgba(59, 130, 246, 0.1)",
+                          padding: "0.3rem 0.5rem",
+                          borderRadius: "4px",
+                          border: "1px solid rgba(59, 130, 246, 0.25)",
+                          fontFamily: "monospace",
+                          wordBreak: "break-all",
+                        }}
+                      >
+                        <span>📁</span>
+                        <span>{dir}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: "0.8rem", color: "#facc15" }}>
+                    ⚠️ 尚未配置任何 STRM 任务，可点击右上角「自定义特定目录」手动输入路径。
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div>
+                <input
+                  type="text"
+                  required
+                  className="input"
+                  value={customDirectory}
+                  onChange={(e) => setCustomDirectory(e.target.value)}
+                  placeholder="输入本地特定目录，如 E:\\LinuxWork\\Test 或 /data/strm"
+                  style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff", fontSize: "0.85rem" }}
+                />
+                <span style={{ fontSize: "0.75rem", color: "#888", marginTop: "0.2rem", display: "block" }}>
+                  提示：将仅重写此目录及其子文件夹下的 .strm 文件
+                </span>
+              </div>
+            )}
           </div>
 
           <div>
-            <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "0.25rem", color: "#ccc" }}>新播放基址 (New Base URL)</label>
+            <label style={{ display: "block", fontSize: "0.85rem", marginBottom: "0.25rem", color: "#ccc", fontWeight: 500 }}>
+              新播放基址 (New Base URL)
+            </label>
             <input
               type="text"
               required
               className="input"
-              value={form.newBaseUrl}
-              onChange={(e) => setForm({ ...form, newBaseUrl: e.target.value })}
+              value={newBaseUrl}
+              onChange={(e) => setNewBaseUrl(e.target.value)}
               placeholder="如 http://192.168.1.100:3000 或 https://media.example.com"
-              style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff" }}
+              style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff", fontSize: "0.85rem" }}
             />
+            <span style={{ fontSize: "0.75rem", color: "#888", marginTop: "0.2rem", display: "block" }}>
+              当前页面访问基址已默认回填，可直接使用或替换为局域网 IP / 公网反代域名
+            </span>
           </div>
 
-          <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "1rem" }}>
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: "0.5rem", marginTop: "0.75rem" }}>
             <button type="button" className="btn btn-secondary" onClick={onClose}>
               关闭
             </button>
-            <button type="submit" className="btn btn-primary" disabled={busy}>
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={busy || (!useCustomDir && taskDirs.length === 0 && !customDirectory.trim())}
+            >
               {busy ? "正在极速替换..." : "开始批量替换"}
             </button>
           </div>
@@ -225,7 +308,8 @@ export function StrmScheduleView({ storages }: { storages: StorageItem[] }) {
 
   const handleToggleActive = async (task: StrmTask) => {
     try {
-      const nextActive = !task.isActive;
+      const isCurrentlyPaused = task.status === "paused" || task.isActive === false;
+      const nextActive = isCurrentlyPaused;
       const res = await fetch(`/api/strm/tasks/${task.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -410,6 +494,7 @@ export function StrmScheduleView({ storages }: { storages: StorageItem[] }) {
 
       {showReplaceModal && (
         <StrmReplaceBaseUrlModal
+          tasks={tasks}
           onClose={() => setShowReplaceModal(false)}
           onSuccess={(msg) => {
             setShowReplaceModal(false);

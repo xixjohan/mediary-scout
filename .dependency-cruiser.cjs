@@ -87,6 +87,15 @@ module.exports = {
         path: "(^apps/web/features/[^/]+/application/|^apps/web/composition/)",
       },
     },
+    {
+      name: "design-system-stays-pure",
+      comment: "L1：Design System 属于无业务纯 UI 层，严禁依赖 features/platform/composition",
+      severity: "error",
+      from: { path: "^apps/web/design-system/" },
+      to: {
+        path: "(^apps/web/features/|^apps/web/platform/|^apps/web/composition/)",
+      },
+    },
   ],
 };
 

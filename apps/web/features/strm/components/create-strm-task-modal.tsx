@@ -31,7 +31,7 @@ export function StrmCreateTaskModal({
     remotePath: "/Media/Movies",
     localOutputDir: "/data/strm/movies",
     scanMode: "incremental_missing" as StrmScanMode,
-    deliveryMode: "redirect" as StrmDeliveryMode,
+    deliveryMode: (storages[0]?.provider === "pan115" ? "proxy" : "redirect") as StrmDeliveryMode,
     scanIntervalMinutes: 360,
     extensions: "mp4;mkv;ts;avi;mov;wmv;iso;flv",
     minFileSizeMb: 100,
@@ -99,7 +99,14 @@ export function StrmCreateTaskModal({
             <select
               className="input"
               value={form.storageId}
-              onChange={(e) => setForm({ ...form, storageId: e.target.value })}
+              onChange={(e) => {
+                const sel = storages.find((s) => s.id === e.target.value);
+                setForm({
+                  ...form,
+                  storageId: e.target.value,
+                  deliveryMode: sel?.provider === "pan115" ? "proxy" : form.deliveryMode,
+                });
+              }}
               style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff" }}
             >
               {storages.map((s) => (
@@ -189,9 +196,14 @@ export function StrmCreateTaskModal({
                 onChange={(e) => setForm({ ...form, deliveryMode: e.target.value as StrmDeliveryMode })}
                 style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff" }}
               >
-                <option value="redirect">302 重定向（客户端直连 CDN）</option>
-                <option value="proxy">服务端代理（支持 HTTP 206 中继）</option>
+                <option value="proxy">服务端代理（推荐，支持 HTTP 206 中继，全平台高兼容）</option>
+                <option value="redirect">302 重定向（客户端直连 CDN，适合 Infuse 等原生播放器）</option>
               </select>
+              {storages.find((s) => s.id === form.storageId)?.provider === "pan115" && (
+                <div style={{ fontSize: "0.75rem", color: "#f59e0b", marginTop: "0.35rem", lineHeight: 1.4 }}>
+                  💡 115网盘严格绑定 UA 与防盗链，推荐使用「服务端代理」，302重定向可能导致 PotPlayer/浏览器 403 或弹下载
+                </div>
+              )}
             </div>
           </div>
 

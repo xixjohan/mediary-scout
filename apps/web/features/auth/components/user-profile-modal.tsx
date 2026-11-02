@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { X, Shield, HardDrive, Calendar, KeyRound, LogOut, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../hooks/use-auth";
+import { formatAccountDisplayName, formatAccountInitial } from "../core/account-formatter";
 
 export function UserProfileModal({
   isOpen,
@@ -41,7 +42,8 @@ export function UserProfileModal({
 
   if (!isOpen || !user || !mounted) return null;
 
-  const initial = user.username.trim().charAt(0).toUpperCase() || "U";
+  const displayName = formatAccountDisplayName(user.username);
+  const initial = formatAccountInitial(displayName);
   const formattedDate = user.createdAt
     ? new Date(user.createdAt).toLocaleDateString("zh-CN", {
         year: "numeric",
@@ -120,7 +122,7 @@ export function UserProfileModal({
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
                 <h3 id="user-profile-title" style={{ margin: 0, fontSize: "18px", fontWeight: 600 }}>
-                  {user.username}
+                  {displayName}
                 </h3>
                 <span
                   style={{

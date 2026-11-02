@@ -43,31 +43,15 @@ import {
   runType2InitializationV2AndPersist,
   runType3MonitoringV2AndPersist,
 } from "./runner-v2.js";
+import { triggerPostIngestSyncIfSucceeded } from "../strm/pinpoint-ingest-sync.js";
+import type { MediaServerCoordinator } from "../mediaserver/coordinator.js";
 import { syncSeasonAgainstMetadata } from "./season-sync.js";
-import { isBrandStorageAuthError } from "../storage/storage-auth-error.js";
+import { isBrandStorageAuthError, maybeFreezeOnBrandAuthError } from "../storage/storage-auth-error.js";
+import { staleStartedBefore } from "./commands.js";
 import { userMessageDrive, type UserMessageScope } from "./user-requests.js";
 // Circular with replace-request.ts (it uses this module's claim helpers); both sides
 // only call the other's functions at run time, never at module evaluation.
 import { queueReplaceRequest } from "./replace-request.js";
-
-async function maybeFreezeOnBrandAuthError(input: {
-  connectedStorageId: string | null | undefined;
-  error: unknown;
-  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
-}): Promise<void> {
-  const { connectedStorageId, error, onAuthErrorFreeze } = input;
-  if (!onAuthErrorFreeze || !connectedStorageId || !isBrandStorageAuthError(error)) {
-    return;
-  }
-  const reason = error instanceof Error ? error.message : String(error);
-  try {
-    await onAuthErrorFreeze(connectedStorageId, reason);
-  } catch (freezeError) {
-    console.error(
-      `[media-track] onAuthErrorFreeze failed for ${connectedStorageId}: ${String(freezeError)}`,
-    );
-  }
-}
 
 /**
  * Pick the 115 landing parent for a title. Anime lands under its own parent
@@ -105,6 +89,8 @@ export interface BaseWorkerDeps {
   storageParentDirectoryId?: string;
   animeStorageParentDirectoryId?: string;
   moviesParentDirectoryId?: string;
+  baseUrl?: string;
+  mediaServerCoordinator?: MediaServerCoordinator;
 }
 
 export async function resolveWorkerDeps(
@@ -127,6 +113,8 @@ export async function resolveWorkerDeps(
   storageParentDirectoryId: string | undefined;
   animeStorageParentDirectoryId: string | undefined;
   moviesParentDirectoryId: string | undefined;
+  baseUrl: string | undefined;
+  mediaServerCoordinator: MediaServerCoordinator | undefined;
 }> {
   const ctx = resolve ? await resolve(accountId, connectedStorageId) : {};
   return {
@@ -157,6 +145,8 @@ export async function resolveWorkerDeps(
       ctx.animeStorageParentDirectoryId ?? base.animeStorageParentDirectoryId,
     moviesParentDirectoryId:
       ctx.moviesParentDirectoryId ?? base.moviesParentDirectoryId,
+    baseUrl: ctx.baseUrl ?? base.baseUrl,
+    mediaServerCoordinator: ctx.mediaServerCoordinator ?? base.mediaServerCoordinator,
   };
 }
 
@@ -475,54 +465,40 @@ export async function runQueuedType2Workflow(input: {
       input,
     );
     resolvedLlmConfig = deps.llmConfig;
+    const categoryParentId = requireCategoryParent(
+      storageParentForTitle(claimed.title, deps.storageParentDirectoryId, deps.animeStorageParentDirectoryId),
+    );
     const result = await runType2InitializationV2AndPersist({
       title: claimed.title,
       season: claimed.season,
-      categoryParentId: requireCategoryParent(
-        storageParentForTitle(
-          claimed.title,
-          deps.storageParentDirectoryId,
-          deps.animeStorageParentDirectoryId,
-        ),
-      ),
+      categoryParentId,
       resourceProvider: deps.resourceProvider,
       storage: deps.storage,
       model: deps.model,
       repository: input.repository,
       accountId: claimed.accountId,
       connectedStorageId: claimed.connectedStorageId,
-      ...(deps.preferredLanguage === undefined
-        ? {}
-        : { preferredLanguage: deps.preferredLanguage }),
-      ...(deps.qualityPreference === undefined
-        ? {}
-        : { qualityPreference: deps.qualityPreference }),
-      ...(deps.storageProvider === undefined
-        ? {}
-        : { storageProvider: deps.storageProvider }),
-      ...(deps.assrtToken === undefined
-        ? {}
-        : { assrtToken: deps.assrtToken }),
-      ...(deps.jevJudge === undefined
-        ? {}
-        : { jevJudge: deps.jevJudge }),
-      ...(deps.agentMemory === undefined
-        ? {}
-        : { agentMemory: deps.agentMemory }),
-        // Web-reference tools, same per-account resolution as memory.
-        ...(deps.titleResearch === undefined
-          ? {}
-          : { titleResearch: deps.titleResearch }),
-      // finishedAt is stamped post-run inside the persist step (see runner-v2),
-      // so it reflects actual completion, not the claim time.
-      workflowRun: {
-        id: claimed.workflowRun.id,
-        startedAt: claimed.workflowRun.startedAt,
-        finishedAt: null,
-      },
+      ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
+      ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
+      ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
+      ...(deps.assrtToken === undefined ? {} : { assrtToken: deps.assrtToken }),
+      ...(deps.jevJudge === undefined ? {} : { jevJudge: deps.jevJudge }),
+      ...(deps.agentMemory === undefined ? {} : { agentMemory: deps.agentMemory }),
+      ...(deps.titleResearch === undefined ? {} : { titleResearch: deps.titleResearch }),
+      workflowRun: { id: claimed.workflowRun.id, startedAt: claimed.workflowRun.startedAt, finishedAt: null },
       now,
     });
 
+    await triggerPostIngestSyncIfSucceeded(result.status, {
+      accountId: claimed.accountId,
+      connectedStorageId: claimed.connectedStorageId,
+      repository: input.repository,
+      storage: deps.storage,
+      title: claimed.title,
+      categoryParentId,
+      baseUrl: deps.baseUrl,
+      mediaServerCoordinator: deps.mediaServerCoordinator,
+    });
     return {
       status: "ran",
       workflowRunId: claimed.workflowRun.id,
@@ -1208,23 +1184,6 @@ async function patrolMovie(args: {
   }
 }
 
-function staleStartedBefore(
-  nowIso: string,
-  timeoutMs: number | undefined,
-): string | null {
-  if (timeoutMs === undefined) {
-    return null;
-  }
-  if (timeoutMs <= 0) {
-    throw new Error("staleActiveRunTimeoutMs must be positive");
-  }
-  const nowMs = Date.parse(nowIso);
-  if (!Number.isFinite(nowMs)) {
-    throw new Error(`Invalid now timestamp: ${nowIso}`);
-  }
-  return new Date(nowMs - timeoutMs).toISOString();
-}
-
 /**
  * The V2 directory lifecycle must verify-or-create the library category parent
  * (Movies/TV/Anime); a missing parent is a misconfiguration, not a silent
@@ -1317,6 +1276,17 @@ export async function runQueuedMovieAcquisition(input: {
         finishedAt: null,
       },
       now,
+    });
+
+    await triggerPostIngestSyncIfSucceeded(result.status, {
+      accountId: claimed.accountId,
+      connectedStorageId: claimed.connectedStorageId,
+      repository: input.repository,
+      storage: deps.storage,
+      title: claimed.title,
+      categoryParentId: deps.moviesParentDirectoryId ?? input.moviesParentDirectoryId ?? "",
+      baseUrl: deps.baseUrl,
+      mediaServerCoordinator: deps.mediaServerCoordinator,
     });
     return {
       status: "ran",

@@ -1,0 +1,230 @@
+/* ---------- notifications feed (Linear changelog patterns) ---------- */
+
+.feed {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+  max-width: 760px;
+}
+
+.feed-day-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.feed-day-label {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  color: var(--text-muted);
+}
+
+.feed-day-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Each notification is its own separated card, stacked with breathing room. */
+.feed-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.feed-card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-card);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* With a poster the card becomes a media object: poster column on the left,
+   the existing head/lines/chips stack on the right. Posterless cards (legacy
+   events, routine) keep the plain single-column layout. */
+.feed-card.has-poster {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.feed-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.feed-poster {
+  width: 54px;
+  flex-shrink: 0;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  background: var(--bg-raised);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* The poster already supplies the left indent, so the body's lines/chips don't
+   need the icon-column padding. */
+.feed-card.has-poster .feed-card-lines,
+.feed-card.has-poster .feed-card-chips {
+  padding-left: 0;
+}
+
+.feed-card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.feed-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The status pill sits at the right edge of the head, beside the timestamp. */
+.feed-card-head .feed-status-pill {
+  margin-left: auto;
+}
+
+.feed-card-head .feed-time {
+  margin-left: 0;
+}
+
+.feed-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+}
+
+.feed-icon.tone-green { color: var(--accent); background: rgba(30, 215, 96, 0.12); }
+.feed-icon.tone-blue { color: var(--info); background: rgba(83, 157, 245, 0.12); }
+.feed-icon.tone-amber { color: var(--warning); background: rgba(255, 164, 43, 0.12); }
+.feed-icon.tone-muted { color: var(--text-muted); }
+
+/* Body: the informative progress line(s), indented under the icon column. */
+.feed-card-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding-left: 40px;
+}
+
+.feed-card-line {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-soft);
+}
+
+.feed-card-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding-left: 40px;
+}
+
+.feed-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  /* Never let the pill compress + wrap its label (e.g. 暂无资源 → 暂无/资源) on a
+     narrow head row; the title (min-width:0 + ellipsis) absorbs the squeeze instead. */
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.feed-status-pill.tone-green { color: var(--accent); background: rgba(30, 215, 96, 0.12); }
+.feed-status-pill.tone-indigo { color: var(--info); background: rgba(83, 157, 245, 0.12); }
+.feed-status-pill.tone-amber { color: var(--warning); background: rgba(255, 164, 43, 0.12); }
+.feed-status-pill.tone-muted { color: var(--text-muted); background: var(--bg-raised); }
+
+.feed-chip-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.feed-chip-label {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.feed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.feed-chip {
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text-soft);
+}
+
+.feed-chip.is-new { color: var(--accent); background: rgba(30, 215, 96, 0.1); }
+.feed-chip.is-missing { color: var(--warning); background: rgba(255, 164, 43, 0.1); }
+
+/* Routine sweep — the "nothing changed" checks folded into one quiet card that
+   names each show it verified, instead of a "其余 N 部" count. */
+.routine-card {
+  border-color: rgba(255, 255, 255, 0.04);
+}
+
+.routine-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 0 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.routine-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  font-size: 12.5px;
+}
+
+.routine-name {
+  font-weight: 600;
+  color: var(--text-soft);
+}
+
+.routine-line {
+  color: var(--text-muted);
+}
+
+.feed-time {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}

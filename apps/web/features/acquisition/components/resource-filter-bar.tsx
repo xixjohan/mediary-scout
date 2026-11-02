@@ -6,6 +6,7 @@ import type {
   CandidateFacets,
   ResolutionTag,
   ResourceFilterCriteria,
+  SizeBucketTag,
   SortOption,
   SpecTag,
 } from "../contracts/resource-filter-model";
@@ -36,6 +37,7 @@ export function ResourceFilterBar({
     criteria.type !== "all" ||
     criteria.resolution !== "all" ||
     criteria.spec !== "all" ||
+    criteria.size !== "all" ||
     criteria.sortBy !== "default";
 
   return (
@@ -180,6 +182,36 @@ export function ResourceFilterBar({
                   onCriteriaChange((prev) => ({
                     ...prev,
                     spec: prev.spec === facet.value && facet.value !== "all" ? "all" : (facet.value as SpecTag),
+                  }))
+                }
+              >
+                <span>{facet.label}</span>
+                <span className="resource-filter-chip-count">{facet.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 分面标签栏 3：文件体积 */}
+      <div className="resource-filter-chips-row">
+        <span className="resource-filter-facet-label">文件体积:</span>
+        <div className="resource-filter-chips-group">
+          {facets.sizes.map((facet) => {
+            const active = criteria.size === facet.value;
+            if (facet.count === 0 && facet.value !== "all") return null;
+            return (
+              <button
+                type="button"
+                key={facet.value}
+                className={`resource-filter-chip tone-size ${active ? "is-active" : ""}`}
+                onClick={() =>
+                  onCriteriaChange((prev) => ({
+                    ...prev,
+                    size:
+                      prev.size === facet.value && facet.value !== "all"
+                        ? "all"
+                        : (facet.value as SizeBucketTag),
                   }))
                 }
               >

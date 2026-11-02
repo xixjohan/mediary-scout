@@ -228,6 +228,45 @@ function isInsideSuspense(node, sf) {
   return false;
 }
 
+/**
+ * 规则 5: 布局与静态外壳组件（Layout / Sidebar Shell）严禁直接调用 useSearchParams
+ * @param {string} filePath
+ * @param {string} source
+ * @returns {Array<{ file: string, line: number, column: number, rule: string, message: string }>}
+ */
+export function analyzeLayoutShellSource(filePath, source) {
+  const violations = [];
+  const sf = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const relPath = relative(root, filePath).replace(/\\/g, "/");
+
+  function visit(node) {
+    if (ts.isCallExpression(node)) {
+      const callText = node.expression.getText(sf);
+      if (callText === "useSearchParams") {
+        const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+        violations.push({
+          file: relPath,
+          line: line + 1,
+          column: character + 1,
+          rule: "layout-shell-no-use-search-params",
+          message:
+            "布局与侧边栏外壳组件（Layout / Sidebar Shell）严禁直接调用 'useSearchParams()'。在 Next.js PPR / Turbopack 模式下，直接调用该 Hook 会破坏 Suspense 静态边界并导致开发态死循环刷新。必须通过 Props 透传参数（如 storageId）或将其隔离在专用 Suspense 内部。",
+        });
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sf);
+  return violations;
+}
+
 /** CLI 主运行逻辑 */
 export function runGate() {
   const files = collectRouteFiles(appDir);
@@ -239,8 +278,29 @@ export function runGate() {
     allViolations.push(...violations);
   }
 
+  // 规则 5 检查：静态布局与侧边栏外壳组件
+  const layoutDir = join(root, "apps/web/components/layout");
+  const layoutFiles = [];
+  if (existsSync(layoutDir)) {
+    for (const entry of readdirSync(layoutDir, { withFileTypes: true })) {
+      if (entry.isFile() && (entry.name.endsWith(".tsx") || entry.name.endsWith(".ts")) && !entry.name.endsWith(".test.ts") && !entry.name.endsWith(".test.tsx")) {
+        layoutFiles.push(join(layoutDir, entry.name));
+      }
+    }
+  }
+  const accountIdentityFile = join(root, "apps/web/features/auth/components/account-identity.tsx");
+  if (existsSync(accountIdentityFile)) {
+    layoutFiles.push(accountIdentityFile);
+  }
+
+  for (const layoutFile of layoutFiles) {
+    const content = readFileSync(layoutFile, "utf8");
+    const violations = analyzeLayoutShellSource(layoutFile, content);
+    allViolations.push(...violations);
+  }
+
   if (allViolations.length > 0) {
-    console.error(`\x1b[31m[Blocking Routes Gate] 发现 ${allViolations.length} 项 Next.js 路由规范违规：\x1b[0m\n`);
+    console.error(`\x1b[31m[Blocking Routes Gate] 发现 ${allViolations.length} 项 Next.js 路由与布局规范违规：\x1b[0m\n`);
     for (const v of allViolations) {
       console.error(`  \x1b[33m${v.file}:${v.line}:${v.column}\x1b[0m [\x1b[36m${v.rule}\x1b[0m]`);
       console.error(`    ${v.message}\n`);
@@ -249,7 +309,7 @@ export function runGate() {
   }
 
   console.log(
-    `\x1b[32m[Blocking Routes Gate] 质检通过：已检查 ${files.length} 个路由文件，0 个阻塞性路由 (0 violations)\x1b[0m`,
+    `\x1b[32m[Blocking Routes Gate] 质检通过：已检查 ${files.length} 个路由文件与 ${layoutFiles.length} 个外壳组件，0 项规范违规 (0 violations)\x1b[0m`,
   );
   return { passed: true, violations: [] };
 }

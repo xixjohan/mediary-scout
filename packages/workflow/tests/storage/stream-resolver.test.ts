@@ -1,10 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   SingleFlightStreamResolver,
+  ProductionStorageStreamResolver,
+  MockStorageStreamResolver,
   type StorageStreamResolver,
   type ResolveStreamInput,
   type ResolvedStream,
 } from "../../src/storage/stream-resolver.js";
+import { Pan115CookieClient } from "../../src/storage/pan115-cookie-client.js";
 
 describe("SingleFlightStreamResolver", () => {
   it("folds concurrent resolveStream calls with identical key into single execution", async () => {
@@ -45,5 +48,78 @@ describe("SingleFlightStreamResolver", () => {
     // 关键断言：底层仅执行了 1 次解析！
     expect(callCount).toBe(1);
     expect(mockInner.resolveStream).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ProductionStorageStreamResolver", () => {
+  it("throws STORAGE_NOT_FOUND when storage does not exist and no fallback", async () => {
+    const resolver = new ProductionStorageStreamResolver(async () => null);
+    await expect(resolver.resolveStream({ storageId: "cs_none", fileId: "f1" })).rejects.toThrow(
+      "STORAGE_NOT_FOUND",
+    );
+  });
+
+  it("delegates to fallback when storage does not exist and fallback is provided", async () => {
+    const fallback = new MockStorageStreamResolver();
+    const resolver = new ProductionStorageStreamResolver(async () => null, fallback);
+    const res = await resolver.resolveStream({ storageId: "cs_none", fileId: "f1" });
+    expect(res.url).toBe("https://mock-cdn.cloudpan.com/download/cs_none/f1");
+  });
+
+  it("throws STORAGE_FROZEN when storage is frozen", async () => {
+    const resolver = new ProductionStorageStreamResolver(async () => ({
+      provider: "pan115",
+      status: "frozen",
+    }));
+    await expect(resolver.resolveStream({ storageId: "cs_f", fileId: "f1" })).rejects.toThrow(
+      "STORAGE_FROZEN",
+    );
+  });
+
+  it("throws PAN115_CREDENTIAL_MISSING when 115 cookie is empty", async () => {
+    const resolver = new ProductionStorageStreamResolver(async () => ({
+      provider: "pan115",
+      status: "active",
+      cookie: "   ",
+    }));
+    await expect(resolver.resolveStream({ storageId: "cs_empty", fileId: "f1" })).rejects.toThrow(
+      "PAN115_CREDENTIAL_MISSING",
+    );
+  });
+
+  it("resolves 115 stream URL via Pan115CookieClient and caches client instance", async () => {
+    const spy = vi.spyOn(Pan115CookieClient.prototype, "getDownloadUrl").mockResolvedValue({
+      url: "https://cdn.115cdn.net/down/test.mkv?token=abc",
+      fileName: "test.mkv",
+      fileSize: 1024,
+    });
+
+    try {
+      const resolver = new ProductionStorageStreamResolver(async (id) => ({
+        provider: "pan115",
+        status: "active",
+        cookie: "UID=foo; CID=bar; SEID=baz",
+      }));
+
+      const res = await resolver.resolveStream({
+        storageId: "cs_115_real",
+        fileId: "file_real",
+        pickCode: "pick_123",
+        userAgent: "Infuse/7.5",
+      });
+
+      expect(res.deliveryMode).toBe("redirect");
+      expect(res.url).toBe("https://cdn.115cdn.net/down/test.mkv?token=abc");
+      expect(res.headers?.["User-Agent"]).toBe("Infuse/7.5");
+      expect(spy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fileId: "file_real",
+          pickCode: "pick_123",
+          userAgent: "Infuse/7.5",
+        }),
+      );
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

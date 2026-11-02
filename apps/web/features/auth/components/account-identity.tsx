@@ -2,26 +2,37 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
 import { LogOut, KeyRound, Users, User } from "lucide-react";
 import { useAuth } from "../hooks/use-auth";
 import { UserProfileModal } from "./user-profile-modal";
+import {
+  formatAccountDisplayName,
+  formatAccountInitial,
+} from "../core/account-formatter";
+
+export { formatAccountDisplayName, formatAccountInitial };
 
 /**
  * 侧边栏用户身份组件：
  * 展示当前用户头像与昵称，点击展开下拉菜单（查看个人资料、修改密码、账号管理、退出登录）。
  */
-export function AccountIdentity({ username, isOwner }: { username: string; isOwner: boolean }) {
+export function AccountIdentity({
+  username,
+  isOwner,
+  storageId,
+}: {
+  username: string;
+  isOwner: boolean;
+  storageId?: string | undefined;
+}) {
   const { logout, user } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
-  const displayName = user?.username || username;
-  const initial = displayName.trim().charAt(0).toUpperCase() || "U";
+  const displayName = formatAccountDisplayName(user?.username || username);
+  const initial = formatAccountInitial(displayName);
 
-  // 保持当前活跃的工作空间网盘参数 (?w)
-  const searchParams = useSearchParams();
-  const w = searchParams?.get("w") ?? null;
+  // 通过属性透传活跃网盘 ID，彻底消除在静态外壳中调用 useSearchParams 破坏 Suspense 边界隐患
   const accountHref = (hash: string) =>
-    `/settings?tab=account${w ? `&w=${encodeURIComponent(w)}` : ""}${hash}`;
+    `/settings?tab=account${storageId ? `&w=${encodeURIComponent(storageId)}` : ""}${hash}`;
 
   return (
     <>

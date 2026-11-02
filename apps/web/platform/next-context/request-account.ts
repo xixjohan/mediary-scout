@@ -9,9 +9,13 @@ import {
   UNAUTHENTICATED_ACCOUNT_ID,
   UnauthenticatedAccountError,
 } from "../../features/auth/contracts/auth-tokens";
-import { isRemoteRequest } from "../../features/auth/core/identity-resolver";
+import {
+  isRemoteRequest,
+  resolveSingleUserAccountId,
+} from "../../features/auth/core/identity-resolver";
 import {
   hasLoginPassword,
+  isMultiUserEnabled,
   resolveBearerAccountId,
   resolveSessionAccountId,
 } from "../../features/auth/application/account-service";
@@ -36,13 +40,42 @@ async function bearerAccountFromRequestScope(): Promise<string | null> {
   return resolveBearerAccountId(requestHeaders);
 }
 
-export async function getCurrentAccountId(): Promise<string> {
-  let store: Awaited<ReturnType<typeof import("next/headers").cookies>> | undefined;
+async function resolveSingleUserCurrentAccount(): Promise<string> {
+  const hasPassword = await hasLoginPassword();
   let hdrs: Headers | undefined;
+  let sessionCookie: string | undefined;
   try {
-    const { cookies, headers } = await import("next/headers");
+    const nextHeaders = await import("next/headers");
+    if (typeof nextHeaders.headers === "function") {
+      hdrs = await nextHeaders.headers();
+    }
+    if (typeof nextHeaders.cookies === "function") {
+      sessionCookie = (await nextHeaders.cookies()).get(SESSION_COOKIE_NAME)?.value;
+    }
+  } catch {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  if (!hdrs) {
+    return DEFAULT_ACCOUNT_ID;
+  }
+  const sessionAccountId = await readSessionAccountId(sessionCookie);
+  if (!isRemoteRequest(hdrs)) {
+    return resolveSingleUserAccountId({ hasPassword, isRemote: false, sessionAccountId });
+  }
+  const bearerAccountId = await resolveBearerAccountId(hdrs);
+  if (bearerAccountId === DEFAULT_ACCOUNT_ID) return bearerAccountId;
+  return resolveSingleUserAccountId({ hasPassword, isRemote: true, sessionAccountId });
+}
+
+export async function getCurrentAccountId(): Promise<string> {
+  if (!isMultiUserEnabled()) {
+    return resolveSingleUserCurrentAccount();
+  }
+
+  let store: Awaited<ReturnType<typeof import("next/headers").cookies>> | undefined;
+  try {
+    const { cookies } = await import("next/headers");
     store = await cookies();
-    hdrs = await headers();
   } catch {
     return DEFAULT_ACCOUNT_ID;
   }
@@ -59,11 +92,6 @@ export async function getCurrentAccountId(): Promise<string> {
   // 2. Bearer Token 解析
   const bearerAccount = await bearerAccountFromRequestScope();
   if (bearerAccount) return bearerAccount;
-
-  // 3. 局域网开箱免密自适应（内网且未设密时，默认对标站长默认账号）
-  if (hdrs && !isRemoteRequest(hdrs) && !(await hasLoginPassword())) {
-    return DEFAULT_ACCOUNT_ID;
-  }
 
   return UNAUTHENTICATED_ACCOUNT_ID;
 }

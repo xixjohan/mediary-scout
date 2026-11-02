@@ -1,0 +1,132 @@
+/* 115 QR connect */
+.qr-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 8px;
+}
+
+.qr-connect-controls {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.qr-app-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  /* Grow to fill the row (its select stretches full-width via the column's
+     default align-items:stretch), so on a narrow viewport the dropdown spans the
+     card and 生成二维码 wraps below — matching the 偏好语言 row. */
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+/* The select itself uses the shared .setting-control look (see below). */
+
+.qr-hint {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* ---------- shared settings controls (select / time + button on one row) ---------- */
+.setting-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.setting-row > .setting-control {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.setting-row > .primary-button {
+  flex-shrink: 0;
+}
+
+/* Unified select / time control — same 44px box as .primary-button, with a
+   roomy custom chevron so the marker isn't crammed against the edge. */
+.setting-control {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 44px;
+  background-color: var(--bg-card);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-pill);
+  font-size: 13.5px;
+  font-family: inherit;
+  padding: 0 18px;
+  transition: border-color 0.15s ease;
+}
+
+.setting-control:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Multi-line variant of .setting-control for <textarea> (token/cookie boxes).
+   Shares the card bg / border / focus look, but un-does the single-line box:
+   auto height, real vertical padding, soft (non-pill) corners. */
+.setting-textarea {
+  appearance: none;
+  -webkit-appearance: none;
+  height: auto;
+  min-height: 76px;
+  background-color: var(--bg-card);
+  color: var(--text);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  padding: 10px 14px;
+  transition: border-color 0.15s ease;
+}
+
+.setting-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+select.setting-control {
+  cursor: pointer;
+  padding-right: 42px;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238a8a8a' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 16px center;
+}
+
+.qr-frame {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  background: #ffffff;
+  border-radius: 12px;
+  padding: 14px 14px 12px;
+}
+
+.qr-frame img {
+  width: 220px;
+  height: 220px;
+  display: block;
+}
+
+.qr-status {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text-soft);
+}
+
+.qr-status.scanned {
+  color: var(--accent-press);
+}

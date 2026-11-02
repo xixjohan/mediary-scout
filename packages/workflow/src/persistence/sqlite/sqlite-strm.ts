@@ -26,6 +26,7 @@ interface StrmTaskRow {
   exclude_keywords: string | null;
   schedule_mode: string;
   status: string;
+  delivery_mode?: string | null;
   last_scan_at: string | null;
   last_scan_status: string | null;
   last_error_message: string | null;
@@ -34,6 +35,7 @@ interface StrmTaskRow {
 }
 
 function strmTaskFromRow(row: StrmTaskRow): StrmTask {
+  const status = row.status as StrmTask["status"];
   return {
     id: row.id,
     accountId: row.account_id,
@@ -48,7 +50,9 @@ function strmTaskFromRow(row: StrmTaskRow): StrmTask {
     minFileSizeMb: row.min_file_size_mb,
     excludeKeywords: row.exclude_keywords ?? null,
     scheduleMode: row.schedule_mode as StrmTask["scheduleMode"],
-    status: row.status as StrmTask["status"],
+    status,
+    deliveryMode: (row.delivery_mode as StrmDeliveryMode) || "redirect",
+    isActive: status !== "paused",
     lastScanAt: row.last_scan_at,
     lastScanStatus: row.last_scan_status,
     lastErrorMessage: row.last_error_message,
@@ -123,9 +127,18 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
     return row ? strmTaskFromRow(row) : null;
   }
 
+  async findStrmTaskById(id: string): Promise<StrmTask | null> {
+    const row = this.db
+      .prepare("SELECT * FROM strm_tasks WHERE id = ?")
+      .get(id) as StrmTaskRow | undefined;
+    return row ? strmTaskFromRow(row) : null;
+  }
+
   async createStrmTask(input: CreateStrmTaskInput): Promise<StrmTask> {
     const id = input.id ?? `strm_task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const now = this.now();
+    const initialStatus: StrmTask["status"] =
+      (input as any).status ?? (input.isActive === false ? "paused" : "idle");
     const task: StrmTask = {
       id,
       accountId: input.accountId,
@@ -140,7 +153,9 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
       minFileSizeMb: input.minFileSizeMb ?? 100,
       excludeKeywords: input.excludeKeywords ?? null,
       scheduleMode: input.scheduleMode ?? "interval",
-      status: "idle",
+      status: initialStatus,
+      deliveryMode: input.deliveryMode ?? "redirect",
+      isActive: initialStatus !== "paused",
       lastScanAt: null,
       lastScanStatus: null,
       lastErrorMessage: null,
@@ -153,8 +168,8 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
         `INSERT INTO strm_tasks (
           id, account_id, name, storage_id, remote_folder_id, remote_path, local_output_dir,
           scan_interval_minutes, scan_mode, extensions, min_file_size_mb, exclude_keywords,
-          schedule_mode, status, last_scan_at, last_scan_status, last_error_message, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          schedule_mode, status, delivery_mode, last_scan_at, last_scan_status, last_error_message, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         task.id,
@@ -171,6 +186,7 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
         task.excludeKeywords,
         task.scheduleMode,
         task.status,
+        task.deliveryMode ?? "redirect",
         task.lastScanAt,
         task.lastScanStatus,
         task.lastErrorMessage,
@@ -188,6 +204,10 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
         (updated as any)[key] = val;
       }
     }
+    if (input.isActive !== undefined && input.status === undefined) {
+      updated.status = input.isActive ? "idle" : "paused";
+    }
+    updated.isActive = updated.status !== "paused";
     return updated as StrmTask;
   }
 
@@ -203,7 +223,7 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
         `UPDATE strm_tasks SET
           name = ?, storage_id = ?, remote_folder_id = ?, remote_path = ?, local_output_dir = ?,
           scan_interval_minutes = ?, scan_mode = ?, extensions = ?, min_file_size_mb = ?, exclude_keywords = ?,
-          schedule_mode = ?, status = ?, last_scan_at = ?, last_scan_status = ?, last_error_message = ?, updated_at = ?
+          schedule_mode = ?, status = ?, delivery_mode = ?, last_scan_at = ?, last_scan_status = ?, last_error_message = ?, updated_at = ?
         WHERE id = ? AND account_id = ?`,
       )
       .run(
@@ -219,6 +239,7 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
         updated.excludeKeywords,
         updated.scheduleMode,
         updated.status,
+        updated.deliveryMode ?? "redirect",
         updated.lastScanAt,
         updated.lastScanStatus,
         updated.lastErrorMessage,

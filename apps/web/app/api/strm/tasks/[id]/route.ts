@@ -4,6 +4,7 @@ import path from "node:path";
 import { isDemoMode } from "../../../../../lib/demo-mode";
 import { requireApiAccount } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
+import { ensureStrmTaskConfigRegistry } from "../../../../../composition/runtime-container";
 import type { UpdateStrmTaskInput } from "@media-track/workflow";
 
 interface RouteParams {
@@ -97,6 +98,7 @@ export async function PUT(request: NextRequest, context: RouteParams) {
     return NextResponse.json({ error: "更新任务失败" }, { status: 500 });
   }
 
+  ensureStrmTaskConfigRegistry().invalidate(id);
   return NextResponse.json(updated);
 }
 
@@ -153,6 +155,8 @@ export async function DELETE(request: NextRequest, context: RouteParams) {
   if (!success) {
     return NextResponse.json({ error: "删除任务失败" }, { status: 500 });
   }
+
+  ensureStrmTaskConfigRegistry().invalidate(id);
 
   return NextResponse.json({
     ok: true,

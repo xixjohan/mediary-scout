@@ -45,8 +45,10 @@ const DUMMY_HASH =
   "scrypt:a2448ef076990b889ef0540720bccce2:4fdc41afebb4560f4a638b4225d8325904894d18d2df1c7a95c50a65c141b926dc252e99b63e681e15e2d6e008acc845b02c9a2fc99a4888749226ab262c6978";
 
 export function isMultiUserEnabled(): boolean {
-  // 原生支持统一用户体系，彻底消除环境变量二元硬开关阻断
-  return true;
+  if (process.env.MEDIA_TRACK_SINGLE_USER === "true" || process.env.MEDIA_TRACK_MULTI_USER === "0") {
+    return false;
+  }
+  return process.env.MEDIA_TRACK_MULTI_USER === "1";
 }
 
 export function isCookieSecure(request: {
@@ -223,9 +225,11 @@ async function getLoginTargetAccount(
   repo: WorkflowRepository,
   username: string,
 ): Promise<Account | null> {
-  const trimmed = username.trim();
-  if (trimmed) {
-    return repo.getAccountByUsername(trimmed);
+  if (isMultiUserEnabled()) {
+    const trimmed = username.trim();
+    if (trimmed) {
+      return repo.getAccountByUsername(trimmed);
+    }
   }
   return repo.getAccountById(DEFAULT_ACCOUNT_ID);
 }
@@ -237,7 +241,7 @@ export async function loginAccount(
 ): Promise<AuthOutcome> {
   const trimmed = username.trim();
   const key = normalizeThrottleKey(
-    throttleKey ?? (trimmed || DEFAULT_ACCOUNT_ID),
+    throttleKey ?? (isMultiUserEnabled() ? (trimmed || DEFAULT_ACCOUNT_ID) : DEFAULT_ACCOUNT_ID),
   );
   const now = Date.now();
   const verdict = checkLoginAllowed(key, now);
@@ -254,7 +258,7 @@ export async function loginAccount(
     recordLoginFailure(key, now);
     return {
       ok: false,
-      error: "用户名或密码不正确。",
+      error: isMultiUserEnabled() ? "用户名或密码不正确。" : "密码不正确。",
     };
   }
 

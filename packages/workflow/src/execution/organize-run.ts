@@ -129,6 +129,7 @@ export function buildOrganizeRun(input: {
     decisions,
     transferAttempts: [],
     notifications: [],
+    keepCurrentEpisodes: true,
   };
 }
 

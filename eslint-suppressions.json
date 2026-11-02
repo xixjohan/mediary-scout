@@ -35,9 +35,6 @@
   "apps/web/app/show/[tmdbId]/page.tsx": {
     "complexity": {
       "count": 3
-    },
-    "max-lines": {
-      "count": 1
     }
   },
   "apps/web/features/acquisition/application/acquisition-service.ts": {
@@ -60,11 +57,6 @@
   },
   "apps/web/features/acquisition/components/season-request-menu.tsx": {
     "complexity": {
-      "count": 1
-    }
-  },
-  "apps/web/features/acquisition/components/title-resource-panel.tsx": {
-    "max-lines": {
       "count": 1
     }
   },

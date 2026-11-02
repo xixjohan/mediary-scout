@@ -285,6 +285,7 @@ export const SQLITE_SCHEMA = `
     exclude_keywords text,
     schedule_mode text DEFAULT 'interval',
     status text DEFAULT 'idle',
+    delivery_mode text DEFAULT 'redirect',
     last_scan_at text,
     last_scan_status text,
     last_error_message text,
@@ -394,5 +395,16 @@ export function upgradeSubscriptionPolicyShape(db: Database.Database): void {
   }
   if (!cols.some((c) => c.name === "custom_keywords")) {
     db.exec("ALTER TABLE subscription_policies ADD COLUMN custom_keywords text NOT NULL DEFAULT '[]'");
+  }
+}
+
+/**
+ * 补上早于 delivery_mode 的库缺的列。
+ */
+export function upgradeStrmTasksShape(db: Database.Database): void {
+  const cols = db.pragma("table_info(strm_tasks)") as Array<{ name: string }>;
+  if (cols.length === 0) return;
+  if (!cols.some((c) => c.name === "delivery_mode")) {
+    db.exec("ALTER TABLE strm_tasks ADD COLUMN delivery_mode text DEFAULT 'redirect'");
   }
 }

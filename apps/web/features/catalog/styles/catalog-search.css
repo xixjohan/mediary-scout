@@ -1,0 +1,1284 @@
+/* ---------- search ---------- */
+
+.search-hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 28px;
+}
+
+.search-hero h1 {
+  font-size: 32px;
+  margin-bottom: 4px;
+}
+
+.search-form {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--bg-raised);
+  border-radius: var(--radius-pill);
+  padding: 0 18px;
+  height: 44px;
+  color: var(--text-muted);
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.search-box:focus-within {
+  border-color: var(--border-soft);
+  background: #2a2a2a;
+  color: var(--text);
+}
+
+.search-box input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-size: 14px;
+  width: 220px;
+  font-family: inherit;
+}
+
+.search-box-large {
+  padding-right: 38px;
+}
+
+.search-box-large input {
+  width: 320px;
+}
+
+/* 搜索页大搜索框清空按钮（类似 title-resources-input-clear 胶囊方案） */
+.search-box-clear {
+  position: absolute;
+  right: 12px;
+  top: 0;
+  bottom: 0;
+  margin: auto 0;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: all var(--transition-fast);
+}
+
+.search-box-clear:hover {
+  background: var(--bg-card-alt);
+  color: var(--text);
+  border-color: var(--border);
+  transform: scale(1.1);
+}
+
+.search-box-clear:active {
+  transform: scale(0.95);
+}
+
+.search-box-clear svg {
+  position: static !important;
+  color: inherit !important;
+  pointer-events: none;
+}
+
+/* 媒体库标题行的盘内快速查找框（.search-box 小变体，LibraryQuickFind）。 */
+.search-box-compact {
+  width: 230px;
+  height: 36px;
+  padding: 0 12px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.search-box-compact input {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+/* 清空按钮仅 query 非空时渲染。 */
+.search-box-compact-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px;
+  /* 命中区不小于 WCAG 2.5.8 的 24×24 触摸最小尺寸（图标仍 14px）。 */
+  min-width: 24px;
+  min-height: 24px;
+  flex-shrink: 0;
+  font-family: inherit;
+}
+
+.search-box-compact-clear:hover {
+  color: var(--text);
+}
+
+.search-box input::placeholder {
+  color: var(--text-muted);
+}
+
+.primary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--accent);
+  color: #121212;
+  border: none;
+  border-radius: var(--radius-pill);
+  height: 44px;
+  padding: 0 26px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.4px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+  transition: transform 0.1s ease, background 0.15s ease;
+}
+
+.primary-button {
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+/* The search submit button must never be squeezed by the flex row — keep its
+   label ("搜索") on one line at a stable width. */
+.search-form .primary-button {
+  flex-shrink: 0;
+  min-width: 96px;
+  justify-content: center;
+}
+
+.primary-button:hover:not(:disabled) {
+  background: #3be477;
+}
+
+.primary-button:active:not(:disabled) {
+  background: var(--accent-press);
+  transform: translateY(1px);
+}
+
+/* Icon micro-interaction: the + (or download/layers) pops, the pill stays put */
+.primary-button svg,
+.season-request-button svg,
+.secondary-button svg {
+  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.primary-button:hover:not(:disabled) svg,
+.season-request-button:hover:not(:disabled) svg,
+.secondary-button:hover svg {
+  transform: scale(1.2);
+}
+
+.primary-button:disabled {
+  background: var(--bg-card);
+  color: var(--text-muted);
+  cursor: default;
+  transform: none;
+}
+
+.quiet-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 72px 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.quiet-state strong {
+  color: var(--text);
+  font-size: 16px;
+}
+
+.quiet-state.compact {
+  padding: 40px 24px;
+}
+
+.section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.section-heading h2 {
+  font-size: 20px;
+}
+
+.section-heading p {
+  font-size: 12px;
+}
+
+/* ---------- candidate cards ---------- */
+
+.candidate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  gap: 16px;
+}
+
+.candidate-card {
+  display: flex;
+  gap: 16px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-card);
+  padding: 16px;
+  transition: background 0.2s ease;
+}
+
+.candidate-card:hover {
+  background: var(--bg-card);
+}
+
+.candidate-poster {
+  display: grid;
+  place-items: center;
+  width: 96px;
+  min-width: 96px;
+  height: 132px;
+  border-radius: 6px;
+  background: linear-gradient(160deg, #2a2a2a 0%, #1c1c1c 100%);
+  color: var(--text-soft);
+  font-weight: 700;
+  font-size: 16px;
+  text-align: center;
+  padding: 8px;
+  box-shadow: var(--shadow-heavy);
+}
+
+.candidate-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  /* Fill the row's remaining width so the title-row spans the full card and its
+     space-between pushes the 获取 button to the right edge — even when there is
+     no overview to widen the body. */
+  flex: 1;
+}
+
+.candidate-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.candidate-title-row h3 {
+  font-size: 16px;
+}
+
+.candidate-title-row p {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.candidate-overview {
+  font-size: 13px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.candidate-meta {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.candidate-meta span {
+  background: var(--bg-raised);
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ---------- library ---------- */
+
+.library-heading {
+  margin-bottom: 20px;
+}
+
+.library-heading h1 {
+  font-size: 28px;
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.title-stage {
+  display: flex;
+  gap: 24px;
+  background: linear-gradient(140deg, #2c2c2c 0%, var(--bg-surface) 70%);
+  border-radius: var(--radius-card);
+  padding: 24px;
+  box-shadow: var(--shadow-heavy);
+}
+
+.poster-tile {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 148px;
+  min-width: 148px;
+  height: 200px;
+  border-radius: 6px;
+  background: linear-gradient(160deg, #3a3a3a 0%, #181818 100%);
+  padding: 14px;
+  font-weight: 700;
+  box-shadow: var(--shadow-heavy);
+}
+
+.poster-tile small {
+  color: var(--text-muted);
+}
+
+.stage-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.stage-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.6px;
+  color: var(--accent);
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.stage-content h2 {
+  font-size: 26px;
+}
+
+.stage-meta {
+  display: flex;
+  gap: 8px;
+}
+
+.stage-meta span {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-pill);
+  padding: 3px 12px;
+  font-size: 11px;
+  color: var(--text-soft);
+}
+
+.season-progress {
+  margin-top: 6px;
+}
+
+.progress-track {
+  position: relative;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.12);
+  overflow: hidden;
+}
+
+.aired-track {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: var(--radius-pill);
+}
+
+.obtained-track {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
+
+.progress-copy {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.metric-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.metric-tile {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--bg-surface);
+  border-radius: var(--radius-card);
+  padding: 14px 16px;
+}
+
+.metric-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+}
+
+.tone-green .metric-icon {
+  color: var(--accent);
+  background: rgba(30, 215, 96, 0.12);
+}
+
+.tone-coral .metric-icon {
+  color: var(--negative);
+  background: rgba(243, 114, 127, 0.12);
+}
+
+.tone-amber .metric-icon {
+  color: var(--warning);
+  background: rgba(255, 164, 43, 0.12);
+}
+
+.tone-blue .metric-icon {
+  color: var(--info);
+  background: rgba(83, 157, 245, 0.12);
+}
+
+.metric-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.metric-value {
+  font-size: 20px;
+}
+
+/* ---------- panels ---------- */
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 16px;
+  align-items: start;
+}
+
+.panel {
+  background: var(--bg-surface);
+  border-radius: var(--radius-card);
+  padding: 20px;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  color: var(--text-muted);
+}
+
+.panel-title {
+  font-size: 16px;
+  color: var(--text);
+}
+
+.panel-note {
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.legend-row {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.legend-item::before {
+  content: "";
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+
+.legend-item.obtained::before {
+  background: var(--accent);
+}
+
+.legend-item.missing::before {
+  background: var(--negative);
+}
+
+.legend-item.unaired::before {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* episode grid: state = visual density (see architecture doc) */
+
+.episode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: 8px;
+}
+
+.episode-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  border-radius: 6px;
+  padding: 10px 4px;
+  font-size: 11px;
+  border: 1px solid transparent;
+}
+
+.episode-cell strong {
+  font-size: 13px;
+}
+
+.episode-cell span {
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.episode-cell.obtained {
+  background: rgba(30, 215, 96, 0.12);
+  border-color: rgba(30, 215, 96, 0.55);
+}
+
+.episode-cell.obtained span {
+  color: var(--accent);
+}
+
+.episode-cell.provider-ahead {
+  background: rgba(83, 157, 245, 0.12);
+  border-color: rgba(83, 157, 245, 0.55);
+}
+
+.episode-cell.provider-ahead span {
+  color: var(--info);
+}
+
+.episode-cell.missing-aired {
+  background: rgba(243, 114, 127, 0.1);
+  border-color: rgba(243, 114, 127, 0.5);
+}
+
+.episode-cell-link {
+  text-decoration: none;
+  cursor: pointer;
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.episode-cell-link:hover {
+  transform: translateY(-2px);
+  border-color: var(--warning);
+}
+
+.episode-cell.missing-aired span {
+  color: var(--negative);
+}
+
+.episode-cell.unaired,
+.episode-cell.unknown {
+  border-color: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+/* 待换: a user asked for this episode to be replaced and no new file has landed yet
+   (the old one is still there). Added on top of the cell's state class with the same
+   specificity, so these rules must come after EVERY state rule above — unaired and
+   unknown included (their faint border, muted text and 0.6 opacity would otherwise win). */
+.episode-cell.swap {
+  position: relative;
+  background: rgba(243, 114, 127, 0.14);
+  border-color: var(--negative);
+  color: var(--text);
+  opacity: 1;
+}
+
+.episode-cell.swap span {
+  color: var(--negative);
+}
+
+.episode-cell.swap::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--negative);
+}
+
+.side-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.event-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.event-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.event-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  border-radius: 50%;
+  background: var(--bg-raised);
+  color: var(--accent);
+}
+
+.event-icon.tone-1 {
+  color: var(--warning);
+}
+
+.event-icon.tone-2 {
+  color: var(--info);
+}
+
+.event-title {
+  display: block;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.event-body {
+  display: block;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.ops-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ops-line {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.ops-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--text-soft);
+}
+
+.ops-line strong {
+  display: block;
+  font-size: 13px;
+}
+
+.ops-line small {
+  color: var(--text-muted);
+}
+
+/* ---------- skeletons ---------- */
+
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-raised);
+  border-radius: var(--radius-card);
+  color: transparent;
+}
+
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.skeleton-input {
+  width: 360px;
+  height: 44px;
+  border-radius: var(--radius-pill);
+}
+
+.skeleton-button {
+  width: 110px;
+  height: 44px;
+  border-radius: var(--radius-pill);
+}
+
+.skeleton-card {
+  height: 164px;
+  border-radius: var(--radius-card);
+  background: var(--bg-surface);
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.05), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+.skeleton-heading {
+  width: 280px;
+  height: 36px;
+  margin-bottom: 20px;
+}
+
+/* Notification feed card placeholder — matches the poster-card height. */
+.skeleton-feed-card {
+  height: 92px;
+}
+
+/* Title-hub skeleton — mirrors the real hub header (poster + title block) and
+   season list so the swap to content doesn't reflow. */
+.skeleton-hub-poster {
+  width: 180px;
+  min-width: 180px;
+  aspect-ratio: 2 / 3;
+  border-radius: var(--radius-card);
+}
+
+.skeleton-hub-titleblock {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+  padding-bottom: 6px;
+}
+
+.skeleton-hub-badge {
+  width: 88px;
+  height: 24px;
+  border-radius: var(--radius-pill);
+}
+
+.skeleton-hub-h1 {
+  width: 60%;
+  min-width: 220px;
+  height: 34px;
+}
+
+.skeleton-hub-line {
+  width: 100%;
+  max-width: 460px;
+  height: 14px;
+}
+
+.skeleton-hub-line.short {
+  max-width: 340px;
+}
+
+.skeleton-hub-section {
+  width: 150px;
+  height: 22px;
+}
+
+.skeleton-hub-row {
+  height: 56px;
+  list-style: none;
+}
+
+/* ---------- responsive ---------- */
+
+/* Account identity has two homes: the footer (desktop) and the top bar (mobile).
+   This wrapper holds the top-bar copy; desktop hides it, mobile shows it.
+   Single-user/demo → AccountIdentityLoader renders null → empty anyway. */
+.sidebar-top-identity {
+  display: none;
+}
+
+@media (max-width: 1080px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .app-shell {
+    /* minmax(0, 1fr) — NOT bare `1fr` (= minmax(auto, 1fr)). A bare 1fr track
+       grows to its content's min-content, so a wide child (search form, candidate
+       card) pushed the single column to ~600px and the whole page overflowed the
+       viewport on mobile. minmax(0, …) pins the track to the container width and
+       lets inner content wrap/shrink instead. */
+    grid-template-columns: minmax(0, 1fr);
+    /* Pack rows to the top. Without this, a short page (e.g. one search result)
+       lets the grid distribute the leftover min-height:100vh space INTO the
+       rows, stretching the top nav row tall. */
+    align-content: start;
+  }
+
+  /* Top bar now holds only the brand + drive switcher (nav moved to a fixed
+     bottom tab bar below), so they sit at each end. */
+  .sidebar {
+    position: static;
+    height: auto;
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    gap: 8px;
+  }
+
+  /* Room is no longer tight in the top bar (nav left it) — show the wordmark. */
+  .brand {
+    padding: 0;
+    gap: 10px;
+  }
+
+  /* Mobile primary navigation = a fixed bottom tab bar (Material/HIG pattern for
+     3–5 sections: thumb-reachable, highest discoverability vs a hidden hamburger).
+     The main `<nav>` is pulled out of the top bar and pinned to the viewport
+     bottom, so logo + drive switcher and the nav no longer fight for top-bar
+     width (the switcher used to overlap 搜索/媒体库/通知).
+     IMPORTANT: `.sidebar > nav` (direct child), NOT `.sidebar nav` — the drive
+     switcher's dropdown is `<nav class="ws-menu">` nested inside `.sidebar`, and a
+     descendant selector would turn THAT into a bottom sheet too (it did). */
+  .sidebar > nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    background: var(--bg-surface);
+    border-top: 1px solid var(--border);
+    /* Honour the safe area on all sides (home indicator + landscape notch). The
+       `, 0px` fallback is required — env() with no fallback invalidates the WHOLE
+       padding declaration on browsers without env() support. */
+    padding: 6px calc(4px + env(safe-area-inset-right, 0px))
+      calc(6px + env(safe-area-inset-bottom, 0px)) calc(4px + env(safe-area-inset-left, 0px));
+  }
+
+  .nav-list {
+    flex-direction: row;
+    justify-content: space-around;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  /* Each tab: icon over a small label, generous touch target (≥44px). */
+  .nav-item {
+    flex-direction: column;
+    gap: 3px;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 6px;
+    min-width: 56px;
+    min-height: 44px;
+    justify-content: center;
+    white-space: nowrap;
+    position: relative;
+    border-radius: var(--radius-card);
+  }
+
+  /* Count badge overlays the icon (top-right) instead of dropping below the label
+     and stretching the tab. */
+  .nav-item .nav-badge {
+    position: absolute;
+    top: 2px;
+    right: 10px;
+  }
+
+  .nav-item.is-active {
+    color: var(--accent);
+    background: none;
+  }
+
+  .sidebar-footer {
+    display: none;
+  }
+
+  /* The footer's 设置/活动 links are hidden on mobile — show the nav-item versions. */
+  .nav-settings-item {
+    display: block;
+  }
+
+  .nav-activity-item {
+    display: block;
+  }
+
+  /* Mobile: the footer is hidden, so surface the account identity in the TOP
+     bar (next to the drive switcher), not the bottom tab bar — the tab bar is
+     icon-over-label links, and a <details> dropdown doesn't fit that pattern. */
+  .sidebar-top-identity {
+    display: block;
+  }
+  /* Avoid double-display: the footer copy is still rendered server-side (it's
+     the desktop home), only hidden on mobile — getCurrentAccountSummary is
+     per-request memoized via React.cache so the two loaders share one DB read. */
+  .sidebar-footer .account-identity {
+    display: none;
+  }
+  /* The top bar is a flex row with justify-content:space-between. The identity
+     <details> sits at the right end; keep it compact (avatar dot + name) so it
+     shares the row with the drive switcher without overflow. */
+  .sidebar-top-identity .account-identity {
+    margin-bottom: 0;
+    /* Establish a positioning context so the absolutely-positioned dropdown
+       anchors to THIS block, not the viewport. */
+    position: relative;
+  }
+  .sidebar-top-identity .account-identity-summary {
+    padding: 6px 8px;
+  }
+  .sidebar-top-identity .account-identity-name {
+    /* Truncate (ellipsis) the username text on very narrow phones (≤390px) so the
+       avatar dot + truncated name share the top bar with the drive switcher
+       without overflow; the dropdown reveals the full name. (Not fully hidden —
+       a breakpoint to hide it entirely is YAGNI for now.) */
+    max-width: 80px;
+  }
+  /* The dropdown opens absolutely-positioned below the summary, anchored to the
+     right edge of the identity block (whose `position: relative` is set above)
+     so it never overflows a 390px viewport horizontally. */
+  .sidebar-top-identity .account-identity-menu {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    min-width: 180px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border, #2a2a2a);
+    border-radius: var(--radius-card);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    padding: 4px;
+    z-index: 60;
+  }
+
+  .main {
+    /* Bottom padding clears the fixed bottom tab bar (~56px + safe area) so the
+       last content isn't hidden behind it. */
+    padding: 20px 16px calc(72px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .title-stage {
+    flex-direction: column;
+  }
+
+  /* The search box has a fixed 320px input (+ the 搜索 button) → ~500px, wider
+     than a phone. Let the form take the full row and the box flex/shrink so the
+     input fills whatever space is left instead of overflowing. */
+  .search-form {
+    width: 100%;
+  }
+
+  .search-box {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .search-box input,
+  .search-box-large input {
+    width: 100%;
+  }
+
+  /* 媒体库查找框换行到标题行下方（860px 断点惯例）。 */
+  .library-find-heading {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+
+  .search-box-compact {
+    /* 上方 .search-box 的 flex:1 把 flex-basis 压成 0%，会吃掉这里的 width:100%，
+       查找框挤在标题行右侧缩成小条不换行——flex:none 让 width 生效、换到标题下方。 */
+    flex: none;
+    width: 100%;
+  }
+
+  /* The candidate result grid forces a 380px minimum column (minmax(380px,1fr)),
+     which overflows a narrow mobile content column. One card per row on phones —
+     minmax(0, …) (not bare 1fr) so the track pins to the container and the card
+     (fixed 96px poster + min-width:0 body) shrinks with it instead of forcing a
+     ~364px min-content track that overflows sub-390px phones. */
+  .candidate-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  /* On phones the wide 获取 action column crushes the title/meta into a sliver
+     ("1966 · 剧集" wrapping one char per line). Stack the title block above a
+     full-width action area so both read cleanly. */
+  .candidate-title-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  /* The drive switcher is a desktop sidebar control (see .workspace-switcher):
+     its `.ws-menu` expands INLINE, which is harmless in a fixed-width vertical
+     sidebar. On mobile the sidebar becomes a horizontal top bar, so an inline
+     menu joins the flex main-axis width calculation — opening it grew the
+     switcher 125px→161px and squeezed `.brand` 175px→139px, forcing the wordmark
+     to wrap onto a second line (top bar 49px→68px). Lift the menu out of flow so
+     opening it can't resize its row, mirroring what
+     `.sidebar-top-identity .account-identity-menu` already does for the identity
+     dropdown a few rules above. */
+  .workspace-switcher {
+    /* Positioning context for the menu below. */
+    position: relative;
+    /* Shrinkable (0 1), NOT 0 0: `storage.label` is free-form text from the
+       connected-storages table, so a long custom label ("我的家庭影音收藏主力盘")
+       would otherwise push the switcher past the viewport and make the whole page
+       scroll horizontally (measured: 280px wide, 49px past a 368px viewport).
+       The floor keeps a typical label ("103164004") from being ellipsised just
+       because `.brand` — which is also a default `0 1 auto` flex item — competes
+       for the row; only genuinely long labels get truncated. */
+    flex: 0 1 auto;
+    min-width: min(125px, 34vw);
+  }
+  .workspace-switcher .ws-menu {
+    position: absolute;
+    /* Right-anchored: the switcher sits at the top bar's right end, so opening
+       leftward keeps the menu inside a ≤390px viewport. */
+    right: 0;
+    top: 100%;
+    min-width: 100%;
+    /* Wide enough for "夸克网盘 …5Kr2" without inheriting the summary's width,
+       but capped so it can't overflow a narrow phone. */
+    width: max-content;
+    max-width: min(240px, calc(100vw - 28px));
+    /* Above the page content; below the identity menu's 60 is fine (they can't
+       both be open in a way that overlaps meaningfully, but keep it explicit). */
+    z-index: 60;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  }
+  /* The ellipsis itself is already declared for all viewports further down; what
+     it additionally needs here is permission to shrink. `.ws-label` is a flex item
+     of `.ws-current`, so it also defaults to min-width:auto and would hold its
+     full intrinsic width, leaving the ellipsis inert no matter how narrow the
+     switcher gets. */
+  .workspace-switcher .ws-label {
+    min-width: 0;
+  }
+}
+
+.candidate-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.series-button {
+  height: 34px;
+  padding: 0 16px;
+  font-size: 11px;
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.series-button:hover {
+  background: var(--bg-card);
+  transform: none;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Search card actions: never squeeze or wrap */
+.candidate-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.candidate-actions .primary-button {
+  white-space: nowrap;
+}
+
+/* Season picker dropdown on search cards */
+.season-menu {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.season-menu .primary-button {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.season-menu-toggle {
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  border: none;
+  border-left: 1px solid rgba(0, 0, 0, 0.25);
+  border-top-right-radius: var(--radius-pill);
+  border-bottom-right-radius: var(--radius-pill);
+  color: #000000;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.season-menu-toggle:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.season-menu-list {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  min-width: 130px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-raised);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-heavy);
+}
+
+.season-menu-list button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.season-menu-list button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+/* Long titles never fight the action column */
+.candidate-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.candidate-title-row > div:first-child {
+  min-width: 0;
+}
+
+.candidate-title-row h3 {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-pill);
+  padding: 7px 16px;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: background 0.15s ease;
+}
+
+.secondary-button:hover {
+  background: rgba(255, 255, 255, 0.16);
+}

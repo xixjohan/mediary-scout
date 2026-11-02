@@ -45,6 +45,16 @@ describe("mapResourceResponse — 降级契约", () => {
     expect(state.retryAfterMs).toBe(42_000);
   });
 
+  it("429 带 prevState (ready) ⇒ 保留上一轮候选集与快照句柄", () => {
+    const prevState = mapResourceResponse(200, { candidates: [view()], cached: false, snapshotId: "snap-orig" });
+    const state = mapResourceResponse(429, { retryAfterMs: 38_000 }, prevState);
+    expect(state.kind).toBe("throttled");
+    if (state.kind !== "throttled") return;
+    expect(state.retryAfterMs).toBe(38_000);
+    expect(state.previousCandidates).toHaveLength(1);
+    expect(state.previousSnapshotId).toBe("snap-orig");
+  });
+
   it("429 但没给 retryAfterMs ⇒ 退回 60s 默认（保守等待）", () => {
     const state = mapResourceResponse(429, {});
     if (state.kind !== "throttled") throw new Error("unexpected");
@@ -235,6 +245,20 @@ describe("mapResourceStreamEvent — 流式事件映射", () => {
     expect(throttled.kind).toBe("throttled");
     if (throttled.kind === "throttled") {
       expect(throttled.retryAfterMs).toBe(45000);
+    }
+
+        const throttledWithPrev = mapResourceStreamEvent(
+      {
+        type: "error",
+        kind: "throttled",
+        retryAfterMs: 38000,
+      },
+      mapResourceResponse(200, { candidates: [view()], cached: false, snapshotId: "snap-stream" }),
+    );
+    expect(throttledWithPrev.kind).toBe("throttled");
+    if (throttledWithPrev.kind === "throttled") {
+      expect(throttledWithPrev.previousCandidates).toHaveLength(1);
+      expect(throttledWithPrev.previousSnapshotId).toBe("snap-stream");
     }
 
     const err = mapResourceStreamEvent({

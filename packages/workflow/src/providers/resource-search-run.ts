@@ -78,6 +78,7 @@ export function buildResourceSearchRun(input: BuildResourceSearchRunInput): Pers
     notifications: [],
     accountId: input.accountId,
     connectedStorageId: input.connectedStorageId ?? null,
+    keepCurrentEpisodes: true,
   };
 }
 

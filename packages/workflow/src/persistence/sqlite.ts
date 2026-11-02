@@ -53,6 +53,7 @@ import {
   isStagingJanitorId,
   isUserVisibleNotificationKind,
   isUserVisibleWorkflowKind,
+  isEpisodePreservingWorkflowKind,
 } from "../domain/domain.js";
 import type {
   AgentDecision,
@@ -279,6 +280,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.db.pragma("foreign_keys = ON");
     this.db.exec(SQLITE_SCHEMA);
     this.upgradeSubscriptionPolicyShape();
+    this.upgradeStrmTasksShape();
   }
 
   /**
@@ -306,6 +308,14 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     }
   }
 
+  private upgradeStrmTasksShape(): void {
+    const cols = this.db.pragma("table_info(strm_tasks)") as Array<{ name: string }>;
+    if (cols.length === 0) return;
+    if (!cols.some((c) => c.name === "delivery_mode")) {
+      this.db.exec("ALTER TABLE strm_tasks ADD COLUMN delivery_mode text DEFAULT 'redirect'");
+    }
+  }
+
   close(): void {
     this.db.close();
   }
@@ -316,10 +326,15 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     const { keepCurrentEpisodes, requireTrackedSeason, ...rest } = input;
     validateWorkflowRunSnapshot(rest);
     const snapshot = cloneWorkflowValue(rest);
-    const requireTracked = reservationRequiresTrackedSeason({
-      ...(requireTrackedSeason === true ? { requireTrackedSeason: true } : {}),
-      ...(keepCurrentEpisodes === true ? { keepCurrentEpisodes: true } : {}),
-    });
+    const isAuxiliary = isEpisodePreservingWorkflowKind(snapshot.workflowRun.kind);
+    const shouldKeepEpisodes = keepCurrentEpisodes === true || isAuxiliary;
+    const isSearchRecord = snapshot.workflowRun.kind === "resource_search";
+    const requireTracked =
+      !isSearchRecord &&
+      reservationRequiresTrackedSeason({
+        ...(requireTrackedSeason === true ? { requireTrackedSeason: true } : {}),
+        ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}),
+      });
     // better-sqlite3 transactions are synchronous — the check and the write
     // commit together, so an untrack cannot land between them.
     this.db.transaction(() => {
@@ -330,7 +345,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
           .get(snapshot.season.id, connectedStorageId);
         if (tracked === undefined) return;
       }
-      this.replaceWorkflowRunSnapshot(snapshot, { runOnly: keepCurrentEpisodes === true });
+      this.replaceWorkflowRunSnapshot(snapshot, { runOnly: shouldKeepEpisodes });
     })();
   }
 
@@ -390,7 +405,10 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         return { status: "already_has_episode_state", episodes: existingEpisodes };
       }
 
-      if (input.keepCurrentEpisodes === true) {
+      const isAuxiliary = isEpisodePreservingWorkflowKind(snapshot.workflowRun.kind);
+      const shouldKeepEpisodes = input.keepCurrentEpisodes === true || isAuxiliary;
+
+      if (shouldKeepEpisodes) {
         // Only the run: the title, season record and episode states are not written at
         // all. The reply is the run as stored, with the season's current state.
         this.replaceWorkflowRunSnapshot(snapshot, { runOnly: true });
@@ -518,7 +536,11 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       snapshot.connectedStorageId ?? existing?.connected_storage_id ?? UNSCOPED_STORAGE;
     const writeSeasonState = options.runOnly !== true;
 
-    if (writeSeasonState) {
+    const existingSeason = this.db
+      .prepare("SELECT 1 FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
+      .get(snapshot.season.id, connectedStorageId);
+
+    if (!existingSeason || writeSeasonState) {
       this.db
         .prepare(
           "INSERT INTO media_titles (id, payload) VALUES (?, ?) ON CONFLICT (id) DO UPDATE SET payload = excluded.payload",
@@ -1284,7 +1306,12 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
           status: row.status,
         };
       })
-      .filter((row) => !isStagingJanitorId(row.id) && !isStagingJanitorId(row.trackedSeasonId));
+      .filter(
+        (row) =>
+          !isStagingJanitorId(row.id) &&
+          !isStagingJanitorId(row.trackedSeasonId) &&
+          row.kind !== "resource_search",
+      );
   }
 
   /** Keep only the latest (startedAt desc) run row per season id. */
@@ -1613,6 +1640,16 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       return { ok: true as const, storage: this.connectedStorageFromRow(row) };
     });
     return unbind();
+  }
+
+  async getConnectedStorageById(storageId: string): Promise<ConnectedStorage | null> {
+    const row = this.db
+      .prepare(
+        "SELECT id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, status, frozen_reason, frozen_at, created_at " +
+          "FROM connected_storages WHERE id = ?",
+      )
+      .get(storageId) as Record<string, unknown> | undefined;
+    return row ? this.connectedStorageFromRow(row) : null;
   }
 
   async findConnectedStorageByUid(
@@ -2536,6 +2573,10 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
   async getStrmTask(id: string, accountId: string): Promise<StrmTask | null> {
     return this.strmStore.getStrmTask(id, accountId);
+  }
+
+  async findStrmTaskById(id: string): Promise<StrmTask | null> {
+    return this.strmStore.findStrmTaskById(id);
   }
 
   async createStrmTask(input: CreateStrmTaskInput): Promise<StrmTask> {

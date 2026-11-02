@@ -26,34 +26,53 @@ if (!existsSync(globalsCssPath)) {
   process.exit(1);
 }
 
-const cssContent = readFileSync(globalsCssPath, "utf8");
-const lines = cssContent.split("\n");
+// 递归扫描 apps/web 下所有 CSS 文件（含 globals.css, tokens/*.css, features/**/*.module.css）
+function scanCssFiles(dir) {
+  const fileList = [];
+  if (!existsSync(dir)) return fileList;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name !== "node_modules" && entry.name !== ".next" && entry.name !== "dist") {
+        fileList.push(...scanCssFiles(full));
+      }
+    } else if (entry.name.endsWith(".css")) {
+      fileList.push(full);
+    }
+  }
+  return fileList;
+}
 
+const webCssFiles = scanCssFiles(join(root, "apps/web"));
 const problems = [];
 
 // ============================================================================
-// 1. 提取 :root 中声明的所有 CSS 自定义属性
+// 1. 提取全站 CSS 中 :root 声明的所有自定义属性 (Design Tokens)
 // ============================================================================
 const declaredTokens = new Set();
-let inRoot = false;
 
-for (let i = 0; i < lines.length; i++) {
-  const line = lines[i];
-  const trimmed = line.trim();
+for (const cssFile of webCssFiles) {
+  const content = readFileSync(cssFile, "utf8");
+  const fileLines = content.split("\n");
+  let inRoot = false;
 
-  if (trimmed.startsWith(":root") && trimmed.includes("{")) {
-    inRoot = true;
-    continue;
-  }
-  if (inRoot && trimmed.includes("}")) {
-    inRoot = false;
-    continue;
-  }
+  for (let i = 0; i < fileLines.length; i++) {
+    const trimmed = fileLines[i].trim();
 
-  if (inRoot) {
-    const match = trimmed.match(/^(--[a-zA-Z0-9_-]+)\s*:/);
-    if (match) {
-      declaredTokens.add(match[1]);
+    if (trimmed.startsWith(":root") && trimmed.includes("{")) {
+      inRoot = true;
+      continue;
+    }
+    if (inRoot && trimmed.includes("}")) {
+      inRoot = false;
+      continue;
+    }
+
+    if (inRoot) {
+      const match = trimmed.match(/^(--[a-zA-Z0-9_-]+)\s*:/);
+      if (match) {
+        declaredTokens.add(match[1]);
+      }
     }
   }
 }
@@ -91,7 +110,7 @@ for (const req of REQUIRED_CORE_TOKENS) {
 }
 
 // ============================================================================
-// 2. 扫描所有 var(--xxx) 引用，拦截未定义变量 (Undefined Token Check)
+// 2. 扫描所有 CSS 文件中的 var(--xxx) 引用，拦截未定义变量 (Undefined Token Check)
 // ============================================================================
 // 排除某些特定浏览器内置或库提供的已知安全变量
 const ALLOWED_EXTERNAL_VARS = new Set([
@@ -102,15 +121,21 @@ const ALLOWED_EXTERNAL_VARS = new Set([
 
 const varRegex = /var\(\s*(--[a-zA-Z0-9_-]+)/g;
 
-for (let i = 0; i < lines.length; i++) {
-  const line = lines[i];
-  let match;
-  while ((match = varRegex.exec(line)) !== null) {
-    const tokenName = match[1];
-    if (!declaredTokens.has(tokenName) && !ALLOWED_EXTERNAL_VARS.has(tokenName)) {
-      problems.push(
-        `globals.css:${i + 1}: 引用了未在 :root 声明的未知设计令牌 -> ${tokenName}`,
-      );
+for (const cssFile of webCssFiles) {
+  const content = readFileSync(cssFile, "utf8");
+  const fileLines = content.split("\n");
+  const relPath = relative(root, cssFile).replace(/\\/g, "/");
+
+  for (let i = 0; i < fileLines.length; i++) {
+    const line = fileLines[i];
+    let match;
+    while ((match = varRegex.exec(line)) !== null) {
+      const tokenName = match[1];
+      if (!declaredTokens.has(tokenName) && !ALLOWED_EXTERNAL_VARS.has(tokenName)) {
+        problems.push(
+          `${relPath}:${i + 1}: 引用了未在 :root 声明的未知设计令牌 -> ${tokenName}`,
+        );
+      }
     }
   }
 }
@@ -160,14 +185,17 @@ for (const file of webTsxFiles) {
 // ============================================================================
 // 3. 扫描 .storage- 组件样式块，严禁裸色值 (No Raw Color Literals in Storage)
 // ============================================================================
-// 检查处于 storage 区域的 CSS 行（从网盘文件管理页面注释开始到结束）
+const globalsLines = readFileSync(globalsCssPath, "utf8").split("\n");
 let inStorageSection = false;
 const rawHexRegex = /#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})\b/;
 
-for (let i = 0; i < lines.length; i++) {
-  const line = lines[i];
+for (let i = 0; i < globalsLines.length; i++) {
+  const line = globalsLines[i];
   if (line.includes("网盘文件管理页面")) {
     inStorageSection = true;
+  }
+  if (inStorageSection && (line.includes("Chat Action Cards") || line.includes("===== Activity page") || line.includes("订阅页缺失待办区"))) {
+    inStorageSection = false;
   }
 
   if (inStorageSection) {
@@ -198,9 +226,40 @@ for (let i = 0; i < lines.length; i++) {
   }
 }
 
+// 同时扫描 storage-drives 模块下的私有样式文件
+const storageStylesDir = join(root, "apps/web/features/storage-drives/styles");
+if (existsSync(storageStylesDir)) {
+  for (const entry of readdirSync(storageStylesDir, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".css")) {
+      const filePath = join(storageStylesDir, entry.name);
+      const content = readFileSync(filePath, "utf8");
+      const fLines = content.split("\n");
+      const relPath = relative(root, filePath).replace(/\\/g, "/");
+
+      for (let i = 0; i < fLines.length; i++) {
+        const line = fLines[i];
+        const stripped = line.replace(/\/\*.*?\*\//g, "").trim();
+        if (!stripped || stripped.startsWith("/*") || stripped.startsWith("*")) continue;
+
+        const hexMatch = stripped.match(rawHexRegex);
+        if (hexMatch) {
+          const hex = hexMatch[0].toLowerCase();
+          if (hex !== "#000000" && hex !== "#ffffff" && hex !== "#000" && hex !== "#fff") {
+            problems.push(
+              `${relPath}:${i + 1}: 网盘模块样式中存在硬编码 Hex 色值 "${hexMatch[0]}"，应使用设计令牌 (var(--...))`,
+            );
+          }
+        }
+      }
+    }
+  }
+}
+
 // ============================================================================
 // 4. 弹窗浮层与核心表单布局约束检查 (Modal Overlay & Form Constraints Check)
 // ============================================================================
+const allCssCombined = webCssFiles.map((f) => readFileSync(f, "utf8")).join("\n");
+
 const REQUIRED_MODAL_SELECTORS = [
   {
     name: ".storage-offline-modal-overlay",
@@ -229,18 +288,18 @@ const REQUIRED_MODAL_SELECTORS = [
 ];
 
 for (const req of REQUIRED_MODAL_SELECTORS) {
-  const selectorIndex = cssContent.indexOf(req.name);
+  const selectorIndex = allCssCombined.indexOf(req.name);
   if (selectorIndex === -1) {
-    problems.push(`globals.css 缺少核心弹窗类选择器: ${req.name}`);
+    problems.push(`样式表缺少核心弹窗类选择器: ${req.name}`);
     continue;
   }
-  const blockStart = cssContent.indexOf("{", selectorIndex);
-  const blockEnd = cssContent.indexOf("}", blockStart);
+  const blockStart = allCssCombined.indexOf("{", selectorIndex);
+  const blockEnd = allCssCombined.indexOf("}", blockStart);
   if (blockStart !== -1 && blockEnd !== -1) {
-    const blockContent = cssContent.slice(blockStart, blockEnd);
+    const blockContent = allCssCombined.slice(blockStart, blockEnd);
     for (const prop of req.requiredProps) {
       if (!blockContent.includes(prop)) {
-        problems.push(`globals.css 选择器 "${req.name}" 缺少关键布局约束属性: "${prop}"`);
+        problems.push(`选择器 "${req.name}" 缺少关键布局约束属性: "${prop}"`);
       }
     }
   }

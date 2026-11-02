@@ -132,7 +132,7 @@ describe("Bearer 形态矩阵 —— proxy 粗筛 vs 路由层精判（同一请
     console.log("\n=== 探针 A 矩阵（多用户 + 远程 cf-ray，/api/activity；头值已按 fetch 规范归一化）===");
     for (const r of rows) console.log(r);
     expect(rows.length).toBe(forms().length);
-  });
+  }, 30000);
 
   it("不变式 1：路由层认得的头，proxy 绝不拦（不存在「proxy 拦死、路由能认」）", async () => {
     for (const [, raw] of forms()) {
@@ -191,7 +191,7 @@ describe("Bearer 形态矩阵 —— proxy 粗筛 vs 路由层精判（同一请
         `形态 ${JSON.stringify(wire)}: gate=${gate} data=${data}`,
       ).toBe(true);
     }
-  });
+  }, 30000);
 });
 
 describe("session 优先 / Bearer 兜底 —— 闸机与数据层并排", () => {

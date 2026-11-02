@@ -1,3 +1,5 @@
+import type { ResourceCandidateView, MergedSourceHealth, ResourceFileNode, ResourceValidityStatus } from "@media-track/workflow";
+
 export type CandidateTrackingRequestResult =
   | {
       status: "queued" | "already_running" | "already_tracked";
@@ -31,3 +33,42 @@ export interface ResourceLinkResponse {
   isMagnet: boolean;
   isHttp: boolean;
 }
+
+export interface CandidateInspectionState {
+  status: ResourceValidityStatus;
+  loading: boolean;
+  message?: string | undefined;
+  totalSizeBytes?: number | undefined;
+  fileCount?: number | undefined;
+  files?: ResourceFileNode[] | undefined;
+}
+
+export type PanelState =
+  | { kind: "idle" }
+  | {
+      kind: "loading";
+      previousCandidates?: ResourceCandidateView[] | undefined;
+      previousSnapshotId?: string | null | undefined;
+      sourceHealth?: MergedSourceHealth | undefined;
+    }
+  | {
+      kind: "streaming";
+      candidates: ResourceCandidateView[];
+      progress: { done: number; total: number; currentKeyword?: string };
+      sourceHealth?: MergedSourceHealth | undefined;
+    }
+  | {
+      kind: "ready";
+      candidates: ResourceCandidateView[];
+      cached: boolean;
+      snapshotId: string | null;
+      sourceHealth?: MergedSourceHealth | undefined;
+    }
+  | {
+      kind: "throttled";
+      retryAfterMs: number;
+      previousCandidates?: ResourceCandidateView[] | undefined;
+      previousSnapshotId?: string | null | undefined;
+      sourceHealth?: MergedSourceHealth | undefined;
+    }
+  | { kind: "error"; message: string };

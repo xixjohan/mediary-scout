@@ -5,6 +5,7 @@ import {
   extractFacets,
   extractResolution,
   filterCandidates,
+  matchesSizeBucket,
   matchesSpec,
   paginateCandidates,
   sortCandidates,
@@ -88,6 +89,47 @@ describe("resource-filter-model 分面、过滤与分页核心域测试", () => 
     });
   });
 
+  describe("matchesSizeBucket 策略测试", () => {
+    const gb = 1024 * 1024 * 1024;
+
+    it("all 档位始终返回 true", () => {
+      expect(matchesSizeBucket(undefined, "all")).toBe(true);
+      expect(matchesSizeBucket(100, "all")).toBe(true);
+      expect(matchesSizeBucket(50 * gb, "all")).toBe(true);
+    });
+
+    it("空值或非正数在具体区间中返回 false", () => {
+      expect(matchesSizeBucket(undefined, "under_2g")).toBe(false);
+      expect(matchesSizeBucket(0, "under_2g")).toBe(false);
+      expect(matchesSizeBucket(-100, "2g_to_10g")).toBe(false);
+    });
+
+    it("under_2g 正确匹配 <= 2GB", () => {
+      expect(matchesSizeBucket(1.5 * gb, "under_2g")).toBe(true);
+      expect(matchesSizeBucket(2 * gb, "under_2g")).toBe(true);
+      expect(matchesSizeBucket(2.1 * gb, "under_2g")).toBe(false);
+    });
+
+    it("2g_to_10g 正确匹配 > 2GB 且 <= 10GB", () => {
+      expect(matchesSizeBucket(2 * gb, "2g_to_10g")).toBe(false);
+      expect(matchesSizeBucket(5 * gb, "2g_to_10g")).toBe(true);
+      expect(matchesSizeBucket(10 * gb, "2g_to_10g")).toBe(true);
+      expect(matchesSizeBucket(10.1 * gb, "2g_to_10g")).toBe(false);
+    });
+
+    it("10g_to_30g 正确匹配 > 10GB 且 <= 30GB", () => {
+      expect(matchesSizeBucket(10 * gb, "10g_to_30g")).toBe(false);
+      expect(matchesSizeBucket(20 * gb, "10g_to_30g")).toBe(true);
+      expect(matchesSizeBucket(30 * gb, "10g_to_30g")).toBe(true);
+      expect(matchesSizeBucket(30.1 * gb, "10g_to_30g")).toBe(false);
+    });
+
+    it("over_30g 正确匹配 > 30GB", () => {
+      expect(matchesSizeBucket(30 * gb, "over_30g")).toBe(false);
+      expect(matchesSizeBucket(50 * gb, "over_30g")).toBe(true);
+    });
+  });
+
   describe("extractFacets 标签统计与聚合", () => {
     it("正确聚合全部候选的类型、分辨率与制作规格统计", () => {
       const facets = extractFacets(sampleCandidates);
@@ -113,6 +155,18 @@ describe("resource-filter-model 分面、过滤与分页核心域测试", () => 
       expect(specRemux?.count).toBe(1); // c5
       const specWebDl = facets.specs.find((s) => s.value === "web-dl");
       expect(specWebDl?.count).toBe(1); // c6
+
+      // 体积统计
+      const sizeAll = facets.sizes.find((s) => s.value === "all");
+      expect(sizeAll?.count).toBe(6);
+      const sizeUnder2g = facets.sizes.find((s) => s.value === "under_2g");
+      expect(sizeUnder2g?.count).toBe(0);
+      const size2g10g = facets.sizes.find((s) => s.value === "2g_to_10g");
+      expect(size2g10g?.count).toBe(2); // c2, c6
+      const size10g30g = facets.sizes.find((s) => s.value === "10g_to_30g");
+      expect(size10g30g?.count).toBe(2); // c3, c4
+      const sizeOver30g = facets.sizes.find((s) => s.value === "over_30g");
+      expect(sizeOver30g?.count).toBe(2); // c1, c5
     });
   });
 
@@ -151,6 +205,27 @@ describe("resource-filter-model 分面、过滤与分页核心域测试", () => 
       const res = filterCandidates(sampleCandidates, criteria);
       expect(res).toHaveLength(1);
       expect(res[0]?.candidateId).toBe("c5");
+    });
+
+    it("按体积档位过滤候选", () => {
+      const criteria: ResourceFilterCriteria = {
+        ...DEFAULT_FILTER_CRITERIA,
+        size: "over_30g",
+      };
+      const res = filterCandidates(sampleCandidates, criteria);
+      expect(res).toHaveLength(2);
+      expect(res.map((c) => c.candidateId)).toEqual(["c1", "c5"]);
+    });
+
+    it("按体积与网盘类型联合过滤", () => {
+      const criteria: ResourceFilterCriteria = {
+        ...DEFAULT_FILTER_CRITERIA,
+        size: "2g_to_10g",
+        type: "115",
+      };
+      const res = filterCandidates(sampleCandidates, criteria);
+      expect(res).toHaveLength(1);
+      expect(res[0]?.candidateId).toBe("c2");
     });
 
     it("无匹配项时返回空数组", () => {
@@ -194,7 +269,7 @@ describe("resource-filter-model 分面、过滤与分页核心域测试", () => 
       expect(result.currentPage).toBe(1);
       expect(result.hasPrev).toBe(false);
       expect(result.hasNext).toBe(true);
-      expect(result.startIndex).toBe(1);
+      expect(result.startIndex).toBe(0);
       expect(result.endIndex).toBe(2);
     });
 
@@ -205,7 +280,7 @@ describe("resource-filter-model 分面、过滤与分页核心域测试", () => 
       expect(result.items[1]?.candidateId).toBe("c6");
       expect(result.hasPrev).toBe(true);
       expect(result.hasNext).toBe(false);
-      expect(result.startIndex).toBe(5);
+      expect(result.startIndex).toBe(4);
       expect(result.endIndex).toBe(6);
     });
 

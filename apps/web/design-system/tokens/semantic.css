@@ -1,0 +1,94 @@
+/* Media Track Design System — Tier 2: Semantic Tokens & Themes */
+:root {
+  /* Semantic: Backgrounds & Surfaces */
+  --bg-base: #121212;
+  --bg-surface: #181818;
+  --bg-raised: #1f1f1f;
+  --bg-card: #252525;
+  --bg-card-alt: #272727;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.08);
+  --bg-chip-hover: #2e2e2e;
+  --bg-backdrop: rgba(0, 0, 0, 0.75);
+
+  /* Semantic: Brand Accent (Spotify Green) */
+  --accent: #1ed760;
+  --accent-press: #169c46;
+  --accent-hover: #3be477;
+  --accent-subtle: rgba(30, 215, 96, 0.12);
+  --accent-subtle-border: rgba(30, 215, 96, 0.28);
+  --accent-glow: 0 0 16px rgba(30, 215, 96, 0.25);
+
+  /* Semantic: Status Colors */
+  --negative: #f3727f;
+  --negative-hover: #ff8591;
+  --negative-subtle: rgba(243, 114, 127, 0.12);
+  --negative-border: rgba(243, 114, 127, 0.28);
+  --color-danger: var(--negative);
+  --color-danger-hover: var(--negative-hover);
+  --color-danger-subtle: var(--negative-subtle);
+  --color-danger-border: var(--negative-border);
+
+  --warning: #ffa42b;
+  --warning-hover: #ffb44d;
+  --warning-subtle: rgba(255, 164, 43, 0.12);
+  --warning-border: rgba(255, 164, 43, 0.28);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-warning-border: var(--warning-border);
+
+  --info: #539df5;
+  --info-hover: #6caaf7;
+  --info-subtle: rgba(83, 157, 245, 0.12);
+  --info-border: rgba(83, 157, 245, 0.28);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+  --color-info-border: var(--info-border);
+
+  --color-success: var(--accent);
+  --color-success-subtle: var(--accent-subtle);
+
+  /* 豆瓣电影评分徽标与主题色彩 */
+  --douban: #23b95f;
+  --douban-subtle: rgba(35, 185, 95, 0.14);
+  --douban-border: rgba(35, 185, 95, 0.32);
+
+  /* Semantic: Typography & Content */
+  --text: #ffffff;
+  --text-muted: #b3b3b3;
+  --text-soft: #cbcbcb;
+  --text-faint: #8f8f8f;
+  --font-stack: "CircularSp", "Circular", "Inter", "PingFang SC", "Microsoft YaHei",
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+
+  /* Semantic: Borders & Dividers */
+  --border: #4d4d4d;
+  --border-soft: #7c7c7c;
+  --border-subtle: rgba(255, 255, 255, 0.1);
+  --divider: #2a2a2a;
+
+  /* Semantic: Forward Compatibility & Subsystem Aliases */
+  --bg: var(--bg-base);
+  --bg-elevated: var(--bg-raised);
+  --surface: var(--bg-surface);
+  --surface-hover: var(--bg-hover);
+  --surface-1: var(--bg-surface);
+  --surface-2: var(--bg-raised);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-muted);
+  --muted: var(--text-muted);
+  --danger: var(--negative);
+  --border-strong: var(--border-soft);
+
+  --color-surface-panel: var(--bg-surface);
+  --color-surface-hover: var(--bg-hover);
+  --color-border-main: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-brand-primary: var(--accent);
+  --color-text-main: var(--text);
+  --color-text-muted: var(--text-muted);
+  --bg-primary: var(--bg-base);
+  --bg-secondary: var(--bg-card);
+  --border-color: var(--border);
+  --color-warn: var(--warning);
+}

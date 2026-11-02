@@ -19,7 +19,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -177,14 +177,89 @@ function checkContractBinding() {
   }
 }
 
-console.log(`${c.bold}${c.cyan}=== 巡影 · Mediary Scout API 契约与时间线字段对齐门禁扫描 ===${c.reset}`);
-checkPhantomProperties();
-checkContractBinding();
+// ============================================================================
+// 3. Monorepo 跨包源码直通与导出对齐检查 (Workspace Export Parity & Paths Guard)
+// ============================================================================
+// ============================================================================
+// 3. Monorepo 跨包导出对齐与编译产物新鲜度门禁 (Workspace Export Parity & Freshness Guard)
+// ============================================================================
+async function checkMonorepoWorkspaceExports() {
+  const distIndexPath = path.join(repoRoot, "packages/workflow/dist/index.js");
+  if (!fs.existsSync(distIndexPath)) {
+    reportViolation(distIndexPath, 1, "packages/workflow/dist/index.js 不存在，必须先执行 npm run build:workflow！");
+    return;
+  }
 
-if (violations > 0) {
-  console.error(`\n${c.red}✖ [Contract Gate] 门禁质检失败：发现 ${violations} 处契约漂移或幽灵属性访问！${c.reset}\n`);
-  process.exit(1);
-} else {
-  console.log(`\n${c.green}✔ [Contract Gate] 门禁质检通过：全量前端组件与 API 契约 100% 对齐，0 幽灵属性访问，时间线映射健全！${c.reset}\n`);
-  process.exit(0);
+  // 1. 编译产物新鲜度检测：确保 dist 没有滞后于 src
+  function getNewestMtime(dir) {
+    let max = 0;
+    if (!fs.existsSync(dir)) return max;
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    for (const e of entries) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        const sub = getNewestMtime(full);
+        if (sub > max) max = sub;
+      } else if (/\.(ts|tsx)$/.test(e.name) && !e.name.endsWith(".test.ts")) {
+        const stat = fs.statSync(full);
+        if (stat.mtimeMs > max) max = stat.mtimeMs;
+      }
+    }
+    return max;
+  }
+
+  const distMtime = fs.statSync(distIndexPath).mtimeMs;
+  const workflowSrcMtime = getNewestMtime(path.join(repoRoot, "packages/workflow/src"));
+  if (workflowSrcMtime > distMtime) {
+    reportViolation(
+      distIndexPath,
+      1,
+      "packages/workflow 源码已被修改但 dist 尚未重新编译，导致 Next.js/Turbopack 访问旧产物报 'is not a function'！请执行 npm run build:workflow！"
+    );
+  }
+
+  // 2. 跨包导出对齐校验：验证关键 API 引用的方法已在 workflow 编译产物中真实导出
+  const strmRoutePath = path.join(repoRoot, "apps/web/app/api/strm/replace-base-url/route.ts");
+  if (fs.existsSync(strmRoutePath) && fs.existsSync(distIndexPath)) {
+    const routeCode = fs.readFileSync(strmRoutePath, "utf8");
+    const importMatch = routeCode.match(/import\s*\{([^}]+)\}\s*from\s*["']@media-track\/workflow["']/);
+    if (importMatch && importMatch[1]) {
+      const importedSymbols = importMatch[1]
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s && !s.startsWith("type "));
+
+      try {
+        const distModule = await import(pathToFileURL(distIndexPath).href);
+        for (const sym of importedSymbols) {
+          if (typeof distModule[sym] === "undefined") {
+            reportViolation(
+              strmRoutePath,
+              1,
+              `导入的符号 '${sym}' 在 packages/workflow/dist/index.js 运行时求值为 undefined，必须执行 npm run build:workflow 对齐编译产物！`
+            );
+          }
+        }
+      } catch (err) {
+        reportViolation(distIndexPath, 1, `加载 packages/workflow/dist/index.js 失败: ${err.message}`);
+      }
+    }
+  }
 }
+
+async function run() {
+  console.log(`${c.bold}${c.cyan}=== 巡影 · Mediary Scout API 契约与时间线字段对齐门禁扫描 ===${c.reset}`);
+  checkPhantomProperties();
+  checkContractBinding();
+  await checkMonorepoWorkspaceExports();
+
+  if (violations > 0) {
+    console.error(`\n${c.red}✖ [Contract Gate] 门禁质检失败：发现 ${violations} 处契约漂移或幽灵属性访问！${c.reset}\n`);
+    process.exit(1);
+  } else {
+    console.log(`\n${c.green}✔ [Contract Gate] 门禁质检通过：全量前端组件与 API 契约 100% 对齐，0 幽灵属性访问，时间线映射健全！${c.reset}\n`);
+    process.exit(0);
+  }
+}
+
+await run();

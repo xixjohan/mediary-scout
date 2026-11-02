@@ -22,7 +22,15 @@ import {
   type WorkflowRepository,
   RoleStore,
   UserManagementService,
+  ProductionStorageStreamResolver,
+  MockStorageStreamResolver,
+  type StorageStreamResolver,
+  setStorageStreamResolver,
+  getStorageStreamResolver,
+  type StorageCredentialLookup,
+  StrmTaskConfigRegistry,
 } from "@media-track/workflow";
+import { extractStorageCredential } from "../features/storage-drives/core/credentials";
 
 const PAN115_COOKIE_KEY = "pan115.cookie";
 
@@ -44,6 +52,8 @@ let userManagementService: UserManagementService | null = null;
 let extensionManager: ExtensionManager | null = null;
 let mediaServerCoordinator: MediaServerCoordinator | null = null;
 let strmSingleFlight: SingleFlight<ResolvedStream> | null = null;
+let activeStreamResolver: StorageStreamResolver | null = null;
+let strmTaskConfigRegistry: StrmTaskConfigRegistry | null = null;
 
 export function resetRuntimeContainerForTests(): void {
   if (frpTunnelManager) {
@@ -57,6 +67,9 @@ export function resetRuntimeContainerForTests(): void {
     mediaServerCoordinator = null;
   }
   strmSingleFlight = null;
+  activeStreamResolver = null;
+  strmTaskConfigRegistry = null;
+  setStorageStreamResolver(new MockStorageStreamResolver());
   apiKeyV2Store = null;
   externalMcpServerStore = null;
   roleStore = null;
@@ -199,6 +212,29 @@ export function setStrmSingleFlightForTest(
   strmSingleFlight = singleFlight;
 }
 
+export function ensureStorageStreamResolver(): StorageStreamResolver {
+  if (!activeStreamResolver) {
+    const repo = getWorkflowRepository();
+    const lookup: StorageCredentialLookup = async (storageId: string) => {
+      const storage = await repo.getConnectedStorageById(storageId);
+      if (!storage) return null;
+      const { cookie, credential } = extractStorageCredential(storage.provider, storage.payload);
+      return {
+        provider: storage.provider,
+        cookie,
+        credential: credential as Record<string, unknown> | null,
+        status: storage.status,
+      };
+    };
+    activeStreamResolver = new ProductionStorageStreamResolver(
+      lookup,
+      new MockStorageStreamResolver(),
+    );
+    setStorageStreamResolver(activeStreamResolver);
+  }
+  return getStorageStreamResolver();
+}
+
 export async function hydratePan115CookieFromDb(): Promise<void> {
   if (pan115CookieHydrated) {
     return;
@@ -268,4 +304,30 @@ export function getPanSouHealthCache(): Map<string, { ok: boolean; checkedAt: nu
 
 export function resetPanSouHealthCacheForTests(): void {
   lastRecordedPanSouHealth.clear();
+}
+
+export function ensureStrmTaskConfigRegistry(repoOverride?: WorkflowRepository): StrmTaskConfigRegistry {
+  if (strmTaskConfigRegistry && !repoOverride) {
+    return strmTaskConfigRegistry;
+  }
+  const repo = repoOverride || getWorkflowRepository();
+  strmTaskConfigRegistry = new StrmTaskConfigRegistry({
+    getTaskById: async (taskId: string) => {
+      return repo.findStrmTaskById(taskId);
+    },
+    getStorageById: async (storageId: string) => {
+      const storage = await repo.getConnectedStorageById(storageId);
+      if (!storage) return null;
+      return { provider: storage.provider, status: storage.status, accountId: storage.accountId };
+    },
+  });
+  return strmTaskConfigRegistry;
+}
+
+export function getStrmTaskConfigRegistry(): StrmTaskConfigRegistry {
+  return ensureStrmTaskConfigRegistry();
+}
+
+export function resetStrmTaskConfigRegistryForTests(): void {
+  strmTaskConfigRegistry = null;
 }

@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
+import { ensureStrmTaskConfigRegistry } from "../../../../composition/runtime-container";
 import type { CreateStrmTaskInput } from "@media-track/workflow";
 
 export async function GET(request: NextRequest) {
@@ -57,5 +58,6 @@ export async function POST(request: NextRequest) {
 
   const repo = getWorkflowRepository();
   const task = await repo.createStrmTask(parseTaskInput(body, accountId));
+  ensureStrmTaskConfigRegistry().invalidate(task.id);
   return NextResponse.json(task, { status: 201 });
 }

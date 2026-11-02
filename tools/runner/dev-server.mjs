@@ -108,6 +108,9 @@ class ProcessAdapter {
   }
 
   static isPortInUse(port) {
+    if (this.findPidsOnPort(port).length > 0) {
+      return Promise.resolve(true);
+    }
     return new Promise((resolve) => {
       const server = net.createServer();
       server.once("error", (err) => {

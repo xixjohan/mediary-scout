@@ -23,3 +23,4 @@ export * from "./chat-conversations.js";
 export * from "./media-request.js";
 export * from "./storage-scope-strategy.js";
 export * from "./user-capability-adapter.js";
+export * from "./resource-meta-enricher.js";

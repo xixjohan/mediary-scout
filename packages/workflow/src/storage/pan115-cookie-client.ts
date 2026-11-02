@@ -1,4 +1,8 @@
 import { lixianRsaEncrypt } from "./pan115-lixian-cipher.js";
+import {
+  encode115DownurlPayload,
+  decode115DownurlResponse,
+} from "./pan115-downurl-cipher.js";
 import { fetchWithTimeout } from "../domain/fetch-with-timeout.js";
 import type {
   Pan115ActionResult,
@@ -300,6 +304,121 @@ export class Pan115CookieClient implements Pan115StorageApi {
       [`files_new_name[${input.fileId}]`, input.newName],
     ]);
     return actionResultFromResponse(response);
+  }
+
+  async getFileInfo(
+    fileId: string,
+  ): Promise<{ fileId: string; fileName: string; fileSize: number; pickCode: string } | null> {
+    const response = await this.getJson(`${PAN115_WEBAPI_BASE_URL}/files/file`, [
+      ["file_id", fileId],
+    ]);
+    if (!responseState(response)) {
+      return null;
+    }
+    const dataList = arrayValue(recordValue(response, "data"));
+    const first =
+      dataList.length > 0 && isRecord(dataList[0])
+        ? dataList[0]
+        : (recordValue(response, "data") as Record<string, unknown> | undefined);
+    if (!first) {
+      return null;
+    }
+    const resolvedFileId = stringValue(recordValue(first, "file_id")) || fileId;
+    const fileName = stringValue(recordValue(first, "file_name"));
+    const fileSize = numberValue(recordValue(first, "file_size"));
+    const pickCode = stringValue(recordValue(first, "pick_code") ?? recordValue(first, "pickcode"));
+    return { fileId: resolvedFileId, fileName, fileSize, pickCode };
+  }
+
+  async getDownloadUrl(input: {
+    fileId: string;
+    pickCode?: string | undefined;
+    userAgent?: string | undefined;
+  }): Promise<{ url: string; fileName?: string | undefined; fileSize?: number | undefined }> {
+    let pickCode = input.pickCode?.trim();
+    let fileName: string | undefined;
+    let fileSize: number | undefined;
+
+    if (!pickCode) {
+      const info = await this.getFileInfo(input.fileId);
+      if (!info || !info.pickCode) {
+        throw new Error(`PAN115_FILE_NOT_FOUND: 无法获取文件 ${input.fileId} 的 pick_code`);
+      }
+      pickCode = info.pickCode;
+      fileName = info.fileName;
+      fileSize = info.fileSize;
+    }
+
+    const ua = input.userAgent || this.userAgent;
+
+    // 1. 优先使用 proapi /app/chrome/downurl 接口（突破普通 Web 端大文件限制）
+    try {
+      const tm = String(Math.floor(Date.now() / 1000));
+      const payload = JSON.stringify({ pickcode: pickCode });
+      const encoded = encode115DownurlPayload(payload, tm);
+
+      const downUrlRes = await this.fetchJson(
+        `https://proapi.115.com/app/chrome/downurl?t=${tm}`,
+        {
+          method: "POST",
+          headers: {
+            Cookie: this.cookie,
+            "User-Agent": ua,
+            "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+            Accept: "application/json, text/plain, */*",
+          },
+          body: new URLSearchParams([["data", encoded.data]]).toString(),
+        },
+      );
+
+      if (responseState(downUrlRes) && recordValue(downUrlRes, "data")) {
+        const rawData = stringValue(recordValue(downUrlRes, "data"));
+        const decryptedJson = decode115DownurlResponse(rawData, encoded.key);
+        const parsed = JSON.parse(decryptedJson) as Record<string, unknown>;
+        const fileEntry = (parsed[input.fileId] ?? Object.values(parsed)[0]) as Record<string, unknown> | undefined;
+        if (fileEntry) {
+          const directUrl =
+            typeof fileEntry["url"] === "string"
+              ? fileEntry["url"]
+              : isRecord(fileEntry["url"])
+                ? stringValue(fileEntry["url"]["url"])
+                : "";
+          if (directUrl && directUrl.startsWith("http")) {
+            const resolvedName = stringValue(fileEntry["file_name"]) || fileName;
+            const resolvedSize = numberValue(fileEntry["file_size"]) || fileSize;
+            return {
+              url: directUrl,
+              ...(resolvedName !== undefined ? { fileName: resolvedName } : {}),
+              ...(resolvedSize !== undefined ? { fileSize: resolvedSize } : {}),
+            };
+          }
+        }
+      }
+    } catch {
+      // 降级尝试常规 webapi
+    }
+
+    // 2. 降级尝试常规 webapi.115.com/files/download
+    const webRes = await this.getJson(`${PAN115_WEBAPI_BASE_URL}/files/download`, [
+      ["pickcode", pickCode],
+      ["_", String(Date.now())],
+    ]);
+    if (responseState(webRes)) {
+      const directUrl = stringValue(recordValue(webRes, "file_url"));
+      if (directUrl && directUrl.startsWith("http")) {
+        const resolvedName = stringValue(recordValue(webRes, "file_name")) || fileName;
+        const resolvedSize = numberValue(recordValue(webRes, "file_size")) || fileSize;
+        return {
+          url: directUrl,
+          ...(resolvedName !== undefined ? { fileName: resolvedName } : {}),
+          ...(resolvedSize !== undefined ? { fileSize: resolvedSize } : {}),
+        };
+      }
+    }
+
+    throw new Error(
+      `PAN115_DOWNLOAD_URL_FAILED: 未能获取到文件 ${input.fileId} 的有效下载链接 (${responseMessage(webRes)})`,
+    );
   }
 
   private async getJson(url: string, params: Array<[string, string]>): Promise<unknown> {

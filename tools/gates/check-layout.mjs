@@ -109,6 +109,7 @@ const ALLOWED_FEATURE_SUBDIRS = new Set([
   "state",
   "api",
   "components",
+  "styles",
 ]);
 if (existsSync(featuresDir)) {
   for (const feat of readdirSync(featuresDir, { withFileTypes: true })) {
@@ -124,10 +125,42 @@ if (existsSync(featuresDir)) {
   }
 }
 
+// 4b) 设计系统结构规范门禁（Design System 骨架约束）
+const dsDir = join(root, "apps", "web", "design-system");
+const ALLOWED_DS_SUBDIRS = new Set([
+  "tokens",
+  "foundations",
+  "components",
+  "icons",
+  "themes",
+]);
+if (existsSync(dsDir)) {
+  for (const sub of readdirSync(dsDir, { withFileTypes: true })) {
+    if (sub.isDirectory() && !ALLOWED_DS_SUBDIRS.has(sub.name)) {
+      problems.push(
+        `apps/web/design-system/${sub.name}: 不允许的子目录（设计系统仅允许 tokens, foundations, components, icons, themes）`,
+      );
+    }
+  }
+}
+
+// 4c) App Router 路由目录纯净度门禁（阻断 app/ 顶级目录下的测试文件与杂质）
+const webAppDir = join(root, "apps", "web", "app");
+if (existsSync(webAppDir)) {
+  for (const entry of readdirSync(webAppDir, { withFileTypes: true })) {
+    if (entry.isFile() && /\.(test|spec)\.(ts|tsx|js|mjs)$/.test(entry.name)) {
+      problems.push(
+        `apps/web/app/${entry.name}: App Router 顶层路由目录严禁存放测试文件，请移入 apps/web/tests/unit/`,
+      );
+    }
+  }
+}
+
 // 5) 超大文件行数棘轮门禁（Audit L5：防止 eslint-suppressions.json 的 max-lines: count: 1 漏洞导致巨型文件继续膨胀）
 const LARGE_FILE_LINE_CAPS = {
   "apps/web/lib/workflow-runtime.ts": 550,
   "apps/web/app/actions.ts": 120,
+  "apps/web/app/globals.css": 300, // 棘轮硬卡点：单体 globals.css 已彻底解耦至 Feature Styles，锁定在 300 行以内
   "packages/workflow/src/sqlite.ts": 2600,
   "packages/workflow/src/acquisition-v2/sandbox.ts": 2560,
   "packages/workflow/src/repository.ts": 2410,

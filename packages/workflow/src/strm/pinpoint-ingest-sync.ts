@@ -78,7 +78,7 @@ async function writeStrmFilesForTask(
       ? path.join(task.localOutputDir, file.subPath)
       : task.localOutputDir;
     const targetFilePath = path.join(targetDir, strmFileName);
-    const playUrl = buildPlayUrl(baseUrl, task.storageId, file.id, file.name);
+    const playUrl = buildPlayUrl(baseUrl, task.id, file.id, file.name);
 
     await writeStrmFile({ targetFilePath, playUrl });
     paths.push(targetFilePath);
@@ -262,5 +262,14 @@ export async function triggerPostIngestSync(input: PostIngestSyncTriggerInput): 
     }
   } catch (err) {
     console.error("[triggerPostIngestSync] Failed to sync pinpoint ingested files:", err);
+  }
+}
+
+export async function triggerPostIngestSyncIfSucceeded(
+  status: string,
+  input: PostIngestSyncTriggerInput,
+): Promise<void> {
+  if (status === "succeeded") {
+    await triggerPostIngestSync(input);
   }
 }

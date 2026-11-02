@@ -6,6 +6,7 @@ import {
   normalizeBaseUrl,
   replaceBaseUrlInFiles,
   replaceBaseUrlInLine,
+  replaceBaseUrlInDirectories,
 } from "./base-url-replacer.js";
 
 describe("base-url-replacer", () => {
@@ -73,5 +74,26 @@ describe("base-url-replacer", () => {
 
     const contentTxt = fs.readFileSync(txtFile, "utf8");
     expect(contentTxt).toBe("Some metadata not to be touched\n");
+  });
+  it("aggregates batch replacements across multiple directories", async () => {
+    const root1 = makeTempDir();
+    const root2 = makeTempDir();
+
+    const f1 = path.join(root1, "movie1.strm");
+    const f2 = path.join(root2, "movie2.strm");
+
+    fs.writeFileSync(f1, "http://10.0.0.1:3000/api/strm/play/1/f1\n");
+    fs.writeFileSync(f2, "http://10.0.0.1:3000/api/strm/play/2/f2\n");
+
+    const result = await replaceBaseUrlInDirectories(
+      [root1, root2, root1], // includes duplicate
+      "https://media.newserver.com",
+    );
+
+    expect(result.total).toBe(2);
+    expect(result.updated).toBe(2);
+    expect(result.directories).toEqual([root1, root2]);
+    expect(fs.readFileSync(f1, "utf8").trim()).toBe("https://media.newserver.com/api/strm/play/1/f1");
+    expect(fs.readFileSync(f2, "utf8").trim()).toBe("https://media.newserver.com/api/strm/play/2/f2");
   });
 });

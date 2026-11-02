@@ -132,6 +132,7 @@ export interface UpdateStrmExecutionRecordInput {
 export interface StrmStore {
   listStrmTasks(accountId: string): Promise<StrmTask[]>;
   getStrmTask(id: string, accountId: string): Promise<StrmTask | null>;
+  findStrmTaskById(id: string): Promise<StrmTask | null>;
   createStrmTask(input: CreateStrmTaskInput): Promise<StrmTask>;
   updateStrmTask(input: UpdateStrmTaskInput): Promise<StrmTask | null>;
   deleteStrmTask(id: string, accountId: string): Promise<boolean>;

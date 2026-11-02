@@ -1,0 +1,412 @@
+/* Library — all tracked titles grid */
+.library-titles {
+  margin-top: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.title-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  gap: 16px;
+}
+
+.library-title-card {
+  background: var(--bg-surface);
+  border-radius: var(--radius-card);
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  transition: background 0.15s ease;
+}
+
+.library-title-card:hover {
+  background: var(--bg-raised);
+}
+
+.library-title-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.library-title-head h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.library-title-head span {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.season-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.season-rows li + li {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.season-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  text-decoration: none;
+  color: var(--text);
+  border-radius: 4px;
+}
+
+.season-row:hover .season-row-name {
+  color: var(--accent);
+}
+
+.season-row-name {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.season-chip {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+}
+
+.season-chip.active {
+  color: var(--accent);
+  background: rgba(30, 215, 96, 0.12);
+}
+
+.season-chip.completed {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.season-row-progress {
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.season-row-progress span {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+.season-row-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Foreign-work review */
+.feed-action {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.feed-action:hover {
+  text-decoration: underline;
+}
+
+.foreign-file-list {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.foreign-file-list code {
+  font-size: 12.5px;
+  color: var(--text-soft);
+  word-break: break-all;
+}
+
+.foreign-import-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.foreign-import-form input {
+  background: var(--bg-card);
+  border: 1px solid transparent;
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  font-size: 13.5px;
+  padding: 9px 16px;
+  min-width: 220px;
+}
+
+.foreign-import-form input:focus {
+  outline: none;
+  border-color: var(--border-soft);
+}
+
+.import-result {
+  width: 100%;
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+.import-result.success {
+  color: var(--accent);
+}
+
+.import-result.failed {
+  color: var(--negative);
+}
+
+/* Candidate poster supports real artwork */
+.candidate-poster {
+  overflow: hidden;
+  position: relative;
+  text-decoration: none;
+}
+
+.candidate-poster img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Status badges (Overseerr ramp: green=have, indigo=in progress, amber=waiting) */
+/* Row of header badges (e.g. 部分入库 + 追更中) — side by side with breathing
+   room, not each on its own line in the title column. */
+.hub-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.hub-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  width: fit-content;
+}
+
+.hub-badge.tone-green {
+  color: #b7f5cd;
+  background: rgba(30, 215, 96, 0.16);
+  border: 1px solid rgba(30, 215, 96, 0.55);
+}
+
+.hub-badge.tone-indigo {
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.18);
+  border: 1px solid rgba(99, 102, 241, 0.6);
+}
+
+.hub-badge.tone-amber {
+  color: #ffd9a1;
+  background: rgba(255, 164, 43, 0.16);
+  border: 1px solid rgba(255, 164, 43, 0.55);
+}
+
+.hub-badge.tone-muted {
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+/* 预定 (reserved movie) — info blue, matching the wall badge. */
+.hub-badge.tone-blue {
+  color: #bcd9ff;
+  background: rgba(83, 157, 245, 0.16);
+  border: 1px solid rgba(83, 157, 245, 0.55);
+}
+
+/* 待换 (「N 集待换」/「待换资源」) — negative red, like the 待换 episode cells. */
+.hub-badge.tone-red {
+  color: var(--negative);
+  background: rgba(243, 114, 127, 0.16);
+  border: 1px solid rgba(243, 114, 127, 0.55);
+}
+
+.card-badge {
+  margin-left: 8px;
+  vertical-align: 1px;
+}
+
+/* Poster wall (library) */
+.poster-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 18px;
+}
+
+.wall-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.wall-poster {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding-bottom: 150%;
+  border-radius: var(--radius-card);
+  overflow: hidden;
+  background: linear-gradient(160deg, #2a2a2a 0%, #1c1c1c 100%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.wall-card:hover .wall-poster {
+  transform: scale(1.03);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.wall-poster img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.wall-poster .poster-fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: var(--text-soft);
+  padding: 12px;
+  text-align: center;
+}
+
+/* Stack of state badges, top-right. Usually one; a 缺集-且-在更 card carries two
+   (⚠️ + 追更中) without overlapping. */
+.wall-states {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wall-state {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  backdrop-filter: blur(4px);
+}
+
+.wall-state.tone-green {
+  background: rgba(30, 215, 96, 0.85);
+  color: #04250f;
+}
+
+.wall-state.tone-indigo {
+  background: rgba(99, 102, 241, 0.9);
+  color: #eef2ff;
+}
+
+.wall-state.tone-amber {
+  background: rgba(255, 164, 43, 0.9);
+  color: #341f00;
+}
+
+/* 预定 (reserved / unreleased movie) — info blue, distinct from 追更中 indigo. */
+.wall-state.tone-blue {
+  background: rgba(83, 157, 245, 0.92);
+  color: #03203f;
+}
+
+/* "获取中" placeholder — a real poster behind a working scrim, not clickable */
+.wall-card.is-loading {
+  cursor: default;
+}
+
+.wall-card.is-loading:hover .wall-poster {
+  transform: none;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.wall-card.is-loading .wall-poster img {
+  filter: saturate(0.7) brightness(0.55);
+}
+
+.wall-loading-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.wall-card.is-interactive-loading {
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  position: relative;
+}
+
+.wall-card.is-interactive-loading:hover .wall-poster {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.3);
+}
+
+.wall-loading-pill {
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.85);
+  background: rgba(99, 102, 241, 0.7);
+  padding: 2px 8px;
+  border-radius: 9999px;
+  letter-spacing: normal;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}

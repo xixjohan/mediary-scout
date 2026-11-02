@@ -68,7 +68,7 @@ export function StrmTaskCard({
   onDelete,
   onToggleActive,
 }: StrmTaskCardProps) {
-  const isPaused = !task.isActive || task.status === "paused";
+  const isPaused = task.status === "paused" || task.isActive === false;
 
   return (
     <div

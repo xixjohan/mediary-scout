@@ -18,3 +18,22 @@ export function isBrandStorageAuthError(error: unknown): boolean {
     isPan123AuthError(error)
   );
 }
+
+export async function maybeFreezeOnBrandAuthError(input: {
+  connectedStorageId: string | null | undefined;
+  error: unknown;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
+}): Promise<void> {
+  const { connectedStorageId, error, onAuthErrorFreeze } = input;
+  if (!onAuthErrorFreeze || !connectedStorageId || !isBrandStorageAuthError(error)) {
+    return;
+  }
+  const reason = error instanceof Error ? error.message : String(error);
+  try {
+    await onAuthErrorFreeze(connectedStorageId, reason);
+  } catch (freezeError) {
+    console.error(
+      `[media-track] onAuthErrorFreeze failed for ${connectedStorageId}: ${String(freezeError)}`,
+    );
+  }
+}

@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { execSync } from "node:child_process";
 import { join } from "node:path";
-import { analyzeRouteSource } from "./check-blocking-routes.mjs";
+import { analyzeRouteSource, analyzeLayoutShellSource } from "./check-blocking-routes.mjs";
 
 describe("Next.js Blocking Routes Gate Verification", () => {
   it("passes check-blocking-routes.mjs on actual repository with 0 violations", () => {
     const scriptPath = join(process.cwd(), "tools/gates/check-blocking-routes.mjs");
     const output = execSync(`node "${scriptPath}"`, { encoding: "utf8" });
     expect(output).toContain("[Blocking Routes Gate] 质检通过");
-    expect(output).toContain("0 个阻塞性路由 (0 violations)");
+    expect(output).toContain("0 项规范违规 (0 violations)");
   });
 
   it("catches blocking route error when export default is async and directly awaits searchParams", () => {
@@ -120,5 +120,20 @@ export default function LoginPage() {
 `;
     const violations = analyzeRouteSource("apps/web/app/login/page.tsx", loginCode);
     expect(violations.length).toBe(0);
+  });
+
+  it("catches useSearchParams call in layout shell components (Rule 5)", () => {
+    const badLayoutCode = `
+"use client";
+import { useSearchParams } from "next/navigation";
+
+export function BadSidebarItem() {
+  const params = useSearchParams();
+  return <div>Item: {params.get("w")}</div>;
+}
+`;
+    const violations = analyzeLayoutShellSource("apps/web/components/layout/bad-item.tsx", badLayoutCode);
+    expect(violations.length).toBe(1);
+    expect(violations[0].rule).toBe("layout-shell-no-use-search-params");
   });
 });

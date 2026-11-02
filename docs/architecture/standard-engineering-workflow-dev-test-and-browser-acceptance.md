@@ -250,4 +250,5 @@ sequenceDiagram
     - 是否拉起本地守护进程并探活？
     - 是否通过 Chrome DevTools MCP 验证真实 DOM 渲染与用户交互链路？
     - 是否对关键页面、操作反馈与模态弹窗截图并记录交付证据？
+    - 是否排查并消除 Fast Refresh 重载死循环与 React 19 水合撕裂（参见 [Next.js 16 极速刷新死循环与水合安全架构规范](turbopack-fast-refresh-loop-and-hydration-safety-architecture-spec.md)）？
 ```

@@ -3,7 +3,7 @@ import type { DriveFileManager, DriveFileItem } from "../storage/drive-file-mana
 import type { StorageExecutor } from "../domain/ports.js";
 import type { PackageTreeFile, VerifiedFile } from "../domain/domain.js";
 import type { StrmTask } from "./strm-types.js";
-import { buildPlayUrl, safeStem, writeStrmFile } from "./strm-writer.js";
+import { buildPlayUrl, safeDirSegments, safeStem, writeStrmFile, removeStrmFile } from "./strm-writer.js";
 
 export interface StrmScanResult {
   scannedCount: number;
@@ -37,33 +37,63 @@ export class StrmScanner {
   private async fetchRemoteFiles(
     storage: StorageExecutor | DriveFileManager,
     folderId: string,
+    maxDepth = 8,
   ): Promise<VerifiedFile[]> {
     if (typeof (storage as DriveFileManager).listDirectory === "function") {
-      const listing = await (storage as DriveFileManager).listDirectory(folderId);
-      return listing.items
-        .filter((it: DriveFileItem) => !it.isFolder)
-        .map((it: DriveFileItem) => ({
-          id: it.id,
-          storageDirectoryId: folderId,
-          name: it.name,
-          sizeBytes: it.sizeBytes,
-          episodeCode: null,
-          providerFileId: it.id,
-        }));
+      const results: VerifiedFile[] = [];
+      const dfm = storage as DriveFileManager;
+
+      const walk = async (dirId: string, prefix: string, depth: number): Promise<void> => {
+        if (depth > maxDepth) return;
+        const listing = await dfm.listDirectory(dirId);
+        for (const it of listing.items) {
+          if (it.isFolder) {
+            await walk(it.id, `${prefix}${it.name}/`, depth + 1);
+          } else {
+            results.push({
+              id: it.id,
+              storageDirectoryId: dirId,
+              name: it.name,
+              sizeBytes: it.sizeBytes,
+              episodeCode: null,
+              providerFileId: it.id,
+              relativePath: `${prefix}${it.name}`,
+            });
+          }
+        }
+      };
+
+      await walk(folderId, "", 1);
+      return results;
+    }
+
+    if (typeof (storage as StorageExecutor).listTree === "function") {
+      try {
+        const tree = await (storage as StorageExecutor).listTree({ directoryId: folderId, maxDepth });
+        if (tree && tree.length > 0) {
+          return tree.map((f: PackageTreeFile) => ({
+            id: f.providerFileId,
+            storageDirectoryId: folderId,
+            name: path.basename(f.path),
+            sizeBytes: f.sizeBytes,
+            episodeCode: null,
+            providerFileId: f.providerFileId,
+            relativePath: f.path,
+          }));
+        }
+      } catch {
+        // non-blocking fallback
+      }
     }
 
     try {
-      return await (storage as StorageExecutor).listVideoFiles(folderId);
-    } catch {
-      const tree = await (storage as StorageExecutor).listTree({ directoryId: folderId });
-      return tree.map((f: PackageTreeFile) => ({
-        id: f.providerFileId,
-        storageDirectoryId: folderId,
-        name: path.basename(f.path),
-        sizeBytes: f.sizeBytes,
-        episodeCode: null,
-        providerFileId: f.providerFileId,
+      const files = await (storage as StorageExecutor).listVideoFiles(folderId);
+      return files.map((f) => ({
+        ...f,
+        relativePath: f.name,
       }));
+    } catch {
+      return [];
     }
   }
 
@@ -115,11 +145,15 @@ export class StrmScanner {
     localStrmMap: Map<string, string>,
     result: StrmScanResult,
   ): Promise<string> {
+    const relDir = rf.relativePath ? path.dirname(rf.relativePath) : "";
     const stem = path.parse(rf.name).name;
     const safeName = safeStem(stem) + ".strm";
-    const relStrmPath = safeName.replace(/\\/g, "/");
-    const targetFullPath = path.join(task.localOutputDir, safeName);
-    const playUrl = buildPlayUrl(baseUrl, task.storageId, rf.id, rf.name);
+    const safeSegments = relDir && relDir !== "." ? safeDirSegments(relDir) : [];
+    const relStrmPath = safeSegments.length > 0
+      ? `${safeSegments.join("/")}/${safeName}`
+      : safeName;
+    const targetFullPath = path.join(task.localOutputDir, ...safeSegments, safeName);
+    const playUrl = buildPlayUrl(baseUrl, task.id, rf.id, rf.name);
 
     if (!localStrmMap.has(relStrmPath)) {
       await writeStrmFile({ targetFilePath: targetFullPath, playUrl });
@@ -140,15 +174,15 @@ export class StrmScanner {
     return relStrmPath;
   }
 
-  private cleanOrphanFiles(
+  private async cleanOrphanFiles(
     localStrmMap: Map<string, string>,
     expectedLocalRels: Set<string>,
     result: StrmScanResult,
-  ): void {
+  ): Promise<void> {
     for (const [relPath, fullPath] of localStrmMap.entries()) {
       if (!expectedLocalRels.has(relPath)) {
         try {
-          fs.unlinkSync(fullPath);
+          await removeStrmFile(fullPath, true);
           result.removedCount++;
         } catch {
           // ignore unlink error
@@ -294,7 +328,7 @@ export class StrmScanner {
         removedCount: result.removedCount,
         message: "正在清理远端已不存在的本地孤儿 STRM 文件...",
       });
-      this.cleanOrphanFiles(localStrmMap, expectedLocalRels, result);
+      await this.cleanOrphanFiles(localStrmMap, expectedLocalRels, result);
     }
 
     await onProgress?.({

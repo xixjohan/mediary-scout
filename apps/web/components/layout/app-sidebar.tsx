@@ -47,7 +47,7 @@ export function AppSidebar({
           Single-user/demo → AccountIdentityLoader returns null → empty. */}
       <Suspense fallback={null}>
         <div className="sidebar-top-identity">
-          <AccountIdentityLoader />
+          <AccountIdentityLoader storageId={activeStorageId} />
         </div>
       </Suspense>
 
@@ -122,7 +122,7 @@ export function AppSidebar({
         {/* Account identity (multi-user only) — who am I + 改密码/登出/账号管理. In
             Suspense so its DB read never blocks the shell. */}
         <Suspense fallback={null}>
-          <AccountIdentityLoader />
+          <AccountIdentityLoader storageId={activeStorageId} />
         </Suspense>
         <Link
           className={`nav-item nav-secondary ${active === "activity" ? "is-active" : ""}`}

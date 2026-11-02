@@ -1,0 +1,416 @@
+/* Settings tabs — Spotify 艺人页式下划线 tab（spec §2，用户拍板 B 方案） */
+.settings-tabs {
+  display: flex;
+  gap: 22px;
+  margin-top: 18px;
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.settings-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  padding: 0 0 9px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+
+.settings-tab:hover {
+  color: var(--text);
+}
+
+.settings-tab.is-active {
+  color: var(--text);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+@media (max-width: 860px) {
+  .settings-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+}
+
+/* 巡检时间点 chips（daily-sweep-form） */
+.sweep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 6px 8px 6px 14px;
+  font-size: 14px;
+}
+
+.sweep-chip-remove {
+  appearance: none;
+  border: none;
+  background: #333;
+  color: var(--text-muted);
+  border-radius: var(--radius-pill);
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sweep-chip-remove:hover {
+  color: var(--text);
+}
+
+.sweep-preset {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--info);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* ── 设置页·网盘 tab 重设计(盘位卡片网格 + 品牌图库添加流)──────────────── */
+
+.drive-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+  margin: 14px 0 18px;
+}
+
+.drive-card {
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-card);
+  padding: 10px 12px;
+  min-width: 0;
+}
+
+.drive-card.is-frozen {
+  border-color: rgba(255, 164, 43, 0.35);
+}
+
+.drive-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drive-card-icon {
+  border-radius: 6px;
+  flex: none;
+}
+
+/* 未注册品牌的图标占位:方形,绝不与状态圆点撞形 */
+.drive-card-icon-fallback {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  flex: none;
+  display: inline-block;
+}
+
+.drive-card-name {
+  font-weight: 600;
+  font-size: 13px;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drive-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+}
+
+.drive-dot.green {
+  background: var(--accent);
+}
+
+.drive-dot.amber {
+  background: var(--warning);
+}
+
+.drive-card-uid {
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.drive-card-meta {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-top: 2px;
+}
+
+.tone-amber-text {
+  color: var(--warning);
+}
+
+/* 动作降权:默认弱化,悬停/键盘聚焦时提到全亮(opacity 不挡触控,手机可直接点) */
+.drive-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 9px;
+  opacity: 0.55;
+  transition: opacity 0.15s;
+}
+
+.drive-card:hover .drive-card-actions,
+.drive-card:focus-within .drive-card-actions {
+  opacity: 1;
+}
+
+.drive-card-actions .ghost-button,
+.drive-card-actions .secondary-button {
+  font-size: 12px;
+  padding: 3px 10px;
+  /* A long 测试连接 result sits beside the button: let the message wrap, never the label. */
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.drive-add-heading {
+  margin-bottom: 8px;
+}
+
+.drive-add-hint {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-left: 8px;
+}
+
+.drive-risk-note {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+/* 品牌图库瓦片(集成图库范式:图标 + 名称 + 认证方式) */
+.brand-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 8px;
+}
+
+.brand-tile {
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-card);
+  padding: 12px 8px 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  cursor: pointer;
+  color: var(--text);
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.brand-tile:hover {
+  border-color: rgba(255, 255, 255, 0.22);
+  background: var(--bg-raised);
+}
+
+.brand-tile.is-selected {
+  border-color: var(--accent);
+  background: var(--bg-raised);
+}
+
+.brand-tile-icon {
+  border-radius: 7px;
+  margin-bottom: 5px;
+}
+
+.brand-tile-label {
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.brand-tile-note {
+  color: var(--text-muted);
+  font-size: 10.5px;
+}
+
+.brand-tile.is-selected .brand-tile-note {
+  color: var(--accent);
+}
+
+.brand-connect-area {
+  margin-top: 10px;
+  background: var(--bg-surface);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: var(--radius-card);
+  padding: 14px;
+}
+
+/* Hallmark · component: service-block · genre: modern-minimal · theme: project (apps/web/DESIGN.md, Spotify)
+ * states: default · details open/closed · summary :focus-visible · pill tones on/neutral/warn/off
+ * 设置 → 资源与服务：面板内每个服务一段固定节奏（名称 + 胶囊 → 一句话 → 说明▸ → 字段 → 动作行）。 */
+.service-block + .service-block {
+  border-top: 1px solid var(--divider);
+  margin-top: 18px;
+  padding-top: 16px;
+}
+.service-block-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+.service-block-name {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+/* 头部行尾的操作位（ServiceBlock 的 headerAction）：flex 行里推到最右；行太窄被
+ * wrap 到第二行时仍贴右，与胶囊同享行的 gap。 */
+.service-block-head-action {
+  margin-left: auto;
+}
+/* 「换回免费模型」（ServiceBlock.headerAction）：主模型块标题行尾的描边小按钮，
+ * mockup 定稿样式（描边胶囊、透明底、软色文字）。次级动作，不与保存按钮争视觉
+ * 权重；hover 才点亮描边提示可点。 */
+.restore-free-llm-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  font-size: 11.5px;
+  line-height: 1.4;
+  background: transparent;
+  color: var(--text-soft);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.restore-free-llm-button:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.restore-free-llm-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.restore-free-llm-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* inline-block, not inline-flex: text-overflow needs a block container, and a
+ * user-typed model id (「已配置 · accounts/fireworks/models/…」) must ellipsize
+ * inside the panel instead of widening the page. Full text is in the title attr. */
+.service-pill {
+  display: inline-block;
+  max-width: 100%;
+  min-width: 0;
+  height: 20px;
+  padding: 0 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: 11px;
+  line-height: 18px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.service-pill.is-on {
+  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  color: var(--accent);
+}
+.service-pill.is-warn {
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+  color: var(--warning);
+}
+.service-pill.is-off {
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--text-faint);
+}
+.service-block-summary {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+.service-block-details {
+  margin: -4px 0 12px;
+}
+.service-block-details > summary {
+  display: inline-block;
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--text-faint);
+  list-style: none;
+}
+.service-block-details > summary::-webkit-details-marker {
+  display: none;
+}
+.service-block-details > summary::after {
+  content: " ▸";
+}
+.service-block-details[open] > summary::after {
+  content: " ▾";
+}
+.service-block-details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.service-block-details-body {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+.service-block-details-body p {
+  margin: 0 0 8px;
+}
+.service-block-details-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.service-block-details-body a:hover {
+  text-decoration: underline;
+}
+/* 多字段表单的底部动作行（单字段表单仍把保存放在输入框右侧的 .setting-row 里） */
+.service-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 4px;
+}
+.service-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  cursor: pointer;
+}

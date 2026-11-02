@@ -1,0 +1,598 @@
+/* 资源存活性与目录树增强 */
+.title-resources-item-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.title-resources-item.is-invalid {
+  opacity: 0.65;
+}
+
+.resource-validity-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  font-size: 0.72rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  flex: none;
+  border: 1px solid transparent;
+}
+
+.resource-validity-badge.idle {
+  background: var(--bg-raised);
+  border-color: var(--border);
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.resource-validity-badge.idle:hover {
+  background: var(--bg-chip-hover);
+  color: var(--text);
+  border-color: var(--border-soft);
+}
+
+.resource-validity-badge.probing {
+  background: rgba(14, 165, 233, 0.12);
+  border-color: rgba(14, 165, 233, 0.3);
+  color: #0ea5e9;
+}
+
+.resource-validity-badge.valid {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(34, 197, 94, 0.3);
+  color: #22c55e;
+}
+
+.resource-validity-badge.invalid {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: #ef4444;
+}
+
+.resource-validity-badge.password {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.3);
+  color: #f59e0b;
+}
+
+.resource-validity-badge.throttled {
+  background: rgba(234, 179, 8, 0.12);
+  border-color: rgba(234, 179, 8, 0.3);
+  color: #eab308;
+}
+
+.resource-validity-badge.unknown {
+  background: var(--bg-surface);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+.resource-spinner {
+  animation: spin 1s linear infinite;
+}
+
+.title-resources-tree-btn {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  color: var(--text-soft);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 6px 10px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  transition: all var(--transition-fast);
+}
+
+.title-resources-tree-btn:hover:not(:disabled) {
+  background: var(--bg-chip-hover);
+  color: var(--text);
+  border-color: var(--border-soft);
+}
+
+.title-resources-tree-btn.active {
+  background: var(--accent-subtle);
+  border-color: var(--accent-subtle-border);
+  color: var(--accent);
+}
+
+.title-resources-tree-drawer {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-lg);
+  padding: 8px 12px;
+  margin-top: 4px;
+}
+
+.resource-folder-tree-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.resource-tree-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  border-bottom: 1px dashed var(--border-soft);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.resource-tree-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.resource-tree-leaf {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 0.8125rem;
+  min-width: 0;
+}
+
+.resource-tree-dir-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 0;
+  font-size: 0.8125rem;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  width: 100%;
+  text-align: left;
+  border-radius: var(--radius-sm);
+  transition: background var(--transition-fast);
+}
+
+.resource-tree-dir-btn:hover {
+  background: var(--bg-chip-hover);
+}
+
+.resource-tree-indent-spacer {
+  width: 14px;
+  display: inline-block;
+}
+
+.resource-tree-file-name,
+.resource-tree-dir-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.resource-tree-file-size {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  margin-left: 8px;
+}
+
+.resource-tree-file-icon {
+  color: var(--text-muted);
+  flex: none;
+}
+
+.resource-tree-dir-icon {
+  color: #eab308;
+  flex: none;
+}
+
+.resource-tree-loading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  padding: 6px 0;
+}
+
+.resource-tree-empty {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  padding: 4px 0;
+}
+
+.resource-meta-size {
+  font-weight: 500;
+  color: var(--text-soft);
+}
+
+/* 批次 4：整理面板。L1 只说做了什么；L2 列出每个文件与建议目标让用户点头。
+   409（盘没确认计划）显示为「已停止，未做任何改动」——不是一个会最终声称成功的进度条。 */
+.title-organize {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.title-organize-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.title-organize-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.title-organize-head-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.title-organize-intro {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 680px;
+}
+
+/* 「整理此目录」的盒式样式走上面 .title-resources-search/.sub-policy-actions 共享的
+   那条规则（同文件靠前）。这里曾有一份等特异性的旧规则，按源码顺序会覆盖共享样式，
+   把按钮打回透明底——删掉，让三个面板的按钮真正长成同一副样子。 */
+
+.title-organize-copy,
+.title-organize-stopped {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.title-organize-stopped {
+  color: var(--negative);
+}
+
+.title-organize-subhead {
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.title-organize-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.title-organize-item {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  justify-content: space-between;
+}
+
+.title-organize-item-blocked {
+  border-left: 2px solid var(--negative);
+  padding-left: 8px;
+}
+
+.title-organize-item-title {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+.title-organize-item-meta,
+.title-organize-item-suggest {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+/* 批次 5：订阅策略面板。这个面板上线时**一条 CSS 都没有**——sub-policy* 类名
+   在全仓库不存在，表单因此是浏览器默认样式：四个标签和输入框挤在同一行、
+   复选框漂在右端、预览结果是无序列表加点。这里补上整套：
+   字段栅格（两列，窄屏一列）、与设计系统同款的输入框/复选框/按钮、
+   以及预览结果的命中/排除两个清单（每条排除带原因）。 */
+.sub-policy {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.sub-policy-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.sub-policy-head h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.sub-policy-head-side {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sub-policy-toggle-btn {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sub-policy-toggle-btn:hover {
+  background: var(--bg-card);
+  color: var(--text);
+  border-color: var(--border-soft);
+}
+
+.sub-policy-collapsed-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+}
+
+.sub-policy-summary-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.sub-policy-summary-tag {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-soft);
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}
+
+.sub-policy-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.sub-policy-chip {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.sub-policy-chip:hover {
+  background: var(--bg-card);
+  color: var(--text);
+  border-color: var(--border-soft);
+}
+
+.sub-policy-field-help {
+  color: var(--text-faint);
+  font-size: 0.72rem;
+  font-weight: normal;
+  margin-left: 4px;
+}
+
+/* 配没配过规则，一眼可辨。绿点 = 已配；灰 = 还没配。 */
+.sub-policy-unset,
+.sub-policy-set {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 0.78rem;
+}
+
+.sub-policy-unset {
+  color: var(--text-faint);
+}
+
+.sub-policy-set {
+  color: var(--accent);
+}
+
+.sub-policy-unset::before,
+.sub-policy-set::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.sub-policy-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+/* 标签在输入框上方，输入框撑满栅格格——浏览器默认的「标签+控件挤一行」
+   在这里不存在。 */
+.sub-policy-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+}
+
+.sub-policy-fields input {
+  width: 100%;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.8125rem;
+  padding: 6px 10px;
+}
+
+.sub-policy-fields input::placeholder {
+  color: var(--text-faint);
+}
+
+.sub-policy-fields input:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(30, 215, 96, 0.22);
+}
+
+/* 「用正则」是横跨整行的一个开关，不占半个栅格。 */
+.sub-policy-regex {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  grid-column: 1 / -1;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.sub-policy-regex input {
+  width: auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.sub-policy-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* 预览结果：一条标题 + 两个清单。清单限高内滚——候选多的时候卡片不无限拉长。 */
+.sub-policy-preview {
+  border-top: 1px solid var(--divider);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.sub-policy-headline {
+  color: var(--text);
+  font-size: 0.875rem;
+  margin: 0;
+}
+
+.sub-policy-warn {
+  color: var(--warning);
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+.sub-policy-sublist-label {
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  margin: 2px 0 0;
+}
+
+.sub-policy-matched,
+.sub-policy-excluded {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.sub-policy-matched li,
+.sub-policy-excluded li {
+  padding-left: 14px;
+  position: relative;
+  min-width: 0;
+}
+
+.sub-policy-matched li::before,
+.sub-policy-excluded li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 0.55em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.sub-policy-matched li {
+  color: var(--text-soft);
+}
+
+.sub-policy-matched li::before {
+  background: var(--accent);
+}
+
+.sub-policy-excluded li {
+  color: var(--text-muted);
+}
+
+.sub-policy-excluded li::before {
+  background: var(--text-faint);
+}
+
+/* 「为什么被排掉」——用户调规则靠的是这个，不是一个猜。 */
+.sub-policy-reason {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  color: var(--text-faint);
+  font-size: 0.72rem;
+}
+
+/* 保存/拒绝/失败三态同班不同色：保存是绿，拒绝与失败是红——绝不能让一个
+   被 API 拒绝的保存看起来像成功。 */
+.sub-policy-copy {
+  font-size: 0.8125rem;
+  margin: 0;
+}
+
+.sub-policy-copy.is-ok {
+  color: var(--accent);
+}
+
+.sub-policy-copy.is-bad {
+  color: var(--negative);
+}
+
+@media (max-width: 860px) {
+  /* 手机上两列字段挤成一列——输入框不该窄于半个屏幕。 */
+  .sub-policy-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

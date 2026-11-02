@@ -1,16 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 describe("StorageOfflineModal 样式与布局完整性防回归测试", () => {
   const root = resolve(process.cwd());
   const cssPath = resolve(root, "apps/web/app/globals.css");
+  const explorerCssPath = resolve(
+    root,
+    "apps/web/features/storage-drives/styles/storage-explorer.css",
+  );
   const tsxPath = resolve(
     root,
     "apps/web/features/storage-drives/components/storage/storage-offline-modal.tsx",
   );
 
-  const cssContent = readFileSync(cssPath, "utf8");
+  const cssContent =
+    readFileSync(cssPath, "utf8") +
+    (existsSync(explorerCssPath) ? "\n" + readFileSync(explorerCssPath, "utf8") : "");
   const tsxContent = readFileSync(tsxPath, "utf8");
 
   it("TSX 弹窗浮层类名与 CSS 规则精确匹配，严禁再次脱节", () => {

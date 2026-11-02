@@ -94,3 +94,33 @@ export async function replaceBaseUrlInFiles(
   await walkDir(strmRootDir);
   return result;
 }
+
+/**
+ * 批量秒级替换多个目录下所有 .strm 文件的基址（自动去重目录并汇总统计）。
+ */
+export async function replaceBaseUrlInDirectories(
+  directories: string[],
+  newBaseUrl: string,
+): Promise<ReplaceBaseUrlResult & { directories: string[] }> {
+  const normalizedBase = normalizeBaseUrl(newBaseUrl);
+  const uniqueDirs = Array.from(
+    new Set(directories.map((d) => d.trim()).filter(Boolean)),
+  );
+
+  const aggregateResult: ReplaceBaseUrlResult & { directories: string[] } = {
+    total: 0,
+    updated: 0,
+    errors: [],
+    directories: uniqueDirs,
+  };
+
+  for (const dir of uniqueDirs) {
+    if (!fs.existsSync(dir)) continue;
+    const res = await replaceBaseUrlInFiles(dir, normalizedBase);
+    aggregateResult.total += res.total;
+    aggregateResult.updated += res.updated;
+    aggregateResult.errors.push(...res.errors);
+  }
+
+  return aggregateResult;
+}

@@ -1,8 +1,9 @@
 import type { ResourceCandidateView, ResourceType } from "@media-track/workflow";
-import { resourceTypeLabel } from "../components/resource-candidate-row";
+import { resourceTypeLabel } from "../core/resource-formatters";
 
 export type ResolutionTag = "all" | "4k" | "1080p" | "720p";
 export type SpecTag = "all" | "remux" | "bluray" | "web-dl" | "hdr_dv";
+export type SizeBucketTag = "all" | "under_2g" | "2g_to_10g" | "10g_to_30g" | "over_30g";
 export type SortOption = "default" | "size_desc" | "size_asc" | "date_desc" | "seeders_desc";
 
 export interface ResourceFilterCriteria {
@@ -10,6 +11,7 @@ export interface ResourceFilterCriteria {
   type: ResourceType | "all";
   resolution: ResolutionTag;
   spec: SpecTag;
+  size: SizeBucketTag;
   sortBy: SortOption;
 }
 
@@ -18,6 +20,7 @@ export const DEFAULT_FILTER_CRITERIA: ResourceFilterCriteria = {
   type: "all",
   resolution: "all",
   spec: "all",
+  size: "all",
   sortBy: "default",
 };
 
@@ -31,6 +34,7 @@ export interface CandidateFacets {
   types: Array<CandidateFacetItem<ResourceType | "all">>;
   resolutions: Array<CandidateFacetItem<ResolutionTag>>;
   specs: Array<CandidateFacetItem<SpecTag>>;
+  sizes: Array<CandidateFacetItem<SizeBucketTag>>;
 }
 
 export interface PaginatedResult<T> {
@@ -43,6 +47,28 @@ export interface PaginatedResult<T> {
   hasNext: boolean;
   startIndex: number;
   endIndex: number;
+}
+
+const ONE_GB = 1024 * 1024 * 1024;
+
+/**
+ * 校验体积是否符合指定的档位策略（策略模式）
+ */
+export function matchesSizeBucket(sizeBytes: number | undefined, bucket: SizeBucketTag): boolean {
+  if (bucket === "all") return true;
+  if (sizeBytes === undefined || !Number.isFinite(sizeBytes) || sizeBytes <= 0) {
+    return false;
+  }
+  switch (bucket) {
+    case "under_2g":
+      return sizeBytes <= 2 * ONE_GB;
+    case "2g_to_10g":
+      return sizeBytes > 2 * ONE_GB && sizeBytes <= 10 * ONE_GB;
+    case "10g_to_30g":
+      return sizeBytes > 10 * ONE_GB && sizeBytes <= 30 * ONE_GB;
+    case "over_30g":
+      return sizeBytes > 30 * ONE_GB;
+  }
 }
 
 /**
@@ -71,30 +97,21 @@ export function matchesSpec(title: string, spec: Exclude<SpecTag, "all">): boole
   }
 }
 
-/**
- * 提取全部分面标签及其统计数量
- */
-export function extractFacets(candidates: readonly ResourceCandidateView[]): CandidateFacets {
-  const total = candidates.length;
-
-  // 1. 类型统计
+function countTypes(candidates: readonly ResourceCandidateView[], total: number) {
   const typeCounts = new Map<ResourceType, number>();
   for (const c of candidates) {
     typeCounts.set(c.type, (typeCounts.get(c.type) ?? 0) + 1);
   }
-
   const types: Array<CandidateFacetItem<ResourceType | "all">> = [
     { value: "all", label: "全部类型", count: total },
   ];
   for (const [type, count] of typeCounts.entries()) {
-    types.push({
-      value: type,
-      label: resourceTypeLabel(type),
-      count,
-    });
+    types.push({ value: type, label: resourceTypeLabel(type), count });
   }
+  return types;
+}
 
-  // 2. 分辨率统计
+function countResolutions(candidates: readonly ResourceCandidateView[], total: number) {
   let count4k = 0;
   let count1080p = 0;
   let count720p = 0;
@@ -104,15 +121,15 @@ export function extractFacets(candidates: readonly ResourceCandidateView[]): Can
     else if (res === "1080p") count1080p++;
     else if (res === "720p") count720p++;
   }
-
-  const resolutions: Array<CandidateFacetItem<ResolutionTag>> = [
-    { value: "all", label: "全部分辨率", count: total },
-    { value: "4k", label: "4K / 2160p", count: count4k },
-    { value: "1080p", label: "1080p", count: count1080p },
-    { value: "720p", label: "720p", count: count720p },
+  return [
+    { value: "all" as const, label: "全部分辨率", count: total },
+    { value: "4k" as const, label: "4K / 2160p", count: count4k },
+    { value: "1080p" as const, label: "1080p", count: count1080p },
+    { value: "720p" as const, label: "720p", count: count720p },
   ];
+}
 
-  // 3. 规格统计
+function countSpecs(candidates: readonly ResourceCandidateView[], total: number) {
   let countRemux = 0;
   let countBluray = 0;
   let countWebDl = 0;
@@ -123,16 +140,48 @@ export function extractFacets(candidates: readonly ResourceCandidateView[]): Can
     if (matchesSpec(c.title, "web-dl")) countWebDl++;
     if (matchesSpec(c.title, "hdr_dv")) countHdr++;
   }
-
-  const specs: Array<CandidateFacetItem<SpecTag>> = [
-    { value: "all", label: "全部规格", count: total },
-    { value: "remux", label: "REMUX", count: countRemux },
-    { value: "bluray", label: "BluRay/原盘", count: countBluray },
-    { value: "web-dl", label: "WEB-DL", count: countWebDl },
-    { value: "hdr_dv", label: "HDR/杜比视界", count: countHdr },
+  return [
+    { value: "all" as const, label: "全部规格", count: total },
+    { value: "remux" as const, label: "REMUX", count: countRemux },
+    { value: "bluray" as const, label: "BluRay/原盘", count: countBluray },
+    { value: "web-dl" as const, label: "WEB-DL", count: countWebDl },
+    { value: "hdr_dv" as const, label: "HDR/杜比视界", count: countHdr },
   ];
+}
 
-  return { types, resolutions, specs };
+function countSizes(candidates: readonly ResourceCandidateView[], total: number) {
+  let countUnder2g = 0;
+  let count2gTo10g = 0;
+  let count10gTo30g = 0;
+  let countOver30g = 0;
+
+  for (const c of candidates) {
+    if (matchesSizeBucket(c.sizeBytes, "under_2g")) countUnder2g++;
+    if (matchesSizeBucket(c.sizeBytes, "2g_to_10g")) count2gTo10g++;
+    if (matchesSizeBucket(c.sizeBytes, "10g_to_30g")) count10gTo30g++;
+    if (matchesSizeBucket(c.sizeBytes, "over_30g")) countOver30g++;
+  }
+
+  return [
+    { value: "all" as const, label: "全部大小", count: total },
+    { value: "under_2g" as const, label: "< 2 GB", count: countUnder2g },
+    { value: "2g_to_10g" as const, label: "2 ~ 10 GB", count: count2gTo10g },
+    { value: "10g_to_30g" as const, label: "10 ~ 30 GB", count: count10gTo30g },
+    { value: "over_30g" as const, label: "> 30 GB", count: countOver30g },
+  ];
+}
+
+/**
+ * 提取全部分面标签及其统计数量
+ */
+export function extractFacets(candidates: readonly ResourceCandidateView[]): CandidateFacets {
+  const total = candidates.length;
+  return {
+    types: countTypes(candidates, total),
+    resolutions: countResolutions(candidates, total),
+    specs: countSpecs(candidates, total),
+    sizes: countSizes(candidates, total),
+  };
 }
 
 /**
@@ -145,27 +194,21 @@ export function filterCandidates(
   const kw = criteria.keyword.trim().toLowerCase();
 
   return candidates.filter((c) => {
-    // 1. 关键词二次过滤（大小写不敏感匹配标题）
     if (kw.length > 0 && !c.title.toLowerCase().includes(kw)) {
       return false;
     }
-
-    // 2. 协议/网盘类型过滤
     if (criteria.type !== "all" && c.type !== criteria.type) {
       return false;
     }
-
-    // 3. 画质过滤
-    if (criteria.resolution !== "all") {
-      const res = extractResolution(c.title);
-      if (res !== criteria.resolution) return false;
+    if (criteria.resolution !== "all" && extractResolution(c.title) !== criteria.resolution) {
+      return false;
     }
-
-    // 4. 规格过滤
-    if (criteria.spec !== "all") {
-      if (!matchesSpec(c.title, criteria.spec)) return false;
+    if (criteria.spec !== "all" && !matchesSpec(c.title, criteria.spec)) {
+      return false;
     }
-
+    if (criteria.size !== "all" && !matchesSizeBucket(c.sizeBytes, criteria.size)) {
+      return false;
+    }
     return true;
   });
 }
@@ -182,7 +225,6 @@ export function sortCandidates(
   }
 
   const sorted = [...candidates];
-
   switch (sortBy) {
     case "size_desc":
       return sorted.sort((a, b) => (b.sizeBytes ?? 0) - (a.sizeBytes ?? 0));
@@ -200,7 +242,7 @@ export function sortCandidates(
 }
 
 /**
- * 分页截取与元数据计算
+ * 客户端纯内存分页切片
  */
 export function paginateCandidates<T>(
   items: readonly T[],
@@ -208,12 +250,12 @@ export function paginateCandidates<T>(
   pageSize: number,
 ): PaginatedResult<T> {
   const totalItems = items.length;
-  const safePageSize = Math.max(1, pageSize);
-  const totalPages = Math.max(1, Math.ceil(totalItems / safePageSize));
-  const currentPage = Math.max(1, Math.min(page, totalPages));
+  const validPageSize = Math.max(1, pageSize);
+  const totalPages = Math.max(1, Math.ceil(totalItems / validPageSize));
+  const currentPage = Math.min(Math.max(1, page), totalPages);
 
-  const startIndex = (currentPage - 1) * safePageSize;
-  const endIndex = Math.min(startIndex + safePageSize, totalItems);
+  const startIndex = (currentPage - 1) * validPageSize;
+  const endIndex = Math.min(startIndex + validPageSize, totalItems);
   const pagedItems = totalItems === 0 ? [] : items.slice(startIndex, endIndex);
 
   return {
@@ -221,10 +263,10 @@ export function paginateCandidates<T>(
     totalItems,
     currentPage,
     totalPages,
-    pageSize: safePageSize,
+    pageSize: validPageSize,
     hasPrev: currentPage > 1,
     hasNext: currentPage < totalPages,
-    startIndex: totalItems === 0 ? 0 : startIndex + 1,
+    startIndex,
     endIndex,
   };
 }

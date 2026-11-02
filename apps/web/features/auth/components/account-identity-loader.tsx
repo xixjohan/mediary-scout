@@ -6,7 +6,7 @@ import { AccountIdentity } from "./account-identity";
  * Async server loader for the sidebar identity block.
  * Mounted inside <Suspense> so its DB read never blocks the static sidebar shell.
  */
-export async function AccountIdentityLoader() {
+export async function AccountIdentityLoader({ storageId }: { storageId?: string | undefined } = {}) {
   await connection();
   try {
     const summary = await getCurrentAccountSummary();
@@ -18,14 +18,16 @@ export async function AccountIdentityLoader() {
         <AccountIdentity
           username="管理员 (未设密码)"
           isOwner={summary.isOwner}
+          storageId={storageId}
         />
       );
     }
 
     return (
       <AccountIdentity
-        username={summary.username === "default" ? "管理员" : summary.username}
+        username={summary.username}
         isOwner={summary.isOwner}
+        storageId={storageId}
       />
     );
   } catch {

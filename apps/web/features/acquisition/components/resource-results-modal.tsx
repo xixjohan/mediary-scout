@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X, Film, FolderSearch } from "lucide-react";
 import type { ResourceCandidateView } from "@media-track/workflow";
@@ -15,7 +15,7 @@ import {
   type CandidateLinkState,
   ResourceCandidateRow,
 } from "./resource-candidate-row";
-import type { ImportState } from "../contracts/acquisition-types";
+import type { CandidateInspectionState, ImportState } from "../contracts/acquisition-types";
 
 export interface ResourceResultsModalProps {
   title?: string | undefined;
@@ -29,6 +29,7 @@ export interface ResourceResultsModalProps {
   throttled: boolean;
   submitting: boolean;
   linkStates: Record<string, CandidateLinkState>;
+  inspectionStates?: Record<string, CandidateInspectionState>;
   copiedId: string | null;
   cached: boolean;
   snapshotId: string | null;
@@ -39,6 +40,7 @@ export interface ResourceResultsModalProps {
   onImportCandidate: (candidateId: string) => void;
   onToggleLink: (candidateId: string) => void;
   onCopyLink: (candidateId: string, text: string) => void;
+  onInspectCandidate?: (candidateId: string) => void;
   onClose: () => void;
 }
 
@@ -54,6 +56,7 @@ export function ResourceResultsModal({
   throttled,
   submitting,
   linkStates,
+  inspectionStates,
   copiedId,
   cached,
   snapshotId,
@@ -64,6 +67,7 @@ export function ResourceResultsModal({
   onImportCandidate,
   onToggleLink,
   onCopyLink,
+  onInspectCandidate,
   onClose,
 }: ResourceResultsModalProps) {
   useEffect(() => {
@@ -160,9 +164,17 @@ export function ResourceResultsModal({
                     streaming={false}
                     linkInfo={linkStates[candidate.candidateId]}
                     copied={copiedId === candidate.candidateId}
+                    inspectionInfo={inspectionStates?.[candidate.candidateId]}
                     onImport={() => void onImportCandidate(candidate.candidateId)}
                     onToggleLink={() => void onToggleLink(candidate.candidateId)}
                     onCopyLink={(text) => void onCopyLink(candidate.candidateId, text)}
+                    onInspect={
+                      onInspectCandidate
+                        ? () => {
+                            onInspectCandidate(candidate.candidateId);
+                          }
+                        : undefined
+                    }
                   />
                 );
               })}

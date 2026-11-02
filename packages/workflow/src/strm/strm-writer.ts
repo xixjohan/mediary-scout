@@ -1,4 +1,5 @@
 import { nativeFs as fs, nativePath as path } from "../domain/native-require.js";
+import type { StrmDeliveryMode } from "./strm-types.js";
 
 /**
  * STRM 文件生成器与路径工具
@@ -39,13 +40,18 @@ export function safeDirSegments(rawPath: string): string[] {
 
 /**
  * 构造流媒体播放相对路径。
+ *
+ * 遵循严格 RESTful 资源定位规范：
+ * /api/strm/play/{taskId}/{fileId}?name=...
+ * 彻底废除 mode=proxy 等运行时参数污染，交由服务端任务配置字典自主决策。
  */
-export function buildPlayPath(storageId: string, fileId: string, fileName?: string): string {
-  const base = `/api/strm/play/${encodeURIComponent(storageId)}/${encodeURIComponent(fileId)}`;
-  if (fileName) {
-    return `${base}?name=${encodeURIComponent(fileName)}`;
-  }
-  return base;
+export function buildPlayPath(
+  taskId: string,
+  fileId: string,
+  fileName?: string,
+): string {
+  const base = `/api/strm/play/${encodeURIComponent(taskId)}/${encodeURIComponent(fileId)}`;
+  return fileName ? `${base}?name=${encodeURIComponent(fileName)}` : base;
 }
 
 /**
@@ -53,12 +59,12 @@ export function buildPlayPath(storageId: string, fileId: string, fileName?: stri
  */
 export function buildPlayUrl(
   baseUrl: string,
-  storageId: string,
+  taskId: string,
   fileId: string,
   fileName?: string,
 ): string {
   const cleanBase = baseUrl.trim().replace(/\/+$/, "");
-  const playPath = buildPlayPath(storageId, fileId, fileName);
+  const playPath = buildPlayPath(taskId, fileId, fileName);
   return `${cleanBase}${playPath}`;
 }
 
