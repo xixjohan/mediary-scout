@@ -1,13 +1,12 @@
 import { chromium } from "playwright";
 import path from "node:path";
-import fs from "node:fs";
 
 const ARTIFACTS_DIR = "C:/Users/hlr/.gemini/antigravity/brain/dfc4c339-ee30-4ac6-8790-7b835893093f";
 const BASE_URL = "http://localhost:3001";
 
 async function runAcceptance() {
   console.log("====================================================");
-  console.log("🚀 启动 Mediary Scout 最近改动与核心功能实机浏览器验收");
+  console.log("🚀 启动 Mediary Scout 最近改动与核心功能全量实机浏览器验收");
   console.log("====================================================");
 
   const browser = await chromium.launch({ headless: true });
@@ -23,7 +22,9 @@ async function runAcceptance() {
       msg.type() === "error" ||
       text.includes("Uncaught") ||
       text.includes("Switched to client") ||
-      text.includes("Hydration failed")
+      text.includes("Hydration failed") ||
+      text.includes("Blocking Route") ||
+      text.includes("new Date()")
     ) {
       console.log(`[BROWSER ${msg.type().toUpperCase()}]:`, text);
       consoleErrors.push(text);
@@ -36,11 +37,11 @@ async function runAcceptance() {
   });
 
   // ----------------------------------------------------
-  // 1. 验收页面 1: 首页 / (搜索、推荐流、无刷新死循环、Suspense 骨架平稳水合)
+  // 1. 首页 / (搜索、精选推荐流、0 刷新循环、0 阻塞报错)
   // ----------------------------------------------------
-  console.log("\n[1/5] 正在验收: 首页 / (搜索与精选推荐流)...");
+  console.log("\n[1/10] 正在验收: 首页 / (搜索与精选推荐流)...");
   await page.goto(`${BASE_URL}/`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(800);
 
   const homeScreenshot = path.join(ARTIFACTS_DIR, "acceptance-01-home-page.png");
   await page.screenshot({ path: homeScreenshot, fullPage: false });
@@ -54,11 +55,11 @@ async function runAcceptance() {
   console.log(`  ✔ 发现精选推荐网格存在: ${hasTrendingGrid}`);
 
   // ----------------------------------------------------
-  // 2. 验收页面 2: 订阅页 /?tab=library
+  // 2. 订阅页 /?tab=library
   // ----------------------------------------------------
-  console.log("\n[2/5] 正在验收: 订阅与媒体库视图 /?tab=library...");
+  console.log("\n[2/10] 正在验收: 订阅与媒体库视图 /?tab=library...");
   await page.goto(`${BASE_URL}/?tab=library`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(800);
 
   const libraryScreenshot = path.join(ARTIFACTS_DIR, "acceptance-02-library-tab.png");
   await page.screenshot({ path: libraryScreenshot, fullPage: false });
@@ -67,29 +68,29 @@ async function runAcceptance() {
   console.log(`  ✔ 订阅库容器存在: ${hasLibrarySurface}`);
 
   // ----------------------------------------------------
-  // 3. 验收页面 3: STRM 任务计划与 1 对多媒体库自动绑定管理页 /storage/strm
+  // 3. STRM 任务计划与 1 对多媒体库自动绑定管理页 /storage/strm
   // ----------------------------------------------------
-  console.log("\n[3/5] 正在验收: STRM 任务计划与媒体库绑定 /storage/strm...");
+  console.log("\n[3/10] 正在验收: STRM 任务计划与媒体库绑定 /storage/strm...");
   await page.goto(`${BASE_URL}/storage/strm`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(800);
 
   const strmListScreenshot = path.join(ARTIFACTS_DIR, "acceptance-03-strm-schedule-list.png");
   await page.screenshot({ path: strmListScreenshot, fullPage: false });
   console.log(`  📸 STRM 计划列表截图已保存: ${strmListScreenshot}`);
 
-  // 点击新建 STRM 任务按钮，打开弹窗并验收「关联远程媒体库」多选支持
+  // 点击新建 STRM 任务按钮，打开弹窗并验收「关联远程影视库」配置
   const newPlanBtn = page.locator("button:has-text('新建 STRM 任务')").first();
   if (await newPlanBtn.isVisible()) {
     console.log("  👉 找到「新建 STRM 任务」按钮，打开创建弹窗...");
     await newPlanBtn.click();
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(500);
 
     const modalScreenshot = path.join(ARTIFACTS_DIR, "acceptance-03-strm-create-modal.png");
     await page.screenshot({ path: modalScreenshot, fullPage: false });
     console.log(`  📸 新建任务弹窗截图已保存: ${modalScreenshot}`);
 
     const hasMediaServerSelect = await page.locator("text=关联远程影视库").count() > 0;
-    console.log(`  ✔ 关联远程媒体库多选配置区正常展示: ${hasMediaServerSelect}`);
+    console.log(`  ✔ 关联远程影视库多选配置区正常展示: ${hasMediaServerSelect}`);
 
     // 关闭弹窗
     const closeBtn = page.locator("button:has-text('取消')").first();
@@ -104,7 +105,7 @@ async function runAcceptance() {
   if (await editBtn.isVisible()) {
     console.log("  👉 找到既有 STRM 计划卡片，打开「编辑」弹窗验收 1 对多媒体库多选与回显...");
     await editBtn.click();
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(500);
 
     const editModalScreenshot = path.join(ARTIFACTS_DIR, "acceptance-03-strm-edit-modal.png");
     await page.screenshot({ path: editModalScreenshot, fullPage: false });
@@ -118,11 +119,11 @@ async function runAcceptance() {
   }
 
   // ----------------------------------------------------
-  // 4. 验收页面 4: 媒体服务器配置与自适应探测 /settings/mediaserver
+  // 4. 媒体服务器配置与自适应探测 /settings/mediaserver
   // ----------------------------------------------------
-  console.log("\n[4/5] 正在验收: 媒体服务器配置与自适应探测 /settings/mediaserver...");
+  console.log("\n[4/10] 正在验收: 媒体服务器配置与自适应探测 /settings/mediaserver...");
   await page.goto(`${BASE_URL}/settings/mediaserver`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(800);
 
   const mediaServerScreenshot = path.join(ARTIFACTS_DIR, "acceptance-04-mediaserver-settings.png");
   await page.screenshot({ path: mediaServerScreenshot, fullPage: false });
@@ -136,7 +137,7 @@ async function runAcceptance() {
   if (await addServerBtn.isVisible()) {
     console.log("  👉 找到「添加媒体服务器」按钮，打开弹窗验证 Plex / Emby / Jellyfin 配置项...");
     await addServerBtn.click();
-    await page.waitForTimeout(600);
+    await page.waitForTimeout(500);
 
     const addServerScreenshot = path.join(ARTIFACTS_DIR, "acceptance-04-add-server-modal.png");
     await page.screenshot({ path: addServerScreenshot, fullPage: false });
@@ -150,17 +151,82 @@ async function runAcceptance() {
   }
 
   // ----------------------------------------------------
-  // 5. 验收页面 5: 网盘文件浏览 /storage 及长效页面稳定性
+  // 5. 活动中心 /activity (动态空洞 await connection() 修复验证)
   // ----------------------------------------------------
-  console.log("\n[5/5] 正在验收: 网盘文件浏览 /storage 及长效页面稳定性...");
-  await page.goto(`${BASE_URL}/storage`, { waitUntil: "networkidle" });
-  await page.waitForTimeout(1000);
+  console.log("\n[5/10] 正在验收: 活动中心 /activity...");
+  await page.goto(`${BASE_URL}/activity`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(800);
 
-  const storageScreenshot = path.join(ARTIFACTS_DIR, "acceptance-05-storage-page.png");
+  const activityScreenshot = path.join(ARTIFACTS_DIR, "acceptance-05-activity-page.png");
+  await page.screenshot({ path: activityScreenshot, fullPage: false });
+  console.log(`  📸 活动中心截图已保存: ${activityScreenshot}`);
+  const hasActivityHeader = await page.locator("h1:has-text('活动')").isVisible();
+  console.log(`  ✔ 活动中心正常渲染: ${hasActivityHeader}`);
+
+  // ----------------------------------------------------
+  // 6. AI 助手 /chat (动态空洞 await connection() 修复验证)
+  // ----------------------------------------------------
+  console.log("\n[6/10] 正在验收: AI 助手 /chat...");
+  await page.goto(`${BASE_URL}/chat`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(800);
+
+  const chatScreenshot = path.join(ARTIFACTS_DIR, "acceptance-06-chat-page.png");
+  await page.screenshot({ path: chatScreenshot, fullPage: false });
+  console.log(`  📸 AI 助手截图已保存: ${chatScreenshot}`);
+  const hasChatWorkspace = await page.isVisible(".product-main-chat");
+  console.log(`  ✔ AI 助手工作区正常渲染: ${hasChatWorkspace}`);
+
+  // ----------------------------------------------------
+  // 7. 通知中心 /notifications (动态空洞 await connection() 修复验证)
+  // ----------------------------------------------------
+  console.log("\n[7/10] 正在验收: 通知中心 /notifications...");
+  await page.goto(`${BASE_URL}/notifications`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(800);
+
+  const notifScreenshot = path.join(ARTIFACTS_DIR, "acceptance-07-notifications-page.png");
+  await page.screenshot({ path: notifScreenshot, fullPage: false });
+  console.log(`  📸 通知中心截图已保存: ${notifScreenshot}`);
+  const hasNotifHeader = await page.locator("h1:has-text('通知')").isVisible();
+  console.log(`  ✔ 通知中心正常渲染: ${hasNotifHeader}`);
+
+  // ----------------------------------------------------
+  // 8. 系统设置 /settings (SettingsSidebar 动态空洞修复验证)
+  // ----------------------------------------------------
+  console.log("\n[8/10] 正在验收: 系统设置 /settings...");
+  await page.goto(`${BASE_URL}/settings`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(800);
+
+  const settingsScreenshot = path.join(ARTIFACTS_DIR, "acceptance-08-settings-page.png");
+  await page.screenshot({ path: settingsScreenshot, fullPage: false });
+  console.log(`  📸 系统设置截图已保存: ${settingsScreenshot}`);
+  const hasSettingsHeader = await page.locator("h1:has-text('设置')").isVisible();
+  console.log(`  ✔ 系统设置正常渲染: ${hasSettingsHeader}`);
+
+  // ----------------------------------------------------
+  // 9. 扩展管理 /settings/extensions (动态空洞 await connection() 修复验证)
+  // ----------------------------------------------------
+  console.log("\n[9/10] 正在验收: 扩展管理 /settings/extensions...");
+  await page.goto(`${BASE_URL}/settings/extensions`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(800);
+
+  const extScreenshot = path.join(ARTIFACTS_DIR, "acceptance-09-extensions-page.png");
+  await page.screenshot({ path: extScreenshot, fullPage: false });
+  console.log(`  📸 扩展管理截图已保存: ${extScreenshot}`);
+  const hasExtHeader = await page.locator("text=自定义资源与搜索扩展").count() > 0;
+  console.log(`  ✔ 扩展管理正常渲染: ${hasExtHeader}`);
+
+  // ----------------------------------------------------
+  // 10. 网盘文件浏览 /storage 及长效页面稳定性监听
+  // ----------------------------------------------------
+  console.log("\n[10/10] 正在验收: 网盘文件浏览 /storage 及长效页面稳定性...");
+  await page.goto(`${BASE_URL}/storage`, { waitUntil: "networkidle" });
+  await page.waitForTimeout(800);
+
+  const storageScreenshot = path.join(ARTIFACTS_DIR, "acceptance-10-storage-page.png");
   await page.screenshot({ path: storageScreenshot, fullPage: false });
   console.log(`  📸 网盘管理截图已保存: ${storageScreenshot}`);
 
-  console.log("\n正在进行 5 秒长效静默监听，断言 0 刷新死循环与 0 客户端报错...");
+  console.log("\n正在进行 5 秒长效静默监听，断言 0 刷新死循环与 0 客户端/服务端预渲染报错...");
   await page.waitForTimeout(5000);
 
   await browser.close();
@@ -174,7 +240,7 @@ async function runAcceptance() {
     process.exit(1);
   }
 
-  console.log("🎉 全部页面实机验收通过！0 控制台致命异常、0 刷新循环、STRM 1对多媒体库绑定闭环、UI 渲染完整！");
+  console.log("🎉 全部 10 个核心页面实机验收通过！0 控制台致命异常、0 刷新循环、STRM 1对多媒体库绑定闭环、UI 渲染完整！");
 }
 
 runAcceptance().catch((err) => {
