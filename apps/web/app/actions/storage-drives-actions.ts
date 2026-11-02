@@ -230,3 +230,43 @@ export async function connectPan115OpenOAuthAction(input: {
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 }
+
+/** 诊断网盘双轨连接状态与实时延迟指标 */
+export async function diagnoseStorageConnectionAction(
+  storageId: string,
+): Promise<{ ok: boolean; report?: import("../../features/storage-drives").StorageDiagnosticsReport | undefined; error?: string | undefined }> {
+  assertNotDemo();
+  try {
+    const { diagnoseStorageConnection, getCurrentAccountId } = await import("../../lib/workflow-runtime");
+    const accountId = await getCurrentAccountId();
+    const report = await diagnoseStorageConnection(accountId, storageId);
+    return { ok: true, report };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** 检查当前账户是否已设置密码（未设密码则允许前端出示免密安全免责确认） */
+export async function checkAccountHasPasswordAction(): Promise<boolean> {
+  assertNotDemo();
+  const { getCurrentAccountId } = await import("../../lib/workflow-runtime");
+  const { accountHasPassword } = await import("../../features/auth/application/account-service");
+  const accountId = await getCurrentAccountId();
+  return accountHasPassword(accountId);
+}
+
+/** 零信任安全查看已登录网盘凭据 (需二次鉴权，前端 30 秒瞬态曝光自毁) */
+export async function revealStorageCredentialAction(
+  storageId: string,
+  password?: string,
+): Promise<{ ok: boolean; credentials?: import("@media-track/workflow").RevealedCredentials | undefined; error?: string | undefined }> {
+  assertNotDemo();
+  try {
+    const { revealStorageCredentials, getCurrentAccountId } = await import("../../lib/workflow-runtime");
+    const accountId = await getCurrentAccountId();
+    const res = await revealStorageCredentials(accountId, storageId, password);
+    return res;
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}

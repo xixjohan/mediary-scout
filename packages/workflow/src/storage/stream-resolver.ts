@@ -2,6 +2,7 @@ import { SingleFlight } from "../strm/single-flight.js";
 import { Pan115CookieClient } from "./pan115-cookie-client.js";
 import { Pan115OpenClient } from "./pan115-open-client.js";
 import { isPan115OpenOAuthValid, type Pan115OpenOAuthCredentials } from "./account-credentials.js";
+import { withBrandPacing } from "./brand-pacing.js";
 
 /**
  * StorageStreamResolver (网盘流媒体直链与反代解析器)
@@ -122,7 +123,12 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
 
     let client = this._pan115CookieClients.get(input.storageId);
     if (!client) {
-      client = new Pan115CookieClient({ cookie });
+      const rawClient = new Pan115CookieClient({ cookie });
+      // 降级使用 115 漏桶限速器 (1.2s/发)，避免并发探测击穿 Cookie 端点触发 115 风控
+      client = withBrandPacing(rawClient, "pan115", {
+        clock: () => Date.now(),
+        sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      });
       this._pan115CookieClients.set(input.storageId, client);
     }
 

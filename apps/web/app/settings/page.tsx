@@ -8,6 +8,7 @@ import { AppSidebar } from "../../components/layout/app-sidebar";
 import { AddDriveBrandTabs } from "../../features/storage-drives/components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../features/settings-system/components/test-connection-button";
 import { UnbindStorageButton } from "../../features/storage-drives/components/unbind-storage-button";
+import { DriveCardExtraActions } from "../../features/storage-drives/components/drive-card-extra-actions";
 import { PushNotificationForm } from "../../features/settings-system/components/push-notification-form";
 import { PreferredLanguageForm } from "../../features/settings-system/components/preferred-language-form";
 import { QualityPreferenceForm } from "../../features/settings-system/components/quality-preference-form";
@@ -711,6 +712,130 @@ async function SubtitleSourceSection() {
 
 
 
+function DriveEngineBadge({ mode }: { mode?: string | undefined }) {
+  if (mode === "dual_engine") {
+    return (
+      <span
+        style={{
+          marginLeft: 6,
+          fontSize: 11,
+          padding: "1px 6px",
+          borderRadius: 4,
+          background: "rgba(16, 185, 129, 0.15)",
+          color: "#10b981",
+          fontWeight: 600,
+        }}
+      >
+        ⚡ 双轨融合
+      </span>
+    );
+  }
+  if (mode === "open_only") {
+    return (
+      <span
+        style={{
+          marginLeft: 6,
+          fontSize: 11,
+          padding: "1px 6px",
+          borderRadius: 4,
+          background: "rgba(245, 158, 11, 0.15)",
+          color: "#f59e0b",
+          fontWeight: 600,
+        }}
+      >
+        🔷 仅开放平台
+      </span>
+    );
+  }
+  return (
+    <span
+      style={{
+        marginLeft: 6,
+        fontSize: 11,
+        padding: "1px 6px",
+        borderRadius: 4,
+        background: "rgba(245, 158, 11, 0.15)",
+        color: "#f59e0b",
+        fontWeight: 600,
+      }}
+    >
+      🔶 仅 Cookie
+    </span>
+  );
+}
+
+function DriveCardMeta({ drive, frozen }: { drive: ConnectedStorageView; frozen: boolean }) {
+  let label: string;
+  let toneClass = "";
+  if (frozen) {
+    label = "掉线 · 重新绑定即恢复";
+    toneClass = "tone-amber-text";
+  } else if (!drive.provisioned) {
+    label = "目录待建";
+    toneClass = "tone-amber-text";
+  } else if (drive.connectedAt) {
+    label = `${drive.connectedAt.slice(0, 10)} 连接`;
+  } else {
+    label = "就绪";
+  }
+  return (
+    <div className="drive-card-meta">
+      <span className={toneClass}>{label}</span>
+      {drive.provider === "pan115" ? <DriveEngineBadge mode={drive.engineMode} /> : null}
+    </div>
+  );
+}
+
+function ConnectedDriveCard({
+  drive,
+  isShared,
+  isOwner,
+}: {
+  drive: ConnectedStorageView;
+  isShared: boolean;
+  isOwner: boolean;
+}) {
+  const frozen = drive.status === "frozen";
+  const ready = !frozen && drive.provisioned;
+  const isRegistered = isRegisteredStorageProvider(drive.provider);
+  const pLabel = providerLabel(drive.provider);
+
+  return (
+    <div className={`drive-card${frozen ? " is-frozen" : ""}`}>
+      <div className="drive-card-head">
+        {isRegistered ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img className="drive-card-icon" src={`/brands/${drive.provider}.svg`} alt="" width={26} height={26} />
+        ) : (
+          <span className="drive-card-icon-fallback" aria-hidden />
+        )}
+        <span className="drive-card-name">{pLabel}</span>
+        <span
+          className={`drive-dot ${ready ? "green" : "amber"}`}
+          role="img"
+          title={frozen ? "凭证已失效，重新绑定同一账号即可恢复" : ready ? "目录已就绪" : "目录待建"}
+          aria-label={frozen ? "掉线" : ready ? "就绪" : "目录待建"}
+        />
+      </div>
+      <div className="drive-card-uid" title={drive.providerUid}>
+        {maskProviderUid(drive.providerUid)}
+      </div>
+      <DriveCardMeta drive={drive} frozen={frozen} />
+      <div className="drive-card-actions">
+        <TestConnectionButton storageId={drive.id} />
+        <DriveCardExtraActions
+          storageId={drive.id}
+          provider={drive.provider}
+          providerLabel={pLabel}
+        />
+        {!isShared || isOwner ? (
+          <UnbindStorageButton storageId={drive.id} label={pLabel} />
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 /** 品牌显示名直读 workflow 注册表(单一事实源,与 workspace-switcher 一致),
  *  未注册品牌兜底显示原始 provider 串。盘卡与解绑确认共用。 */
 function providerLabel(provider: string): string {
@@ -757,51 +882,14 @@ async function Pan115Section() {
 
       {drives.length > 0 ? (
         <div className="drive-grid">
-          {drives.map((drive) => {
-            const frozen = drive.status === "frozen";
-            const ready = !frozen && drive.provisioned;
-            return (
-              <div key={drive.id} className={`drive-card${frozen ? " is-frozen" : ""}`}>
-                <div className="drive-card-head">
-                  {isRegisteredStorageProvider(drive.provider) ? (
-                    // 已注册品牌必有 svg(workspace-switcher 同款资产)
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img className="drive-card-icon" src={`/brands/${drive.provider}.svg`} alt="" width={26} height={26} />
-                  ) : (
-                    // 未注册品牌:中性方形占位(与右侧状态圆点区分形状,避免双点误读)
-                    <span className="drive-card-icon-fallback" aria-hidden />
-                  )}
-                  <span className="drive-card-name">{providerLabel(drive.provider)}</span>
-                  <span
-                    className={`drive-dot ${ready ? "green" : "amber"}`}
-                    role="img"
-                    title={frozen ? "凭证已失效，重新绑定同一账号即可恢复" : ready ? "目录已就绪" : "目录待建"}
-                    aria-label={frozen ? "掉线" : ready ? "就绪" : "目录待建"}
-                  />
-                </div>
-                <div className="drive-card-uid" title={drive.providerUid}>
-                  {maskProviderUid(drive.providerUid)}
-                </div>
-                <div className="drive-card-meta">
-                  {frozen ? (
-                    <span className="tone-amber-text">掉线 · 重新绑定即恢复</span>
-                  ) : !drive.provisioned ? (
-                    <span className="tone-amber-text">目录待建</span>
-                  ) : drive.connectedAt ? (
-                    <span>{drive.connectedAt.slice(0, 10)} 连接</span>
-                  ) : (
-                    <span>就绪</span>
-                  )}
-                </div>
-                <div className="drive-card-actions">
-                  <TestConnectionButton storageId={drive.id} />
-                  {(!isShared || isOwner) ? (
-                    <UnbindStorageButton storageId={drive.id} label={providerLabel(drive.provider)} />
-                  ) : null}
-                </div>
-              </div>
-            );
-          })}
+          {drives.map((drive) => (
+            <ConnectedDriveCard
+              key={drive.id}
+              drive={drive}
+              isShared={isShared}
+              isOwner={isOwner}
+            />
+          ))}
         </div>
       ) : null}
 

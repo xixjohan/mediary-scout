@@ -359,3 +359,29 @@ export async function listManagedAccounts(
   }
   return summaries;
 }
+
+export async function accountHasPassword(accountId: string): Promise<boolean> {
+  const repo = getWorkflowRepository();
+  const account = await repo.getAccountById(accountId);
+  return Boolean(account && account.passwordHash && account.passwordHash.length > 0);
+}
+
+export async function verifyCurrentAccountPassword(
+  accountId: string,
+  password?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const repo = getWorkflowRepository();
+  const account = await repo.getAccountById(accountId);
+  // 未设密码或单用户隐式账户（无密码状态）：直接允许，由前端出示安全免责提示
+  if (!account || !account.passwordHash || account.passwordHash.length === 0) {
+    return { ok: true };
+  }
+  if (!password) {
+    return { ok: false, error: "请输入账户密码以完成身份验证" };
+  }
+  const valid = await verifyPassword(password, account.passwordHash);
+  if (!valid) {
+    return { ok: false, error: "密码验证不正确" };
+  }
+  return { ok: true };
+}

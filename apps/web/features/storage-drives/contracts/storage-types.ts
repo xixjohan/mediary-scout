@@ -18,6 +18,10 @@ export interface ConnectedStorageView {
   status: "active" | "frozen";
   /** True once category directories are provisioned (CIDs stored). */
   provisioned: boolean;
+  /** 115 双轨驱动工作模式：dual_engine (最佳) | cookie_only | open_only */
+  engineMode?: ("dual_engine" | "cookie_only" | "open_only") | undefined;
+  /** 是否已配置有效的 115 开放平台 OAuth 凭据 */
+  hasOpenOAuth?: boolean | undefined;
 }
 
 export interface AccountStorageCredentials {

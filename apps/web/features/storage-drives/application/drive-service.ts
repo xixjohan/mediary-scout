@@ -12,9 +12,14 @@ import {
   formatNetworkError,
   generateGuangYaDeviceId,
   getStorageBrand,
+  getCredentialStrategy,
+  type RevealedCredentials,
+  type Pan115OpenOAuthCredentials,
   GuangYaClient,
+  isPan115OpenOAuthValid,
   isRegisteredStorageProvider,
   Pan115CookieClient,
+  Pan115OpenClient,
   Pan123Client,
   parseCloudDriveUid,
   parsePan115Uid,
@@ -22,6 +27,7 @@ import {
   parseTianyiUid,
   provisionCategoryDirs,
   QuarkCookieClient,
+  resolvePan115EngineMode,
   resolveQueueStorageChoice,
   resolveStorageBinding,
   type StorageProvider,
@@ -98,7 +104,11 @@ export async function getPan115ConnectionStatus(): Promise<Pan115ConnectionStatu
 export async function getAccountConnectedStorages(accountId: string): Promise<ConnectedStorageView[]> {
   const rows = await getWorkflowRepository().listConnectedStorages(accountId);
   return rows.map((row) => {
-    const meta = (row.payload as { meta?: { connectedAt?: string } } | null)?.meta;
+    const payload = (row.payload as Record<string, unknown> | null) ?? {};
+    const meta = (payload as { meta?: { connectedAt?: string } }).meta;
+    const openOAuth = payload.openOAuth as Pan115OpenOAuthCredentials | undefined;
+    const hasOpenOAuth = isPan115OpenOAuthValid(openOAuth);
+    const engineMode = row.provider === "pan115" ? resolvePan115EngineMode(payload) : undefined;
     return {
       id: row.id,
       provider: row.provider,
@@ -108,6 +118,8 @@ export async function getAccountConnectedStorages(accountId: string): Promise<Co
       createdAt: row.createdAt,
       status: row.status,
       provisioned: Boolean(row.tvCid && row.moviesCid && row.animeCid),
+      ...(engineMode ? { engineMode } : {}),
+      ...(hasOpenOAuth !== undefined ? { hasOpenOAuth } : {}),
     };
   });
 }
@@ -999,4 +1011,146 @@ export async function resolveQueueStorage(
   } catch {
     return { id: null, frozen: false, unknown: true, provider: null };
   }
+}
+
+export interface StorageDiagnosticsReport {
+  storageId: string;
+  provider: string;
+  engineMode?: "dual_engine" | "cookie_only" | "open_only" | undefined;
+  cookieStatus: {
+    configured: boolean;
+    valid?: boolean | undefined;
+    latencyMs?: number | undefined;
+    error?: string | undefined;
+  };
+  openOAuthStatus?: {
+    configured: boolean;
+    valid?: boolean | undefined;
+    latencyMs?: number | undefined;
+    expiresInSec?: number | undefined;
+    error?: string | undefined;
+  } | undefined;
+  routingSummary: {
+    transferEngine: "cookie" | "open" | "none";
+    listingEngine: "cookie" | "open";
+    streamEngine: "cookie" | "open";
+  };
+}
+
+async function probeCookieHealth(
+  provider: string,
+  cookie: string,
+  rootCid: string | null,
+): Promise<{ valid: boolean; latencyMs: number; error?: string | undefined }> {
+  const t0 = Date.now();
+  try {
+    if (provider === "pan115") {
+      await new Pan115CookieClient({ cookie, listPageDelayMs: 0 }).getDirectoryInfo({
+        directoryId: rootCid ?? "0",
+      });
+    }
+    return { valid: true, latencyMs: Date.now() - t0 };
+  } catch (err) {
+    return {
+      valid: false,
+      latencyMs: Date.now() - t0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+async function probeOpenOAuthHealth(
+  accountId: string,
+  storageId: string,
+  provider: string,
+  openOAuth: Pan115OpenOAuthCredentials,
+): Promise<{ valid: boolean; latencyMs: number; expiresInSec?: number | undefined; error?: string | undefined }> {
+  const t0 = Date.now();
+  try {
+    const openClient = new Pan115OpenClient({
+      credentials: openOAuth,
+      onCredentialsPersist: async (creds) => {
+        await makeTokenPersister(accountId, storageId, provider)(creds);
+      },
+    });
+    await openClient.listItems({ directoryId: "0" });
+    const now = Date.now();
+    return {
+      valid: true,
+      latencyMs: now - t0,
+      expiresInSec: Math.max(0, Math.floor((openOAuth.expiresAt - now) / 1000)),
+    };
+  } catch (err) {
+    return {
+      valid: false,
+      latencyMs: Date.now() - t0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export async function diagnoseStorageConnection(
+  accountId: string,
+  storageId: string,
+): Promise<StorageDiagnosticsReport> {
+  const repository = getWorkflowRepository();
+  const drive = (await repository.listConnectedStorages(accountId)).find((s) => s.id === storageId);
+  if (!drive) {
+    throw new Error(`STORAGE_NOT_FOUND: 存储驱动 ${storageId} 不存在`);
+  }
+
+  const payload = (drive.payload as Record<string, unknown> | null) ?? {};
+  const provider = drive.provider;
+  const cookie = typeof payload.cookie === "string" ? payload.cookie.trim() : "";
+  const openOAuth = payload.openOAuth as Pan115OpenOAuthCredentials | undefined;
+  const hasOpenOAuth = isPan115OpenOAuthValid(openOAuth);
+  const engineMode = provider === "pan115" ? resolvePan115EngineMode(payload) : undefined;
+
+  const report: StorageDiagnosticsReport = {
+    storageId,
+    provider,
+    ...(engineMode ? { engineMode } : {}),
+    cookieStatus: { configured: Boolean(cookie) },
+    ...(openOAuth ? { openOAuthStatus: { configured: true } } : {}),
+    routingSummary: {
+      transferEngine: Boolean(cookie) ? "cookie" : "none",
+      listingEngine: hasOpenOAuth ? "open" : "cookie",
+      streamEngine: hasOpenOAuth ? "open" : "cookie",
+    },
+  };
+
+  if (cookie) {
+    const cookieHealth = await probeCookieHealth(provider, cookie, drive.rootCid);
+    report.cookieStatus = { configured: true, ...cookieHealth };
+  }
+
+  if (provider === "pan115" && openOAuth) {
+    const oauthHealth = await probeOpenOAuthHealth(accountId, storageId, provider, openOAuth);
+    report.openOAuthStatus = { configured: true, ...oauthHealth };
+  }
+
+  return report;
+}
+
+export async function revealStorageCredentials(
+  accountId: string,
+  storageId: string,
+  password?: string,
+): Promise<{ ok: boolean; credentials?: RevealedCredentials | undefined; error?: string | undefined }> {
+  const { verifyCurrentAccountPassword } = await import("../../auth/application/account-service");
+  const authVerdict = await verifyCurrentAccountPassword(accountId, password);
+  if (!authVerdict.ok) {
+    return { ok: false, error: authVerdict.error ?? "安全密码验证失败" };
+  }
+
+  const repository = getWorkflowRepository();
+  const drive = (await repository.listConnectedStorages(accountId)).find((s) => s.id === storageId);
+  if (!drive) {
+    return { ok: false, error: `存储驱动 ${storageId} 不存在` };
+  }
+
+  const strategy = getCredentialStrategy(drive.provider);
+  const credentials = strategy.reveal(drive.payload);
+
+  return { ok: true, credentials };
 }
