@@ -187,3 +187,46 @@ export async function connectPan123TokenAction(token: string): Promise<ConnectQu
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 }
+
+
+/** 启动 115 开放平台 OAuth 授权 (复用 LitePan 中继) */
+export async function startPan115OAuthAction() {
+  assertNotDemo();
+  const { startPan115OAuthRelay } = await import(
+    "../../features/storage-drives/application/pan115-open-connect-service"
+  );
+  return startPan115OAuthRelay();
+}
+
+/** 轮询 115 开放平台 OAuth 授权状态 */
+export async function pollPan115OAuthAction(sessionId: string) {
+  assertNotDemo();
+  const { pollPan115OAuthRelay } = await import(
+    "../../features/storage-drives/application/pan115-open-connect-service"
+  );
+  return pollPan115OAuthRelay(sessionId);
+}
+
+/** 提交并连接 115 开放平台 OAuth 凭据 (双轨模式) */
+export async function connectPan115OpenOAuthAction(input: {
+  accessToken: string;
+  refreshToken: string;
+}): Promise<ConnectQuarkActionResult> {
+  assertNotDemo();
+  try {
+    const { getCurrentAccountId } = await import("../../platform/next-context/request-account");
+    const accountId = await getCurrentAccountId();
+    const { connectPan115OpenOAuth } = await import(
+      "../../features/storage-drives/application/pan115-open-connect-service"
+    );
+    const res = await connectPan115OpenOAuth({
+      accessToken: input.accessToken,
+      refreshToken: input.refreshToken,
+      accountId,
+    });
+    revalidatePath("/settings");
+    return { ok: true, message: res.message };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  }
+}

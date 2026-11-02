@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Pan115QrConnect } from "./pan115-qr-connect";
 import { Pan115CookieConnect } from "./pan115-cookie-connect";
+import { Pan115OpenConnect } from "./pan115-open-connect";
 import { QuarkQrConnect } from "./quark-qr-connect";
 import { QuarkCookieConnect } from "./quark-cookie-connect";
 import { CloudFamilyCookieConnect } from "./cloud-family-cookie-connect";
@@ -64,6 +65,14 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
             </summary>
             <div style={{ marginTop: 10 }}>
               <Pan115CookieConnect />
+            </div>
+          </details>
+          <details style={{ marginTop: 12 }}>
+            <summary className="panel-note" style={{ cursor: "pointer", fontWeight: 600, color: "#10b981" }}>
+              ⚡ 升级 115 开放平台 (Open OAuth) 双轨增强 (免掉线 / 10倍速扫库)
+            </summary>
+            <div style={{ marginTop: 10 }}>
+              <Pan115OpenConnect />
             </div>
           </details>
         </div>
