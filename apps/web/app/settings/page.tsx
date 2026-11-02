@@ -50,6 +50,7 @@ import { SettingsActionInbox } from "../../features/settings-system/components/s
 import { loadSettingsAttentionSummary, markSettingsAttentionSeen, resolveCurrentIsOwner } from "../../lib/settings-attention-server";
 import {
   getAccountConnectedStorages,
+  type ConnectedStorageView,
   isSharedResourceMode,
   getAccountScopedSettings,
   getCurrentAccountId,
