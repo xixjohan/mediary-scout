@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { connection } from "next/server";
 
 import { PageLoginGuard } from "../lib/page-auth-guard";
 import { Suspense } from "react";
@@ -77,7 +78,7 @@ export function HomeView({
 function HomeShell() {
   return (
     <div className="app-shell">
-      <AppSidebar active="search" />
+      <AppSidebar active="search" skeleton />
       <main className="main product-main" aria-busy="true" />
     </div>
   );
@@ -369,6 +370,7 @@ async function SearchResults({
   basePath: string;
   filterParams?: { type?: string; country?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
 }) {
+  await connection();
   const pageSize = filterParams?.pageSize ?? 30;
   const searchView = await getSearchView(query, storageId, filterParams?.page, pageSize);
   if (searchView.state === "empty") {
@@ -481,6 +483,7 @@ async function LibrarySurface({
   status?: "active" | "completed" | "all";
   storageId?: string | undefined;
 }) {
+  await connection();
   const [rawWall, inProgress] = await Promise.all([getLibraryWall(storageId), getInProgressTitles(storageId)]);
   const inProgressIds = new Set(inProgress.map((title) => title.tmdbId));
   // A title still being fetched shows as a 获取中 placeholder, not (yet) a card.

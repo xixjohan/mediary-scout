@@ -10,23 +10,17 @@ import { SettingsAttentionBadge } from "../../features/settings-system/component
 import { WorkspaceSwitcherLoader } from "../../features/auth/components/workspace-switcher-loader";
 import { AccountIdentityLoader } from "../../features/auth/components/account-identity-loader";
 
-export function AppSidebar({
-  active,
-  searchQuery = "",
-  basePath = "/",
+export type SidebarActiveTab = "search" | "library" | "notifications" | "activity" | "settings" | "storage" | "chat" | "none";
+
+function SidebarHeader({
   activeStorageId,
+  skeleton,
 }: {
-  active: "search" | "library" | "notifications" | "activity" | "settings" | "storage" | "chat" | "none";
-  searchQuery?: string;
-  /** Tree model: the active workspace path ("/w/<id>" or "/") so the search/library
-   *  tabs keep you in the workspace you're viewing. */
-  basePath?: string;
-  /** The active non-primary drive id (undefined = primary). Global links
-   *  (通知/活动/设置) carry it as `?w` so leaving a workspace keeps the drive. */
   activeStorageId?: string | undefined;
+  skeleton: boolean;
 }) {
   return (
-    <aside className="sidebar">
+    <>
       <div className="brand">
         <span className="brand-mark">
           <Aperture size={18} aria-hidden />
@@ -37,115 +31,178 @@ export function AppSidebar({
         </span>
       </div>
 
-      {/* Drive switcher (≥2 drives). In Suspense so its DB read never blocks the
-          static shell, and so the client switcher's useSearchParams() is allowed. */}
-      <Suspense fallback={null}>
-        <WorkspaceSwitcherLoader />
-      </Suspense>
+      {!skeleton ? (
+        <Suspense fallback={null}>
+          <WorkspaceSwitcherLoader />
+        </Suspense>
+      ) : null}
 
-      {/* Account identity — mobile top-bar copy (desktop keeps the footer one).
-          Single-user/demo → AccountIdentityLoader returns null → empty. */}
-      <Suspense fallback={null}>
-        <div className="sidebar-top-identity">
-          <AccountIdentityLoader storageId={activeStorageId} />
-        </div>
-      </Suspense>
+      {!skeleton ? (
+        <Suspense fallback={null}>
+          <div className="sidebar-top-identity">
+            <AccountIdentityLoader storageId={activeStorageId} />
+          </div>
+        </Suspense>
+      ) : null}
+    </>
+  );
+}
 
-      <nav aria-label="主导航">
-        <ul className="nav-list">
-          <li>
-            <SearchNavLink active={active === "search"} knownQuery={searchQuery} basePath={basePath} />
-          </li>
-          <li>
-            <Link
-              className={`nav-item ${active === "library" ? "is-active" : ""}`}
-              href={`${basePath}?tab=library`}
-            >
-              <Library size={16} aria-hidden />
-              订阅
-            </Link>
-          </li>
-          <li>
-            <Link
-              className={`nav-item ${active === "chat" ? "is-active" : ""}`}
-              href={globalNavHref("/chat", activeStorageId)}
-            >
-              <Bot size={16} aria-hidden />
-              助理
-            </Link>
-          </li>
-          <li>
-            <Link
-              className={`nav-item ${active === "storage" ? "is-active" : ""}`}
-              href={globalNavHref("/storage", activeStorageId)}
-            >
-              <HardDrive size={16} aria-hidden />
-              网盘
-            </Link>
-          </li>
-          <li>
-            <Link
-              className={`nav-item ${active === "notifications" ? "is-active" : ""}`}
-              href={globalNavHref("/notifications", activeStorageId)}
-            >
-              <Bell size={16} aria-hidden />
-              通知
-              <NotificationsNavBadge storageId={activeStorageId} />
-            </Link>
-          </li>
-          {/* 活动 + 设置 are secondary: on desktop they live in the footer; on the
-              mobile top bar (footer hidden) they surface as nav items here. */}
-          <li className="nav-activity-item">
-            <Link
-              className={`nav-item ${active === "activity" ? "is-active" : ""}`}
-              href={globalNavHref("/activity", activeStorageId)}
-            >
-              <Activity size={16} aria-hidden />
-              活动
-              <ActivityNavBadge storageId={activeStorageId} />
-            </Link>
-          </li>
-          <li className="nav-settings-item">
-            <Link
-              className={`nav-item ${active === "settings" ? "is-active" : ""}`}
-              href={globalNavHref("/settings", activeStorageId)}
-            >
-              <Settings size={16} aria-hidden />
-              设置
-              <SettingsAttentionBadge storageId={activeStorageId} visibleWhen="mobile" />
-            </Link>
-          </li>
-        </ul>
-      </nav>
+function SidebarNav({
+  active,
+  searchQuery,
+  basePath,
+  activeStorageId,
+  skeleton,
+}: {
+  active: SidebarActiveTab;
+  searchQuery: string;
+  basePath: string;
+  activeStorageId?: string | undefined;
+  skeleton: boolean;
+}) {
+  return (
+    <nav aria-label="主导航">
+      <ul className="nav-list">
+        <li>
+          <SearchNavLink active={active === "search"} knownQuery={searchQuery} basePath={basePath} />
+        </li>
+        <li>
+          <Link
+            className={`nav-item ${active === "library" ? "is-active" : ""}`}
+            href={`${basePath}?tab=library`}
+          >
+            <Library size={16} aria-hidden />
+            订阅
+          </Link>
+        </li>
+        <li>
+          <Link
+            className={`nav-item ${active === "chat" ? "is-active" : ""}`}
+            href={globalNavHref("/chat", activeStorageId)}
+          >
+            <Bot size={16} aria-hidden />
+            助理
+          </Link>
+        </li>
+        <li>
+          <Link
+            className={`nav-item ${active === "storage" ? "is-active" : ""}`}
+            href={globalNavHref("/storage", activeStorageId)}
+          >
+            <HardDrive size={16} aria-hidden />
+            网盘
+          </Link>
+        </li>
+        <li>
+          <Link
+            className={`nav-item ${active === "notifications" ? "is-active" : ""}`}
+            href={globalNavHref("/notifications", activeStorageId)}
+          >
+            <Bell size={16} aria-hidden />
+            通知
+            {!skeleton ? <NotificationsNavBadge storageId={activeStorageId} /> : null}
+          </Link>
+        </li>
+        <li className="nav-activity-item">
+          <Link
+            className={`nav-item ${active === "activity" ? "is-active" : ""}`}
+            href={globalNavHref("/activity", activeStorageId)}
+          >
+            <Activity size={16} aria-hidden />
+            活动
+            {!skeleton ? <ActivityNavBadge storageId={activeStorageId} /> : null}
+          </Link>
+        </li>
+        <li className="nav-settings-item">
+          <Link
+            className={`nav-item ${active === "settings" ? "is-active" : ""}`}
+            href={globalNavHref("/settings", activeStorageId)}
+          >
+            <Settings size={16} aria-hidden />
+            设置
+            {!skeleton ? <SettingsAttentionBadge storageId={activeStorageId} visibleWhen="mobile" /> : null}
+          </Link>
+        </li>
+      </ul>
+    </nav>
+  );
+}
 
-      <div className="sidebar-footer">
-        {/* Account identity (multi-user only) — who am I + 改密码/登出/账号管理. In
-            Suspense so its DB read never blocks the shell. */}
+function SidebarFooter({
+  active,
+  activeStorageId,
+  skeleton,
+}: {
+  active: SidebarActiveTab;
+  activeStorageId?: string | undefined;
+  skeleton: boolean;
+}) {
+  return (
+    <div className="sidebar-footer">
+      {!skeleton ? (
         <Suspense fallback={null}>
           <AccountIdentityLoader storageId={activeStorageId} />
         </Suspense>
-        <Link
-          className={`nav-item nav-secondary ${active === "activity" ? "is-active" : ""}`}
-          href={globalNavHref("/activity", activeStorageId)}
-        >
-          <Activity size={16} aria-hidden />
-          活动
-          <ActivityNavBadge storageId={activeStorageId} />
-        </Link>
-        <Link className="health-card" href={globalNavHref("/settings", activeStorageId)} style={{ textDecoration: "none", color: "inherit" }}>
-          <span className="health-icon">
-            <Settings size={16} aria-hidden />
-          </span>
-          <span>
-            <strong>设置</strong>
-            {/* 副标题兼作宣传口:把「远程访问」摆进来,左下角这张卡一直可见,
-                比顶部通知的触达更持久。去掉「推送」是为了保持**单行** ——
-                四项会撑到换行,卡片高度就乱了。 */}
-            <span>{resolveIsDesktop() ? "网盘 · 偏好 · 设置" : "网盘 · 偏好 · 远程访问"}</span>
-          </span>
-          <SettingsAttentionBadge storageId={activeStorageId} visibleWhen="desktop" />
-        </Link>
-      </div>
+      ) : null}
+      <Link
+        className={`nav-item nav-secondary ${active === "activity" ? "is-active" : ""}`}
+        href={globalNavHref("/activity", activeStorageId)}
+      >
+        <Activity size={16} aria-hidden />
+        活动
+        {!skeleton ? <ActivityNavBadge storageId={activeStorageId} /> : null}
+      </Link>
+      <Link className="health-card" href={globalNavHref("/settings", activeStorageId)} style={{ textDecoration: "none", color: "inherit" }}>
+        <span className="health-icon">
+          <Settings size={16} aria-hidden />
+        </span>
+        <span>
+          <strong>设置</strong>
+          <span>{resolveIsDesktop() ? "网盘 · 偏好 · 设置" : "网盘 · 偏好 · 远程访问"}</span>
+        </span>
+        {!skeleton ? <SettingsAttentionBadge storageId={activeStorageId} visibleWhen="desktop" /> : null}
+      </Link>
+    </div>
+  );
+}
+
+export function AppSidebar({
+  active,
+  searchQuery = "",
+  basePath = "/",
+  activeStorageId,
+  skeleton = false,
+}: {
+  active: SidebarActiveTab;
+  searchQuery?: string;
+  basePath?: string;
+  activeStorageId?: string | undefined;
+  skeleton?: boolean;
+}) {
+  return (
+    <aside className="sidebar">
+      <SidebarHeader activeStorageId={activeStorageId} skeleton={skeleton} />
+      <SidebarNav
+        active={active}
+        searchQuery={searchQuery}
+        basePath={basePath}
+        activeStorageId={activeStorageId}
+        skeleton={skeleton}
+      />
+      <SidebarFooter active={active} activeStorageId={activeStorageId} skeleton={skeleton} />
     </aside>
   );
+}
+
+/**
+ * Pure synchronous static skeleton variant of AppSidebar for Suspense fallback shells.
+ * Satisfies React 19 / PPR invariant: zero async I/O, zero connection() calls.
+ */
+export function AppSidebarSkeleton({
+  active = "none",
+}: {
+  active?: SidebarActiveTab;
+}) {
+  return <AppSidebar active={active} skeleton />;
 }

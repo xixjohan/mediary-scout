@@ -66,7 +66,7 @@ function ShowPageInner({
     <div className="app-shell">
       <Suspense
         fallback={
-          <ShowShell active="none">
+          <ShowShell active="none" skeleton>
             <HubSkeleton backLabel="返回" backHref="/?tab=search" />
           </ShowShell>
         }
@@ -77,20 +77,10 @@ function ShowPageInner({
   );
 }
 
-function ShowShell({
-  active,
-  basePath = "/",
-  activeStorageId,
-  children,
-}: {
-  active: "search" | "library" | "none";
-  basePath?: string;
-  activeStorageId?: string | undefined;
-  children: ReactNode;
-}) {
+function ShowShell({ active, basePath = "/", activeStorageId, skeleton = false, children }: { active: "search" | "library" | "none"; basePath?: string; activeStorageId?: string | undefined; skeleton?: boolean; children: ReactNode }) {
   return (
     <>
-      <AppSidebar active={active} basePath={basePath} activeStorageId={activeStorageId} />
+      <AppSidebar active={active} basePath={basePath} activeStorageId={activeStorageId} skeleton={skeleton} />
       <main className="main product-main product-main-hub">{children}</main>
     </>
   );

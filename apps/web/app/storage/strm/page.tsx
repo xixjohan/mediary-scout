@@ -27,7 +27,7 @@ export default function StrmPage({
 function StrmShell() {
   return (
     <div className="app-shell">
-      <AppSidebar active="storage" />
+      <AppSidebar active="storage" skeleton />
       <main className="main product-main" aria-busy="true" />
     </div>
   );

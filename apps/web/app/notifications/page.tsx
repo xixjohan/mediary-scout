@@ -81,7 +81,7 @@ function NotificationsPageInner({
 function NotificationsShell() {
   return (
     <div className="app-shell">
-      <AppSidebar active="notifications" />
+      <AppSidebar active="notifications" skeleton />
       <main className="main product-main" aria-busy="true" />
     </div>
   );

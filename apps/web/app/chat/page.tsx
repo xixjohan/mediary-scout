@@ -20,7 +20,7 @@ function ChatPageInner({
 function ChatShell() {
   return (
     <div className="app-shell">
-      <AppSidebar active="chat" />
+      <AppSidebar active="chat" skeleton />
       <main className="main product-main" aria-busy="true" />
     </div>
   );

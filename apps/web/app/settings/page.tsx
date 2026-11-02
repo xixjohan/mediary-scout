@@ -106,7 +106,7 @@ function SettingsPageInner({
       {/* Only the sidebar depends on the active drive (`?w`); wrap just it in
           Suspense so the static shell + per-section streaming stay intact and the
           route still prerenders (cacheComponents). Fallback = primary sidebar. */}
-      <Suspense fallback={<AppSidebar active="settings" />}>
+      <Suspense fallback={<AppSidebar active="settings" skeleton />}>
         <SettingsSidebar searchParams={searchParams} />
       </Suspense>
       <main className="main product-main">

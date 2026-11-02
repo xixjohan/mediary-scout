@@ -24,7 +24,7 @@ function ActivityPageInner({
 function ActivityShell() {
   return (
     <div className="app-shell">
-      <AppSidebar active="activity" />
+      <AppSidebar active="activity" skeleton />
       <main className="main product-main" aria-busy="true" />
     </div>
   );

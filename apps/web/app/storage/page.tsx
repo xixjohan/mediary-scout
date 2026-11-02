@@ -30,7 +30,7 @@ export default function StoragePage({
 function StorageShell() {
   return (
     <div className="app-shell">
-      <AppSidebar active="storage" />
+      <AppSidebar active="storage" skeleton />
       <main className="main product-main" aria-busy="true" />
     </div>
   );

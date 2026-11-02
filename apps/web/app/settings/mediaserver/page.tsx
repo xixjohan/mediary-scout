@@ -24,7 +24,7 @@ export default function MediaServerSettingsPage({
 function MediaServerSettingsShell() {
   return (
     <div className="app-shell">
-      <AppSidebar active="settings" />
+      <AppSidebar active="settings" skeleton />
       <main className="main product-main" aria-busy="true" />
     </div>
   );
