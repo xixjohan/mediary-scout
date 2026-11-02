@@ -138,8 +138,8 @@ export const DETECTOR_RULES = [
   {
     id: "SEC-007-FORBIDDEN-INTERNAL-IP",
     name: "非标开发宿主 IP 或私有非标 SSH 端口",
-    regex: /\b(?:10\.126\.\d+\.\d+|DEPLOY_PORT=22)\b/g,
-    suggestion: "严禁提交开发宿主私网 IP (10.126.*.*) 或私有端口，请使用 127.0.0.1 或 192.168.1.100 与端口 22",
+    regex: new RegExp("\\b(?:10\\.126\\.\\d+\\.\\d+|DEPLOY_" + "PORT=(?!22\\b)\\d+)\\b", "g"),
+    suggestion: "严禁提交开发宿主私网 IP (10.126.*.*) 或非标端口，请使用 127.0.0.1 或 192.168.1.100 与端口 22",
     check: () => true,
   },
   {
