@@ -19,7 +19,7 @@ const ROOT_ALLOWLIST = new Set([
   ".dockerignore", ".env.example", ".eslintignore", ".gitignore", ".gitattributes",
   ".dependency-cruiser.cjs", ".dependency-cruiser-known-violations.json",
   "eslint-suppressions.json",
-  "Dockerfile", "LICENSE", "README.md", "README.en.md",
+  "Dockerfile", "Dockerfile.dev", "LICENSE", "README.md", "README.en.md", "AGENT.md",
   "package.json", "package-lock.json", "pnpm-lock.yaml", "tsconfig.json", "vitest.config.ts",
   "eslint.config.mjs", "docker-compose.yml", "dev.bat", "smoke.bat",
 ]);

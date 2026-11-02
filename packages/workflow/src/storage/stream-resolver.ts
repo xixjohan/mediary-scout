@@ -1,5 +1,7 @@
 import { SingleFlight } from "../strm/single-flight.js";
 import { Pan115CookieClient } from "./pan115-cookie-client.js";
+import { Pan115OpenClient } from "./pan115-open-client.js";
+import { isPan115OpenOAuthValid, type Pan115OpenOAuthCredentials } from "./account-credentials.js";
 
 /**
  * StorageStreamResolver (网盘流媒体直链与反代解析器)
@@ -12,15 +14,15 @@ import { Pan115CookieClient } from "./pan115-cookie-client.js";
 export interface ResolveStreamInput {
   storageId: string;
   fileId: string;
-  pickCode?: string;
-  fileName?: string;
-  userAgent?: string;
+  pickCode?: string | undefined;
+  fileName?: string | undefined;
+  userAgent?: string | undefined;
 }
 
 export interface ResolvedStream {
   url: string;
   deliveryMode: "redirect" | "proxy";
-  headers?: Record<string, string>;
+  headers?: Record<string, string> | undefined;
   expirationSeconds: number; // TTL（秒）
 }
 
@@ -51,9 +53,9 @@ export class SingleFlightStreamResolver implements StorageStreamResolver {
 
 export interface StorageCredentialsInfo {
   provider: string;
-  cookie?: string;
-  credential?: Record<string, unknown> | null;
-  status?: string;
+  cookie?: string | undefined;
+  credential?: Record<string, unknown> | null | undefined;
+  status?: string | undefined;
 }
 
 export type StorageCredentialLookup = (storageId: string) => Promise<StorageCredentialsInfo | null>;
@@ -61,14 +63,86 @@ export type StorageCredentialLookup = (storageId: string) => Promise<StorageCred
 /**
  * 生产环境真实网盘流媒体解析器：
  * 具备各网盘驱动能力，将媒体请求映射为真实 CDN 302 重定向直链。
+ * 针对 115 网盘支持双轨直链解析 (优先走官方开放平台 Open API，异常降级走 Cookie)。
  */
 export class ProductionStorageStreamResolver implements StorageStreamResolver {
-  private readonly _pan115Clients = new Map<string, Pan115CookieClient>();
+  private readonly _pan115CookieClients = new Map<string, Pan115CookieClient>();
+  private readonly _pan115OpenClients = new Map<string, Pan115OpenClient>();
 
   constructor(
     private readonly _lookup: StorageCredentialLookup,
-    private readonly _fallback?: StorageStreamResolver,
+    private readonly _fallback?: StorageStreamResolver | undefined,
   ) {}
+
+  private async resolvePan115Stream(
+    creds: StorageCredentialsInfo,
+    input: ResolveStreamInput,
+  ): Promise<ResolvedStream> {
+    const openOAuth = (creds.credential as Record<string, unknown> | undefined)?.openOAuth as
+      | Pan115OpenOAuthCredentials
+      | undefined;
+
+    // 1. 优先尝试 115 开放平台 (Open API) 原生直链
+    if (isPan115OpenOAuthValid(openOAuth) && input.pickCode) {
+      try {
+        let openClient = this._pan115OpenClients.get(input.storageId);
+        if (!openClient) {
+          openClient = new Pan115OpenClient({ credentials: openOAuth! });
+          this._pan115OpenClients.set(input.storageId, openClient);
+        }
+        const downloadInput: { pickCode: string; userAgent?: string } = {
+          pickCode: input.pickCode,
+        };
+        if (input.userAgent !== undefined) {
+          downloadInput.userAgent = input.userAgent;
+        }
+        const res = await openClient.getDownloadUrl(downloadInput);
+
+        return {
+          url: res.url,
+          deliveryMode: "redirect",
+          headers: {
+            "User-Agent":
+              res.userAgent ||
+              input.userAgent ||
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          },
+          expirationSeconds: 7200,
+        };
+      } catch (err) {
+        console.warn(`[ProductionStorageStreamResolver] 115 Open API直链解析失败，尝试降级回Cookie:`, err);
+      }
+    }
+
+    // 2. 降级或默认: 走 Cookie Client 直链解析
+    const cookie = creds.cookie?.trim();
+    if (!cookie) {
+      throw new Error(`PAN115_CREDENTIAL_MISSING: 存储驱动 ${input.storageId} 缺少有效 Cookie 凭据`);
+    }
+
+    let client = this._pan115CookieClients.get(input.storageId);
+    if (!client) {
+      client = new Pan115CookieClient({ cookie });
+      this._pan115CookieClients.set(input.storageId, client);
+    }
+
+    const res = await client.getDownloadUrl({
+      fileId: input.fileId,
+      ...(input.pickCode !== undefined ? { pickCode: input.pickCode } : {}),
+      ...(input.userAgent !== undefined ? { userAgent: input.userAgent } : {}),
+    });
+
+    return {
+      url: res.url,
+      deliveryMode: "redirect",
+      headers: {
+        "User-Agent":
+          input.userAgent ||
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      },
+      expirationSeconds: 7200,
+    };
+  }
 
   async resolveStream(input: ResolveStreamInput): Promise<ResolvedStream> {
     const creds = await this._lookup(input.storageId);
@@ -84,33 +158,7 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
     }
 
     if (creds.provider === "pan115") {
-      const cookie = creds.cookie?.trim();
-      if (!cookie) {
-        throw new Error(`PAN115_CREDENTIAL_MISSING: 存储驱动 ${input.storageId} 缺少有效 Cookie 凭据`);
-      }
-
-      let client = this._pan115Clients.get(input.storageId);
-      if (!client) {
-        client = new Pan115CookieClient({ cookie });
-        this._pan115Clients.set(input.storageId, client);
-      }
-
-      const res = await client.getDownloadUrl({
-        fileId: input.fileId,
-        ...(input.pickCode !== undefined ? { pickCode: input.pickCode } : {}),
-        ...(input.userAgent !== undefined ? { userAgent: input.userAgent } : {}),
-      });
-
-      return {
-        url: res.url,
-        deliveryMode: "redirect",
-        headers: {
-          "User-Agent":
-            input.userAgent ||
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-        },
-        expirationSeconds: 7200,
-      };
+      return this.resolvePan115Stream(creds, input);
     }
 
     if (this._fallback) {
@@ -125,7 +173,7 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
  */
 export class MockStorageStreamResolver implements StorageStreamResolver {
   constructor(
-    private readonly handler?: (input: ResolveStreamInput) => Promise<ResolvedStream>,
+    private readonly handler?: ((input: ResolveStreamInput) => Promise<ResolvedStream>) | undefined,
   ) {}
 
   async resolveStream(input: ResolveStreamInput): Promise<ResolvedStream> {

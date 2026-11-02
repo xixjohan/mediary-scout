@@ -1,0 +1,20 @@
+# Auto detect text files and perform LF normalization on checkin
+* text=auto
+
+# Linux shell scripts MUST always use LF
+*.sh text eol=lf
+Dockerfile* text eol=lf
+
+# Windows PowerShell scripts MUST use CRLF for reliable comment tokenization
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Source code files
+*.js text eol=lf
+*.mjs text eol=lf
+*.cjs text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.json text eol=lf
+*.md text eol=lf

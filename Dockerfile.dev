@@ -1,0 +1,56 @@
+# =============================================================================
+# 巡影 (Mediary Scout) 极速本地 Linux 开发与实机验证镜像 (Dockerfile.dev)
+# 
+# 优化策略：
+#   1. 依赖分层强缓存：优先安装 monorepo package.json 依赖，未改动依赖时构建耗时为 0 秒
+#   2. 单阶段直接运行：避免 standalone 跨阶段拷贝时遗漏原生 C++ 绑定动态库
+#   3. 进程内闭环验证：默认 MEDIA_TRACK_WORKER_MODE=inprocess，单容器闭环包含 Web 与 Worker
+#   4. 零侵入轻量健康检查：利用 Node 22 原生 fetch 执行 /api/health 自省探针
+# =============================================================================
+
+ARG DOCKER_MIRROR
+ARG NODE_IMAGE=node:22-slim
+
+FROM ${DOCKER_MIRROR:+${DOCKER_MIRROR}/library/}${NODE_IMAGE}
+WORKDIR /app
+
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG GIT_SHA=dev-local
+ARG MEDIA_TRACK_ALLOWED_ORIGINS
+
+# 1. 依赖描述清单前置拷贝 (最大化命中 Docker Layer Cache)
+COPY package.json package-lock.json ./
+COPY apps/web/package.json apps/web/
+COPY packages/workflow/package.json packages/workflow/
+
+RUN npm config set registry "$NPM_REGISTRY" && npm ci && npm install better-sqlite3@12.11.1
+
+# 2. 源码拷贝与提交哈希标记 (自验证守卫)
+RUN echo "mediary-dev build commit: ${GIT_SHA}" && echo "${GIT_SHA}" > /app/BUILD_COMMIT
+COPY . .
+
+ENV MEDIA_TRACK_ALLOWED_ORIGINS=${MEDIA_TRACK_ALLOWED_ORIGINS}
+ENV NODE_ENV=production
+ENV PORT=3000
+ENV HOSTNAME=0.0.0.0
+
+# 默认开发验证适配器装配（进程内 worker，开箱即用，零额外容器开销）
+ENV MEDIA_TRACK_SEARCH_PROVIDER=tmdb
+ENV MEDIA_TRACK_WORKFLOW_ADAPTER=pansou
+ENV MEDIA_TRACK_STORAGE_ADAPTER=115
+ENV MEDIA_TRACK_AGENT_ADAPTER=vercel-ai
+ENV MEDIA_TRACK_WORKER_MODE=inprocess
+ENV MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db
+ENV MEDIA_TRACK_DEMO_SEED=0
+
+# 3. 编译共享工作流与 Web 站点
+RUN npm run build:web
+RUN npm run build:worker
+
+EXPOSE 3000
+
+# 预设轻量健康检查探针 (Node 22 原生 fetch 探针，无需 curl/wget)
+HEALTHCHECK --interval=10s --timeout=4s --start-period=15s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+
+CMD ["npx", "next", "start", "apps/web", "-p", "3000"]

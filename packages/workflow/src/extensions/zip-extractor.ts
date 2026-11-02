@@ -1,6 +1,5 @@
 import { nativePath as path } from "../domain/native-require.js";
 import fs from "node:fs/promises";
-import extractZip from "extract-zip";
 import type { ExtensionManifest } from "./extension-types.js";
 
 /**
@@ -17,17 +16,40 @@ export function assertSafeZipPath(targetDir: string, relativePath: string): stri
 
 /**
  * 安全解压 ZIP 文件包至目标目录
+ * 避免在顶层静态 import extract-zip，防止 Turbopack 将其打入客户端/中间件 chunk 并导致 ModuleNotFound 致命编译中断
  */
 export async function extractZipSafely(zipFilePath: string, destDir: string): Promise<ExtensionManifest> {
   const resolvedDest = path.resolve(destDir);
   await fs.mkdir(resolvedDest, { recursive: true });
 
-  await extractZip(zipFilePath, {
-    dir: resolvedDest,
-    onEntry: (entry) => {
-      assertSafeZipPath(resolvedDest, entry.fileName);
-    },
-  });
+  let extracted = false;
+
+  // 1. 尝试使用 extract-zip 动态加载（动态拼接模块名阻断 Turbopack 静态分析）
+  try {
+    const pkgName = ["extract", "zip"].join("-");
+    const mod = await import(/* webpackIgnore: true */ pkgName);
+    const extractZip = mod.default || mod;
+    await extractZip(zipFilePath, {
+      dir: resolvedDest,
+      onEntry: (entry: { fileName: string }) => {
+        assertSafeZipPath(resolvedDest, entry.fileName);
+      },
+    });
+    extracted = true;
+  } catch {
+    // 降级回退方案
+  }
+
+  // 2. 若无 extract-zip，尝试系统原生 unzip 指令
+  if (!extracted) {
+    try {
+      const cp = await import("node:child_process");
+      cp.execSync(`unzip -q -o "${zipFilePath}" -d "${resolvedDest}"`);
+      extracted = true;
+    } catch (e: any) {
+      throw new Error(`解压扩展包失败 (未找到 extract-zip 且系统 unzip 不可用): ${e?.message || e}`);
+    }
+  }
 
   // 读取并校验 manifest.json
   const manifestPath = path.join(resolvedDest, "manifest.json");

@@ -1,9 +1,9 @@
 /**
- * Pure decision logic for §7 multi-account storage binding + category directory
- * provisioning. No I/O here �?the repository (binding) and the real 115
+ * Pure decision logic for Â§7 multi-account storage binding + category directory
+ * provisioning. No I/O here â€?the repository (binding) and the real 115
  * storage adapter (dir provisioning) inject their effects. Keeping the rules pure
  * keeps the instance-wide uniqueness invariant and the idempotent find-or-create
- * testable without a database or a live 网盘.
+ * testable without a database or a live ç½‘ç›˜.
  */
 import { DEFAULT_ACCOUNT_ID } from "../domain/domain.js";
 
@@ -46,7 +46,7 @@ export interface ConnectedStorage {
   moviesCid: string | null;
   tvCid: string | null;
   animeCid: string | null;
-  /** active = usable; frozen = cookie died (e.g. logged in elsewhere) �?no
+  /** active = usable; frozen = cookie died (e.g. logged in elsewhere) â†?no
    *  acquisition and no patrol run for this drive until re-bound to the same uid.
    *  Data is never lost while frozen. */
   status: "active" | "frozen";
@@ -55,7 +55,7 @@ export interface ConnectedStorage {
   createdAt: string;
 }
 
-/** Upsert payload �?nullable directory CIDs are optional at call sites. */
+/** Upsert payload â€?nullable directory CIDs are optional at call sites. */
 export interface UpsertConnectedStorageInput {
   id: string;
   accountId: string;
@@ -77,9 +77,9 @@ export type StorageBindingDecision =
 
 /**
  * Enforce instance-wide UNIQUE(provider, provider_uid):
- * - unseen (provider, uid)        �?insert a new connection
- * - already owned by this account �?refresh (re-scan updates the cookie payload)
- * - owned by another account      �?reject (never let two accounts bind one 网盘)
+ * - unseen (provider, uid)        â†?insert a new connection
+ * - already owned by this account â†?refresh (re-scan updates the cookie payload)
+ * - owned by another account      â†?reject (never let two accounts bind one ç½‘ç›˜)
  */
 export function resolveStorageBinding(input: {
   provider: string;
@@ -111,11 +111,11 @@ export interface ProvisionedCids {
 
 /**
  * Idempotent: reuse a same-named directory if one already exists under the
- * parent, else create it. Safe to re-run on an already-provisioned 网盘 (the
+ * parent, else create it. Safe to re-run on an already-provisioned ç½‘ç›˜ (the
  * second run finds every dir and creates nothing).
  *
  * Directory names are customisable (rootName / moviesName / tvName / animeName).
- * A blank or whitespace-only name falls back to its brand default �?in
+ * A blank or whitespace-only name falls back to its brand default â€?in
  * particular the root ALWAYS resolves to a real container folder, never to the
  * account root, so the drive's write scope can never widen to the whole account.
  */
@@ -175,7 +175,7 @@ const LEGACY_COOKIE_KEY = "pan115.cookie";
 const LEGACY_COOKIE_META_KEY = "pan115.cookieMeta";
 
 /**
- * §7 P0 migration (idempotent, startup): a pre-multi-account deployment stored
+ * Â§7 P0 migration (idempotent, startup): a pre-multi-account deployment stored
  * the single 115 cookie in the global `app_settings`. Move it into a
  * `connected_storages` row owned by the implicit default account, with directory
  * CIDs backfilled from the env the worker used to read. Re-running is a no-op
@@ -223,4 +223,71 @@ export async function migrateLegacyCookieToDefaultAccount(input: {
     createdAt: input.now,
   });
   return { migrated: true, providerUid };
+}
+
+
+/** 115 开放平台 OAuth 凭据定义（对接 115 Open API） */
+export interface Pan115OpenOAuthCredentials {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number; // 毫秒时间戳
+  clientId?: string;
+  clientSecret?: string;
+}
+
+/** 115 网盘驱动执行引擎工作模式 */
+export type Pan115EngineMode = "cookie_only" | "open_only" | "dual_engine";
+
+/** 115 统一凭据载荷（存储在 connected_storages.payload） */
+export interface Pan115UnifiedCredentialPayload {
+  cookie?: string;
+  cookieMeta?: Record<string, unknown>;
+  openOAuth?: Pan115OpenOAuthCredentials;
+  engineMode?: Pan115EngineMode;
+}
+
+/**
+ * 判断 115 开放平台凭据是否有效可用
+ */
+export function isPan115OpenOAuthValid(creds?: Pan115OpenOAuthCredentials | null): boolean {
+  if (!creds) return false;
+  return (
+    typeof creds.accessToken === "string" &&
+    creds.accessToken.trim().length > 0 &&
+    typeof creds.refreshToken === "string" &&
+    creds.refreshToken.trim().length > 0
+  );
+}
+
+/**
+ * 智能决议 115 凭据的工作引擎模式：
+ * - 兼具 Cookie 与有效 Open OAuth -> "dual_engine"（最佳推荐：转存走 Cookie，扫库与直链走 Open）
+ * - 仅有 Open OAuth -> "open_only"（免掉线扫库与直链，不支持分享转存）
+ * - 其余 -> "cookie_only"（传统 Web Cookie 模式）
+ */
+export function resolvePan115EngineMode(payload: unknown): Pan115EngineMode {
+  if (!payload || typeof payload !== "object") {
+    return "cookie_only";
+  }
+  const obj = payload as Record<string, unknown>;
+  const hasCookie = typeof obj["cookie"] === "string" && (obj["cookie"] as string).trim().length > 0;
+  const openOAuth = obj["openOAuth"] as Pan115OpenOAuthCredentials | undefined;
+  const hasOAuth = isPan115OpenOAuthValid(openOAuth);
+
+  // 若显式指定且凭据满足，尊重显式模式
+  if (obj["engineMode"] === "dual_engine" && hasCookie && hasOAuth) {
+    return "dual_engine";
+  }
+  if (obj["engineMode"] === "open_only" && hasOAuth) {
+    return "open_only";
+  }
+
+  // 默认自动推断
+  if (hasCookie && hasOAuth) {
+    return "dual_engine";
+  }
+  if (hasOAuth && !hasCookie) {
+    return "open_only";
+  }
+  return "cookie_only";
 }

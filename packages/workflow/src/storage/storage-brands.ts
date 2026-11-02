@@ -38,6 +38,7 @@ import { isPan115AuthError } from "./pan115-cookie-client.js";
 import {
   createBootstrapPan115CookieStorageExecutor,
   createProtectedPan115CookieStorageExecutorFromEnv,
+  createUnifiedPan115StorageExecutor,
 } from "./pan115-storage-factory.js";
 import { isPan123AuthError, parsePan123Uid } from "./pan123-client.js";
 import type { Pan123Credential } from "./pan123-client.js";
@@ -232,6 +233,20 @@ export const STORAGE_BRANDS = [
           createBootstrapPan115CookieStorageExecutor({ cookie, ...(env === undefined ? {} : { env }) }),
     create: (input) => {
       const cookie = input.cookie ?? "";
+      const cred = input.credential as Record<string, unknown> | undefined;
+      const openOAuth = cred?.openOAuth as any;
+      const engineMode = cred?.engineMode as any;
+
+      if (openOAuth || engineMode === "dual_engine" || engineMode === "open_only") {
+        return createUnifiedPan115StorageExecutor({
+          cookie,
+          openOAuth,
+          engineMode,
+          scopeCids: input.scopeCids,
+          env: input.env,
+        });
+      }
+
       const env = {
         ...(input.env ?? process.env),
         PAN115_COOKIE: cookie,
