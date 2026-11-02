@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# 巡影 (Mediary Scout) - Git 客户端预提交安全门禁
+# 拦截所有携带真实凭据、私有 IP 及非脱敏密码的代码与文档提交
+
+node tools/gates/check-security-credentials.mjs --staged
+
+if [ $? -ne 0 ]; then
+  printf "\n\033[31m[GIT COMMIT BLOCKED]\033[0m 检测到提交内容违反了《凭据安全红线与脱敏规范 §7》！\n"
+  printf "请参阅 docs/architecture/security-credential-governance-and-git-hook-gate-spec.md 进行修正脱敏。\n\n"
+  exit 1
+fi

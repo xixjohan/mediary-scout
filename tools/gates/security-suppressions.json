@@ -1,0 +1,39 @@
+{
+  "docs/architecture/remote-linux-dev-deploy-and-verification-spec.md": {
+    "SEC-007-FORBIDDEN-INTERNAL-IP": "Legacy internal dev IP note (pending history rewrite)"
+  },
+  "docs/architecture/resource-acquisition-outage-and-cache-poisoning-audit-spec.md": {
+    "SEC-007-FORBIDDEN-INTERNAL-IP": "Legacy internal dev IP note (pending history rewrite)"
+  },
+  "docs/postmortems/nextjs-chunk-load-and-zero-downtime-deployment-architecture.md": {
+    "SEC-007-FORBIDDEN-INTERNAL-IP": "Legacy LAN IP log in postmortem (pending history rewrite)"
+  },
+  "docs/postmortems/version-update-and-connection-fetch-failed-governance.md": {
+    "SEC-007-FORBIDDEN-INTERNAL-IP": "Legacy internal dev IP note (pending history rewrite)"
+  },
+  "docs/research/seo-interlink-findings.md": {
+    "SEC-009-SENSITIVE-SLUG-OR-ZONE": "Legacy CF zone & test slug note (pending history rewrite)"
+  },
+  "env/.env.example": {
+    "SEC-007-FORBIDDEN-INTERNAL-IP": "Legacy dev host example (pending history rewrite)",
+    "SEC-005-PRIVATE-KEY": "Template SSH key placeholder"
+  },
+  "AGENT.md": {
+    "SEC-007-FORBIDDEN-INTERNAL-IP": "Local dev instance guide (pending history rewrite)"
+  },
+  "apps/web/features/settings-system/core/remote-access.ts": {
+    "SEC-009-SENSITIVE-SLUG-OR-ZONE": "Legacy connect hostname comment (pending history rewrite)"
+  },
+  "apps/web/lib/remote-access-probe.test.ts": {
+    "SEC-009-SENSITIVE-SLUG-OR-ZONE": "Legacy connect test fixture"
+  },
+  "apps/web/lib/remote-access.test.ts": {
+    "SEC-009-SENSITIVE-SLUG-OR-ZONE": "Legacy connect test fixture"
+  },
+  "workers/scout-connect/src/html/connect-prompt.test.ts": {
+    "SEC-009-SENSITIVE-SLUG-OR-ZONE": "Legacy connect test fixture"
+  },
+  "workers/scout-connect/src/html/console-page.test.ts": {
+    "SEC-009-SENSITIVE-SLUG-OR-ZONE": "Legacy connect test fixture"
+  }
+}

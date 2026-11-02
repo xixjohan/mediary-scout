@@ -123,7 +123,7 @@ docker run -d \
 ```
 
 #### 2. 大陆网络配合出站代理启动（推荐：加速 TMDB，国内网盘直连）
-若宿主机或局域网旁路由运行了 Clash / V2Ray / Sing-box 等代理（如 `http://127.0.0.1:7890` 或 `http://172.17.0.1:7890`）：
+若宿主机或局域网旁路由运行了 Clash / V2Ray / Sing-box 等代理（如 `http://192.168.1.100:7890` 或 `http://172.17.0.1:7890`）：
 ```bash
 docker run -d \
   --name mediary \

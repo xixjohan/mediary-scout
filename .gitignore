@@ -93,3 +93,7 @@ docs/images/devto-cover.*
 # scripts/run-local-real.sh 的本地真实实例运行时产物（DB 由上面的 *.db 覆盖）
 run/server.log
 run/server.pid
+
+# 不落库文档与敏感排查记录
+docs_secret/
+/docs_secret/
