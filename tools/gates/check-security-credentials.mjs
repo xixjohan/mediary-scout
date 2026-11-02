@@ -51,6 +51,7 @@ export const COMPLIANT_PLACEHOLDERS = [
   /sk-env-secret-value-0001/,
   /lwt_live_8f3a9e\.\.\./,
   /msk_live_9a8b7c6d5e4f3a2b1c0d9e8f/,
+  /cf_zone_0123456789abcdef0123456789abcdef/,
   /tunnel_0123456789abcdef0123456789abcdef/,
   /your_secure_password_here/,
   /<ADMIN_PASSWORD>/,

@@ -36,8 +36,8 @@ const testRoot = process.env.MEDIA_TRACK_115_TEST_ROOT_CID;
 const TOP_N = 6;
 
 const prowlarr = new ProwlarrResourceProvider({
-  baseURL: "http://127.0.0.1:9696",
-  apiKey: "prowlarr_mock_api_key_0123456789abcdef",
+  baseURL: process.env.PROWLARR_BASE_URL ?? "http://127.0.0.1:9696",
+  apiKey: process.env.PROWLARR_API_KEY ?? "prowlarr_mock_api_key_0123456789abcdef",
 });
 const storage = createProtectedPan115CookieStorageExecutorFromEnv({ env: process.env });
 
