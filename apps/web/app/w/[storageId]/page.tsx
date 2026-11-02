@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { PageLoginGuard } from "../../../lib/page-auth-guard";
 import { notFound } from "next/navigation";
 import { WorkspaceNotFoundError } from "@media-track/workflow";
@@ -35,6 +36,7 @@ async function ValidatedWorkspaceHome({
   params: Promise<{ storageId: string }>;
   searchParams: Promise<Record<string, string | string[] | undefined>> | undefined;
 }) {
+  await connection();
   const { storageId } = await params;
   try {
     // Up-front ownership validation; the data readers re-resolve the same scope.

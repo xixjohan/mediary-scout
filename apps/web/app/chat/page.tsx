@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { ChatWorkspace } from "../../features/assistant/components/chat-workspace";
@@ -31,6 +32,7 @@ async function ChatSurface({
 }: {
   searchParams: Promise<{ w?: string; c?: string }>;
 }) {
+  await connection();
   const { w, c } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return (

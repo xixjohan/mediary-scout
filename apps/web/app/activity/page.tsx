@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { ActivityFeed } from "../../features/activity/components/activity-feed";
@@ -31,6 +32,7 @@ function ActivityShell() {
 }
 
 async function ActivitySurface({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
+  await connection();
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return (

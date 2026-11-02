@@ -88,6 +88,7 @@ function NotificationsShell() {
 }
 
 async function NotificationsSurface({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
+  await connection();
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return (

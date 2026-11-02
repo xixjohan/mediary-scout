@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import Link from "next/link";
 import { FolderSync } from "lucide-react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
@@ -41,6 +42,7 @@ async function StorageSurface({
 }: {
   searchParams: Promise<{ w?: string; dir?: string }>;
 }) {
+  await connection();
   const { w, dir } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   const storages = await getAccountConnectedStorages();

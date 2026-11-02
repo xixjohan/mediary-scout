@@ -134,7 +134,56 @@ export function analyzeSuspenseFallbacks(filePath, source) {
     node.forEachChild(visitShellFunctions);
   }
 
-  // 2. 扫描所有 <Suspense fallback={...}> 属性
+  // 2. 扫描本文件定义的所有 async 函数（函数声明或变量声明）
+  const asyncFunctionsInFile = new Map();
+  function collectAsyncFunctions(node) {
+    if (ts.isFunctionDeclaration(node) && node.name) {
+      const isAsync = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
+      if (isAsync) {
+        asyncFunctionsInFile.set(node.name.getText(), node);
+      }
+    } else if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (decl.name && ts.isIdentifier(decl.name) && decl.initializer) {
+          const init = decl.initializer;
+          if (
+            (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) &&
+            init.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
+          ) {
+            asyncFunctionsInFile.set(decl.name.getText(), init);
+          }
+        }
+      }
+    }
+    node.forEachChild(collectAsyncFunctions);
+  }
+  sf.forEachChild(collectAsyncFunctions);
+
+  // 辅助函数：判断 AST 节点及其后代中是否包含 await connection() 调用
+  function hasAwaitConnectionCall(fnNode) {
+    let found = false;
+    function checkNode(n) {
+      if (found) return;
+      if (ts.isAwaitExpression(n)) {
+        const expr = n.expression;
+        if (ts.isCallExpression(expr)) {
+          const calleeText = expr.expression.getText();
+          if (calleeText === "connection") {
+            found = true;
+            return;
+          }
+        }
+      }
+      n.forEachChild(checkNode);
+    }
+    const body = fnNode.body;
+    if (body) {
+      body.forEachChild(checkNode);
+    }
+    return found;
+  }
+
+  // 3. 扫描所有 <Suspense fallback={...}> 属性与子组件动态声明
   function visitSuspenseTags(node) {
     if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node)) {
       const tag = (node.openingElement ?? node).tagName.getText();
@@ -174,33 +223,34 @@ export function analyzeSuspenseFallbacks(filePath, source) {
             }
           }
         }
+
+        // 检查 Suspense 子节点中的本文件异步组件，断言必须包含 await connection()
+        if (ts.isJsxElement(node)) {
+          function checkSuspenseChildren(childNode) {
+            if (ts.isJsxElement(childNode) || ts.isJsxSelfClosingElement(childNode)) {
+              const childTag = (childNode.openingElement ?? childNode).tagName.getText();
+              if (childTag === "PageLoginGuard") return;
+              const asyncFnNode = asyncFunctionsInFile.get(childTag);
+              if (asyncFnNode && !hasAwaitConnectionCall(asyncFnNode)) {
+                const { line, character } = sf.getLineAndCharacterOfPosition(childNode.getStart());
+                violations.push({
+                  file: relPath,
+                  line: line + 1,
+                  column: character + 1,
+                  rule: "Dynamic-Hole-Connection-Required",
+                  message: `异步页面动态空洞组件 <${childTag} /> 由 <Suspense> 挂载，必须在函数体内显式声明 'await connection()'，切断预渲染静态阶段以防止 new Date() / 会话鉴权触发 Blocking Route 异常。`,
+                });
+              }
+            }
+            if (ts.isJsxElement(childNode) || ts.isJsxFragment(childNode)) {
+              childNode.children.forEach(checkSuspenseChildren);
+            }
+          }
+          node.children.forEach(checkSuspenseChildren);
+        }
       }
     }
     node.forEachChild(visitSuspenseTags);
-  }
-
-  // 3. 检查 page.tsx 中根搜索与媒体库组件是否声明了 await connection()
-  if (relPath === "apps/web/app/page.tsx") {
-    function visitPageServerComponents(node) {
-      if (ts.isFunctionDeclaration(node)) {
-        const fnName = node.name?.getText();
-        if (fnName === "SearchResults" || fnName === "LibrarySurface") {
-          const bodyText = node.body?.getText() ?? "";
-          if (!bodyText.includes("await connection()")) {
-            const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart());
-            violations.push({
-              file: relPath,
-              line: line + 1,
-              column: character + 1,
-              rule: "Declare-Connection-For-Dynamic-Hole",
-              message: `组件 ${fnName} 读取了动态业务数据，必须在入口显式声明 'await connection()'，确保 PPR 部分预渲染流式空洞契约一致。`,
-            });
-          }
-        }
-      }
-      node.forEachChild(visitPageServerComponents);
-    }
-    sf.forEachChild(visitPageServerComponents);
   }
 
   sf.forEachChild(visitShellFunctions);

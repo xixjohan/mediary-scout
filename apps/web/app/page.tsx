@@ -136,6 +136,7 @@ async function HomeSurface({
   searchParams: Promise<Record<string, string | string[] | undefined>> | undefined;
   storageId?: string | undefined;
 }) {
+  await connection();
   const params = (await searchParams) ?? {};
   const {
     query,

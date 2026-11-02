@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { connection } from "next/server";
 import { PageLoginGuard } from "../../../lib/page-auth-guard";
 import { AppSidebar } from "../../../components/layout/app-sidebar";
 import { resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
@@ -35,6 +36,7 @@ async function MediaServerSettingsSurface({
 }: {
   searchParams: Promise<{ w?: string }>;
 }) {
+  await connection();
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
 

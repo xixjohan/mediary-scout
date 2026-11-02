@@ -63,16 +63,47 @@ export default function TestPage() {
     expect(violations.some((v) => v.rule === "No-Async-Loader-In-Fallback")).toBe(true);
   });
 
-  it("catches SearchResults without await connection() in page.tsx (Rule 3)", () => {
+  it("catches async dynamic hole component without await connection() inside Suspense (Rule 4)", () => {
     const badCode = `
 import { Suspense } from "react";
 
-async function SearchResults({ query }: { query: string }) {
-  const result = await fetchSomething(query);
-  return <div>{result}</div>;
+async function CustomSurface() {
+  const data = await getRegisteredDriveCount();
+  return <div>{data}</div>;
+}
+
+export default function CustomPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <CustomSurface />
+    </Suspense>
+  );
 }
 `;
-    const violations = analyzeSuspenseFallbacks("apps/web/app/page.tsx", badCode);
-    expect(violations.some((v) => v.rule === "Declare-Connection-For-Dynamic-Hole")).toBe(true);
+    const violations = analyzeSuspenseFallbacks("apps/web/app/custom/page.tsx", badCode);
+    expect(violations.some((v) => v.rule === "Dynamic-Hole-Connection-Required")).toBe(true);
+  });
+
+  it("passes when async dynamic hole component declares await connection() inside Suspense", () => {
+    const goodCode = `
+import { Suspense } from "react";
+import { connection } from "next/server";
+
+async function CustomSurface() {
+  await connection();
+  const data = await getRegisteredDriveCount();
+  return <div>{data}</div>;
+}
+
+export default function CustomPage() {
+  return (
+    <Suspense fallback={<div />}>
+      <CustomSurface />
+    </Suspense>
+  );
+}
+`;
+    const violations = analyzeSuspenseFallbacks("apps/web/app/custom/page.tsx", goodCode);
+    expect(violations.length).toBe(0);
   });
 });

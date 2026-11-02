@@ -234,8 +234,8 @@ function SettingsPageInner({
 }
 
 async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
-  const { w } = await searchParams;
-  const workspace = await resolveGlobalWorkspace(w);
+  await connection();
+  const workspace = await resolveGlobalWorkspace((await searchParams).w);
   return <AppSidebar active="settings" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />;
 }
 
