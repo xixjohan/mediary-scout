@@ -24,6 +24,9 @@ export interface StrmTask {
   status: StrmTaskStatus;
   deliveryMode?: StrmDeliveryMode | undefined;
   isActive?: boolean | undefined;
+  mediaServerId?: string | null | undefined;
+  mediaLibraryId?: string | null | undefined;
+  mediaLibraryName?: string | null | undefined;
   lastScanAt: string | null;
   lastScanStatus: string | null;
   lastErrorMessage: string | null;
@@ -47,6 +50,9 @@ export interface CreateStrmTaskInput {
   scheduleMode?: StrmScheduleMode | undefined;
   deliveryMode?: StrmDeliveryMode | undefined;
   isActive?: boolean | undefined;
+  mediaServerId?: string | null | undefined;
+  mediaLibraryId?: string | null | undefined;
+  mediaLibraryName?: string | null | undefined;
 }
 
 export interface UpdateStrmTaskInput {
@@ -66,6 +72,9 @@ export interface UpdateStrmTaskInput {
   status?: StrmTaskStatus | undefined;
   deliveryMode?: StrmDeliveryMode | undefined;
   isActive?: boolean | undefined;
+  mediaServerId?: string | null | undefined;
+  mediaLibraryId?: string | null | undefined;
+  mediaLibraryName?: string | null | undefined;
   lastScanAt?: string | null;
   lastScanStatus?: string | null;
   lastErrorMessage?: string | null;

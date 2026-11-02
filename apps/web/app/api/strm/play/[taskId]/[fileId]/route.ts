@@ -63,6 +63,66 @@ function handleRedirect(targetUrl: string): Response {
   });
 }
 
+function buildUpstreamHeaders(
+  request: NextRequest,
+  options?: { customHeaders?: Record<string, string> | undefined },
+): Record<string, string> {
+  const clientRange = request.headers.get("range");
+  const upstreamHeaders: Record<string, string> = {
+    "User-Agent":
+      options?.customHeaders?.["User-Agent"] ||
+      options?.customHeaders?.["user-agent"] ||
+      request.headers.get("user-agent") ||
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    ...(options?.customHeaders || {}),
+  };
+
+  if (clientRange) {
+    upstreamHeaders["Range"] = clientRange;
+  }
+  return upstreamHeaders;
+}
+
+function buildProxyResponseHeaders(
+  upstreamResp: Response,
+  fileName?: string | undefined,
+): Headers {
+  const responseHeaders = new Headers();
+  responseHeaders.set("Accept-Ranges", "bytes");
+  responseHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  responseHeaders.set("Pragma", "no-cache");
+  responseHeaders.set("Expires", "0");
+  responseHeaders.set("Referrer-Policy", "no-referrer");
+
+  const forwardHeaders = [
+    "content-range",
+    "content-length",
+    "etag",
+    "last-modified",
+  ];
+
+  for (const name of forwardHeaders) {
+    const val = upstreamResp.headers.get(name);
+    if (val) {
+      responseHeaders.set(name, val);
+    }
+  }
+
+  // 智能修正 Content-Type（杜绝 application/octet-stream 导致浏览器或播放器解码器退化）
+  const upstreamContentType = upstreamResp.headers.get("content-type");
+  responseHeaders.set("content-type", inferVideoMimeType(fileName, upstreamContentType));
+
+  // 强制输出 inline disposition，杜绝网盘上游强制 attachment 导致浏览器或播放器弹出下载对话框
+  const effectiveFileName = fileName || "video.mkv";
+  const asciiSafe = effectiveFileName.replace(/[^\x20-\x7E]/g, "_");
+  const encodedUtf8 = encodeURIComponent(effectiveFileName);
+  responseHeaders.set(
+    "content-disposition",
+    `inline; filename="${asciiSafe}"; filename*=UTF-8''${encodedUtf8}`,
+  );
+  return responseHeaders;
+}
+
 async function handleStreamProxy(
   request: NextRequest,
   targetUrl: string,
@@ -72,21 +132,8 @@ async function handleStreamProxy(
   },
 ): Promise<Response> {
   try {
-    const clientRange = request.headers.get("range");
     const isHead = request.method === "HEAD";
-
-    const upstreamHeaders: Record<string, string> = {
-      "User-Agent":
-        options?.customHeaders?.["User-Agent"] ||
-        options?.customHeaders?.["user-agent"] ||
-        request.headers.get("user-agent") ||
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      ...(options?.customHeaders || {}),
-    };
-
-    if (clientRange) {
-      upstreamHeaders["Range"] = clientRange;
-    }
+    const upstreamHeaders = buildUpstreamHeaders(request, options);
 
     const upstreamResp = await fetch(targetUrl, {
       method: isHead ? "HEAD" : "GET",
@@ -95,39 +142,7 @@ async function handleStreamProxy(
       signal: request.signal,
     });
 
-    const responseHeaders = new Headers();
-    responseHeaders.set("Accept-Ranges", "bytes");
-    responseHeaders.set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
-    responseHeaders.set("Pragma", "no-cache");
-    responseHeaders.set("Expires", "0");
-    responseHeaders.set("Referrer-Policy", "no-referrer");
-
-    const forwardHeaders = [
-      "content-range",
-      "content-length",
-      "etag",
-      "last-modified",
-    ];
-
-    for (const name of forwardHeaders) {
-      const val = upstreamResp.headers.get(name);
-      if (val) {
-        responseHeaders.set(name, val);
-      }
-    }
-
-    // 智能修正 Content-Type（杜绝 application/octet-stream 导致浏览器或播放器解码器退化）
-    const upstreamContentType = upstreamResp.headers.get("content-type");
-    responseHeaders.set("content-type", inferVideoMimeType(options?.fileName, upstreamContentType));
-
-    // 强制输出 inline disposition，杜绝网盘上游强制 attachment 导致浏览器或播放器弹出下载对话框
-    const effectiveFileName = options?.fileName || "video.mkv";
-    const asciiSafe = effectiveFileName.replace(/[^\x20-\x7E]/g, "_");
-    const encodedUtf8 = encodeURIComponent(effectiveFileName);
-    responseHeaders.set(
-      "content-disposition",
-      `inline; filename="${asciiSafe}"; filename*=UTF-8''${encodedUtf8}`,
-    );
+    const responseHeaders = buildProxyResponseHeaders(upstreamResp, options?.fileName);
 
     if (isHead || !upstreamResp.body) {
       return new Response(null, {

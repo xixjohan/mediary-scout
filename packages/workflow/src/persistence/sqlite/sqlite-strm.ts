@@ -27,6 +27,9 @@ interface StrmTaskRow {
   schedule_mode: string;
   status: string;
   delivery_mode?: string | null;
+  media_server_id?: string | null;
+  media_library_id?: string | null;
+  media_library_name?: string | null;
   last_scan_at: string | null;
   last_scan_status: string | null;
   last_error_message: string | null;
@@ -53,6 +56,9 @@ function strmTaskFromRow(row: StrmTaskRow): StrmTask {
     status,
     deliveryMode: (row.delivery_mode as StrmDeliveryMode) || "redirect",
     isActive: status !== "paused",
+    mediaServerId: row.media_server_id ?? null,
+    mediaLibraryId: row.media_library_id ?? null,
+    mediaLibraryName: row.media_library_name ?? null,
     lastScanAt: row.last_scan_at,
     lastScanStatus: row.last_scan_status,
     lastErrorMessage: row.last_error_message,
@@ -112,6 +118,38 @@ function strmExecutionRecordFromRow(row: StrmExecutionRecordRow): StrmExecutionR
 /**
  * STRM 任务配置、流链接缓存与执行记录专用 SQLite 持久层模块
  */
+function buildNewStrmTask(input: CreateStrmTaskInput, now: string): StrmTask {
+  const id = input.id || `strm_task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const initialStatus: StrmTask["status"] =
+    (input as any).status || (input.isActive === false ? "paused" : "idle");
+  return {
+    id,
+    accountId: input.accountId,
+    name: input.name,
+    storageId: input.storageId,
+    remoteFolderId: input.remoteFolderId,
+    remotePath: input.remotePath,
+    localOutputDir: input.localOutputDir,
+    scanIntervalMinutes: input.scanIntervalMinutes ?? 360,
+    scanMode: input.scanMode || "incremental_missing",
+    extensions: input.extensions || "mp4;mkv;ts;avi;mov;wmv;iso;flv",
+    minFileSizeMb: input.minFileSizeMb ?? 100,
+    excludeKeywords: input.excludeKeywords || null,
+    scheduleMode: input.scheduleMode || "interval",
+    status: initialStatus,
+    deliveryMode: input.deliveryMode || "redirect",
+    isActive: initialStatus !== "paused",
+    mediaServerId: input.mediaServerId || null,
+    mediaLibraryId: input.mediaLibraryId || null,
+    mediaLibraryName: input.mediaLibraryName || null,
+    lastScanAt: null,
+    lastScanStatus: null,
+    lastErrorMessage: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore {
   async listStrmTasks(accountId: string): Promise<StrmTask[]> {
     const rows = this.db
@@ -135,41 +173,16 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
   }
 
   async createStrmTask(input: CreateStrmTaskInput): Promise<StrmTask> {
-    const id = input.id ?? `strm_task_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    const now = this.now();
-    const initialStatus: StrmTask["status"] =
-      (input as any).status ?? (input.isActive === false ? "paused" : "idle");
-    const task: StrmTask = {
-      id,
-      accountId: input.accountId,
-      name: input.name,
-      storageId: input.storageId,
-      remoteFolderId: input.remoteFolderId,
-      remotePath: input.remotePath,
-      localOutputDir: input.localOutputDir,
-      scanIntervalMinutes: input.scanIntervalMinutes ?? 360,
-      scanMode: input.scanMode ?? "incremental_missing",
-      extensions: input.extensions ?? "mp4;mkv;ts;avi;mov;wmv;iso;flv",
-      minFileSizeMb: input.minFileSizeMb ?? 100,
-      excludeKeywords: input.excludeKeywords ?? null,
-      scheduleMode: input.scheduleMode ?? "interval",
-      status: initialStatus,
-      deliveryMode: input.deliveryMode ?? "redirect",
-      isActive: initialStatus !== "paused",
-      lastScanAt: null,
-      lastScanStatus: null,
-      lastErrorMessage: null,
-      createdAt: now,
-      updatedAt: now,
-    };
+    const task = buildNewStrmTask(input, this.now());
 
     this.db
       .prepare(
         `INSERT INTO strm_tasks (
           id, account_id, name, storage_id, remote_folder_id, remote_path, local_output_dir,
           scan_interval_minutes, scan_mode, extensions, min_file_size_mb, exclude_keywords,
-          schedule_mode, status, delivery_mode, last_scan_at, last_scan_status, last_error_message, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          schedule_mode, status, delivery_mode, media_server_id, media_library_id, media_library_name,
+          last_scan_at, last_scan_status, last_error_message, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         task.id,
@@ -186,7 +199,10 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
         task.excludeKeywords,
         task.scheduleMode,
         task.status,
-        task.deliveryMode ?? "redirect",
+        task.deliveryMode || "redirect",
+        task.mediaServerId || null,
+        task.mediaLibraryId || null,
+        task.mediaLibraryName || null,
         task.lastScanAt,
         task.lastScanStatus,
         task.lastErrorMessage,
@@ -223,7 +239,8 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
         `UPDATE strm_tasks SET
           name = ?, storage_id = ?, remote_folder_id = ?, remote_path = ?, local_output_dir = ?,
           scan_interval_minutes = ?, scan_mode = ?, extensions = ?, min_file_size_mb = ?, exclude_keywords = ?,
-          schedule_mode = ?, status = ?, delivery_mode = ?, last_scan_at = ?, last_scan_status = ?, last_error_message = ?, updated_at = ?
+          schedule_mode = ?, status = ?, delivery_mode = ?, media_server_id = ?, media_library_id = ?, media_library_name = ?,
+          last_scan_at = ?, last_scan_status = ?, last_error_message = ?, updated_at = ?
         WHERE id = ? AND account_id = ?`,
       )
       .run(
@@ -240,6 +257,9 @@ export class SqliteStrmRepository extends BaseSqliteModule implements StrmStore 
         updated.scheduleMode,
         updated.status,
         updated.deliveryMode ?? "redirect",
+        updated.mediaServerId ?? null,
+        updated.mediaLibraryId ?? null,
+        updated.mediaLibraryName ?? null,
         updated.lastScanAt,
         updated.lastScanStatus,
         updated.lastErrorMessage,

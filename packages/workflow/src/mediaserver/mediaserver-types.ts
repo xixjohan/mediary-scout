@@ -18,6 +18,7 @@ export interface MediaServerConfig {
   hostUrl: string;
   apiTokenEncrypted: string;
   pathMappings: PathMapping[];
+  detectedLibraries?: MediaLibrary[] | undefined;
   isActive: boolean;
   lastSyncAt: string | null;
   createdAt: string;
@@ -32,6 +33,7 @@ export interface CreateMediaServerConfigInput {
   hostUrl: string;
   apiToken: string; // 明文，保存时加密
   pathMappings?: PathMapping[];
+  detectedLibraries?: MediaLibrary[] | undefined;
   isActive?: boolean;
 }
 
@@ -43,6 +45,7 @@ export interface UpdateMediaServerConfigInput {
   hostUrl?: string;
   apiToken?: string; // 明文，若传入则重新加密
   pathMappings?: PathMapping[];
+  detectedLibraries?: MediaLibrary[] | undefined;
   isActive?: boolean;
   lastSyncAt?: string | null;
 }
@@ -127,4 +130,23 @@ export interface MediaServerStore {
   updateMediaServerRefreshRecord(input: UpdateMediaServerRefreshRecordInput): Promise<MediaServerRefreshRecord | null>;
   listMediaServerRefreshRecords(configId: string, accountId: string, limit?: number): Promise<MediaServerRefreshRecord[]>;
   getLatestMediaServerRefreshRecord(configId: string, accountId: string): Promise<MediaServerRefreshRecord | null>;
+}
+
+export interface StrmTaskFileChangeContext {
+  accountId: string;
+  taskId: string;
+  taskName: string;
+  storageId: string;
+  localOutputDir: string;
+  mediaType?: "movie" | "show" | undefined;
+  mediaServerId?: string | null | undefined;
+  mediaLibraryId?: string | null | undefined;
+  mediaLibraryName?: string | null | undefined;
+  generatedPaths: string[];
+  relativeSubPaths: string[];
+}
+
+export interface ResolvedMediaServerTarget {
+  libraryId?: string | undefined;
+  remotePath?: string | undefined;
 }

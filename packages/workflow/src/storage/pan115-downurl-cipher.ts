@@ -181,3 +181,76 @@ export function decode115DownurlResponse(srcBase64: string, keyHex: string): str
   const decrypted = m115SymDecode(bsrc2, bsrc2.length, bkey1, bkey2);
   return Buffer.from(decrypted).toString("utf8");
 }
+
+export interface ProApiDownloadUrlResult {
+  url: string;
+  fileName?: string | undefined;
+  fileSize?: number | undefined;
+}
+
+function extractDirectUrl(fileEntry: Record<string, unknown>): string {
+  const urlProp = fileEntry["url"];
+  if (typeof urlProp === "string") return urlProp;
+  if (typeof urlProp === "object" && urlProp !== null) {
+    const nested = (urlProp as Record<string, unknown>)["url"];
+    if (typeof nested === "string") return nested;
+  }
+  return "";
+}
+
+function parseProApiDecryptedEntry(
+  decryptedJson: string,
+  fileId: string,
+): ProApiDownloadUrlResult | null {
+  const parsed = JSON.parse(decryptedJson) as Record<string, unknown>;
+  const fileEntry = (parsed[fileId] ?? Object.values(parsed)[0]) as Record<string, unknown> | undefined;
+  if (!fileEntry) return null;
+
+  const directUrl = extractDirectUrl(fileEntry);
+  if (!directUrl.startsWith("http")) return null;
+
+  const fileName = typeof fileEntry["file_name"] === "string" ? fileEntry["file_name"] : undefined;
+  const rawSize = fileEntry["file_size"];
+  const fileSize = typeof rawSize === "number" ? rawSize : Number(rawSize) || undefined;
+  return { url: directUrl, fileName, fileSize };
+}
+
+export async function request115ProApiDownloadUrl(options: {
+  fetchJson: (url: string, init: { method: "POST"; headers: Record<string, string>; body?: string }) => Promise<unknown>;
+  cookie: string;
+  userAgent: string;
+  fileId: string;
+  pickCode: string;
+}): Promise<ProApiDownloadUrlResult | null> {
+  try {
+    const tm = String(Math.floor(Date.now() / 1000));
+    const payload = JSON.stringify({ pickcode: options.pickCode });
+    const encoded = encode115DownurlPayload(payload, tm);
+
+    const downUrlRes = await options.fetchJson(
+      `https://proapi.115.com/app/chrome/downurl?t=${tm}`,
+      {
+        method: "POST",
+        headers: {
+          Cookie: options.cookie,
+          "User-Agent": options.userAgent,
+          "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+          Accept: "application/json, text/plain, */*",
+        },
+        body: new URLSearchParams([["data", encoded.data]]).toString(),
+      },
+    );
+
+    const resRecord = typeof downUrlRes === "object" && downUrlRes !== null ? (downUrlRes as Record<string, unknown>) : null;
+    const isStateOk = resRecord?.["state"] === true || resRecord?.["state"] === 1 || resRecord?.["state"] === "1";
+    if (!isStateOk || typeof resRecord?.["data"] !== "string") {
+      return null;
+    }
+
+    const decryptedJson = decode115DownurlResponse(resRecord["data"], encoded.key);
+    return parseProApiDecryptedEntry(decryptedJson, options.fileId);
+  } catch {
+    // 降级尝试常规 webapi
+  }
+  return null;
+}

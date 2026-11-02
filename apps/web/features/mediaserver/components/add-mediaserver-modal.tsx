@@ -141,6 +141,7 @@ export function AddMediaServerModal({
           hostUrl: addForm.hostUrl,
           apiToken: addForm.apiToken,
           pathMappings: addForm.pathMappings.filter((m) => m.localPath && m.remotePath),
+          detectedLibraries,
           isActive: true,
         }),
       });

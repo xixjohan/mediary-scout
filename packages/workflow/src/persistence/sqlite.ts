@@ -163,7 +163,7 @@ import type {
  * inline: a fresh SQLite database needs the FINAL shape up front, not migration
  * steps. The acct_default seed row matches what the old twin produced.
  */
-import { SQLITE_SCHEMA } from "./sqlite/sqlite-schema.js";
+import { SQLITE_SCHEMA, upgradeStrmTasksShape } from "./sqlite/sqlite-schema.js";
 export { SQLITE_SCHEMA };
 
 // Lazy-load the native better-sqlite3 at CALL time (the desktop path), NOT at module
@@ -309,11 +309,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   }
 
   private upgradeStrmTasksShape(): void {
-    const cols = this.db.pragma("table_info(strm_tasks)") as Array<{ name: string }>;
-    if (cols.length === 0) return;
-    if (!cols.some((c) => c.name === "delivery_mode")) {
-      this.db.exec("ALTER TABLE strm_tasks ADD COLUMN delivery_mode text DEFAULT 'redirect'");
-    }
+    upgradeStrmTasksShape(this.db);
   }
 
   close(): void {

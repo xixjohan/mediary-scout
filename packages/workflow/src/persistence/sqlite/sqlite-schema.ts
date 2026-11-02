@@ -286,6 +286,9 @@ export const SQLITE_SCHEMA = `
     schedule_mode text DEFAULT 'interval',
     status text DEFAULT 'idle',
     delivery_mode text DEFAULT 'redirect',
+    media_server_id text,
+    media_library_id text,
+    media_library_name text,
     last_scan_at text,
     last_scan_status text,
     last_error_message text,
@@ -302,6 +305,7 @@ export const SQLITE_SCHEMA = `
     host_url text NOT NULL,
     api_token_encrypted text NOT NULL,
     path_mappings_json text NOT NULL,
+    detected_libraries_json text DEFAULT '[]',
     is_active integer DEFAULT 1,
     last_sync_at text,
     created_at text NOT NULL,
@@ -406,5 +410,25 @@ export function upgradeStrmTasksShape(db: Database.Database): void {
   if (cols.length === 0) return;
   if (!cols.some((c) => c.name === "delivery_mode")) {
     db.exec("ALTER TABLE strm_tasks ADD COLUMN delivery_mode text DEFAULT 'redirect'");
+  }
+  if (!cols.some((c) => c.name === "media_server_id")) {
+    db.exec("ALTER TABLE strm_tasks ADD COLUMN media_server_id text");
+  }
+  if (!cols.some((c) => c.name === "media_library_id")) {
+    db.exec("ALTER TABLE strm_tasks ADD COLUMN media_library_id text");
+  }
+  if (!cols.some((c) => c.name === "media_library_name")) {
+    db.exec("ALTER TABLE strm_tasks ADD COLUMN media_library_name text");
+  }
+}
+
+/**
+ * 补上早于 detected_libraries_json 的库缺的列。
+ */
+export function upgradeMediaserverConfigsShape(db: Database.Database): void {
+  const cols = db.pragma("table_info(mediaserver_configs)") as Array<{ name: string }>;
+  if (cols.length === 0) return;
+  if (!cols.some((c) => c.name === "detected_libraries_json")) {
+    db.exec("ALTER TABLE mediaserver_configs ADD COLUMN detected_libraries_json text DEFAULT '[]'");
   }
 }

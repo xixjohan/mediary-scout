@@ -402,6 +402,7 @@ export { resolveIsDesktop } from "./desktop-flag";
 export { DEFAULT_PANSOU_BASE_URL } from "./pansou-chain";
 export { isSharedResourceMode } from "@media-track/workflow";
 export { runAutoUpdateIfDue } from "../features/settings-system/application/auto-update-service";
+export { runDueStrmTasks } from "../features/strm/application/strm-runner-service";
 export {
   queueCandidateTracking,
   queueCandidateSeries,

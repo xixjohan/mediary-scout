@@ -14,6 +14,13 @@ export interface EditStrmTaskModalProps {
   onSuccess: (updatedName: string) => void;
 }
 
+interface MediaServerConfigItem {
+  id: string;
+  name: string;
+  serverType: string;
+  detectedLibraries?: Array<{ id: string; name: string; type: string; locations: string[] }>;
+}
+
 export function EditStrmTaskModal({
   task,
   storages,
@@ -21,7 +28,18 @@ export function EditStrmTaskModal({
   onSuccess,
 }: EditStrmTaskModalProps) {
   const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const [mediaServers, setMediaServers] = useState<MediaServerConfigItem[]>([]);
+
+  useEffect(() => {
+    setMounted(true);
+    fetch("/api/mediaserver/configs")
+      .then((res) => (res.ok ? res.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) setMediaServers(data);
+      })
+      .catch(() => {});
+  }, []);
+
   const [form, setForm] = useState({
     name: task.name,
     storageId: task.storageId,
@@ -34,6 +52,9 @@ export function EditStrmTaskModal({
     extensions: task.extensions,
     minFileSizeMb: task.minFileSizeMb,
     excludeKeywords: task.excludeKeywords || "",
+    mediaServerId: task.mediaServerId || "",
+    mediaLibraryId: task.mediaLibraryId || "",
+    mediaLibraryName: task.mediaLibraryName || "",
     isActive: task.isActive,
   });
 
@@ -223,6 +244,72 @@ export function EditStrmTaskModal({
                 onChange={(e) => setForm({ ...form, minFileSizeMb: Number(e.target.value) })}
                 style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff" }}
               />
+            </div>
+          </div>
+
+          <div style={{ padding: "0.75rem", background: "#222", border: "1px dashed #444", borderRadius: "8px" }}>
+            <label style={{ display: "block", fontSize: "0.85rem", fontWeight: 600, marginBottom: "0.4rem", color: "#60a5fa" }}>
+              📺 关联远程影视库 (可选，生成后精准触发刷新)
+            </label>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
+              <div>
+                <span style={{ display: "block", fontSize: "0.75rem", color: "#aaa", marginBottom: "0.2rem" }}>媒体服务器</span>
+                <select
+                  className="input"
+                  value={form.mediaServerId}
+                  onChange={(e) => {
+                    const serverId = e.target.value;
+                    const server = mediaServers.find((s) => s.id === serverId);
+                    const firstLib = server?.detectedLibraries?.[0];
+                    setForm({
+                      ...form,
+                      mediaServerId: serverId,
+                      mediaLibraryId: firstLib ? firstLib.id : "",
+                      mediaLibraryName: firstLib ? firstLib.name : "",
+                    });
+                  }}
+                  style={{ width: "100%", padding: "0.45rem", borderRadius: "6px", background: "#18181b", border: "1px solid #444", color: "#fff", fontSize: "0.85rem" }}
+                >
+                  <option value="">-- 未关联 (独立生成) --</option>
+                  {mediaServers.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name} ({s.serverType.toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <span style={{ display: "block", fontSize: "0.75rem", color: "#aaa", marginBottom: "0.2rem" }}>目标影视库</span>
+                <select
+                  className="input"
+                  disabled={!form.mediaServerId}
+                  value={form.mediaLibraryId}
+                  onChange={(e) => {
+                    const libId = e.target.value;
+                    const server = mediaServers.find((s) => s.id === form.mediaServerId);
+                    const lib = server?.detectedLibraries?.find((l) => l.id === libId);
+                    setForm({
+                      ...form,
+                      mediaLibraryId: libId,
+                      mediaLibraryName: lib ? lib.name : "",
+                    });
+                  }}
+                  style={{ width: "100%", padding: "0.45rem", borderRadius: "6px", background: "#18181b", border: "1px solid #444", color: form.mediaServerId ? "#fff" : "#666", fontSize: "0.85rem" }}
+                >
+                  <option value="">-- 自适应推导 --</option>
+                  {mediaServers
+                    .find((s) => s.id === form.mediaServerId)
+                    ?.detectedLibraries?.map((lib) => (
+                      <option key={lib.id} value={lib.id}>
+                        {lib.name} ({lib.type === "movie" ? "电影" : lib.type === "show" ? "剧集" : "其它"})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            </div>
+            <div style={{ fontSize: "0.72rem", color: "#888", marginTop: "0.35rem" }}>
+              💡 一个影视库（如 Plex 电影库）支持关联多个 STRM 任务；任务生成 .strm 后将精准通知该库进行局部路径扫描。
             </div>
           </div>
 

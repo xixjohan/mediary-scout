@@ -32,6 +32,32 @@ const c = {
   gray: "\x1b[90m",
 };
 
+/**
+ * 极简零依赖 .env 文件解析器
+ */
+function loadEnvFile(filePath) {
+  if (!fs.existsSync(filePath)) return {};
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    const env = {};
+    for (const rawLine of content.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("#")) continue;
+      const eqIdx = line.indexOf("=");
+      if (eqIdx === -1) continue;
+      const key = line.slice(0, eqIdx).trim();
+      let val = line.slice(eqIdx + 1).trim();
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      if (key) env[key] = val;
+    }
+    return env;
+  } catch {
+    return {};
+  }
+}
+
 // ============================================================================
 // 1. CLI 参数与配置策略解析 (Strategy Pattern)
 // ============================================================================
@@ -43,6 +69,7 @@ function parseArgs(args) {
     stop: false,
     status: false,
     cleanDb: false,
+    cleanCache: false,
     skipBuild: false,
     openBrowser: true,
   };
@@ -61,6 +88,11 @@ function parseArgs(args) {
       options.status = true;
     } else if (a === "--clean-db") {
       options.cleanDb = true;
+    } else if (a === "--clean-cache") {
+      options.cleanCache = true;
+    } else if (a === "--clean") {
+      options.cleanDb = true;
+      options.cleanCache = true;
     } else if (a === "--skip-build") {
       options.skipBuild = true;
     } else if (a === "--no-open") {
@@ -90,6 +122,8 @@ ${c.cyan}常用选项:${c.reset}
   --port <number>   指定服务端口 (默认 3001)
   --prod            生产环境预览模式 (npm run build:web && next start)
   --demo            纯模拟演示模式 (MEDIA_TRACK_DEMO=true，无需外部网盘)
+  --clean           启动前清理数据库与 Web 构建缓存 (.next)
+  --clean-cache     启动前清理 Web 构建与 HMR 缓存 (.next)
   --clean-db        启动前重置开发数据库 run/mediary.db
   --skip-build      跳过 workflow 增量构建感知检查
   --no-open         服务就绪后不自动打开浏览器
@@ -326,7 +360,15 @@ async function run() {
   console.log(`\n${c.bold}⚡ 巡影 · Mediary Scout 极速启动编排器${c.reset}`);
   console.log(`${c.gray}运行模式: ${options.prod ? "生产模拟 (Production Preview)" : "开发调试 (Turbopack HMR)"} | 目标端口: ${options.port}${c.reset}\n`);
 
-  // --- 状态：PREFLIGHT（数据库重置）---
+  // --- 状态：PREFLIGHT（缓存与数据库重置）---
+  if (options.cleanCache) {
+    const nextDir = path.join(repoRoot, "apps/web/.next");
+    if (fs.existsSync(nextDir)) {
+      console.log(`${c.yellow}清理 Web 构建与 HMR 缓存: ${nextDir}${c.reset}`);
+      fs.rmSync(nextDir, { recursive: true, force: true });
+    }
+  }
+
   if (options.cleanDb) {
     if (fs.existsSync(dbPath)) {
       console.log(`${c.yellow}重置开发数据库: ${dbPath}${c.reset}`);
@@ -339,6 +381,17 @@ async function run() {
   if (portTaken) {
     console.log(`${c.yellow}检测到端口 ${options.port} 已被占用，自动执行安全回收...${c.reset}`);
     await ProcessAdapter.stopService(options.port, pidFile);
+  }
+
+  // 自动检测并加载本地环境凭据配置 (env/.envdev 优先于 .env)
+  const devEnvPath = path.join(repoRoot, "env/.envdev");
+  const rootEnvPath = path.join(repoRoot, ".env");
+  const loadedEnv = {
+    ...loadEnvFile(rootEnvPath),
+    ...loadEnvFile(devEnvPath),
+  };
+  if (fs.existsSync(devEnvPath)) {
+    console.log(`${c.green}✔ 已自动载入开发环境配置: env/.envdev${c.reset}`);
   }
 
   // --- 状态：CACHE_CHECK（增量编译感知）---
@@ -356,17 +409,18 @@ async function run() {
   // --- 状态：SPAWNING（启动子进程）---
   // 严格复用 desktop 及 docker-compose 环境配置基线，杜绝配置漂移
   const env = {
+    ...loadedEnv,
     ...process.env,
     PORT: String(options.port),
     HOSTNAME: "127.0.0.1",
     MEDIA_TRACK_SQLITE_PATH: dbPath,
-    MEDIA_TRACK_SEARCH_PROVIDER: "tmdb",
-    MEDIA_TRACK_WORKFLOW_ADAPTER: "pansou",
-    MEDIA_TRACK_STORAGE_ADAPTER: "115",
-    MEDIA_TRACK_AGENT_ADAPTER: "vercel-ai",
+    MEDIA_TRACK_SEARCH_PROVIDER: process.env.MEDIA_TRACK_SEARCH_PROVIDER || loadedEnv.MEDIA_TRACK_SEARCH_PROVIDER || "tmdb",
+    MEDIA_TRACK_WORKFLOW_ADAPTER: process.env.MEDIA_TRACK_WORKFLOW_ADAPTER || loadedEnv.MEDIA_TRACK_WORKFLOW_ADAPTER || "pansou",
+    MEDIA_TRACK_STORAGE_ADAPTER: process.env.MEDIA_TRACK_STORAGE_ADAPTER || loadedEnv.MEDIA_TRACK_STORAGE_ADAPTER || "115",
+    MEDIA_TRACK_AGENT_ADAPTER: process.env.MEDIA_TRACK_AGENT_ADAPTER || loadedEnv.MEDIA_TRACK_AGENT_ADAPTER || "vercel-ai",
     MEDIA_TRACK_SINGLE_USER: "true",
     MEDIA_TRACK_WORKER_MODE: "inprocess",
-    MEDIA_TRACK_JWT_SECRET: process.env.MEDIA_TRACK_JWT_SECRET || "local-dev-secret-please-override-32b",
+    MEDIA_TRACK_JWT_SECRET: process.env.MEDIA_TRACK_JWT_SECRET || loadedEnv.MEDIA_TRACK_JWT_SECRET || "local-dev-secret-please-override-32b",
     ...(options.demo ? { MEDIA_TRACK_DEMO: "true" } : {}),
   };
 

@@ -24,6 +24,22 @@ export async function GET(request: NextRequest, context: RouteParams) {
   return NextResponse.json({ ...safe, hasToken: Boolean(apiTokenEncrypted) });
 }
 
+function buildUpdateInput(
+  id: string,
+  accountId: string,
+  body: Partial<CreateMediaServerConfigInput>,
+): UpdateMediaServerConfigInput {
+  const updateInput: UpdateMediaServerConfigInput = { id, accountId };
+  if (body.name?.trim()) updateInput.name = body.name.trim();
+  if (body.serverType) updateInput.serverType = body.serverType;
+  if (body.hostUrl?.trim()) updateInput.hostUrl = body.hostUrl.trim();
+  if (body.apiToken?.trim()) updateInput.apiToken = body.apiToken.trim();
+  if (body.pathMappings) updateInput.pathMappings = body.pathMappings;
+  if (body.detectedLibraries) updateInput.detectedLibraries = body.detectedLibraries;
+  if (typeof body.isActive === "boolean") updateInput.isActive = body.isActive;
+  return updateInput;
+}
+
 export async function PUT(request: NextRequest, context: RouteParams) {
   const gate = await requireApiAccount(request);
   if (gate instanceof Response) return gate;
@@ -45,17 +61,7 @@ export async function PUT(request: NextRequest, context: RouteParams) {
     return NextResponse.json({ error: "媒体服务器配置不存在" }, { status: 404 });
   }
 
-  const updateInput: UpdateMediaServerConfigInput = {
-    id,
-    accountId,
-  };
-  if (body.name?.trim()) updateInput.name = body.name.trim();
-  if (body.serverType) updateInput.serverType = body.serverType;
-  if (body.hostUrl?.trim()) updateInput.hostUrl = body.hostUrl.trim();
-  if (body.apiToken?.trim()) updateInput.apiToken = body.apiToken.trim();
-  if (body.pathMappings) updateInput.pathMappings = body.pathMappings;
-  if (typeof body.isActive === "boolean") updateInput.isActive = body.isActive;
-
+  const updateInput = buildUpdateInput(id, accountId, body);
   const updated = await repo.updateMediaServerConfig(updateInput);
 
   if (!updated) {

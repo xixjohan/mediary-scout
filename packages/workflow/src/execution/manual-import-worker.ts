@@ -4,12 +4,14 @@ import { claimNextQueuedRun } from "../persistence/repository.js";
 import type { QueueClaimOptions, WorkflowRepository } from "../persistence/repository.js";
 import type { PersistedWorkflowRunSnapshot } from "../persistence/repository.js";
 import { ensureMediaLibraryDirectory } from "../domain/media-library-folder.js";
+import { triggerPostIngestSyncIfSucceeded } from "../strm/pinpoint-ingest-sync.js";
 import { MANUAL_IMPORT_KIND } from "./manual-import-command.js";
 import { MANUAL_IMPORT_TTL_MS, resolveManualImportCandidate } from "./manual-import-resolver.js";
 import type { MediaType, ResourceCandidate, TransferAttempt } from "../domain/domain.js";
 import type { StorageExecutor } from "../domain/ports.js";
 import { isBrandStorageAuthError } from "../storage/storage-auth-error.js";
 import type { AccountWorkerContext, ResolveAccountWorkerContext } from "./worker.js";
+import type { MediaServerCoordinator } from "../mediaserver/coordinator.js";
 
 /**
  * The worker half of manual import (batch 3, ①).
@@ -218,6 +220,18 @@ export async function runQueuedManualImport(input: {
     transferAttempts: [attempt],
     notifications: [],
   });
+
+  await triggerPostIngestSyncIfSucceeded("succeeded", {
+    accountId: claimed.accountId,
+    connectedStorageId: claimed.connectedStorageId,
+    repository: input.repository,
+    storage,
+    title: claimed.title,
+    categoryParentId: categoryParentDirectoryId,
+    baseUrl: ctx.baseUrl,
+    mediaServerCoordinator: ctx.mediaServerCoordinator,
+  });
+
   return { status: "succeeded", workflowRunId: claimed.workflowRun.id };
 }
 

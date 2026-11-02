@@ -151,6 +151,7 @@ export function EditMediaServerModal({
         serverType: form.serverType,
         hostUrl: form.hostUrl.trim(),
         pathMappings: form.pathMappings.filter((m) => m.localPath.trim() && m.remotePath.trim()),
+        detectedLibraries,
         isActive: form.isActive,
       };
       if (form.apiToken.trim()) {

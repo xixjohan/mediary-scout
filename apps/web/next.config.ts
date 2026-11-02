@@ -59,6 +59,7 @@ const nextConfig: NextConfig = {
   // under cacheComponents).
   async redirects() {
     return [
+      { source: "/strm", destination: "/storage/strm", permanent: false },
       { source: "/show/:tmdbId/:seasonNumber", destination: "/show/:tmdbId", permanent: false },
     ];
   },

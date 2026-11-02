@@ -2117,7 +2117,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       scheduleMode: input.scheduleMode ?? "interval",
       status: "idle",
       deliveryMode: input.deliveryMode ?? "redirect",
-      isActive: input.isActive ?? true,
+      isActive: input.isActive ?? true, mediaServerId: input.mediaServerId ?? null, mediaLibraryId: input.mediaLibraryId ?? null, mediaLibraryName: input.mediaLibraryName ?? null,
       lastScanAt: null,
       lastScanStatus: null,
       lastErrorMessage: null,
@@ -2251,10 +2251,9 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       hostUrl: input.hostUrl,
       apiTokenEncrypted: input.apiToken,
       pathMappings: input.pathMappings ?? [],
+      detectedLibraries: input.detectedLibraries ?? [],
       isActive: input.isActive ?? true,
-      lastSyncAt: null,
-      createdAt: now,
-      updatedAt: now,
+      lastSyncAt: null, createdAt: now, updatedAt: now,
     };
     this.mediaServerConfigs.set(id, structuredClone(config));
     return structuredClone(config);
@@ -2266,11 +2265,10 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const now = new Date().toISOString();
     const updated: MediaServerConfig = {
       ...c,
-      name: input.name ?? c.name,
-      serverType: input.serverType ?? c.serverType,
-      hostUrl: input.hostUrl ?? c.hostUrl,
+      name: input.name ?? c.name, serverType: input.serverType ?? c.serverType, hostUrl: input.hostUrl ?? c.hostUrl,
       apiTokenEncrypted: input.apiToken ? input.apiToken : c.apiTokenEncrypted,
       pathMappings: input.pathMappings ?? c.pathMappings,
+      detectedLibraries: input.detectedLibraries !== undefined ? input.detectedLibraries : (c.detectedLibraries ?? []),
       isActive: input.isActive !== undefined ? input.isActive : c.isActive,
       lastSyncAt: input.lastSyncAt !== undefined ? input.lastSyncAt : c.lastSyncAt,
       updatedAt: now,

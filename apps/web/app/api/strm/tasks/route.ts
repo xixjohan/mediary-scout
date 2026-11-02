@@ -15,6 +15,19 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(tasks);
 }
 
+function applyOptionalTaskFields(task: CreateStrmTaskInput, body: Partial<CreateStrmTaskInput>): void {
+  if (body.scanIntervalMinutes) task.scanIntervalMinutes = Number(body.scanIntervalMinutes);
+  if (body.scanMode) task.scanMode = body.scanMode;
+  if (body.extensions) task.extensions = body.extensions.trim();
+  if (body.minFileSizeMb !== undefined) task.minFileSizeMb = Number(body.minFileSizeMb);
+  if (body.excludeKeywords !== undefined) task.excludeKeywords = body.excludeKeywords;
+  if (body.scheduleMode) task.scheduleMode = body.scheduleMode;
+  if (body.deliveryMode) task.deliveryMode = body.deliveryMode;
+  if (body.mediaServerId !== undefined) task.mediaServerId = body.mediaServerId || null;
+  if (body.mediaLibraryId !== undefined) task.mediaLibraryId = body.mediaLibraryId || null;
+  if (body.mediaLibraryName !== undefined) task.mediaLibraryName = body.mediaLibraryName || null;
+}
+
 function parseTaskInput(body: Partial<CreateStrmTaskInput>, accountId: string): CreateStrmTaskInput {
   const task: CreateStrmTaskInput = {
     accountId,
@@ -25,13 +38,7 @@ function parseTaskInput(body: Partial<CreateStrmTaskInput>, accountId: string): 
     localOutputDir: body.localOutputDir!.trim(),
     isActive: true,
   };
-  if (body.scanIntervalMinutes) task.scanIntervalMinutes = Number(body.scanIntervalMinutes);
-  if (body.scanMode) task.scanMode = body.scanMode;
-  if (body.extensions) task.extensions = body.extensions.trim();
-  if (body.minFileSizeMb !== undefined) task.minFileSizeMb = Number(body.minFileSizeMb);
-  if (body.excludeKeywords !== undefined) task.excludeKeywords = body.excludeKeywords;
-  if (body.scheduleMode) task.scheduleMode = body.scheduleMode;
-  if (body.deliveryMode) task.deliveryMode = body.deliveryMode;
+  applyOptionalTaskFields(task, body);
   return task;
 }
 

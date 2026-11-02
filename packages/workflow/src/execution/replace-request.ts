@@ -2,7 +2,14 @@ import type { LanguageModel } from "ai";
 import type { QueueClaimOptions, TrackedSeasonState, WorkflowRepository } from "../persistence/repository.js";
 import { claimNextQueuedRun } from "../persistence/repository.js";
 import type { AuditEvent, EpisodeState, TrackedSeason } from "../domain/domain.js";
-import { syncSeasonAgainstMetadata } from "./season-sync.js";
+import {
+  episodeScope,
+  messageFor,
+  optionalDeps,
+  queuedBy,
+  recordReplacementOutcome,
+  syncedSeasons,
+} from "./replace-request-helpers.js";
 import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
 import type { JevJudge } from "../providers/jev-judge.js";
 import type { RunAcquisitionV2Request, RunAcquisitionV2Result } from "../acquisition-v2/orchestrator.js";
@@ -19,6 +26,7 @@ import {
 } from "./user-requests.js";
 import type { WorkflowStatus } from "../domain/domain.js";
 import { runMovieAcquisitionV2AndPersist, runReplaceRequestV2AndPersist } from "./runner-v2.js";
+import { triggerPostIngestSyncIfSucceeded } from "../strm/pinpoint-ingest-sync.js";
 import {
   handleWorkflowRunFailure,
   requireCategoryParent,
@@ -226,6 +234,8 @@ export async function runQueuedReplaceRequest(
   /** A TV message this run carries names no (in-scope) episode: its episodes are read
    *  from the words, so the reply says whether any came out (see UserMessageReply.unidentified). */
   let untaggedTvMessage = false;
+  const movie = claimed.title.type === "movie";
+  let resolvedDeps: Awaited<ReturnType<typeof resolveWorkerDeps>> | undefined;
   // The config of the model this run ENDED UP using (per-account resolver may
   // override the base) — captured for the failure handler's free-tier copy.
   let resolvedLlmConfig: { baseURL?: string; modelId?: string } | undefined;
@@ -236,7 +246,6 @@ export async function runQueuedReplaceRequest(
       throw new Error(`REPLACE_REQUEST_NOT_TRACKED: ${work.titleKey} is no longer tracked on this drive`);
     }
     const lockState = states.find((s) => s.season.id === claimed.season.id)!;
-    const movie = claimed.title.type === "movie";
     // A film obtained before the run: its old file is in the library, so it stays
     // obtained whatever this run lands, and the prompt may say it is there.
     const filmObtained = movie && lockState.episodes.some((e) => e.obtained);
@@ -342,6 +351,7 @@ export async function runQueuedReplaceRequest(
       input as any,
     );
     resolvedLlmConfig = deps.llmConfig;
+    resolvedDeps = deps;
     const common: any = {
       resourceProvider: deps.resourceProvider,
       storage: deps.storage,
@@ -508,127 +518,34 @@ export async function runQueuedReplaceRequest(
         }
       }
     }
+
+    if (resolvedDeps) {
+      const categoryParentId = movie
+        ? (resolvedDeps.moviesParentDirectoryId ?? input.moviesParentDirectoryId ?? "")
+        : requireCategoryParent(
+            storageParentForTitle(
+              claimed.title,
+              resolvedDeps.storageParentDirectoryId ?? input.storageParentDirectoryId,
+              resolvedDeps.animeStorageParentDirectoryId ?? input.animeStorageParentDirectoryId,
+            ),
+          );
+
+      await triggerPostIngestSyncIfSucceeded(workflowStatus, {
+        accountId: claimed.accountId,
+        connectedStorageId: claimed.connectedStorageId,
+        repository,
+        storage: resolvedDeps.storage,
+        title: claimed.title,
+        categoryParentId,
+        baseUrl: resolvedDeps.baseUrl,
+        mediaServerCoordinator: resolvedDeps.mediaServerCoordinator,
+      });
+    }
+
     return { status: "ran", workflowRunId: runId, workflowStatus };
   } finally {
     // Retried once like the other writes of this run: a run left `running` holds its work
     // (the patrol, untracking) until crash recovery at the next worker start.
     await finishLockRun?.().catch(() => finishLockRun?.());
   }
-}
-
-/** 待换 records and episode sources after a replace run. */
-async function recordReplacementOutcome(input: {
-  repository: WorkflowRepository;
-  work: UserMessageScope;
-  runId: string;
-  results: Array<{ episode: string; outcome: "replaced" | "not_found"; label?: string; linkKey?: string | null; sizeBytes: number | null }>;
-  messages: UserMessage[];
-  /** The work's 待换 rows when the run claimed its work. */
-  pendingRows: Array<{ episode: string; messageId: string }>;
-  /** Episodes whose copy the agent rejected this run (a rejection this run added to the list). */
-  rejectedEpisodes: string[];
-  /** A film: each of its messages means the film, tagged or not. */
-  film: boolean;
-  now: () => string;
-}): Promise<void> {
-  const { repository, work, messages, pendingRows, now } = input;
-  const replaced = input.results.filter((r) => r.outcome === "replaced");
-  // An episode that was already 待换 when the run started is written back only when this
-  // run asked for it again: a message the run carries names it (a film's message means
-  // the film), or the agent rejected a copy of it this run. Otherwise its row is left as
-  // it is — still there, or deleted by the user's 「不换了」 while the run worked, and then
-  // it stays deleted.
-  const pendingAtStart = new Set(pendingRows.map((p) => p.episode));
-  const askedByMessages = input.film ? (messages.length > 0 ? ["MOVIE"] : []) : messages.flatMap((m) => m.episodeTags);
-  const askedAgain = new Set([...askedByMessages, ...input.rejectedEpisodes]);
-  const notFound = input.results
-    .filter((r) => r.outcome === "not_found")
-    .map((r) => r.episode)
-    .filter((episode) => !pendingAtStart.has(episode) || askedAgain.has(episode));
-  // Per episode, the source first and only then its 待换 row: a failed write leaves
-  // the row in place, so the episode comes back next patrol. A pending-only run has no
-  // message to release — the row is the only thing that remembers the request.
-  for (const r of replaced) {
-    await repository.upsertEpisodeSource({
-      ...work,
-      episode: r.episode,
-      linkKey: r.linkKey ?? null,
-      label: r.label ?? "",
-      sizeBytes: r.sizeBytes,
-      runId: input.runId,
-      recordedAt: now(),
-    });
-    await repository.removePendingReplacements({ ...work, episodes: [r.episode] });
-  }
-  // Keep a still-pending episode on the message that first asked for it.
-  const byMessage = new Map<string, string[]>();
-  for (const episode of notFound) {
-    const messageId =
-      pendingRows.find((p) => p.episode === episode)?.messageId ?? messageFor(messages, episode)?.id ?? pendingRows[0]?.messageId;
-    if (messageId === undefined) continue;
-    byMessage.set(messageId, [...(byMessage.get(messageId) ?? []), episode]);
-  }
-  for (const [messageId, episodes] of byMessage) {
-    await repository.addPendingReplacements({ ...work, episodes, messageId, now: now() });
-  }
-}
-
-/** Whether an episode code belongs to this work on this drive: "MOVIE" for a film,
- *  SxxEyy of a tracked season for a show. */
-function episodeScope(movie: boolean, states: TrackedSeasonState[]): (episode: string) => boolean {
-  if (movie) return (episode) => episode === "MOVIE";
-  const seasons = new Set(states.map((s) => s.season.seasonNumber));
-  return (episode) => {
-    const m = /^S(\d{2,})E\d{2,}$/.exec(episode);
-    return m !== null && seasons.has(Number(m[1]));
-  };
-}
-
-/** Every season refreshed against TMDB (best-effort per season, as in the patrol). */
-async function syncedSeasons(
-  states: TrackedSeasonState[],
-  tmdbId: number,
-  sync: SeasonMetadataSync | undefined,
-): Promise<Array<{ season: TrackedSeason; episodes: EpisodeState[] }>> {
-  const out: Array<{ season: TrackedSeason; episodes: EpisodeState[] }> = [];
-  for (const state of states) {
-    let entry = { season: state.season, episodes: state.episodes };
-    if (sync) {
-      try {
-        const meta = await sync({ tmdbId, seasonNumber: state.season.seasonNumber });
-        if (meta) {
-          const synced = syncSeasonAgainstMetadata({ ...entry, latestAiredEpisode: meta.latestAiredEpisode, totalEpisodes: meta.totalEpisodes });
-          entry = { season: synced.season, episodes: synced.episodes };
-        }
-      } catch {
-        // Metadata sync is best-effort; fall back to stored counts.
-      }
-    }
-    out.push(entry);
-  }
-  return out;
-}
-
-/** Who queued the run (the queued audit event's origin); "user" when unknown. */
-function queuedBy(events: AuditEvent[]): ReplaceRequestOrigin {
-  const origin = events.find((e) => e.type === "replace_request_queued")?.data?.["origin"];
-  return origin === "patrol" ? "patrol" : "user";
-}
-
-/** The message that named this episode, else the oldest one claimed. */
-function messageFor(messages: UserMessage[], episode: string): UserMessage | undefined {
-  return messages.find((m) => m.episodeTags.includes(episode)) ?? messages[0];
-}
-
-/** The per-account options the runners take, present only when resolved. */
-function optionalDeps(deps: any): any {
-  return {
-    ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
-    ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
-    ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
-    ...(deps.assrtToken === undefined ? {} : { assrtToken: deps.assrtToken }),
-    ...(deps.jevJudge === undefined ? {} : { jevJudge: deps.jevJudge }),
-    ...(deps.agentMemory === undefined ? {} : { agentMemory: deps.agentMemory }),
-    ...(deps.titleResearch === undefined ? {} : { titleResearch: deps.titleResearch }),
-  };
 }

@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
     hostUrl: body.hostUrl.trim(),
     apiToken: body.apiToken.trim(),
     pathMappings: body.pathMappings || [],
+    detectedLibraries: body.detectedLibraries || [],
     isActive: body.isActive ?? true,
   });
 

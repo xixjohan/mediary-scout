@@ -36,20 +36,22 @@ export default function AppError({
   const isChunk = isChunkLoadError(error);
 
   useEffect(() => {
+    console.error("[Root AppError]", error);
     if (!isChunk || typeof window === "undefined") return;
 
     try {
-      const lastReload = parseInt(window.sessionStorage.getItem(CHUNK_RELOAD_KEY) || "0", 10);
+      const storage = window.localStorage || window.sessionStorage;
+      const lastReload = parseInt(storage.getItem(CHUNK_RELOAD_KEY) || "0", 10);
       const now = Date.now();
       if (!lastReload || now - lastReload > COOLDOWN_MS) {
-        window.sessionStorage.setItem(CHUNK_RELOAD_KEY, String(now));
+        storage.setItem(CHUNK_RELOAD_KEY, String(now));
         setReloading(true);
         window.location.reload();
       }
     } catch {
-      // sessionStorage blocked (private mode or sandbox) — skip auto-reload
+      // storage blocked (private mode or sandbox) — skip auto-reload
     }
-  }, [isChunk]);
+  }, [isChunk, error]);
 
   if (isChunk) {
     return (

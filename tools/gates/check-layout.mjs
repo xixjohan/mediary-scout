@@ -26,7 +26,7 @@ const ROOT_ALLOWLIST = new Set([
 const ROOT_DIR_ALLOWLIST = new Set([
   ".git", ".github", ".claude", ".next", ".venv", "node_modules",
   "apps", "packages", "workers", "scripts", "tools", "tests", "docs", "site",
-  "data", "backups",
+  "data", "backups", "env",
   "e2e-run", "test-results", "playwright-report", // E2E 运行时产物（gitignored）
   "run", // scripts/run-local-real.sh 的本地真实实例运行时产物（DB/日志/pid，gitignored）
 ]);

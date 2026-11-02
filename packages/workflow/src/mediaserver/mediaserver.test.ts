@@ -111,6 +111,36 @@ describe("PlexAdapter", () => {
     expect(refreshResult.refreshedCount).toBe(1);
     expect(refreshResult.sectionsRefreshed).toEqual(["电影"]);
   });
+
+  it("refreshLibrary 在局部路径失败时自动降级刷新整个 Section (Tiered Fallback)", async () => {
+    const urlsCalled: string[] = [];
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+      urlsCalled.push(url);
+      if (url.includes("?path=")) {
+        // 模拟路径不存在或 Plex 返回 404
+        return { ok: false, status: 404 };
+      }
+      // 降级为整个 Section 扫描时成功
+      return { ok: true, status: 200 };
+    });
+
+    const adapter = new PlexAdapter({
+      hostUrl: "http://localhost:32400",
+      token: "secret_token",
+      fetchFn: mockFetch as unknown as typeof fetch,
+    });
+
+    const result = await adapter.refreshLibrary({
+      libraryId: "sec_movie",
+      path: "/non/existent/path",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.sectionsRefreshed).toEqual(["sec_movie"]);
+    expect(urlsCalled.length).toBe(2);
+    expect(urlsCalled[0]).toContain("/library/sections/sec_movie/refresh?path=");
+    expect(urlsCalled[1]).toBe("http://localhost:32400/library/sections/sec_movie/refresh");
+  });
 });
 
 describe("EmbyAdapter", () => {
@@ -256,6 +286,139 @@ describe("MediaServerCoordinator", () => {
     // 合并为同一个父级目录刷新
     expect(refreshedPaths).toHaveLength(1);
     expect(refreshedPaths[0]).toBe("/mnt/strm/movies/Inception");
+
+    coordinator.dispose();
+  });
+
+  it("autoResolveMediaServerTarget 与 notifyTaskFilesChanged 支持基于 detectedLibraries 自适应推导并定向刷新 Section", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    await repo.createMediaServerConfig({
+      id: "cfg_plex",
+      accountId: "acct_plex",
+      name: "Home Plex",
+      serverType: "plex",
+      hostUrl: "http://127.0.0.1:32400",
+      apiToken: "plex_token",
+      detectedLibraries: [
+        { id: "sec_1", name: "电影", type: "movie", locations: ["/media/movies"] },
+        { id: "sec_2", name: "剧集", type: "show", locations: ["/media/tv"] },
+      ],
+      isActive: true,
+    });
+
+    const refreshedSections: string[] = [];
+    const refreshedPlexUrls: string[] = [];
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes("/library/sections/")) {
+        refreshedPlexUrls.push(url);
+        const match = url.match(/\/library\/sections\/([^/?]+)\/refresh/);
+        if (match?.[1]) refreshedSections.push(match[1]);
+        return { ok: true };
+      }
+      return { ok: true };
+    });
+
+    const coordinator = new MediaServerCoordinator({
+      store: repo,
+      debounceMs: 50,
+      maxWaitMs: 150,
+      fetchFn: mockFetch as unknown as typeof fetch,
+    });
+
+    // 触发电视剧变更
+    coordinator.notifyTaskFilesChanged({
+      accountId: "acct_plex",
+      taskId: "task_tv",
+      taskName: "115 电视剧 STRM",
+      storageId: "cs_1",
+      localOutputDir: "D:\\strm\\tv",
+      mediaType: "show",
+      generatedPaths: ["D:\\strm\\tv\\三体 (2023) {tmdb-200}\\Season 1\\S01E01.strm"],
+      relativeSubPaths: ["三体 (2023) {tmdb-200}/Season 1/S01E01.strm"],
+    });
+
+    await new Promise((r) => setTimeout(r, 120));
+
+    // 断言 Plex 仅定向刷新剧集 Section 2，且携带了 POSIX 规范容器内部路径
+    expect(refreshedSections).toContain("sec_2");
+    expect(refreshedPlexUrls.length).toBe(1);
+    expect(decodeURIComponent(refreshedPlexUrls[0]!)).toContain("/media/tv/三体 (2023) {tmdb-200}/Season 1");
+
+    coordinator.dispose();
+  });
+
+  it("支持显式 mediaServerId 与 mediaLibraryId 强绑定定向刷新，且不骚扰其它活动服务器", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    // 服务器 1: 客厅 Plex
+    await repo.createMediaServerConfig({
+      id: "srv_plex_living",
+      accountId: "acct_multi",
+      name: "客厅 Plex",
+      serverType: "plex",
+      hostUrl: "http://127.0.0.1:32400",
+      apiToken: "plex_token",
+      detectedLibraries: [
+        { id: "plex_sec_10", name: "电影", type: "movie", locations: ["/media/plex_movies"] },
+      ],
+      isActive: true,
+    });
+    // 服务器 2: 卧室 Emby
+    await repo.createMediaServerConfig({
+      id: "srv_emby_bedroom",
+      accountId: "acct_multi",
+      name: "卧室 Emby",
+      serverType: "emby",
+      hostUrl: "http://127.0.0.1:8096",
+      apiToken: "emby_token",
+      detectedLibraries: [
+        { id: "emby_lib_20", name: "电影", type: "movie", locations: ["/media/emby_movies"] },
+      ],
+      isActive: true,
+    });
+
+    const plexCalls: string[] = [];
+    const embyCalls: string[] = [];
+
+    const mockFetch = vi.fn().mockImplementation(async (url: string) => {
+      if (url.includes(":32400")) {
+        plexCalls.push(url);
+      } else if (url.includes(":8096")) {
+        embyCalls.push(url);
+      }
+      return { ok: true, status: 200 };
+    });
+
+    const coordinator = new MediaServerCoordinator({
+      store: repo,
+      debounceMs: 50,
+      maxWaitMs: 150,
+      fetchFn: mockFetch as unknown as typeof fetch,
+    });
+
+    // 触发只绑定了「客厅 Plex」任务的文件变更
+    coordinator.notifyTaskFilesChanged({
+      accountId: "acct_multi",
+      taskId: "task_115_movie",
+      taskName: "115 华语电影",
+      storageId: "cs_1",
+      localOutputDir: "D:\\strm\\movies",
+      mediaType: "movie",
+      mediaServerId: "srv_plex_living",
+      mediaLibraryId: "plex_sec_10",
+      mediaLibraryName: "电影",
+      generatedPaths: ["D:\\strm\\movies\\流浪地球2 (2023)\\The.Wandering.Earth.II.strm"],
+      relativeSubPaths: ["流浪地球2 (2023)/The.Wandering.Earth.II.strm"],
+    });
+
+    await new Promise((r) => setTimeout(r, 120));
+
+    // 客厅 Plex 收到刷新请求，且精准定向到 plex_sec_10
+    expect(plexCalls.length).toBeGreaterThanOrEqual(1);
+    expect(plexCalls[0]).toContain("/library/sections/plex_sec_10/refresh?path=");
+    expect(decodeURIComponent(plexCalls[0]!)).toContain("/media/plex_movies/流浪地球2 (2023)");
+
+    // 卧室 Emby 绝不被骚扰（0 次请求）
+    expect(embyCalls).toHaveLength(0);
 
     coordinator.dispose();
   });

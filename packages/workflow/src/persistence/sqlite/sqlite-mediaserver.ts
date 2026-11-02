@@ -1,5 +1,6 @@
 import { encryptSecret } from "@media-track/shared";
-import { BaseSqliteModule } from "../sqlite-context.js";
+import { BaseSqliteModule, type SqliteDbContext } from "../sqlite-context.js";
+import { upgradeMediaserverConfigsShape } from "./sqlite-schema.js";
 import type {
   CreateMediaServerConfigInput,
   CreateMediaServerRefreshRecordInput,
@@ -18,6 +19,7 @@ interface MediaServerConfigRow {
   host_url: string;
   api_token_encrypted: string;
   path_mappings_json: string;
+  detected_libraries_json?: string | null;
   is_active: number;
   last_sync_at: string | null;
   created_at: string;
@@ -31,6 +33,12 @@ function mediaServerConfigFromRow(row: MediaServerConfigRow): MediaServerConfig 
   } catch {
     mappings = [];
   }
+  let detectedLibraries = [];
+  try {
+    detectedLibraries = row.detected_libraries_json ? JSON.parse(row.detected_libraries_json) : [];
+  } catch {
+    detectedLibraries = [];
+  }
   return {
     id: row.id,
     accountId: row.account_id,
@@ -39,6 +47,7 @@ function mediaServerConfigFromRow(row: MediaServerConfigRow): MediaServerConfig 
     hostUrl: row.host_url,
     apiTokenEncrypted: row.api_token_encrypted,
     pathMappings: mappings,
+    detectedLibraries,
     isActive: row.is_active === 1,
     lastSyncAt: row.last_sync_at,
     createdAt: row.created_at,
@@ -96,6 +105,11 @@ function mediaServerRefreshRecordFromRow(row: MediaServerRefreshRecordRow): Medi
  * 媒体服务器配置与刷新执行记录专用 SQLite 持久层模块
  */
 export class SqliteMediaServerRepository extends BaseSqliteModule implements MediaServerStore {
+  constructor(ctx: SqliteDbContext) {
+    super(ctx);
+    upgradeMediaserverConfigsShape(this.db);
+  }
+
   async listMediaServerConfigs(accountId: string): Promise<MediaServerConfig[]> {
     const rows = this.db
       .prepare("SELECT * FROM mediaserver_configs WHERE account_id = ? ORDER BY created_at DESC")
@@ -115,14 +129,16 @@ export class SqliteMediaServerRepository extends BaseSqliteModule implements Med
     const now = this.now();
     const tokenEncrypted = encryptSecret(input.apiToken);
     const pathMappingsJson = JSON.stringify(input.pathMappings ?? []);
+    const detectedLibraries = input.detectedLibraries ?? [];
+    const detectedLibrariesJson = JSON.stringify(detectedLibraries);
     const isActive = input.isActive !== false ? 1 : 0;
 
     this.db
       .prepare(
         `INSERT INTO mediaserver_configs (
           id, account_id, name, server_type, host_url, api_token_encrypted,
-          path_mappings_json, is_active, last_sync_at, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?)`,
+          path_mappings_json, detected_libraries_json, is_active, last_sync_at, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, null, ?, ?)`,
       )
       .run(
         id,
@@ -132,6 +148,7 @@ export class SqliteMediaServerRepository extends BaseSqliteModule implements Med
         input.hostUrl.replace(/\/+$/, ""),
         tokenEncrypted,
         pathMappingsJson,
+        detectedLibrariesJson,
         isActive,
         now,
         now,
@@ -145,6 +162,7 @@ export class SqliteMediaServerRepository extends BaseSqliteModule implements Med
       hostUrl: input.hostUrl.replace(/\/+$/, ""),
       apiTokenEncrypted: tokenEncrypted,
       pathMappings: input.pathMappings ?? [],
+      detectedLibraries,
       isActive: isActive === 1,
       lastSyncAt: null,
       createdAt: now,
@@ -160,6 +178,8 @@ export class SqliteMediaServerRepository extends BaseSqliteModule implements Med
     const tokenEncrypted = input.apiToken ? encryptSecret(input.apiToken) : current.apiTokenEncrypted;
     const pathMappings = input.pathMappings ?? current.pathMappings;
     const pathMappingsJson = JSON.stringify(pathMappings);
+    const detectedLibraries = input.detectedLibraries !== undefined ? input.detectedLibraries : (current.detectedLibraries ?? []);
+    const detectedLibrariesJson = JSON.stringify(detectedLibraries);
     const hostUrl = input.hostUrl ? input.hostUrl.replace(/\/+$/, "") : current.hostUrl;
     const isActive = input.isActive !== undefined ? (input.isActive ? 1 : 0) : (current.isActive ? 1 : 0);
     const lastSyncAt = input.lastSyncAt !== undefined ? input.lastSyncAt : current.lastSyncAt;
@@ -168,7 +188,7 @@ export class SqliteMediaServerRepository extends BaseSqliteModule implements Med
       .prepare(
         `UPDATE mediaserver_configs SET
           name = ?, server_type = ?, host_url = ?, api_token_encrypted = ?,
-          path_mappings_json = ?, is_active = ?, last_sync_at = ?, updated_at = ?
+          path_mappings_json = ?, detected_libraries_json = ?, is_active = ?, last_sync_at = ?, updated_at = ?
         WHERE id = ? AND account_id = ?`,
       )
       .run(
@@ -177,6 +197,7 @@ export class SqliteMediaServerRepository extends BaseSqliteModule implements Med
         hostUrl,
         tokenEncrypted,
         pathMappingsJson,
+        detectedLibrariesJson,
         isActive,
         lastSyncAt,
         now,
@@ -191,6 +212,7 @@ export class SqliteMediaServerRepository extends BaseSqliteModule implements Med
       hostUrl,
       apiTokenEncrypted: tokenEncrypted,
       pathMappings,
+      detectedLibraries,
       isActive: isActive === 1,
       lastSyncAt,
       updatedAt: now,

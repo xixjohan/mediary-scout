@@ -85,10 +85,26 @@ export function StrmTaskCard({
       }}
     >
       <div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.35rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.35rem", flexWrap: "wrap" }}>
           <FolderSync size={18} style={{ color: isPaused ? "#888" : "#3b82f6" }} />
           <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600 }}>{task.name}</h3>
           <DeliveryModeBadge deliveryMode={task.deliveryMode} />
+          {task.mediaLibraryName && (
+            <span
+              style={{
+                fontSize: "0.75rem",
+                padding: "0.15rem 0.5rem",
+                borderRadius: "999px",
+                background: "rgba(16, 185, 129, 0.15)",
+                color: "#34d399",
+                fontWeight: 500,
+                border: "1px solid rgba(16, 185, 129, 0.3)",
+              }}
+              title="入库生成后将精准定向通知该影视库进行局部路径扫描"
+            >
+              📺 {task.mediaLibraryName}
+            </span>
+          )}
           <TaskStatusBadge isRunning={isRunning} isPaused={isPaused} />
         </div>
 

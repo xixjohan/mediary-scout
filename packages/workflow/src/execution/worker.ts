@@ -195,232 +195,18 @@ export type QueuedType2WorkerResult =
       errorMessage: string;
     };
 
-function failureReport(
-  claimed: PersistedWorkflowRunSnapshot,
-  status: "failed" | "retrying",
-  lines: string[],
-): NotificationReport {
-  return {
-    titleName: claimed.title.title,
-    // A replace_request covers every tracked season of the work and is only recorded
-    // on its lowest one (the lock): naming that season would label an S02 request
-    // 「第 1 季」. Title-level, like its success report (buildReplacementReport).
-    seasonLabel:
-      claimed.title.type !== "movie" && claimed.workflowRun.kind !== "replace_request" && claimed.season.seasonNumber
-        ? `第 ${claimed.season.seasonNumber} 季`
-        : null,
-    status,
-    lines,
-    newlyObtained: [],
-    realMissing: [],
-    posterPath: claimed.title.posterPath ?? null,
-    tmdbId: claimed.title.tmdbId,
-    mediaType: claimed.title.type,
-    year: claimed.title.year,
-  };
-}
+import {
+  FREE_LLM_MODEL_GONE_LINE,
+  FREE_LLM_POOL_FAILURE_LINE,
+  handleWorkflowRunFailure,
+  isTransientForRun,
+} from "./workflow-failure-handler.js";
 
-/** 免费档（isFreeLlmPreset）下 LLM 调用类失败的首行文案。逐字固定（含全角
- *  标点）—— 改动要走设计复核。只在「当前生效配置 == 出厂免费预设 且错误能
- *  明确识别为 LLM 调用失败（限流/鉴权/5xx）」时替换 agnostic 的「获取失败」
- *  首行；自带模型的用户永远看到 agnostic 文案（不点名任何厂商）。 */
-export const FREE_LLM_POOL_FAILURE_LINE =
-  "AI 模型调用失败：Kilo 公共免费池暂时不可用（限速或服务波动）。可稍后重试，或在 设置 → AI 模型 换成自己的服务。";
-
-/** 免费档下「模型下架」（model not found 类）的首行文案。模型没了重试也不会
- *  好，所以它不是 transient（不退避重排）、直接终止并指引用户换模型。 */
-export const FREE_LLM_MODEL_GONE_LINE =
-  "内置免费模型已失效（Kilo 池变动）。请到 设置 → AI 模型 换一个模型或换成自己的服务。";
-
-/**
- * 首行失败标题：免费档 + 可明确识别的 LLM 调用失败 → 点名 Kilo 的可操作文案；
- *  其余一切（自带模型、非 LLM 错误、识别不了的）→ 现有 agnostic 文案。口径
- *  保守：分类器（isLlm*Error）都带非-LLM 上游（网盘品牌/PanSou/Prowlarr）短路，
- *  网盘错/搜索源错绝不冒充「Kilo 挂了」。auth(401/403) 也归入「池不可用」：
- *  免费预设不带 key，从 Kilo 回 401/403 只能是池侧访问策略变了，agnostic 的
- *  「检查 API Key」指引对没配过 key 的免费档用户是误导。
- */
-function failureHeadline(input: {
-  error: unknown;
-  llmConfig: { baseURL?: string; modelId?: string } | undefined;
-}): string | null {
-  if (!isFreeLlmPreset(input.llmConfig ?? {})) {
-    return null;
-  }
-  if (isLlmModelGoneError(input.error)) {
-    return FREE_LLM_MODEL_GONE_LINE;
-  }
-  if (
-    isLlmRateLimitError(input.error) ||
-    isLlmAuthError(input.error) ||
-    isLlmServerError(input.error)
-  ) {
-    return FREE_LLM_POOL_FAILURE_LINE;
-  }
-  return null;
-}
-
-function isTransientForRun(
-  error: unknown,
-  llmConfig: { baseURL?: string; modelId?: string } | undefined,
-): boolean {
-  const httpStatusClassified =
-    isFreeLlmPreset(llmConfig ?? {}) &&
-    (isLlmModelGoneError(error) ||
-      isLlmRateLimitError(error) ||
-      isLlmAuthError(error) ||
-      isLlmServerError(error) ||
-      isLlmHttpStatusError(error));
-  return isTransientAcquisitionError(
-    error,
-    0,
-    httpStatusClassified ? { httpStatusClassified: true } : undefined,
-  );
-}
-
-/**
- * Single failure path for every interactive queued acquisition (type2/series/
- * movie). A TRANSIENT error (network/TLS/socket — see isTransientAcquisitionError)
- * under the retry cap → back to `queued` with backoff (the worker re-claims it
- * after nextAttemptAt) plus a `retrying` notification. Otherwise → terminal
- * `failed` plus a `failed` notification — no longer the old silent `notifications:[]`.
- */
-export async function handleWorkflowRunFailure(input: {
-  claimed: PersistedWorkflowRunSnapshot;
-  error: unknown;
-  repository: Pick<WorkflowRepository, "saveWorkflowRunSnapshot">;
-  now: () => string;
-  /** Freeze the run's connected drive on brand *AuthError (cookie/token dead). */
-  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
-  /** Trigger stamped on the failure/retry notification. Default "user" (individual push).
-   *  A patrol-origin replace run passes "scheduled" so its failure joins the daily digest,
-   *  matching the success path (stampReplaceNotification). */
-  notificationTrigger?: "user" | "scheduled";
-  /** The effective LLM config of the model THIS run used (base or per-account
-   *  resolver). Consulted ONLY for free-preset-gated presentation/recovery — the
-   *  failure copy (isFreeLlmPreset) and the HTTP-status transient layer (429/5xx
-   *  backoff is the free pool's recovery strategy, Copilot r5 M); never affects
-   *  execution. Absent → agnostic copy + legacy connection-class transient. */
-  llmConfig?: { baseURL?: string; modelId?: string };
-}): Promise<{ status: "auto_requeued" | "failed"; workflowRunId: string; errorMessage: string }> {
-  const { claimed, error, repository } = input;
-  const nowIso = input.now();
-  // describeAgentRunError maps an LLM auth/401 failure (the agent dying on its
-  // first model call when the BYO LLM key is missing/invalid, issue #49) onto
-  // actionable, provider-agnostic guidance; every other error keeps its original
-  // message. The raw `error` object is untouched, so transient classification +
-  // any logging stay accurate.
-  const errorMessage = describeAgentRunError(error);
-  const priorCount = claimed.workflowRun.autoRequeueCount ?? 0;
-  // HTTP 状态类退避（429/5xx）是免费池专属恢复策略（spec：已配置 DB/env 的
-  // 用户行为不变）：仅当「当前生效配置 == 出厂免费预设（isFreeLlmPreset）且
-  // 错误能明确识别为 LLM 调用失败」时，才让 transient 判定追加 HTTP 状态类
-  // 匹配。识别 = agent-error.ts 的 isLlm* 分类器任一命中，**或**
-  // isLlmHttpStatusError —— message-only 的状态形态（"Request failed with
-  // status code 429" / "HTTP 520 from gateway"，isLlm* 的短语/数值分类器
-  // 刻意不认裸数字）与 transient 层（开关打开后）实际匹配的形态同源
-  // （nodeCarriesHttpStatusShape），保证门控不再比被门控的能力窄（Copilot
-  // r6 M）。非 LLM 排除保留：网盘/PanSou/Prowlarr 的 429/5xx 不因此进门，
-  // BYO 维持既有保守连接类分类 —— Kilo 免费池的恢复策略不扩大到别人的
-  // 失败上（Copilot r5 M）。
-  const transient = isTransientForRun(error, input.llmConfig);
-  const willRetry = transient && priorCount < AUTO_REQUEUE_MAX;
-
-  // A staging dir that survived the harness cleanup on this failed body rides on
-  // the error (attachStagingLeaks). This handler is the ONLY persist path for a
-  // failed/requeued run, so the leak is recorded here or nowhere (Copilot #260 r1).
-  const leakEvents = stagingFailureAuditEvents(error);
-  const claimedRun =
-    leakEvents.length === 0
-      ? claimed.workflowRun
-      : { ...claimed.workflowRun, auditEvents: [...claimed.workflowRun.auditEvents, ...leakEvents] };
-
-  let report: NotificationReport;
-  let workflowRun;
-  if (willRetry) {
-    workflowRun = requeueWorkflowRunForRetry(claimedRun, errorMessage, nowIso);
-    const minutes = Math.round((AUTO_REQUEUE_BACKOFF_MS[priorCount] ?? 0) / 60_000);
-    // 把真实报因摘要带进「重试中」通知——以前一律「网络波动」把根因藏了,
-    // 用户和我们都得翻日志才知道发生了什么(issue #196)。摘要已脱敏+截断,
-    // 不会把 cookie/token 泄进推送渠道;原始错误仍在日志/auditEvents 里。
-    report = failureReport(claimed, "retrying", [
-      `网络波动 · 第 ${priorCount + 1} 次自动重试,约 ${minutes} 分钟后`,
-      `原因:${summarizeErrorForNotification(errorMessage)}`,
-    ]);
-  } else {
-    workflowRun = failWorkflowRun(claimedRun, errorMessage, nowIso);
-    // 免费档 + 可明确识别的 LLM 调用失败 → 首行换成点名 Kilo 的指引；其余
-    // （含重试耗尽的网络中断）保持 agnostic 现状。
-    const headline = failureHeadline({ error, llmConfig: input.llmConfig });
-    report = failureReport(claimed, "failed", [
-      headline ?? (transient ? `网络中断,已自动重试 ${priorCount} 次仍失败` : "获取失败"),
-      // Pushed verbatim by formatReportPushText, so the same redaction as the retry
-      // line; the raw message stays in the run row (failWorkflowRun) for forensics.
-      summarizeErrorForNotification(errorMessage),
-    ]);
-  }
-  const notification: NotificationEvent = {
-    id: `notification_${claimed.workflowRun.id}_${willRetry ? `retry${priorCount + 1}` : "failed"}`,
-    workflowRunId: claimed.workflowRun.id,
-    kind: claimed.workflowRun.kind,
-    title: claimed.title.title,
-    body: formatReportPushText(report),
-    createdAt: nowIso,
-    trigger: input.notificationTrigger ?? "user",
-    report,
-  };
-  // One stdout line per failure (console.log — stdout, beside the worker's other
-  // lines). Without it the only trace is the run row, which a user retry/cancel
-  // deletes — the 《出入平安》 timeout cause (2026-09-24) had to be dug out of dead
-  // Row order is not guaranteed; same redaction as the push line.
-  // Emitted BEFORE persistence: if the save below rejects, this line is the only record.
-  console.log(
-    `[workflow] run ${claimed.workflowRun.id} ${claimed.workflowRun.kind} ${willRetry ? "auto_requeued" : "failed"}` +
-      ` (storage ${claimed.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
-  );
-  // saveWorkflowRunSnapshot DELETES the season's episode bucket then re-inserts
-  // only what we pass. The two branches need OPPOSITE handling:
-  //  - auto-requeue: the run is going BACK to queued (still in flight) → preserve
-  //    the claimed snapshot's children, else a TV/series run loses its reserved
-  //    episode bucket mid-retry (Copilot review #1).
-  //  - terminal failure: a failed Type 2 init intentionally clears its initial
-  //    episode state so a fresh, never-acquired season doesn't linger as tracked
-  //    (see worker.test "clears initial episode state when the agent model dies").
-  //    A replace_request is the exception: it runs on a library that already has
-  //    files, and a failed replace must leave that library exactly as it was.
-  // A staging recovery runs on a library that already has files, and its failure
-  // is not the user's problem: write no notification, and do not touch the
-  // episode bucket. The claimed copy is from queue time on InMemory, and a user
-  // run is allowed to mark episodes while this recovery sits queued.
-  const silent = claimed.workflowRun.kind === "staging_recovery";
-  const keepEpisodes = willRetry || claimed.workflowRun.kind === "replace_request";
-  await repository.saveWorkflowRunSnapshot({
-    accountId: claimed.accountId,
-    connectedStorageId: claimed.connectedStorageId,
-    title: claimed.title,
-    season: claimed.season,
-    workflowRun,
-    episodes: keepEpisodes ? claimed.episodes : [],
-    resourceSnapshots: willRetry ? claimed.resourceSnapshots : [],
-    decisions: willRetry ? claimed.decisions : [],
-    transferAttempts: willRetry ? claimed.transferAttempts : [],
-    notifications: silent ? [] : [notification],
-    ...(silent ? { keepCurrentEpisodes: true } : {}),
-  });
-  // Brand auth (dead cookie/token) — freeze the drive so the queue refuses more
-  // work until re-bound. LLM Unauthorized is NOT a brand AuthError; only the
-  // five *AuthError classes trigger this. Failures in the freeze hook are log-only.
-  await maybeFreezeOnBrandAuthError({
-    connectedStorageId: claimed.connectedStorageId,
-    error,
-    ...(input.onAuthErrorFreeze === undefined ? {} : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
-  });
-  return {
-    status: willRetry ? "auto_requeued" : "failed",
-    workflowRunId: claimed.workflowRun.id,
-    errorMessage,
-  };
-}
+export {
+  FREE_LLM_MODEL_GONE_LINE,
+  FREE_LLM_POOL_FAILURE_LINE,
+  handleWorkflowRunFailure,
+};
 
 export async function runQueuedType2Workflow(input: {
   repository: WorkflowRepository;
@@ -1363,16 +1149,17 @@ export async function runQueuedSeriesInitialization(input: {
         "Queued series initialization run is missing its season metadata",
       );
     }
+    const categoryParentId = requireCategoryParent(
+      storageParentForTitle(
+        claimed.title,
+        deps.storageParentDirectoryId,
+        deps.animeStorageParentDirectoryId,
+      ),
+    );
     const result = await runSeriesInitializationV2AndPersist({
       title: claimed.title,
       seasons,
-      categoryParentId: requireCategoryParent(
-        storageParentForTitle(
-          claimed.title,
-          deps.storageParentDirectoryId,
-          deps.animeStorageParentDirectoryId,
-        ),
-      ),
+      categoryParentId,
       seasonQualityRecord: claimed.season.qualityPreference,
       resourceProvider: deps.resourceProvider,
       storage: deps.storage,
@@ -1432,6 +1219,18 @@ export async function runQueuedSeriesInitialization(input: {
       transferAttempts: [],
       notifications: [],
     });
+
+    await triggerPostIngestSyncIfSucceeded(result.status, {
+      accountId: claimed.accountId,
+      connectedStorageId: claimed.connectedStorageId,
+      repository: input.repository,
+      storage: deps.storage,
+      title: claimed.title,
+      categoryParentId,
+      baseUrl: deps.baseUrl,
+      mediaServerCoordinator: deps.mediaServerCoordinator,
+    });
+
     return {
       status: "ran",
       workflowRunId: claimed.workflowRun.id,

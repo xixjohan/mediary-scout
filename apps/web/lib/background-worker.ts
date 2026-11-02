@@ -31,6 +31,8 @@ export interface DrainDeps {
   /** The daily auto-update check — self-gated, reads a few settings and returns. Runs
    *  after the sweep, and also when no drive is connected: it touches no drive. */
   autoUpdate?: (() => Promise<void>) | undefined;
+  /** Periodic check for STRM tasks due for scan. */
+  runDueStrmTasks?: (() => Promise<number>) | undefined;
   /** How many queued runs may go at once (the 同时处理 setting, shared with the patrol).
    *  Absent ⇒ 1: one after another. */
   concurrency?: (() => Promise<number>) | undefined;
@@ -74,6 +76,18 @@ export async function drainQueueOnce(deps: DrainDeps): Promise<number> {
     console.error(
       `[background-worker] daily sweep failed: ${error instanceof Error ? error.message : String(error)}`,
     );
+  }
+  if (deps.runDueStrmTasks) {
+    try {
+      const strmScanned = await deps.runDueStrmTasks();
+      if (strmScanned > 0) {
+        console.log(`[background-worker] completed ${strmScanned} due STRM scheduled scan(s)`);
+      }
+    } catch (error) {
+      console.error(
+        `[background-worker] STRM scheduled scan failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
   await checkAutoUpdate(deps);
   return drained;
@@ -192,6 +206,7 @@ export interface WorkerRuntime {
   autoUpdate?: () => Promise<void>;
   /** How many queued runs may go at once (see DrainDeps). Optional so test runtimes can omit it. */
   concurrency?: () => Promise<number>;
+  runDueStrmTasks?: () => Promise<number>;
 }
 
 /**
@@ -208,6 +223,7 @@ export async function defaultRuntime(): Promise<WorkerRuntime> {
     recoverOrphanedRuns,
     workerHasConfiguredDrive,
     getWorkerConcurrency,
+    runDueStrmTasks,
   } = await import("./workflow-runtime");
   return {
     runNext: (claim) => runNextQueuedWorkflow(claim),
@@ -216,6 +232,7 @@ export async function defaultRuntime(): Promise<WorkerRuntime> {
     autoUpdate: () => runAutoUpdateIfDue(),
     recover: () => recoverOrphanedRuns(),
     isDriveConfigured: () => workerHasConfiguredDrive(),
+    runDueStrmTasks: () => runDueStrmTasks(),
   };
 }
 
@@ -264,6 +281,7 @@ export function startBackgroundWorker(options?: { pollMs?: number; runtime?: Wor
           isDriveConfigured: runtime.isDriveConfigured,
           autoUpdate: runtime.autoUpdate,
           concurrency: runtime.concurrency,
+          runDueStrmTasks: runtime.runDueStrmTasks,
           pollMs,
         });
         if (drained > 0) {

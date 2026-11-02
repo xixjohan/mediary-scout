@@ -40,6 +40,15 @@ function assignTextAndMode(
   if (body.scheduleMode) target.scheduleMode = body.scheduleMode;
 }
 
+function assignMediaServerBinding(
+  target: UpdateStrmTaskInput,
+  body: Partial<UpdateStrmTaskInput>,
+): void {
+  if (body.mediaServerId !== undefined) target.mediaServerId = body.mediaServerId || null;
+  if (body.mediaLibraryId !== undefined) target.mediaLibraryId = body.mediaLibraryId || null;
+  if (body.mediaLibraryName !== undefined) target.mediaLibraryName = body.mediaLibraryName || null;
+}
+
 function assignFilterAndStatus(
   target: UpdateStrmTaskInput,
   body: Partial<UpdateStrmTaskInput>,
@@ -59,6 +68,7 @@ function buildUpdateInput(
 ): UpdateStrmTaskInput {
   const updateInput: UpdateStrmTaskInput = { id, accountId };
   assignTextAndMode(updateInput, body);
+  assignMediaServerBinding(updateInput, body);
   assignFilterAndStatus(updateInput, body);
   return updateInput;
 }

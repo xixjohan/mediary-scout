@@ -49,6 +49,7 @@ import {
 import {
   getCurrentAccountId,
   getWorkflowRepository,
+  getMediaServerCoordinator,
   hydratePan115CookieFromDb,
   isPan115CookieHydrated,
   setPan115CookieHydrated,
@@ -125,6 +126,7 @@ import {
   resolveUserPanSouBaseUrl,
   getPanSouAuth,
 } from "../core/pansou-chain";
+import { recordPanSouHealth } from "./pansou-health";
 
 export function defaultQuality(): string {
   return "4K";
@@ -206,39 +208,13 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
+      baseUrl: process.env.APP_BASE_URL || process.env.MEDIARY_URL || `http://127.0.0.1:${process.env.PORT || "3001"}`,
+      mediaServerCoordinator: getMediaServerCoordinator(),
     };
   };
 }
 
-/** 记录自建搜索源的最新健康结论,供设置页徽章读取(它每 8s 轮询,不能自己打网络)。
- *  幂等:值未变化就不写,避免每次搜索都产生一次 DB 写。 */
-//  ⚠️ 必须按账号分键:多用户模式下一个进程服务多个账号,不分键会让账号 B 的
-//  结论因为账号 A 刚写过同一个值而被跳过 —— 于是 B 的源挂了却永远不告警,
-//  正是本 PR 要消灭的那种静默。
-const lastRecordedPanSouHealth = new Map<string, string>();
-async function recordPanSouHealth(healthy: boolean, accountId?: string): Promise<void> {
-  const value = healthy ? "ok" : "unhealthy";
-  try {
-    // 有 request scope(设置页/HTTP)时用请求账号;worker 路径没有 request scope,
-    // 必须用调用方传入的 run 所属账号 —— 否则多用户模式下所有健康结论都记到
-    // acct_default 名下,B 用户永远看不到「自建源连不上」的告警。
-    const resolved = accountId ?? (await getCurrentAccountId());
-    if (lastRecordedPanSouHealth.get(resolved) === value) return;
-    await getWorkflowRepository().setAccountSetting(
-      resolved,
-      PANSOU_HEALTH_SETTING_KEY,
-      value,
-    );
-    lastRecordedPanSouHealth.set(resolved, value);
-  } catch (error) {
-    // 搜索不能因为一次设置写失败而失败。但不静默:打出来,否则就是本 PR 要修的病。
-    console.warn(
-      `[pansou-health] 记录健康态失败(不影响本次搜索): ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
-}
 
-/** Test-only: 清掉幂等缓存,免得跨用例串味。 */
 
 /** Claim and run the next queued run. The in-process worker passes `claim` (its drive
  *  filter and claim callback) so several runs can go at once, never two on one drive;

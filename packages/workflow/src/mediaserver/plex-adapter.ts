@@ -96,16 +96,27 @@ export class PlexAdapter {
     try {
       // 1. 指定了 libraryId
       if (options.libraryId) {
-        let ep = `/library/sections/${options.libraryId}/refresh`;
+        // Tier 1: 优先尝试局部路径精准刷新
         if (options.path) {
-          ep += `?path=${encodeURIComponent(options.path)}`;
+          const pathEp = `/library/sections/${options.libraryId}/refresh?path=${encodeURIComponent(options.path)}`;
+          const pathRes = await this.request(pathEp);
+          if (pathRes.ok) {
+            return {
+              ok: true,
+              refreshedCount: 1,
+              sectionsRefreshed: [options.libraryId],
+            };
+          }
+          // 局部路径匹配失败或返回非 200 (如 400/404)，自动无缝降级为 Tier 2 具体库整库扫描
         }
-        const res = await this.request(ep);
+
+        // Tier 2: 降级刷新整个具体库 (Section)
+        const sectionRes = await this.request(`/library/sections/${options.libraryId}/refresh`);
         return {
-          ok: res.ok,
-          refreshedCount: res.ok ? 1 : 0,
+          ok: sectionRes.ok,
+          refreshedCount: sectionRes.ok ? 1 : 0,
           sectionsRefreshed: [options.libraryId],
-          errorMessage: res.ok ? undefined : `Plex refresh error: HTTP ${res.status}`,
+          errorMessage: sectionRes.ok ? undefined : `Plex refresh error: HTTP ${sectionRes.status}`,
         };
       }
 
