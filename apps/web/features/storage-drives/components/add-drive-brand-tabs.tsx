@@ -20,7 +20,7 @@ type Brand = "pan115" | "quark" | "uc" | "guangya" | "tianyi" | "pan123";
 /** 品牌图库瓦片的静态元数据:图标走 /brands/<key>.svg(workspace-switcher 同款资产),
  *  authNote 把认证方式前置到选择时刻(选之前就知道要扫码还是粘贴)。加新品牌:此表加一行 + Brand 联合 + 下方连接区分支 + /brands svg(完整触点见加品牌清单)。 */
 const BRAND_TILES: Array<{ key: Brand; label: string; authNote: string }> = [
-  { key: "pan115", label: "115网盘", authNote: "扫码 / 粘 cookie" },
+  { key: "pan115", label: "115网盘", authNote: "双轨: 扫码 / 开放OAuth" },
   { key: "quark", label: "夸克网盘", authNote: "扫码 / 粘 cookie" },
   { key: "uc", label: "UC网盘", authNote: "扫码 / 粘 cookie" },
   { key: "guangya", label: "光鸭云盘", authNote: "扫码 / 粘 token" },
@@ -35,6 +35,7 @@ const BRAND_TILES: Array<{ key: Brand; label: string; authNote: string }> = [
  *  点瓦片才展开(添加是低频动作,别让 115 连接区常驻占位)。再点选中瓦片可收起。 */
 export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: Brand | null }) {
   const [brand, setBrand] = useState<Brand | null>(defaultBrand);
+  const [pan115Tab, setPan115Tab] = useState<"qr" | "oauth" | "cookie">("qr");
 
   return (
     <div>
@@ -58,23 +59,83 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
       </div>
       {brand === "pan115" ? (
         <div className="brand-connect-area">
-          <Pan115QrConnect />
-          <details style={{ marginTop: 12 }}>
-            <summary className="panel-note" style={{ cursor: "pointer" }}>
-              扫码不行？手动粘 cookie
-            </summary>
-            <div style={{ marginTop: 10 }}>
-              <Pan115CookieConnect />
+          {/* 115 双轨认证方式平铺切换卡，消除用户将 OAuth 误认为客户端类型下拉选项的困惑 */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+            <button
+              type="button"
+              className={pan115Tab === "qr" ? "primary-button" : "secondary-button"}
+              onClick={() => setPan115Tab("qr")}
+              style={{ fontSize: 13, padding: "6px 14px" }}
+            >
+              📱 扫码快捷登录 (Cookie 基础轨 · 负责转存)
+            </button>
+            <button
+              type="button"
+              className={pan115Tab === "oauth" ? "primary-button" : "secondary-button"}
+              onClick={() => setPan115Tab("oauth")}
+              style={{
+                fontSize: 13,
+                padding: "6px 14px",
+                ...(pan115Tab !== "oauth" ? { borderColor: "rgba(16, 185, 129, 0.4)", color: "#10b981" } : {}),
+              }}
+            >
+              ⚡ 开放平台授权 (OAuth 高性能轨 · 推荐)
+            </button>
+            <button
+              type="button"
+              className={pan115Tab === "cookie" ? "primary-button" : "secondary-button"}
+              onClick={() => setPan115Tab("cookie")}
+              style={{ fontSize: 13, padding: "6px 14px" }}
+            >
+              📋 粘贴 Cookie
+            </button>
+          </div>
+
+          {pan115Tab === "qr" ? (
+            <div>
+              <Pan115QrConnect />
+              <div
+                style={{
+                  marginTop: 14,
+                  padding: "10px 14px",
+                  background: "rgba(16, 185, 129, 0.06)",
+                  border: "1px dashed rgba(16, 185, 129, 0.3)",
+                  borderRadius: 6,
+                  fontSize: 12,
+                  color: "#10b981",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                }}
+              >
+                <span>💡 提示：扫码获得 Cookie（负责转存）；推荐点击上方「⚡ 开放平台授权」绑定 OAuth 开启双轨引擎（免频繁掉线/千级文件秒级扫库/直链高并发）。</span>
+                <button
+                  type="button"
+                  onClick={() => setPan115Tab("oauth")}
+                  style={{
+                    marginLeft: 10,
+                    background: "transparent",
+                    border: "none",
+                    color: "#10b981",
+                    textDecoration: "underline",
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                    fontWeight: 600,
+                  }}
+                >
+                  去配置 OAuth →
+                </button>
+              </div>
             </div>
-          </details>
-          <details style={{ marginTop: 12 }}>
-            <summary className="panel-note" style={{ cursor: "pointer", fontWeight: 600, color: "#10b981" }}>
-              ⚡ 升级 115 开放平台 (Open OAuth) 双轨增强 (免掉线 / 10倍速扫库)
-            </summary>
-            <div style={{ marginTop: 10 }}>
+          ) : pan115Tab === "oauth" ? (
+            <div>
               <Pan115OpenConnect />
             </div>
-          </details>
+          ) : (
+            <div>
+              <Pan115CookieConnect />
+            </div>
+          )}
         </div>
       ) : brand === "quark" ? (
         <div className="brand-connect-area">
