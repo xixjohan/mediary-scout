@@ -5,7 +5,7 @@
  *
  * 只在**保存**时打这一次网络。设置页徽章每 8s 轮询一次，绝不能在那条路径上探活。
  */
-import { isPanSouSearchData, type PanSouAuth } from "@media-track/workflow";
+import type { PanSouAuth } from "@media-track/workflow";
 
 export type PanSouProbeFailure =
   | "unreachable"
@@ -21,8 +21,10 @@ export type PanSouProbeResult =
 
 const PROBE_TIMEOUT_MS = 8000;
 
-/** PanSou 的登录端点（fish2018/pansou api/router.go：/api/auth/login 是公开路径）。 */
+/** PanSou 的公开健康与认证端点（fish2018/pansou api/router.go）。 */
+const PANSOU_HEALTH_PATH = "/api/health";
 const PANSOU_LOGIN_PATH = "/api/auth/login";
+const PANSOU_VERIFY_PATH = "/api/auth/verify";
 
 export async function probePanSou(
   baseURL: string,
@@ -35,133 +37,182 @@ export async function probePanSou(
 ): Promise<PanSouProbeResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   // trim 后再拼:首尾空白会拼出非法请求地址。
-  const url = `${baseURL.trim().replace(/\/+$/, "")}/api/search`;
-  const auth = await resolveProbeAuthHeaders(url, options.auth, fetchImpl);
-  if ("failure" in auth) {
-    return auth.failure;
-  }
-  try {
-    const response = await fetchImpl(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...auth.headers },
-      // 探活用一个无意义关键词：命中与否不重要，响应形状才重要。
-      body: JSON.stringify({ kw: "__probe__", res: "all" }),
-      // 与仓库其余处一致(fetch-with-timeout.ts / remote-access-probe.ts):
-      // 用 AbortSignal.timeout 而不是手搓 controller + setTimeout。
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      // 401/403 单列成 auth_failed：这两类是「凭据不对」，其余才是「源有问题」。
-      if (response.status === 401 || response.status === 403) {
-        return {
-          ok: false,
-          reason: "auth_failed",
-          message: `搜索源要求认证但凭据未被接受（HTTP ${response.status}），未保存。请检查用户名密码或令牌。`,
-        };
-      }
-      return {
-        ok: false,
-        reason: "http_error",
-        message: `搜索源返回 HTTP ${response.status}，未保存。`,
-      };
-    }
-    // 非 JSON（nginx 欢迎页之类）在这里变成 null，随后被判为 not_pansou。
-    // 这不是「吞掉错误」：解析失败本身就是「这不是 PanSou」的证据，
-    // 而它会带着可读原因回给用户，不会消失。
-    const payload: unknown = await response.json().catch(() => null);
-    if (!isPanSouShaped(payload)) {
-      return {
-        ok: false,
-        reason: "not_pansou",
-        message: "该地址能访问，但返回的不是 PanSou 接口格式（是不是填成了别的服务？），未保存。",
-      };
-    }
-    return { ok: true };
-  } catch (error) {
-    // AbortSignal.timeout 到期时 fetch 抛的是 TimeoutError(仓库既有测试
-    // remote-access.test.ts 断言的就是这个),不是 AbortError。两个都认,
-    // 否则超时会被误归成「连不上」的泛泛提示。
-    const aborted =
-      error instanceof Error &&
-      (error.name === "TimeoutError" || error.name === "AbortError");
-    return {
-      ok: false,
-      reason: "unreachable",
-      message: aborted
-        ? `搜索源 ${PROBE_TIMEOUT_MS / 1000} 秒内无响应，未保存；若想先跑起来，清空本项即可回落官方源。`
-        : "连不上该搜索源，未保存。请检查地址、端口与容器是否在运行；若想先跑起来，清空本项即可回落官方源。",
-    };
-  }
+  const base = baseURL.trim().replace(/\/+$/, "");
+  const health = await probePanSouHealth(base, fetchImpl);
+  if (!health.ok) return health.failure;
+  return verifyPanSouAuth(base, health.authEnabled, options.auth, fetchImpl);
 }
 
-/**
- * 探活前把认证头准备好。登录形态会真的打一次 /api/auth/login —— 探活的全部
- * 意义就是「保存前证明这台源配对了」，跳过登录等于证明了一件没用的事。
- *
- * 登录失败不抛异常，而是转成 auth_failed 结果：探活的契约是「返回一个带原因的
- * 结果」，抛出去会让调用方多一条要处理的路径。
- */
-async function resolveProbeAuthHeaders(
-  searchUrl: string,
+type PanSouHealthResult =
+  | { ok: true; authEnabled: boolean }
+  | { ok: false; failure: PanSouProbeResult };
+
+async function probePanSouHealth(base: string, fetchImpl: typeof fetch): Promise<PanSouHealthResult> {
+  const request = await fetchProbeResponse(
+    fetchImpl,
+    `${base}${PANSOU_HEALTH_PATH}`,
+    { method: "GET" },
+    "健康检查请求失败",
+  );
+  if (!request.ok) return { ok: false, failure: request.failure };
+  const responseFailure = classifyHttpFailure(request.response, "PanSou 健康检查");
+  if (responseFailure) return { ok: false, failure: responseFailure };
+  const payload: unknown = await request.response.json().catch(() => null);
+  return isPanSouHealth(payload)
+    ? { ok: true, authEnabled: payload.auth_enabled }
+    : {
+        ok: false,
+        failure: {
+          ok: false,
+          reason: "not_pansou",
+          message: "该地址能访问，但健康检查响应不是 PanSou 格式，未保存。",
+        },
+      };
+}
+
+async function verifyPanSouAuth(
+  base: string,
+  authEnabled: boolean,
   auth: PanSouAuth | undefined,
   fetchImpl: typeof fetch,
-): Promise<{ headers: Record<string, string> } | { failure: PanSouProbeResult }> {
+): Promise<PanSouProbeResult> {
   if (!auth || auth.kind === "none") {
-    return { headers: {} };
+    return authEnabled
+      ? {
+          ok: false,
+          reason: "auth_failed",
+          message: "该 PanSou 已启用认证，请填写用户名密码或访问令牌，未保存。",
+        }
+      : { ok: true };
   }
-  if (auth.kind === "bearer") {
-    return { headers: { Authorization: `Bearer ${auth.token}` } };
+  if (!authEnabled) {
+    return {
+      ok: false,
+      reason: "auth_failed",
+      message: "该 PanSou 未启用认证；请清空认证凭据后再保存，未保存。",
+    };
   }
-  const base = searchUrl.replace(/\/api\/search$/, "");
-  try {
-    const response = await fetchImpl(`${base}${PANSOU_LOGIN_PATH}`, {
+  return auth.kind === "bearer"
+    ? probeBearerToken(base, auth.token, fetchImpl)
+    : probeLoginCredentials(base, auth.username, auth.password, fetchImpl);
+}
+
+async function probeBearerToken(
+  base: string,
+  token: string,
+  fetchImpl: typeof fetch,
+): Promise<PanSouProbeResult> {
+  const request = await fetchProbeResponse(
+    fetchImpl,
+    `${base}${PANSOU_VERIFY_PATH}`,
+    { method: "POST", headers: { Authorization: `Bearer ${token}` } },
+    "令牌验证请求失败",
+  );
+  if (!request.ok) return request.failure;
+  const responseFailure = classifyHttpFailure(request.response, "PanSou 令牌验证", true);
+  if (responseFailure) return responseFailure;
+  const payload: unknown = await request.response.json().catch(() => null);
+  return isVerifiedToken(payload)
+    ? { ok: true }
+    : { ok: false, reason: "auth_failed", message: "PanSou 未确认该访问令牌有效，未保存。" };
+}
+
+async function probeLoginCredentials(
+  base: string,
+  username: string,
+  password: string,
+  fetchImpl: typeof fetch,
+): Promise<PanSouProbeResult> {
+  const request = await fetchProbeResponse(
+    fetchImpl,
+    `${base}${PANSOU_LOGIN_PATH}`,
+    {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: auth.username, password: auth.password }),
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    });
-    const text = await response.text();
-    if (!response.ok) {
-      return {
-        failure: {
-          ok: false,
-          reason: "auth_failed",
-          message: `登录失败（HTTP ${response.status}）：${text.slice(0, 160)}，未保存。`,
-        },
-      };
-    }
-    const payload: unknown = JSON.parse(text) as unknown;
-    const token = (payload as { token?: unknown }).token;
-    if (typeof token !== "string" || !token) {
-      return {
-        failure: {
-          ok: false,
-          reason: "auth_failed",
-          message: "登录响应里没有 token 字段，未保存。",
-        },
-      };
-    }
-    return { headers: { Authorization: `Bearer ${token}` } };
-  } catch (error) {
+      body: JSON.stringify({ username, password }),
+    },
+    "登录请求失败",
+  );
+  if (!request.ok) return request.failure;
+  const responseFailure = classifyHttpFailure(request.response, "PanSou 登录", true);
+  if (responseFailure) return responseFailure;
+  const payload: unknown = await request.response.json().catch(() => null);
+  const token = (payload as { token?: unknown } | null)?.token;
+  return typeof token === "string" && token.length > 0
+    ? { ok: true }
+    : { ok: false, reason: "auth_failed", message: "PanSou 登录响应未提供访问令牌，未保存。" };
+}
+
+async function fetchProbeResponse(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  phase: string,
+): Promise<{ ok: true; response: Response } | { ok: false; failure: PanSouProbeResult }> {
+  try {
     return {
-      failure: {
-        ok: false,
-        reason: "auth_failed",
-        message: `登录请求失败：${error instanceof Error ? error.message : String(error)}，未保存。`,
-      },
+      ok: true,
+      response: await fetchImpl(url, {
+        ...init,
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      }),
     };
+  } catch (error) {
+    return { ok: false, failure: transportFailure(error, phase) };
   }
 }
 
-function isPanSouShaped(payload: unknown): boolean {
+function classifyHttpFailure(
+  response: Response,
+  phase: string,
+  authRequest = false,
+): PanSouProbeResult | null {
+  if (response.status === 401 || response.status === 403) {
+    return {
+      ok: false,
+      reason: "auth_failed",
+      message: authRequest
+        ? `认证失败：${phase}未被接受（HTTP ${response.status}），未保存。`
+        : `${phase}被拒绝（HTTP ${response.status}），未保存。`,
+    };
+  }
+  return response.ok
+    ? null
+    : { ok: false, reason: "http_error", message: `${phase}返回 HTTP ${response.status}，未保存。` };
+}
+
+function isPanSouHealth(payload: unknown): payload is { status: "ok"; auth_enabled: boolean } {
   if (typeof payload !== "object" || payload === null) return false;
-  // One rule, shared with the workflow provider (isPanSouSearchData): a present
-  // `results` must be an array; with it absent, PanSou's zero-hit reply is
-  // `{"data":{"total":0}}` (`results,omitempty`). The probe keyword is deliberately
-  // meaningless, so on a fresh instance THAT is the normal reply — rejecting it
-  // refuses a healthy address; diverging from the provider's rule could persist
-  // one the provider then cannot consume.
-  return isPanSouSearchData((payload as { data?: unknown }).data);
+  const value = payload as { status?: unknown; auth_enabled?: unknown };
+  return value.status === "ok" && typeof value.auth_enabled === "boolean";
+}
+
+function isVerifiedToken(payload: unknown): boolean {
+  return typeof payload === "object" && payload !== null && (payload as { valid?: unknown }).valid === true;
+}
+
+function transportFailure(error: unknown, phase: string): PanSouProbeResult {
+  const timedOut =
+    error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
+  const code = findNetworkErrorCode(error);
+  return {
+    ok: false,
+    reason: "unreachable",
+    message: timedOut
+      ? `${phase}在 ${PROBE_TIMEOUT_MS / 1000} 秒内无响应，未保存。`
+      : `${phase}${code ? `（${code}）` : ""}，无法连接到该 PanSou，未保存；请检查地址、端口、容器网络和代理设置。`,
+  };
+}
+
+function findNetworkErrorCode(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && typeof current === "object" && current !== null; depth += 1) {
+    if ("code" in current && typeof current.code === "string" && /^[A-Z0-9_]+$/.test(current.code)) {
+      return current.code;
+    }
+    current = "cause" in current ? current.cause : undefined;
+  }
+  return undefined;
 }
 
 /** 保存前的便宜格式校验。抽出来是为了两个保存入口(设置页 action / agent API)共用

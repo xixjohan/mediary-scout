@@ -93,6 +93,7 @@ import {
   resolveIsDesktop,
 } from "../../lib/workflow-runtime";
 import {
+  resolvePanSouBaseUrlSource,
   PANSOU_USERNAME_SETTING_KEY,
   PANSOU_PASSWORD_SETTING_KEY,
   PANSOU_TOKEN_SETTING_KEY,
@@ -522,6 +523,10 @@ async function ResourceProviderSection() {
   const accountId = await getCurrentAccountId();
   const repository = getAccountScopedSettings(accountId);
   const pansouBaseURL = (await repository.getSetting(PANSOU_BASE_URL_SETTING_KEY)) ?? "";
+  const pansouEnvBaseURL = process.env.PANSOU_BASE_URL?.trim() ?? "";
+  const pansouBaseURLSource = resolvePanSouBaseUrlSource(pansouBaseURL, {
+    PANSOU_BASE_URL: pansouEnvBaseURL,
+  });
   const pansouHealth = (await repository.getSetting(PANSOU_HEALTH_SETTING_KEY)) ?? "";
   // 只判断「有没有」，不回显值：表单据此显示占位符（「已保存，输入可替换」）。
   // 密码与令牌一旦进了服务端渲染的 HTML，就会被浏览器历史、扩展和截图一起带走。
@@ -569,7 +574,7 @@ async function ResourceProviderSection() {
           // The two layers of resolveUserPanSouBaseUrl (DB, then env PANSOU_BASE_URL);
           // both blank → the runtime falls back to the public DEFAULT_PANSOU_BASE_URL.
           dbBaseURL: pansouBaseURL,
-          envBaseURL: process.env.PANSOU_BASE_URL?.trim() ?? "",
+          envBaseURL: pansouEnvBaseURL,
           health: pansouHealth,
         })}
         summary={
@@ -602,6 +607,7 @@ async function ResourceProviderSection() {
       >
         <PanSouConfigForm
           baseURL={pansouBaseURL}
+          source={pansouBaseURLSource}
           credentials={{
             username: pansouUsername,
             hasPassword: pansouPasswordSet,

@@ -21,7 +21,11 @@ export interface DoubanRating {
 }
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const NEGATIVE_TTL_MS = 3 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 2500;
+const RATING_CONCURRENCY = 6;
+const inFlightRatings = new Map<string, Promise<DoubanRating | null>>();
+const NEGATIVE_CACHE_ENTRY = { kind: "negative" } as const;
 
 function normalizeSearchTitle(raw: string): string {
   return raw
@@ -68,16 +72,19 @@ export async function fetchDoubanRatingFromUpstream(
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        "User-Agent": "api-client/1 com.douban.frodo/7.18.0(230) Android/30",
-      },
-    });
-    clearTimeout(timer);
-
-    if (!response.ok) return null;
-    const data = (await response.json()) as DoubanFrodoResponse;
+    let data: DoubanFrodoResponse;
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          "User-Agent": "api-client/1 com.douban.frodo/7.18.0(230) Android/30",
+        },
+      });
+      if (!response.ok) return null;
+      data = (await response.json()) as DoubanFrodoResponse;
+    } finally {
+      clearTimeout(timer);
+    }
     const items = data.items;
     if (!Array.isArray(items) || items.length === 0) return null;
 
@@ -130,21 +137,32 @@ export async function getDoubanRating(
   const cache = getDurableJsonCache();
 
   try {
-    const cached = await cache.getJson<DoubanRating>(key);
-    if (cached !== null) return cached;
+    const cached = await cache.getJson<DoubanRating | typeof NEGATIVE_CACHE_ENTRY>(key);
+    if (cached !== null) {
+      return "score" in cached ? cached : null;
+    }
   } catch {
     // 缓存读取失败继续走上游
   }
 
-  const upstream = await fetchDoubanRatingFromUpstream(title, year);
-  if (upstream !== null) {
+  const pending = inFlightRatings.get(key);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const upstream = await fetchDoubanRatingFromUpstream(title, year);
     try {
-      await cache.setJson(key, upstream, SEVEN_DAYS_MS);
+      await cache.setJson(key, upstream ?? NEGATIVE_CACHE_ENTRY, upstream ? SEVEN_DAYS_MS : NEGATIVE_TTL_MS);
     } catch {
       // 写入失败忽略
     }
+    return upstream;
+  })();
+  inFlightRatings.set(key, request);
+  try {
+    return await request;
+  } finally {
+    if (inFlightRatings.get(key) === request) inFlightRatings.delete(key);
   }
-  return upstream;
 }
 
 /**
@@ -156,15 +174,18 @@ export async function getDoubanRatings(
   const result = new Map<string, DoubanRating>();
   if (items.length === 0) return result;
 
-  await Promise.allSettled(
-    items.map(async (item) => {
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(RATING_CONCURRENCY, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const item = items[nextIndex++]!;
       const mapKey = `${item.title}_${item.year ?? ""}`;
       const rating = await getDoubanRating(item.title, item.year);
       if (rating !== null) {
         result.set(mapKey, rating);
       }
-    }),
-  );
+    }
+  });
+  await Promise.allSettled(workers);
 
   return result;
 }

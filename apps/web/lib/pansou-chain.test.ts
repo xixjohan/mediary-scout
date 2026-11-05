@@ -5,6 +5,7 @@ import {
   observeHealth,
   normalizePanSouBaseUrl,
   DEFAULT_PANSOU_BASE_URL,
+  resolvePanSouBaseUrlSource,
   resolveUserPanSouBaseUrl,
 } from "./pansou-chain";
 
@@ -79,6 +80,22 @@ describe("resolveUserPanSouBaseUrl", () => {
 
   it("returns empty when neither tier is configured", () => {
     expect(resolveUserPanSouBaseUrl(null, {})).toBe("");
+  });
+});
+
+describe("resolvePanSouBaseUrlSource", () => {
+  it("reports the database override before the environment value", () => {
+    expect(resolvePanSouBaseUrlSource("http://db.example", { PANSOU_BASE_URL: "http://env.example" })).toBe(
+      "database",
+    );
+  });
+
+  it("reports environment when there is no database override", () => {
+    expect(resolvePanSouBaseUrlSource("", { PANSOU_BASE_URL: "http://env.example" })).toBe("environment");
+  });
+
+  it("reports the public default when both overrides are absent", () => {
+    expect(resolvePanSouBaseUrlSource(null, {})).toBe("default");
   });
 });
 

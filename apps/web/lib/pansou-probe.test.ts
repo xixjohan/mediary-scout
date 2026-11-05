@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { probePanSou, validatePanSouBaseUrlFormat } from "./pansou-probe";
 
-/** PanSou 正常响应的最小形状:data.results 是数组。探活只看形状,不看命中。 */
-function pansouResponse(body: unknown = { data: { results: [] } }, status = 200): typeof fetch {
+/** PanSou 官方轻量健康接口的最小形状。保存设置时不触发完整搜索。 */
+function pansouHealthResponse(body: unknown = { status: "ok", auth_enabled: false }, status = 200): typeof fetch {
   return (async () =>
     new Response(JSON.stringify(body), {
       status,
@@ -11,25 +11,25 @@ function pansouResponse(body: unknown = { data: { results: [] } }, status = 200)
 }
 
 describe("probePanSou", () => {
-  it("accepts a PanSou-shaped 200", async () => {
+  it("accepts the official health response without running a search", async () => {
     const result = await probePanSou("http://192.168.1.10:8899", {
-      fetchImpl: pansouResponse({ data: { results: [{ title: "x" }] } }),
+      fetchImpl: pansouHealthResponse(),
     });
     expect(result).toEqual({ ok: true });
   });
 
-  it("POSTs to /api/search on the given base URL, tolerating a trailing slash", async () => {
+  it("GETs /api/health on the given base URL, tolerating a trailing slash", async () => {
     let seenUrl = "";
     let seenMethod = "";
     const result = await probePanSou("http://192.168.1.10:8899/", {
       fetchImpl: (async (url: string, init: RequestInit) => {
         seenUrl = url;
         seenMethod = init.method ?? "";
-        return new Response(JSON.stringify({ data: { results: [] } }), { status: 200 });
+        return new Response(JSON.stringify({ status: "ok", auth_enabled: false }), { status: 200 });
       }) as unknown as typeof fetch,
     });
-    expect(seenUrl).toBe("http://192.168.1.10:8899/api/search");
-    expect(seenMethod).toBe("POST");
+    expect(seenUrl).toBe("http://192.168.1.10:8899/api/health");
+    expect(seenMethod).toBe("GET");
     expect(result.ok).toBe(true);
   });
 
@@ -55,19 +55,16 @@ describe("probePanSou", () => {
   });
 
   it("reports not_pansou when JSON parses but has neither data.results nor data.total", async () => {
-    // Was `{ data: { total: 0 } }` — but that IS PanSou's real zero-hit shape
-    // (`results,omitempty`); asserting it as foreign encoded the very bug that
-    // made every honest miss look like a broken source. A payload with no PanSou
-    // data field at all is the genuine "填成了别的服务" case.
+    // A 200 response is not enough: the health endpoint must identify itself as PanSou.
     const result = await probePanSou("http://192.168.1.10:8899", {
-      fetchImpl: pansouResponse({ data: { hello: "world" } }),
+      fetchImpl: pansouHealthResponse({ data: { hello: "world" } }),
     });
     expect(result).toMatchObject({ ok: false, reason: "not_pansou" });
   });
 
   it("reports http_error on a 502", async () => {
     const result = await probePanSou("http://192.168.1.10:8899", {
-      fetchImpl: pansouResponse({ data: { results: [] } }, 502),
+      fetchImpl: pansouHealthResponse({ error: "unavailable" }, 502),
     });
     expect(result).toMatchObject({ ok: false, reason: "http_error" });
     if (!result.ok) expect(result.message).toContain("502");
@@ -81,8 +78,8 @@ describe("probePanSou", () => {
           throw new Error("boom");
         }) as unknown as typeof fetch,
       }),
-      probePanSou("http://x", { fetchImpl: pansouResponse({ nope: true }) }),
-      probePanSou("http://x", { fetchImpl: pansouResponse({ data: { results: [] } }, 502) }),
+      probePanSou("http://x", { fetchImpl: pansouHealthResponse({ nope: true }) }),
+      probePanSou("http://x", { fetchImpl: pansouHealthResponse({ error: "unavailable" }, 502) }),
     ]);
     for (const failure of failures) {
       expect(failure.ok).toBe(false);
@@ -133,27 +130,16 @@ describe("probePanSou timeout classification", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.message).toContain("无响应");
   });
-});
 
-describe("probePanSou zero-hit response shape", () => {
-  it("accepts {code:0,data:{total:0}} — PanSou omits `results` when a search has no hits", async () => {
-    // Real shape (model/response.go `results,omitempty`), verified live 2026-09-19.
-    // The probe keyword `__probe__` legitimately hits nothing on a fresh instance,
-    // so rejecting this shape would refuse to save a perfectly good address.
-    const result = await probePanSou("http://192.168.1.10:8899", {
-      fetchImpl: pansouResponse({ code: 0, message: "success", data: { total: 0 } }),
+  it("exposes the stable transport cause code without misclassifying it as authentication", async () => {
+    const result = await probePanSou("http://slow.test", {
+      fetchImpl: (async () => {
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("socket closed"), { code: "UND_ERR_SOCKET" }),
+        });
+      }) as unknown as typeof fetch,
     });
-    expect(result).toEqual({ ok: true });
-  });
-
-  it("rejects a PRESENT but malformed results even when total is numeric", async () => {
-    // Copilot (#259 r1): the probe must share the provider's exact shape rule, or a
-    // save-time probe can persist an address the workflow provider then cannot consume.
-    for (const results of [{}, "garbage", 42]) {
-      const result = await probePanSou("http://192.168.1.10:8899", {
-        fetchImpl: pansouResponse({ code: 0, data: { total: 1, results } }),
-      });
-      expect(result).toMatchObject({ ok: false, reason: "not_pansou" });
-    }
+    expect(result).toMatchObject({ ok: false, reason: "unreachable" });
+    if (!result.ok) expect(result.message).toContain("UND_ERR_SOCKET");
   });
 });

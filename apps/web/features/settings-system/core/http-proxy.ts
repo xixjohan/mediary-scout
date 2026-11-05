@@ -1,4 +1,5 @@
-import { Agent, EnvHttpProxyAgent, setGlobalDispatcher, type Dispatcher } from "undici";
+import { isIP } from "node:net";
+import { Agent, Dispatcher, EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
 
 /**
  * Opt-in outbound proxy for the server's global `fetch`.
@@ -69,7 +70,7 @@ export class ProxyManager {
     if (config.httpsProxy?.trim()) process.env.HTTPS_PROXY = config.httpsProxy.trim();
 
     const oldAgent = this.currentAgent;
-    const newAgent = new EnvHttpProxyAgent();
+    const newAgent = new CidrAwareProxyDispatcher();
     this.currentAgent = newAgent;
     setGlobalDispatcher(newAgent);
 
@@ -111,8 +112,8 @@ const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"
 /** 境内网盘生态、豆瓣评分及内部微服务默认免代理白名单，确保即使开启外网代理，国内直连服务也绝不挂起或被拉崩。 */
 export const DEFAULT_DOMESTIC_NO_PROXY = [
   "localhost",
-  "127.0.0.1",
-  "::1",
+  "127.0.0.0/8",
+  "::1/128",
   "web",
   "worker",
   "pansou",
@@ -162,37 +163,197 @@ export const DEFAULT_DOMESTIC_NO_PROXY = [
   "doubanio.com",
   "*.doubanio.com",
   ".doubanio.com",
-  // 局域网私网地址段（防止自建网盘或容器间调用在配置外网代理时被误转发）
-  "10.*",
-  "192.168.*",
-  "172.16.*",
-  "172.17.*",
-  "172.18.*",
-  "172.19.*",
-  "172.20.*",
-  "172.21.*",
-  "172.22.*",
-  "172.23.*",
-  "172.24.*",
-  "172.25.*",
-  "172.26.*",
-  "172.27.*",
-  "172.28.*",
-  "172.29.*",
-  "172.30.*",
-  "172.31.*",
+  // Undici 的 EnvHttpProxyAgent 不认识 CIDR；CidrAwareProxyDispatcher 会按 CIDR
+  // 把 IP 字面量目标分流到直连 Agent，不依赖不受支持的 `10.*` 伪通配写法。
+  "10.0.0.0/8",
+  "172.16.0.0/12",
+  "192.168.0.0/16",
+  "fc00::/7",
+  "fe80::/10",
 ] as const;
 
 export function resolveMergedNoProxy(existing?: string): string {
-  const custom = (existing ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const set = new Set(custom);
-  for (const domain of DEFAULT_DOMESTIC_NO_PROXY) {
-    set.add(domain);
+  const customEntries = (existing ?? "").split(/[\s,]+/).map((value) => value.trim()).filter(Boolean);
+  // "*" means every host bypasses the proxy. Appending defaults would make
+  // EnvHttpProxyAgent treat it as a literal hostname instead of its wildcard.
+  if (customEntries.includes("*")) return "*";
+
+  const entries = new Map<string, string>();
+  for (const entry of customEntries) {
+    entries.set(entry.toLowerCase(), entry);
   }
-  return Array.from(set).join(",");
+  for (const domain of DEFAULT_DOMESTIC_NO_PROXY) {
+    entries.set(domain.toLowerCase(), domain);
+  }
+  return Array.from(entries.values()).join(",");
+}
+
+interface ParsedIpAddress {
+  version: 4 | 6;
+  value: bigint;
+  bitLength: 32 | 128;
+}
+
+interface ParsedCidr {
+  network: ParsedIpAddress;
+  prefixLength: number;
+}
+
+let cachedCidrSource: string | null = null;
+let cachedCidrs: ParsedCidr[] = [];
+
+/**
+ * Match an IP-literal request origin against comma/space-separated CIDR entries.
+ * Domain names remain the responsibility of EnvHttpProxyAgent's exact/suffix matcher;
+ * this deliberately avoids DNS lookups on the request hot path.
+ */
+export function matchesNoProxyCidr(origin: string | URL, noProxy: string): boolean {
+  let url: URL;
+  try {
+    url = origin instanceof URL ? origin : new URL(origin);
+  } catch {
+    return false;
+  }
+
+  const address = parseIpAddress(url.hostname);
+  if (!address) return false;
+
+  if (cachedCidrSource !== noProxy) {
+    cachedCidrSource = noProxy;
+    cachedCidrs = noProxy.split(/[\s,]+/).map(parseCidr).filter((cidr): cidr is ParsedCidr => cidr !== null);
+  }
+  for (const cidr of cachedCidrs) {
+    if (cidr.network.version !== address.version) continue;
+    const hostBits = BigInt(address.bitLength - cidr.prefixLength);
+    if ((address.value >> hostBits) === (cidr.network.value >> hostBits)) return true;
+  }
+  return false;
+}
+
+function parseCidr(entry: string): ParsedCidr | null {
+  const slashIndex = entry.lastIndexOf("/");
+  if (slashIndex <= 0) return null;
+  const network = parseIpAddress(entry.slice(0, slashIndex));
+  const prefixLength = Number(entry.slice(slashIndex + 1));
+  if (
+    !network ||
+    !Number.isInteger(prefixLength) ||
+    prefixLength < 0 ||
+    prefixLength > network.bitLength
+  ) {
+    return null;
+  }
+  return { network, prefixLength };
+}
+
+function parseIpAddress(rawAddress: string): ParsedIpAddress | null {
+  let address = rawAddress;
+  if (address.startsWith("[") && address.endsWith("]")) {
+    address = address.slice(1, -1);
+  }
+  // RFC 4007 zone identifiers select an interface, not part of the address bits.
+  address = address.split("%")[0] ?? address;
+  const version = isIP(address);
+  if (version === 4) {
+    const value = address.split(".").reduce((acc, octet) => (acc << 8n) | BigInt(octet), 0n);
+    return { version: 4, value, bitLength: 32 };
+  }
+  if (version !== 6) return null;
+
+  const normalized = ipv6ToBigInt(address);
+  return normalized === null ? null : { version: 6, value: normalized, bitLength: 128 };
+}
+
+function ipv6ToBigInt(address: string): bigint | null {
+  let normalized = address.toLowerCase();
+  if (normalized.includes(".")) {
+    const lastColon = normalized.lastIndexOf(":");
+    const ipv4Tail = normalized.slice(lastColon + 1);
+    if (lastColon < 0 || isIP(ipv4Tail) !== 4) return null;
+    const octets = ipv4Tail.split(".").map(Number);
+    const firstWord = ((octets[0]! << 8) | octets[1]!).toString(16);
+    const secondWord = ((octets[2]! << 8) | octets[3]!).toString(16);
+    normalized = `${normalized.slice(0, lastColon)}:${firstWord}:${secondWord}`;
+  }
+
+  const halves = normalized.split("::");
+  if (halves.length > 2) return null;
+  const left = halves[0] ? halves[0]!.split(":") : [];
+  const right = halves.length === 2 && halves[1] ? halves[1]!.split(":") : [];
+  const missingWords = 8 - left.length - right.length;
+  if ((halves.length === 1 && missingWords !== 0) || (halves.length === 2 && missingWords < 1)) {
+    return null;
+  }
+  const words = [...left, ...Array.from({ length: missingWords }, () => "0"), ...right];
+  if (words.length !== 8 || words.some((word) => !/^[\da-f]{1,4}$/i.test(word))) return null;
+  return words.reduce((acc, word) => (acc << 16n) | BigInt(`0x${word}`), 0n);
+}
+
+export interface CidrAwareProxyDispatcherOptions {
+  /** Test seam; production defaults to direct sockets for CIDR matches. */
+  directDispatcher?: Dispatcher;
+  /** Test seam; production defaults to the existing environment proxy agent. */
+  proxyDispatcher?: Dispatcher;
+  /** Test seam; production reads the same NO_PROXY variable as Undici. */
+  getNoProxy?: () => string;
+}
+
+/**
+ * Add CIDR semantics on top of Undici's EnvHttpProxyAgent. The existing agent
+ * continues to handle hostnames, exact IPs, and domain suffixes; IP literals in
+ * NO_PROXY CIDRs are dispatched through a direct Agent. No address enumeration
+ * or per-request DNS lookup is needed, including for large prefixes such as /8.
+ */
+export class CidrAwareProxyDispatcher extends Dispatcher {
+  private readonly directDispatcher: Dispatcher;
+  private readonly proxyDispatcher: Dispatcher;
+  private readonly getNoProxy: () => string;
+
+  public constructor(options: CidrAwareProxyDispatcherOptions = {}) {
+    super();
+    this.directDispatcher = options.directDispatcher ?? new Agent();
+    this.proxyDispatcher = options.proxyDispatcher ?? new EnvHttpProxyAgent();
+    this.getNoProxy = options.getNoProxy ?? (() => process.env.no_proxy ?? process.env.NO_PROXY ?? "");
+  }
+
+  public override dispatch(options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
+    const origin = options.origin;
+    const target = origin && matchesNoProxyCidr(origin, this.getNoProxy())
+      ? this.directDispatcher
+      : this.proxyDispatcher;
+    return target.dispatch(options, handler);
+  }
+
+  public override close(callback: () => void): void;
+  public override close(): Promise<void>;
+  public override close(callback?: () => void): Promise<void> | void {
+    const closed = Promise.all([this.directDispatcher.close(), this.proxyDispatcher.close()]).then(() => undefined);
+    if (callback) {
+      void closed.then(callback);
+      return;
+    }
+    return closed;
+  }
+
+  public override destroy(error: Error | null, callback: () => void): void;
+  public override destroy(callback: () => void): void;
+  public override destroy(error?: Error | null): Promise<void>;
+  public override destroy(
+    errorOrCallback?: Error | null | (() => void),
+    callback?: () => void,
+  ): Promise<void> | void {
+    const error = typeof errorOrCallback === "function" ? null : (errorOrCallback ?? null);
+    const done = typeof errorOrCallback === "function" ? errorOrCallback : callback;
+    const destroyed = Promise.all([
+      this.directDispatcher.destroy(error),
+      this.proxyDispatcher.destroy(error),
+    ]).then(() => undefined);
+    if (done) {
+      void destroyed.then(done);
+      return;
+    }
+    return destroyed;
+  }
 }
 
 /** 展开 fetch 错误中的 cause（如 connect ECONNREFUSED），避免向前端仅仅抛出泛化的 "TypeError: fetch failed" */
@@ -225,7 +386,7 @@ function redactProxy(raw: string): string {
 
 const defaultDeps: ConfigureProxyDeps = {
   setDispatcher: setGlobalDispatcher,
-  makeAgent: () => new EnvHttpProxyAgent(),
+  makeAgent: () => new CidrAwareProxyDispatcher(),
 };
 
 /**

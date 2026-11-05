@@ -90,6 +90,18 @@ export function resolveUserPanSouBaseUrl(
   return dbValue?.trim() || env.PANSOU_BASE_URL?.trim() || "";
 }
 
+export type PanSouBaseUrlSource = "database" | "environment" | "default";
+
+/** Return the effective address source without exposing its value to the client form. */
+export function resolvePanSouBaseUrlSource(
+  dbValue: string | null | undefined,
+  env: Record<string, string | undefined> = process.env,
+): PanSouBaseUrlSource {
+  if (dbValue?.trim()) return "database";
+  if (env.PANSOU_BASE_URL?.trim()) return "environment";
+  return "default";
+}
+
 /**
  * 装配 PanSou 检索链。抽成纯函数是为了让「什么时候该包 fallback」可以被单测
  * —— 这个判断以前埋在 getWorkerResourceProvider 里，测不到。

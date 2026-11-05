@@ -110,10 +110,15 @@ export function animeFirstAirDateFloor(now: Date = new Date()): string {
  *  `now`; ORDER does not matter (cacheKeyFor sorts both sides before keying). */
 export function getTrendingFeeds(now: Date = new Date()): string[] {
   const floor = animeFirstAirDateFloor(now);
+  const animeDiscovery = "include_adult=false&language=zh-CN&sort_by=popularity.desc&with_genres=16&with_original_language=ja%7Czh%7Cko";
   return [
     "trending/movie/week?language=zh-CN",
     "trending/tv/week?language=zh-CN",
     `discover/tv?first_air_date.gte=${floor}&include_adult=false&language=zh-CN&sort_by=popularity.desc&vote_count.gte=50&with_genres=16&with_original_language=ja`,
+    `discover/movie?${animeDiscovery}`,
+    `discover/movie?${animeDiscovery}&page=2`,
+    `discover/tv?${animeDiscovery}`,
+    `discover/tv?${animeDiscovery}&page=2`,
   ];
 }
 

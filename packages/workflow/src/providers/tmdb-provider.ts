@@ -453,9 +453,9 @@ export async function fetchTmdbList(
   accesses: TmdbAccess[],
   path: string,
   query: Record<string, string> = {},
-  opts: { fetchJson?: TmdbFetchJson } = {},
+  opts: { fetchJson?: TmdbFetchJson; deadAccesses?: Set<string> } = {},
 ): Promise<unknown> {
-  return fetchViaAccessChain(accesses, path, query, opts.fetchJson ?? defaultFetchJson);
+  return fetchViaAccessChain(accesses, path, query, opts.fetchJson ?? defaultFetchJson, opts.deadAccesses);
 }
 
 export function createTmdbMetadataProviderFromEnv(

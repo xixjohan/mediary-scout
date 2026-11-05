@@ -32,4 +32,18 @@ describe("fetchTmdbList", () => {
     expect(result).toEqual({ results: [] });
     expect(fetchJson).toHaveBeenCalledTimes(2);
   });
+
+  it("remembers failed accesses across list pages", async () => {
+    const fetchJson = vi.fn()
+      .mockRejectedValueOnce(new Error("network timeout"))
+      .mockResolvedValue({ results: [] });
+    const accesses = [{ baseURL: "https://direct.example", readToken: "user-key" }, { baseURL: "https://proxy.example" }];
+    const deadAccesses = new Set<string>();
+
+    await fetchTmdbList(accesses, "discover/movie", { page: "1" }, { fetchJson, deadAccesses });
+    await fetchTmdbList(accesses, "discover/movie", { page: "2" }, { fetchJson, deadAccesses });
+
+    expect(fetchJson).toHaveBeenCalledTimes(3);
+    expect([...deadAccesses]).toEqual(["https://direct.example\nuser-key"]);
+  });
 });

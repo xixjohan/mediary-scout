@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { Film, RefreshCw, Search } from "lucide-react";
 import { showHref } from "@media-track/workflow";
 import { getDiscoverFeed, type TrendingKind } from "../../../lib/trending";
@@ -136,6 +137,50 @@ function TrendingRowPagination({
   );
 }
 
+function TrendingCardsGrid({
+  cards,
+  basePath,
+  storageId,
+  doubanMap,
+}: {
+  cards: Awaited<ReturnType<typeof getDiscoverFeed>>;
+  basePath: string;
+  storageId?: string | undefined;
+  doubanMap?: Map<string, { score: number }>;
+}) {
+  return (
+    <div className="trending-grid">
+      {cards.map((card, index) => (
+        <TrendingCardItem
+          key={`${card.mediaType}_${card.tmdbId}`}
+          card={card}
+          index={index}
+          basePath={basePath}
+          storageId={storageId}
+          douban={doubanMap?.get(`${card.title}_${card.year ?? ""}`)}
+        />
+      ))}
+    </div>
+  );
+}
+
+async function RatedTrendingCards({
+  cards,
+  basePath,
+  storageId,
+  pageSize,
+}: {
+  cards: Awaited<ReturnType<typeof getDiscoverFeed>>;
+  basePath: string;
+  storageId?: string | undefined;
+  pageSize: number;
+}) {
+  const doubanMap = await getDoubanRatings(
+    cards.slice(0, pageSize).map((card) => ({ title: card.title, year: card.year })),
+  );
+  return <TrendingCardsGrid cards={cards} basePath={basePath} storageId={storageId} doubanMap={doubanMap} />;
+}
+
 export async function TrendingRow({
   activeKind,
   basePath,
@@ -169,10 +214,6 @@ export async function TrendingRow({
     );
   }
 
-  const doubanMap = await getDoubanRatings(
-    cards.slice(0, pageSize).map((c) => ({ title: c.title, year: c.year })),
-  );
-
   return (
     <section className="trending" aria-label="发现精选">
       <div className="trending-head">
@@ -186,18 +227,9 @@ export async function TrendingRow({
           <RefreshCw size={12} aria-hidden /> 每日更新 · 权威双评分
         </span>
       </div>
-      <div className="trending-grid">
-        {cards.map((card, index) => (
-          <TrendingCardItem
-            key={`${card.mediaType}_${card.tmdbId}`}
-            card={card}
-            index={index}
-            basePath={basePath}
-            storageId={storageId}
-            douban={doubanMap.get(`${card.title}_${card.year ?? ""}`)}
-          />
-        ))}
-      </div>
+      <Suspense fallback={<TrendingCardsGrid cards={cards} basePath={basePath} storageId={storageId} />}>
+        <RatedTrendingCards cards={cards} basePath={basePath} storageId={storageId} pageSize={pageSize} />
+      </Suspense>
       <TrendingRowPagination filterParams={filterParams} count={cards.length} basePath={basePath} />
     </section>
   );

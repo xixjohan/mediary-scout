@@ -309,6 +309,27 @@ describe("trending discovery", () => {
     expect(animeParams.get("sort_by")).toBe("popularity.desc");
   });
 
+  it("prewarms the first two pages of the anime discovery filter used by the search page", () => {
+    const feeds = getTrendingFeeds(new Date("2026-07-04T00:00:00Z"));
+    for (const mediaType of ["movie", "tv"]) {
+      for (const page of [1, 2]) {
+        const feed = feeds.find((item) => {
+          if (!item.startsWith(`discover/${mediaType}?`)) return false;
+          const params = new URL(`https://x/${item}`).searchParams;
+          return params.get("with_original_language") === "ja|zh|ko"
+            && params.get("page") === (page === 1 ? null : String(page));
+        });
+        expect(feed, `${mediaType} page ${page} should be warmed`).toBeDefined();
+        const params = new URL(`https://x/${feed}`).searchParams;
+        expect(params.get("include_adult")).toBe("false");
+        expect(params.get("language")).toBe("zh-CN");
+        expect(params.get("sort_by")).toBe("popularity.desc");
+        expect(params.get("with_genres")).toBe("16");
+        expect(params.get("with_original_language")).toBe("ja|zh|ko");
+      }
+    }
+  });
+
   it("allows the trending/ prefix (was 404)", async () => {
     const res = await handleTmdbProxy({
       request: new Request("https://w.example/trending/movie/week?language=zh-CN"),

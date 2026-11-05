@@ -33,7 +33,6 @@ export {
 
 export {
   type PushSettingsActionResult,
-  type PanSouConfigInput,
   savePushSettingsAction,
   clearPushChannelAction,
   saveDailySweepTimesAction,
@@ -48,7 +47,6 @@ export {
   clearTmdbApiKeyAction,
   saveAssrtTokenAction,
   clearAssrtTokenAction,
-  savePanSouConfigAction,
   saveProwlarrConfigAction,
   clearProwlarrConfigAction,
   saveHaisouConfigAction,
@@ -58,6 +56,12 @@ export {
   setJevPrefilterEnabledAction,
   testPushNotificationAction,
 } from "./actions/settings-system-actions";
+
+export {
+  type PanSouConfigInput,
+  type PanSouConfigSaveMode,
+  savePanSouConfigAction,
+} from "./actions/settings-pansou-actions";
 
 export type { ConnectLoginActionResult, TestRemoteAccessResult } from "../features/auth/contracts/auth-tokens";
 export {

@@ -151,6 +151,7 @@ export async function fetchFeedCards(
   accesses: unknown,
   kind: TrendingKind,
   page = 1,
+  deadAccesses = new Set<string>(),
 ): Promise<TrendingCard[]> {
   try {
     const query = trendingFeedQuery(kind);
@@ -161,6 +162,7 @@ export async function fetchFeedCards(
       accesses as Parameters<typeof fetchTmdbList>[0],
       TRENDING_KINDS[kind].path,
       query,
+      { deadAccesses },
     );
     return mapTrendingResults(raw, kind);
   } catch {
@@ -304,6 +306,7 @@ export async function fetchDiscoverCards(
   accesses: unknown,
   mediaType: "movie" | "tv",
   params?: DiscoverFilterParams,
+  deadAccesses = new Set<string>(),
 ): Promise<TrendingCard[]> {
   try {
     const path = mediaType === "movie" ? "discover/movie" : "discover/tv";
@@ -319,7 +322,7 @@ export async function fetchDiscoverCards(
     const responses = await Promise.all(
       pageNumbers.map((p) => {
         const query = buildDiscoverQuery(mediaType, { ...params, page: p });
-        return fetchTmdbList(accesses as Parameters<typeof fetchTmdbList>[0], path, query);
+        return fetchTmdbList(accesses as Parameters<typeof fetchTmdbList>[0], path, query, { deadAccesses });
       }),
     );
 
@@ -369,32 +372,34 @@ async function fetchMediaFeed(
   accesses: unknown,
   mediaType: "movie" | "tv",
   filterParams?: DiscoverFilterParams,
+  deadAccesses = new Set<string>(),
 ): Promise<TrendingCard[]> {
   if (shouldUseDiscoverFeed(filterParams)) {
-    return fetchDiscoverCards(accesses, mediaType, filterParams);
+    return fetchDiscoverCards(accesses, mediaType, filterParams, deadAccesses);
   }
-  return fetchFeedCards(accesses, mediaType, filterParams?.page ?? 1);
+  return fetchFeedCards(accesses, mediaType, filterParams?.page ?? 1, deadAccesses);
 }
 
 async function fetchTypedFeedCards(
   accesses: unknown,
   filterParams?: DiscoverFilterParams,
+  deadAccesses = new Set<string>(),
 ): Promise<TrendingCard[] | null> {
   const type = filterParams?.type;
   if (!type || type === "all") return null;
 
   if (type === "documentary" || type === "anime") {
     const [movieCards, tvCards] = await Promise.all([
-      fetchDiscoverCards(accesses, "movie", filterParams),
-      fetchDiscoverCards(accesses, "tv", filterParams),
+      fetchDiscoverCards(accesses, "movie", filterParams, deadAccesses),
+      fetchDiscoverCards(accesses, "tv", filterParams, deadAccesses),
     ]);
     return interleaveFeeds([movieCards, tvCards]);
   }
   if (type === "variety") {
-    return fetchDiscoverCards(accesses, "tv", filterParams);
+    return fetchDiscoverCards(accesses, "tv", filterParams, deadAccesses);
   }
   if (type === "movie" || type === "tv") {
-    return fetchMediaFeed(accesses, type, filterParams);
+    return fetchMediaFeed(accesses, type, filterParams, deadAccesses);
   }
   return null;
 }
@@ -403,7 +408,8 @@ async function fetchRawFeedPool(
   accesses: unknown,
   filterParams?: DiscoverFilterParams,
 ): Promise<TrendingCard[]> {
-  const typedCards = await fetchTypedFeedCards(accesses, filterParams);
+  const deadAccesses = new Set<string>();
+  const typedCards = await fetchTypedFeedCards(accesses, filterParams, deadAccesses);
   if (typedCards !== null) {
     return typedCards;
   }
@@ -412,20 +418,20 @@ async function fetchRawFeedPool(
 
   if (hasDynamicFilter(filterParams)) {
     const [movieCards, tvCards] = await Promise.all([
-      fetchDiscoverCards(accesses, "movie", filterParams),
-      fetchDiscoverCards(accesses, "tv", filterParams),
+      fetchDiscoverCards(accesses, "movie", filterParams, deadAccesses),
+      fetchDiscoverCards(accesses, "tv", filterParams, deadAccesses),
     ]);
     return interleaveFeeds([movieCards, tvCards]);
   }
 
   if (shouldServeTrendingOnly(filterParams) && filterParams?.trending) {
-    return fetchFeedCards(accesses, filterParams.trending, page);
+    return fetchFeedCards(accesses, filterParams.trending, page, deadAccesses);
   }
 
   const [movieCards, tvCards, animeCards] = await Promise.all([
-    fetchFeedCards(accesses, "movie", page),
-    fetchFeedCards(accesses, "tv", page),
-    fetchFeedCards(accesses, "anime", page),
+    fetchFeedCards(accesses, "movie", page, deadAccesses),
+    fetchFeedCards(accesses, "tv", page, deadAccesses),
+    fetchFeedCards(accesses, "anime", page, deadAccesses),
   ]);
   return interleaveFeeds([movieCards, tvCards, animeCards]);
 }

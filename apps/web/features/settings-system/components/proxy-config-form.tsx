@@ -122,15 +122,18 @@ export function ProxyConfigForm({ initial }: { initial: ProxyConfigInput }) {
 
       <div style={{ marginBottom: 14 }}>
         <label className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
-          自定义免代理白名单 NO_PROXY (逗号分隔，可选)
+            自定义免代理白名单 NO_PROXY（逗号分隔，可选）
         </label>
         <input
           type="text"
           className="setting-control w-full"
-          placeholder="localhost,127.0.0.1,192.168.*"
+          placeholder="localhost,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
           value={noProxy}
           onChange={(e) => setNoProxy(e.target.value)}
         />
+        <p className="panel-note" style={{ marginTop: 5 }}>
+          支持主机名、域名后缀和 IPv4 / IPv6 CIDR（如 10.0.0.0/8）；CIDR 只匹配 URL 中的 IP 字面量，不会解析域名。
+        </p>
       </div>
 
       <div className="flex items-center gap-3">
