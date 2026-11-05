@@ -60,6 +60,8 @@ import {
   frozenDriveMessage,
   STORAGE_PROBES,
   makeTokenPersister,
+  makePan115OpenOAuthPersister,
+  makePan115OpenOAuthRefreshCoordinator,
   defaultDriveIdOf,
   freezeConnectedStorage,
   testConnection,
@@ -923,31 +925,7 @@ async function getWorkerStorageExecutor(
       ? preloadedCreds
       : await getAccountStorageCredentials(accountId, connectedStorageId);
   if (creds) {
-    // Scope writes to THIS drive's own provisioned dirs — not the global env CIDs
-    // (which belong to the default account's drive). Dispatch by the drive's
-    // brand: 115 → Storage115Executor, quark → QuarkStorageExecutor.
-    const scopeCids = [creds.rootCid, creds.moviesCid, creds.tvCid, creds.animeCid].filter(
-      (cid): cid is string => Boolean(cid),
-    );
-    // Token-auth brands (光鸭/天翼) authenticate with a rotating credential blob
-    // (not a cookie): pass the credential + a persist hook so a mid-run refresh
-    // writes the new blob back into this drive's payload. Cookie brands (115/
-    // 夸克) keep the cookie path untouched.
-    if (isRegisteredStorageProvider(creds.provider) && getStorageBrand(creds.provider).authKind === "token") {
-      return createExecutorForBrand({
-        provider: creds.provider,
-        credential: creds.credential ?? {},
-        scopeCids,
-        env: process.env,
-        onCredentialRefresh: makeTokenPersister(accountId, creds.id, creds.provider),
-      });
-    }
-    return createExecutorForBrand({
-      provider: creds.provider,
-      cookie: creds.cookie,
-      scopeCids,
-      env: process.env,
-    });
+    return createExecutorForConnectedStorage(accountId, creds);
   }
   if (adapter === "115") {
     // No drive bound yet → legacy env-cookie 115 path (fresh deploy bootstrap).
@@ -960,6 +938,42 @@ async function getWorkerStorageExecutor(
     transferOutcomes: fakeTransferOutcomes(),
   });
   return fakeStorageExecutor;
+}
+
+function createExecutorForConnectedStorage(
+  accountId: string,
+  creds: AccountStorageCredentials,
+): StorageExecutor {
+  // Scope writes to this drive's own provisioned dirs, never the global env CIDs.
+  const scopeCids = [creds.rootCid, creds.moviesCid, creds.tvCid, creds.animeCid].filter(
+    (cid): cid is string => Boolean(cid),
+  );
+  if (creds.provider === "pan115") {
+    return createExecutorForBrand({
+      provider: creds.provider,
+      cookie: creds.cookie,
+      credential: creds.credential ?? {},
+      scopeCids,
+      env: process.env,
+      onOpenCredentialsPersist: makePan115OpenOAuthPersister(accountId, creds.id),
+      coordinateOpenTokenRefresh: makePan115OpenOAuthRefreshCoordinator(accountId, creds.id),
+    });
+  }
+  if (isRegisteredStorageProvider(creds.provider) && getStorageBrand(creds.provider).authKind === "token") {
+    return createExecutorForBrand({
+      provider: creds.provider,
+      credential: creds.credential ?? {},
+      scopeCids,
+      env: process.env,
+      onCredentialRefresh: makeTokenPersister(accountId, creds.id, creds.provider),
+    });
+  }
+  return createExecutorForBrand({
+    provider: creds.provider,
+    cookie: creds.cookie,
+    scopeCids,
+    env: process.env,
+  });
 }
 
 /**

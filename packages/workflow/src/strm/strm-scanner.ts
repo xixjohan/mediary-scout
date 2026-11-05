@@ -3,6 +3,7 @@ import type { DriveFileManager, DriveFileItem } from "../storage/drive-file-mana
 import type { StorageExecutor } from "../domain/ports.js";
 import type { PackageTreeFile, VerifiedFile } from "../domain/domain.js";
 import type { StrmTask } from "./strm-types.js";
+import { resolveStrmOutputPath } from "./output-path.js";
 import { buildPlayUrl, safeDirSegments, safeStem, writeStrmFile, removeStrmFile } from "./strm-writer.js";
 
 export interface StrmScanResult {
@@ -276,7 +277,9 @@ export class StrmScanner {
       message: `已获取远端 ${remoteFiles.length} 个条目，匹配到 ${validRemoteFiles.length} 个有效媒体...`,
     });
 
-    const localStrmMap = this.scanLocalStrmFiles(task.localOutputDir);
+    const outputDir = resolveStrmOutputPath(task.localOutputDir);
+    const resolvedTask = { ...task, localOutputDir: outputDir };
+    const localStrmMap = this.scanLocalStrmFiles(outputDir);
 
     await onProgress?.({
       phase: "scanning_local",
@@ -289,7 +292,7 @@ export class StrmScanner {
     });
 
     const protectReason = this.checkEmptyProtect(
-      task,
+      resolvedTask,
       validRemoteFiles.length,
       localStrmMap.size,
       forceAllowEmptyCleanup,
@@ -311,7 +314,7 @@ export class StrmScanner {
 
     const expectedLocalRels = await this.syncAllValidFiles(
       validRemoteFiles,
-      task,
+      resolvedTask,
       baseUrl,
       localStrmMap,
       result,

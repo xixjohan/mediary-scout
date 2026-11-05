@@ -44,43 +44,33 @@ import {
 import type {
   Account,
   ConnectedStorage,
+  Pan115OpenOAuthCredentials,
   Session,
   UpsertConnectedStorageInput,
 } from "../storage/account-credentials.js";
 import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "../domain/workflow-scope.js";
 import type { StoredSubscriptionPolicy, SubscriptionPolicyWrite } from "./subscription-policy-store.js";
+import type { CreateMediaRequestInput, MediaRequest, MediaRequestStatus, MediaRequestStore } from "../domain/media-request.js";
 import type {
-  CreateMediaRequestInput,
-  MediaRequest,
-  MediaRequestStatus,
-  MediaRequestStore,
-} from "../domain/media-request.js";
-import type {
-  CreateMediaServerConfigInput,
-  CreateMediaServerRefreshRecordInput,
-  MediaServerConfig,
-  MediaServerRefreshRecord,
-  MediaServerStore,
-  UpdateMediaServerConfigInput,
-  UpdateMediaServerRefreshRecordInput,
+  CreateMediaServerConfigInput, CreateMediaServerRefreshRecordInput,
+  MediaServerConfig, MediaServerRefreshRecord, MediaServerStore,
+  UpdateMediaServerConfigInput, UpdateMediaServerRefreshRecordInput,
 } from "../mediaserver/mediaserver-types.js";
 import type {
-  CreateStrmExecutionRecordInput,
-  CreateStrmTaskInput,
-  StrmExecutionRecord,
-  StrmLinkCacheItem,
-  StrmStore,
-  StrmTask,
-  UpdateStrmExecutionRecordInput,
-  UpdateStrmTaskInput,
+  CreateStrmExecutionRecordInput, CreateStrmTaskInput,
+  StrmExecutionRecord, StrmLinkCacheItem, StrmStore, StrmTask,
+  UpdateStrmExecutionRecordInput, UpdateStrmTaskInput,
 } from "../strm/strm-types.js";
 import type {
-  ChatConversationStore,
-  ChatConversationSummary,
-  CreateConversationInput,
-  PersistedChatMessage,
-  SaveChatMessageInput,
+  ChatConversationStore, ChatConversationSummary,
+  CreateConversationInput, PersistedChatMessage, SaveChatMessageInput,
 } from "../domain/chat-conversations.js";
+import type {
+  ReverseScanStore, ReverseScanJob, CreateReverseScanJobInput,
+  UpdateReverseScanJobPatch, ReverseScanItem, CreateReverseScanItemInput,
+  UpdateReverseScanItemPatch, ReverseScanItemReviewStatus,
+} from "../domain/reverse-scan-types.js";
+import { InMemoryReverseScanStore } from "./in-memory-reverse-scan.js";
 
 /**
  * Tree model: the value stored in `connected_storage_id` for the degenerate
@@ -92,6 +82,37 @@ import type {
  * so the SAME title can be tracked independently on multiple drives.
  */
 export const UNSCOPED_STORAGE = "__unscoped__";
+
+export type Pan115OAuthCredentialWriteDecision = "updated" | "already_current" | "stale" | "missing";
+
+function asOAuthRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function hasCompleteOAuthCredentials(value: Record<string, unknown>): boolean {
+  const expiresAt = value["expiresAt"];
+  return typeof value["accessToken"] === "string" && value["accessToken"].trim().length > 0 &&
+    typeof value["refreshToken"] === "string" && value["refreshToken"].trim().length > 0 &&
+    typeof expiresAt === "number" && Number.isFinite(expiresAt);
+}
+
+/** Classify a candidate token rotation against the currently persisted payload. */
+export function decidePan115OAuthCredentialWrite(
+  payloadValue: unknown,
+  credentials: Pan115OpenOAuthCredentials,
+): Exclude<Pan115OAuthCredentialWriteDecision, "missing"> {
+  const current = asOAuthRecord(asOAuthRecord(payloadValue)?.["openOAuth"]);
+  if (!current) return "updated";
+  const same = current["accessToken"] === credentials.accessToken &&
+    current["refreshToken"] === credentials.refreshToken && current["expiresAt"] === credentials.expiresAt;
+  if (same) return "already_current";
+
+  const currentExpiresAt = current["expiresAt"];
+  return hasCompleteOAuthCredentials(current) && typeof currentExpiresAt === "number" &&
+    currentExpiresAt >= credentials.expiresAt ? "stale" : "updated";
+}
 
 /** Which queued runs the worker may claim while others are running. */
 export interface QueuedRunDriveFilter {
@@ -288,7 +309,7 @@ export type WorkflowRunReservationResult =
       status: "not_tracked";
     };
 
-export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore, ChatConversationStore, MediaRequestStore, StrmStore, MediaServerStore {
+export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore, ChatConversationStore, MediaRequestStore, StrmStore, MediaServerStore, ReverseScanStore {
   saveWorkflowRunSnapshot(
     input: PersistWorkflowRunSnapshotInput & {
       /** Write the run only. The season's episode bucket stays as stored.
@@ -394,6 +415,8 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
     mediaKind: "movie" | "tv",
     seasonNumber?: number,
   ): Promise<{ status: "untracked" | "not_found" | "in_flight"; removedSeasons: number }>;
+  /** Asynchronously update posterPath for a media_titles row so lazy lookups don't repeat. */
+  updateMediaTitlePosterPath(titleId: string, posterPath: string): Promise<void>;
   /** Manual retry of a terminally `failed` run: reset it to immediately-claimable
    *  queued (counters cleared) so the worker re-runs it. Refuses (not_retriable)
    *  for any non-failed run. */
@@ -439,6 +462,32 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   backfillConnectedStorageId(): Promise<number>;
   /** Connected network drives owned by the account (§7 multi-account). */
   listConnectedStorages(accountId: string): Promise<ConnectedStorage[]>;
+  /** Atomically replace a 115 OAuth credential payload if it is not older than
+   *  the currently stored rotation. */
+  persistPan115OpenOAuthCredentials(
+    accountId: string,
+    storageId: string,
+    credentials: {
+      accessToken: string;
+      refreshToken: string;
+      expiresAt: number;
+    },
+  ): Promise<"updated" | "already_current" | "stale" | "missing">;
+  /** Atomically claim/release a short-lived 115 OAuth refresh lease shared by
+   *  web and worker processes using the same SQLite database. Times are epoch ms. */
+  tryAcquirePan115OAuthRefreshLease(
+    storageId: string,
+    ownerId: string,
+    leaseExpiresAt: number,
+    now: number,
+  ): Promise<boolean>;
+  renewPan115OAuthRefreshLease(
+    storageId: string,
+    ownerId: string,
+    leaseExpiresAt: number,
+    now: number,
+  ): Promise<boolean>;
+  releasePan115OAuthRefreshLease(storageId: string, ownerId: string): Promise<void>;
   /** True if any account has at least one connected drive (cheap EXISTS). */
   hasAnyConnectedStorage(): Promise<boolean>;
   upsertConnectedStorage(row: UpsertConnectedStorageInput): Promise<void>;
@@ -512,6 +561,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   private readonly settings = new Map<string, string>();
   private readonly accountSettings = new Map<string, Map<string, string>>();
   private readonly connectedStorages = new Map<string, ConnectedStorage>();
+  private readonly pan115OAuthRefreshLeases = new Map<string, { ownerId: string; expiresAt: number }>();
   private readonly accounts = new Map<string, Account>();
   private readonly sessions = new Map<string, Session>();
   private readonly deadLinks = new Map<string, DeadLink>();
@@ -598,6 +648,58 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return [...this.connectedStorages.values()]
       .filter((storage) => storage.accountId === accountId)
       .map((storage) => ({ ...storage }));
+  }
+
+  async persistPan115OpenOAuthCredentials(
+    accountId: string,
+    storageId: string,
+    credentials: { accessToken: string; refreshToken: string; expiresAt: number },
+  ): Promise<"updated" | "already_current" | "stale" | "missing"> {
+    const storage = [...this.connectedStorages.values()].find(
+      (row) => row.id === storageId && row.accountId === accountId && row.provider === "pan115",
+    );
+    if (!storage) return "missing";
+    const decision = decidePan115OAuthCredentialWrite(storage.payload, credentials);
+    if (decision !== "updated") return decision;
+    const payload = storage.payload !== null && typeof storage.payload === "object" && !Array.isArray(storage.payload)
+      ? storage.payload as Record<string, unknown>
+      : {};
+    const key = connectedStorageKey(storage.provider, storage.providerUid);
+    this.connectedStorages.set(key, {
+      ...storage,
+      payload: { ...payload, openOAuth: { ...credentials } },
+    });
+    return "updated";
+  }
+
+  async tryAcquirePan115OAuthRefreshLease(
+    storageId: string,
+    ownerId: string,
+    leaseExpiresAt: number,
+    now: number,
+  ): Promise<boolean> {
+    const lease = this.pan115OAuthRefreshLeases.get(storageId);
+    if (lease && lease.expiresAt > now) return false;
+    this.pan115OAuthRefreshLeases.set(storageId, { ownerId, expiresAt: leaseExpiresAt });
+    return true;
+  }
+
+  async renewPan115OAuthRefreshLease(
+    storageId: string,
+    ownerId: string,
+    leaseExpiresAt: number,
+    now: number,
+  ): Promise<boolean> {
+    const lease = this.pan115OAuthRefreshLeases.get(storageId);
+    if (!lease || lease.ownerId !== ownerId || lease.expiresAt <= now) return false;
+    this.pan115OAuthRefreshLeases.set(storageId, { ownerId, expiresAt: leaseExpiresAt });
+    return true;
+  }
+
+  async releasePan115OAuthRefreshLease(storageId: string, ownerId: string): Promise<void> {
+    if (this.pan115OAuthRefreshLeases.get(storageId)?.ownerId === ownerId) {
+      this.pan115OAuthRefreshLeases.delete(storageId);
+    }
   }
 
   async hasAnyConnectedStorage(): Promise<boolean> {
@@ -901,10 +1003,12 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   }
 
   async getMediaTitleName(titleKey: string): Promise<string | null> {
-    for (const snapshot of this.workflowRuns.values()) {
-      if (snapshot.title.id === titleKey) return snapshot.title.title;
-    }
+    for (const s of this.workflowRuns.values()) if (s.title.id === titleKey) return s.title.title;
     return null;
+  }
+
+  async updateMediaTitlePosterPath(titleId: string, posterPath: string): Promise<void> {
+    for (const s of this.workflowRuns.values()) if (s.title.id === titleId) s.title.posterPath = posterPath;
   }
 
   async summarizeAgentMemories(input: { accountId: string; since: string }): Promise<AgentMemorySummary> {
@@ -2337,6 +2441,14 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return list[0] ?? null;
   }
 
+  private readonly reverseScanStore = new InMemoryReverseScanStore();
+  async createReverseScanJob(input: CreateReverseScanJobInput): Promise<ReverseScanJob> { return this.reverseScanStore.createReverseScanJob(input); }
+  async getReverseScanJob(id: string): Promise<ReverseScanJob | null> { return this.reverseScanStore.getReverseScanJob(id); }
+  async listReverseScanJobs(accountId: string, limit?: number): Promise<ReverseScanJob[]> { return this.reverseScanStore.listReverseScanJobs(accountId, limit); }
+  async updateReverseScanJob(id: string, patch: UpdateReverseScanJobPatch): Promise<void> { return this.reverseScanStore.updateReverseScanJob(id, patch); }
+  async createReverseScanItem(input: CreateReverseScanItemInput): Promise<ReverseScanItem> { return this.reverseScanStore.createReverseScanItem(input); }
+  async listReverseScanItems(jobId: string, reviewStatus?: ReverseScanItemReviewStatus): Promise<ReverseScanItem[]> { return this.reverseScanStore.listReverseScanItems(jobId, reviewStatus); }
+  async updateReverseScanItem(id: string, patch: UpdateReverseScanItemPatch): Promise<void> { return this.reverseScanStore.updateReverseScanItem(id, patch); }
 }
 
 export function validateWorkflowRunSnapshot(input: PersistWorkflowRunSnapshotInput): void {

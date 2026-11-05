@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
+import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { driveConnectionBadge } from "../../lib/settings-badge";
 import { maskProviderUid } from "../../lib/mask-provider-uid";
 import { connection } from "next/server";
@@ -54,6 +55,7 @@ import {
   isSharedResourceMode,
   getAccountScopedSettings,
   getCurrentAccountId,
+  UNAUTHENTICATED_ACCOUNT_ID,
   getCurrentAccountSummary,
   isMultiUserEnabled,
   listManagedAccounts,
@@ -1017,7 +1019,32 @@ export default function SettingsPage(props: Parameters<typeof SettingsPageInner>
       <Suspense fallback={null}>
         <PageLoginGuard />
       </Suspense>
-      <SettingsPageInner {...props} />
+      <Suspense fallback={<SettingsShell />}>
+        <SettingsSurface {...props} />
+      </Suspense>
     </>
   );
+}
+
+function SettingsShell() {
+  return (
+    <div className="app-shell">
+      <AppSidebar active="settings" skeleton />
+      <main className="main product-main" aria-busy="true" />
+    </div>
+  );
+}
+
+async function SettingsSurface(props: Parameters<typeof SettingsPageInner>[0]) {
+  await connection();
+  const accountId = await getCurrentAccountId();
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    return (
+      <>
+        <ClientLoginRedirect />
+        <SettingsShell />
+      </>
+    );
+  }
+  return <SettingsPageInner {...props} />;
 }

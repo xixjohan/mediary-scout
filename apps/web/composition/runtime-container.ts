@@ -23,6 +23,8 @@ import {
   RoleStore,
   UserManagementService,
   ProductionStorageStreamResolver,
+  isPan115OpenOAuthValid,
+  type Pan115OpenOAuthCredentials,
   MockStorageStreamResolver,
   type StorageStreamResolver,
   setStorageStreamResolver,
@@ -31,6 +33,10 @@ import {
   StrmTaskConfigRegistry,
 } from "@media-track/workflow";
 import { extractStorageCredential } from "../features/storage-drives/core/credentials";
+import {
+  createPan115OpenOAuthPersister,
+  createPan115OpenOAuthRefreshCoordinator,
+} from "../features/storage-drives/application/pan115-open-oauth-persistence";
 
 const PAN115_COOKIE_KEY = "pan115.cookie";
 
@@ -218,12 +224,24 @@ export function ensureStorageStreamResolver(): StorageStreamResolver {
     const lookup: StorageCredentialLookup = async (storageId: string) => {
       const storage = await repo.getConnectedStorageById(storageId);
       if (!storage) return null;
-      const { cookie, credential } = extractStorageCredential(storage.provider, storage.payload);
+      const { cookie, credential: extractedCredential } = extractStorageCredential(storage.provider, storage.payload);
+      const payload =
+        storage.payload !== null && typeof storage.payload === "object" && !Array.isArray(storage.payload)
+          ? (storage.payload as Record<string, unknown>)
+          : null;
+      const openOAuth = storage.provider === "pan115" ? payload?.openOAuth : undefined;
+      const hasOpenOAuth = isPan115OpenOAuthValid(openOAuth as Pan115OpenOAuthCredentials | undefined);
       return {
         provider: storage.provider,
         cookie,
-        credential: credential as Record<string, unknown> | null,
+        credential: (hasOpenOAuth && payload ? payload : extractedCredential) as Record<string, unknown> | null,
         status: storage.status,
+        ...(hasOpenOAuth
+          ? {
+              persistOpenOAuthCredentials: createPan115OpenOAuthPersister(repo, storage.accountId, storage.id),
+              coordinateOpenTokenRefresh: createPan115OpenOAuthRefreshCoordinator(repo, storage.accountId, storage.id),
+            }
+          : {}),
       };
     };
     activeStreamResolver = new ProductionStorageStreamResolver(

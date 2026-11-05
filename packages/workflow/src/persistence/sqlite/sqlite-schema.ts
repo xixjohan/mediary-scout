@@ -245,6 +245,11 @@ export const SQLITE_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_connected_storages_account
     ON connected_storages (account_id, created_at);
+  CREATE TABLE IF NOT EXISTS pan115_oauth_refresh_leases (
+    storage_id text PRIMARY KEY,
+    owner_id text NOT NULL,
+    lease_expires_at integer NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS chat_conversations (
     id text PRIMARY KEY,
     account_id text NOT NULL,
@@ -383,6 +388,51 @@ export const SQLITE_SCHEMA = `
     ON media_requests (media_title_id, season_number);
   CREATE INDEX IF NOT EXISTS idx_media_requests_run
     ON media_requests (workflow_run_id);
+  CREATE TABLE IF NOT EXISTS reverse_scan_jobs (
+    id text PRIMARY KEY,
+    account_id text NOT NULL,
+    storage_id text NOT NULL,
+    target_cid text NOT NULL,
+    category text NOT NULL,
+    status text NOT NULL DEFAULT 'queued',
+    total_folders integer DEFAULT 0,
+    scanned_folders integer DEFAULT 0,
+    discovered_titles integer DEFAULT 0,
+    auto_ingested_titles integer DEFAULT 0,
+    pending_review_titles integer DEFAULT 0,
+    current_step_message text,
+    progress_percent integer DEFAULT 0,
+    error_message text,
+    started_at text,
+    finished_at text,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_reverse_scan_jobs_account
+    ON reverse_scan_jobs (account_id, created_at DESC);
+  CREATE TABLE IF NOT EXISTS reverse_scan_items (
+    id text PRIMARY KEY,
+    job_id text NOT NULL,
+    account_id text NOT NULL,
+    folder_id text NOT NULL,
+    folder_name text NOT NULL,
+    relative_path text NOT NULL,
+    parsed_title text,
+    parsed_year integer,
+    matched_tmdb_id integer,
+    matched_media_type text,
+    matched_title text,
+    matched_poster_path text,
+    confidence integer NOT NULL DEFAULT 0,
+    review_status text NOT NULL DEFAULT 'auto_accepted',
+    discovered_files_json text DEFAULT '[]',
+    reconciled_seasons_json text,
+    error_reason text,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_reverse_scan_items_job
+    ON reverse_scan_items (job_id, review_status);
   INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
     VALUES ('acct_default', 'default', '', 1, '1970-01-01T00:00:00.000Z')
     ON CONFLICT (id) DO NOTHING;

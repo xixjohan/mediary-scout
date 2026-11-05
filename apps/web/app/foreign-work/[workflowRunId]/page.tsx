@@ -1,12 +1,13 @@
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../../lib/page-auth-guard";
+import { ClientLoginRedirect } from "../../../features/auth/components/client-login-redirect";
 import Link from "next/link";
 import { connection } from "next/server";
 import { ArrowLeft, Film, TriangleAlert } from "lucide-react";
 import { AppSidebar } from "../../../components/layout/app-sidebar";
 import { GitHubNameplate } from "../../../components/layout/github-nameplate";
 import { ForeignWorkImportForm } from "../../../features/acquisition/components/foreign-work-import-form";
-import { getForeignWorkReview } from "../../../lib/workflow-runtime";
+import { getCurrentAccountId, getForeignWorkReview, UNAUTHENTICATED_ACCOUNT_ID } from "../../../lib/workflow-runtime";
 
 function ForeignWorkPageInner({
   params,
@@ -36,6 +37,10 @@ function ForeignWorkPageInner({
 
 async function ForeignWorkReview({ params }: { params: Promise<{ workflowRunId: string }> }) {
   await connection();
+  const accountId = await getCurrentAccountId();
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    return <ClientLoginRedirect />;
+  }
   const { workflowRunId } = await params;
   const review = await getForeignWorkReview(decodeURIComponent(workflowRunId));
 

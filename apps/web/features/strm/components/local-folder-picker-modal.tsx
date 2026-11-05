@@ -13,6 +13,7 @@ export interface LocalFolderPickerModalProps {
 interface DirEntry {
   name: string;
   fullPath: string;
+  configPath?: string;
   isDriveRoot?: boolean;
 }
 
@@ -52,9 +53,7 @@ export function LocalFolderPickerModal({
       setParentPath(data.parentPath || null);
       setCanWrite(Boolean(data.canWrite));
       setDirectories(data.directories || []);
-      if (data.currentPath) {
-        setSelectedPath(data.currentPath);
-      }
+      if (data.currentPath) setSelectedPath(data.currentPath);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -89,14 +88,37 @@ export function LocalFolderPickerModal({
   };
 
   const handlePreset = (preset: string) => {
-    setSelectedPath(preset);
-    onSelect(preset);
-    onClose();
+    void (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const res = await fetch("/api/system/fs-browse", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "ensure-output", outputPath: preset.replace(/^\/app\//, "") }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "STRM 输出目录不可用");
+        setSelectedPath(preset);
+        onSelect(data.configPath || preset.replace(/^\/app\//, ""));
+        onClose();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setLoading(false);
+      }
+    })();
   };
 
   const handleConfirm = () => {
     if (selectedPath) {
-      onSelect(selectedPath);
+      const relativePath = selectedPath.replace(/\\/g, "/");
+      const dataRoot = currentPath.replace(/\\/g, "/").replace(/\/$/, "");
+      const selected = directories.find((dir) => dir.fullPath === selectedPath);
+      const configPath = selected?.configPath ?? (dataRoot.includes("/data")
+        ? `${dataRoot.slice(dataRoot.lastIndexOf("/data"))}/${relativePath.split("/").pop()}`
+        : relativePath);
+      onSelect(configPath);
     }
     onClose();
   };
@@ -122,18 +144,26 @@ export function LocalFolderPickerModal({
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={() => handlePreset("/data/strm/movies")}
+            onClick={() => handlePreset("/app/data/strm/movies")}
             style={{ fontSize: "0.75rem", background: "rgba(59, 130, 246, 0.15)", color: "#60a5fa" }}
           >
-            Docker 电影 (/data/strm/movies)
+            电影 (/app/data/strm/movies)
           </button>
           <button
             type="button"
             className="btn btn-ghost btn-sm"
-            onClick={() => handlePreset("/data/strm/tv")}
+            onClick={() => handlePreset("/app/data/strm/tv")}
             style={{ fontSize: "0.75rem", background: "rgba(168, 85, 247, 0.15)", color: "#c084fc" }}
           >
-            Docker 剧集 (/data/strm/tv)
+            剧集 (/app/data/strm/tv)
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => handlePreset("/app/data/strm/anime")}
+            style={{ fontSize: "0.75rem", background: "rgba(168, 85, 247, 0.15)", color: "#c084fc" }}
+          >
+            动漫 (/app/data/strm/anime)
           </button>
         </div>
 

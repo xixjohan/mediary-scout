@@ -24,3 +24,7 @@ export * from "./media-request.js";
 export * from "./storage-scope-strategy.js";
 export * from "./user-capability-adapter.js";
 export * from "./resource-meta-enricher.js";
+export * from "./workspace-resolution.js";
+export * from "./title-parse-chain.js";
+export * from "./reverse-scan-types.js";
+export * from "./media-kind-sniffer.js";

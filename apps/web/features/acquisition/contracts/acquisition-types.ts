@@ -5,6 +5,7 @@ export type CandidateTrackingRequestResult =
       status: "queued" | "already_running" | "already_tracked";
       workflowRunId: string | null;
       trackedSeasonId: string;
+      message?: string | undefined;
     }
   | {
       status: "unsupported";

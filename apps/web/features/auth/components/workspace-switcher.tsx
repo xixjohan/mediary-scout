@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { lastQueryKey, switcherTabHref, workspaceSection } from "@media-track/workflow/scope";
+import { WORKSPACE_COOKIE_NAME } from "@media-track/workflow";
 
 export interface WorkspaceTab {
   id: string;
@@ -33,13 +34,46 @@ function BrandMark({ provider, frozen }: { provider?: string | undefined; frozen
   );
 }
 
+function getClientWorkspaceCookie(): string | null {
+  if (typeof document === "undefined") return null;
+  try {
+    const match = document.cookie.match(new RegExp(`(?:^|; )${WORKSPACE_COOKIE_NAME}=([^;]*)`));
+    return match && match[1] ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveActiveSwitcherId(
+  tabs: WorkspaceTab[],
+  pathname: string,
+  searchW: string | null,
+  initialActiveId?: string | undefined,
+): string {
+  const primaryId = tabs[0]!.id;
+  const pathMatch = /^\/w\/([^/]+)/.exec(pathname);
+  if (pathMatch && tabs.some((tab) => tab.id === pathMatch[1])) return pathMatch[1]!;
+  if (searchW && tabs.some((tab) => tab.id === searchW)) return searchW;
+  if (initialActiveId && tabs.some((tab) => tab.id === initialActiveId)) return initialActiveId;
+  const cookieWorkspace = getClientWorkspaceCookie();
+  if (cookieWorkspace && tabs.some((tab) => tab.id === cookieWorkspace)) return cookieWorkspace;
+  return primaryId;
+}
+
 /**
- * 侧栏顶部网盘切换器(树模型,≥2 盘才显示)。当前盘从 pathname(/w/<id>)或全局页的
- * `?w` 解析,二者皆无 → primary(tabs[0])。切盘**保持当前 section**(搜索/订阅/
- * 通知/活动/设置),由 switcherTabHref 算去处;搜索页额外注入目标盘的记忆 query。
+ * 侧栏顶部网盘切换器(树模型,≥2 盘才显示)。
+ * 活跃盘决议链：
+ * PathMatch (/w/<id>) -> QueryParam (?w=) -> initialActiveId (服务端解析注入) -> ClientCookie -> primary(tabs[0])。
+ * 切盘**保持当前 section**(搜索/订阅/通知/活动/设置),由 switcherTabHref 算去处;搜索页额外注入目标盘的记忆 query。
  * 用原生 <details> 下拉,SSR 友好。
  */
-export function WorkspaceSwitcher({ tabs }: { tabs: WorkspaceTab[] }) {
+export function WorkspaceSwitcher({
+  tabs,
+  initialActiveId,
+}: {
+  tabs: WorkspaceTab[];
+  initialActiveId?: string | undefined;
+}) {
   const pathname = usePathname() ?? "/";
   const search = useSearchParams();
   const router = useRouter();
@@ -47,8 +81,7 @@ export function WorkspaceSwitcher({ tabs }: { tabs: WorkspaceTab[] }) {
     return null;
   }
   const primaryId = tabs[0]!.id;
-  const pathMatch = /^\/w\/([^/]+)/.exec(pathname);
-  const activeId = pathMatch ? pathMatch[1] : (search.get("w") ?? primaryId);
+  const activeId = resolveActiveSwitcherId(tabs, pathname, search.get("w"), initialActiveId);
   const current = tabs.find((tab) => tab.id === activeId) ?? tabs[0]!;
   const section = workspaceSection(pathname, search.get("tab"));
 
@@ -78,6 +111,11 @@ export function WorkspaceSwitcher({ tabs }: { tabs: WorkspaceTab[] }) {
               className={`ws-tab${tab.id === current.id ? " is-active" : ""}${tab.frozen ? " is-frozen" : ""}`}
               title={tab.frozen ? `${tab.label}（网盘掉线，去设置重新绑定）` : tab.label}
               onClick={(event) => {
+                try {
+                  document.cookie = `${WORKSPACE_COOKIE_NAME}=${encodeURIComponent(tab.id)}; path=/; max-age=2592000; SameSite=Lax`;
+                } catch {
+                  // ignore
+                }
                 // Search keeps the section AND restores the TARGET drive's last query
                 // (per-drive memory). Done on click (not in href) to avoid reading
                 // sessionStorage during render → SSR hydration mismatch.

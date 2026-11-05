@@ -7,7 +7,7 @@
  *  2. 【网络地址与敏感拓扑阻断】：拦截开发机私网特定 IP (10.126.*.*)、非标 SSH 端口、真实用户 Slug 与 CF Zone ID。
  *  3. 【硬编码密码与组网密钥阻断】：拦截 WEB_ADMIN_PASSWORD 真实密码、EasyTier network_secret 真实密钥。
  *  4. 【双输入适配器与极速增量支持】：支持 --staged 毫秒级增量扫描（用于 Git Hook），以及全量仓库扫描（用于 npm run gate）。
- *  5. 【白名单与基线机制】：内置 AGENT.md §7 标准规范占位符放行机制，支持 tools/gates/security-suppressions.json 基线。
+ *  5. 【白名单与基线机制】：内置 AGENTS.md §7 标准规范占位符放行机制，支持 tools/gates/security-suppressions.json 基线。
  */
 
 import fs from "node:fs";

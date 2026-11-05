@@ -1,6 +1,6 @@
 "use client";
 
-import { DownloadCloud, FolderPlus, RefreshCw, Search } from "lucide-react";
+import { Compass, DownloadCloud, FolderPlus, RefreshCw, Search } from "lucide-react";
 import type { ConnectedStorageView } from "../../../../lib/workflow-runtime";
 
 export function formatProviderLabel(provider: string): string {
@@ -30,6 +30,7 @@ interface StorageTopBarProps {
   actionBusy: boolean;
   onOpenCreate: () => void;
   onOpenOffline?: () => void;
+  onOpenScan?: () => void;
   onRefresh: () => void;
 }
 
@@ -43,6 +44,7 @@ export function StorageTopBar({
   actionBusy,
   onOpenCreate,
   onOpenOffline,
+  onOpenScan,
   onRefresh,
 }: StorageTopBarProps) {
   return (
@@ -100,6 +102,18 @@ export function StorageTopBar({
             title="添加磁力、HTTP链接或种子文件到网盘进行离线下载"
           >
             <DownloadCloud size={16} /> 离线下载
+          </button>
+        )}
+        {onOpenScan && (
+          <button
+            type="button"
+            className="storage-btn secondary"
+            onClick={onOpenScan}
+            disabled={loading || actionBusy}
+            title="一键扫描网盘已有影视，自动识别并恢复订阅"
+            style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
+          >
+            <Compass size={16} /> 扫描恢复订阅
           </button>
         )}
         <button

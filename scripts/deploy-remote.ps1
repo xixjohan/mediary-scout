@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("Dev", "Official")]
     [string]$Mode = "Dev",
@@ -361,12 +361,18 @@ try {
         Write-Step "2/5 [Dev] Building fast development image ($dockerImage) via Dockerfile.dev..."
         $gitSha = (& git rev-parse --short HEAD 2>$null)
         if (-not $gitSha) { $gitSha = "dev-$(Get-Date -Format 'yyyyMMddHHmmss')" }
+        # Direct mode: append timestamp so BUILD_COMMIT layer cache busts, new code gets rebuilt
+        if ($effectiveSync -eq "Direct") { $gitSha = "$gitSha-dirty-$(Get-Date -Format 'HHmmss')" }
 
         # 防御 CRLF：清洗工作区内可能的 \r 换行符
         Invoke-RemoteSsh "find $remoteWorkdir/scripts -name '*.sh' -exec sed -i 's/\r$//' {} + 2>/dev/null || true"
 
         $mirrorArg = if ($dockerMirror) { "--build-arg DOCKER_MIRROR=$dockerMirror" } else { "" }
-        $buildCmd = "docker build $mirrorArg --build-arg GIT_SHA=$gitSha -f $remoteWorkdir/Dockerfile.dev -t $dockerImage $remoteWorkdir"
+        $buildProxyArgs = ""
+        if ($httpProxy) { $buildProxyArgs += " --build-arg HTTP_PROXY=$httpProxy" }
+        if ($httpsProxy) { $buildProxyArgs += " --build-arg HTTPS_PROXY=$httpsProxy" }
+        if ($noProxy) { $buildProxyArgs += " --build-arg NO_PROXY=$noProxy" }
+        $buildCmd = "docker build $mirrorArg $buildProxyArgs --build-arg GIT_SHA=$gitSha -f $remoteWorkdir/Dockerfile.dev -t $dockerImage $remoteWorkdir"
         Invoke-RemoteSsh $buildCmd
         Write-Success "Development image built successfully!"
 
@@ -378,7 +384,7 @@ try {
         if ($httpsProxy) { $proxyFlags += " -e HTTPS_PROXY=$httpsProxy" }
         if ($noProxy) { $proxyFlags += " -e NO_PROXY=$noProxy" }
 
-        $devRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped -p ${targetPort}:3000 -v ${dataVolume}:/app/data -v ${remoteWorkdir}/apps/web/public:/app/apps/web/public -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl $proxyFlags $dockerImage"
+        $devRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -v ${remoteWorkdir}/apps/web/public:/app/apps/web/public -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl $proxyFlags $dockerImage"
         Invoke-RemoteSsh $devRunCmd
         Write-Success "Development container launched (Port $targetPort, Isolated volume $dataVolume)!"
 
@@ -453,7 +459,7 @@ try {
         if ($httpsProxy) { $proxyFlags += " -e HTTPS_PROXY=$httpsProxy" }
         if ($noProxy) { $proxyFlags += " -e NO_PROXY=$noProxy" }
 
-        $prodRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped -p ${targetPort}:3000 -v ${dataVolume}:/app/data -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl $proxyFlags $dockerImage"
+        $prodRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl $proxyFlags $dockerImage"
         Invoke-RemoteSsh $prodRunCmd
         Write-Success "Production container recreated!"
 

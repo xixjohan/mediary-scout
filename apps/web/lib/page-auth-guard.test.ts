@@ -79,6 +79,9 @@ describe("requirePageLogin", () => {
     vi.doMock("./workflow-runtime", () => ({
       SESSION_COOKIE_NAME: "mt_session",
       hasLoginPassword: vi.fn(async () => false),
+      resolveSessionAccountId: vi.fn(async (sess: string) => (sess === "invalid" ? null : "acct_default")),
+      getCurrentAccountId: vi.fn(async () => "acct_default"),
+      UNAUTHENTICATED_ACCOUNT_ID: "acct_unauthenticated",
     }));
   });
 
@@ -102,6 +105,20 @@ describe("requirePageLogin", () => {
     expect(redirect).toHaveBeenCalledWith("/login");
   });
 
+  it("首访无 cookie 但有 x-page-guarded 请求头 + 设了密码 + 无 session → redirect('/login')", async () => {
+    const rt = await import("./workflow-runtime");
+    vi.mocked(rt.hasLoginPassword).mockResolvedValue(true);
+    vi.doUnmock("next/headers");
+    vi.doMock("next/headers", () => ({
+      cookies: async () => ({
+        get: () => undefined,
+      }),
+      headers: async () => new Headers({ "x-page-guarded": "1" }),
+    }));
+    await (await load())();
+    expect(redirect).toHaveBeenCalledWith("/login");
+  });
+
   it("有守卫信号 + 设了密码 + 有 session → 不跳转", async () => {
     cookieStore.set("mt_page_guarded", "1");
     cookieStore.set("mt_session", "sess.sig");
@@ -109,6 +126,27 @@ describe("requirePageLogin", () => {
     vi.mocked(rt.hasLoginPassword).mockResolvedValue(true);
     await (await load())();
     expect(redirect).not.toHaveBeenCalled();
+  });
+
+  it("有守卫信号 + 设了密码 + 过期/失效的 session → 判定为未登录并跳转 /login", async () => {
+    cookieStore.set("mt_page_guarded", "1");
+    cookieStore.set("mt_session", "invalid");
+    const rt = await import("./workflow-runtime");
+    vi.mocked(rt.hasLoginPassword).mockResolvedValue(true);
+    vi.mocked(rt.resolveSessionAccountId).mockResolvedValue(null);
+    vi.mocked(rt.getCurrentAccountId).mockResolvedValue("acct_unauthenticated");
+    await (await load())();
+    expect(redirect).toHaveBeenCalledWith("/login");
+  });
+
+  it("有守卫信号 + 设了密码 + getCurrentAccountId 返回哨兵账号 → 判定为未登录并跳转 /login", async () => {
+    cookieStore.set("mt_page_guarded", "1");
+    cookieStore.set("mt_session", "any_session_token");
+    const rt = await import("./workflow-runtime");
+    vi.mocked(rt.hasLoginPassword).mockResolvedValue(true);
+    vi.mocked(rt.getCurrentAccountId).mockResolvedValue("acct_unauthenticated");
+    await (await load())();
+    expect(redirect).toHaveBeenCalledWith("/login");
   });
 
   it("无守卫信号（/login 自身）→ 不跳转，且不读密码状态（省一次 DB）", async () => {

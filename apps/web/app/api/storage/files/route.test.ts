@@ -79,6 +79,7 @@ describe("Storage Files API Routes", () => {
       const req = new NextRequest("http://localhost/api/storage/files?storageId=cs_1&dirId=dir_root");
       const res = await getFiles(req);
       expect(res.status).toBe(200);
+      expect(res.headers.get("Cache-Control")).toContain("no-store");
       const data = await res.json();
       expect(data.currentDirectoryId).toBe("dir_root");
       expect(fakeManager.listDirectory).toHaveBeenCalledWith("dir_root");

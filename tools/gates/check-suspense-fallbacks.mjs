@@ -8,7 +8,12 @@
  *      防止其挂载包含 await connection() 的 WorkspaceSwitcherLoader / AccountIdentityLoader；
  *   3. [No Async Loaders in Fallback] Fallback JSX 树内严禁挂载已知需要 await connection() 的异步 Loader 组件；
  *   4. [Dynamic Hole Declaration] 页面级异步组件（如 SearchResults / LibrarySurface / NotificationFeed 等）
- *      在读取 dynamic API (new Date() / SQLite / TMDB) 时必须声明 await connection()，确保 PPR 静态外壳与动态流式空洞契约一致。
+ *      在读取 dynamic API (new Date() / SQLite / TMDB) 时必须声明 await connection()，确保 PPR 静态外壳与动态流式空洞契约一致；
+ *   5. [No Redirect In Suspense Child] 挂载于 <Suspense> 内部的子组件严禁在渲染主体内调用 redirect() 抛出 NEXT_REDIRECT，
+ *      防止 React 19 SSR 降级为客户端错误并触发 Turbopack Fast Refresh 的 window.location.reload() 无限循环；
+ *   6. [Proxy Matcher Static Assets Excluded] apps/web/proxy.ts 的 matcher 必须严格排除静态媒体资源与元数据端点
+ *      (icon.svg, apple-icon, manifest, .svg, .png 等)，杜绝浏览器抓取图标时被 307 重定向至 /login 引发网络风暴；
+ *   7. [PageLoginGuard Safe Redirect Invariant] PageLoginGuard 必须使用 PageLoginRedirect 客户端跳转组件，严禁调用 redirect()。
  *
  * 退出码: 0 = 通过, 1 = 发现违规 (打印文件及行号与重构指引)
  */
@@ -134,30 +139,32 @@ export function analyzeSuspenseFallbacks(filePath, source) {
     node.forEachChild(visitShellFunctions);
   }
 
-  // 2. 扫描本文件定义的所有 async 函数（函数声明或变量声明）
+  // 2. 扫描本文件定义的所有函数（用于静态守卫与连接契约分析）
   const asyncFunctionsInFile = new Map();
-  function collectAsyncFunctions(node) {
+  const allFunctionsInFile = new Map();
+  function collectFunctions(node) {
     if (ts.isFunctionDeclaration(node) && node.name) {
       const isAsync = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword);
       if (isAsync) {
         asyncFunctionsInFile.set(node.name.getText(), node);
       }
+      allFunctionsInFile.set(node.name.getText(), node);
     } else if (ts.isVariableStatement(node)) {
       for (const decl of node.declarationList.declarations) {
         if (decl.name && ts.isIdentifier(decl.name) && decl.initializer) {
           const init = decl.initializer;
-          if (
-            (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) &&
-            init.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)
-          ) {
-            asyncFunctionsInFile.set(decl.name.getText(), init);
+          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+            if (init.modifiers?.some((m) => m.kind === ts.SyntaxKind.AsyncKeyword)) {
+              asyncFunctionsInFile.set(decl.name.getText(), init);
+            }
+            allFunctionsInFile.set(decl.name.getText(), init);
           }
         }
       }
     }
-    node.forEachChild(collectAsyncFunctions);
+    node.forEachChild(collectFunctions);
   }
-  sf.forEachChild(collectAsyncFunctions);
+  sf.forEachChild(collectFunctions);
 
   // 辅助函数：判断 AST 节点及其后代中是否包含 await connection() 调用
   function hasAwaitConnectionCall(fnNode) {
@@ -172,6 +179,27 @@ export function analyzeSuspenseFallbacks(filePath, source) {
             found = true;
             return;
           }
+        }
+      }
+      n.forEachChild(checkNode);
+    }
+    const body = fnNode.body;
+    if (body) {
+      body.forEachChild(checkNode);
+    }
+    return found;
+  }
+
+  // 辅助函数：判断 AST 节点及其后代中是否直接调用 redirect()
+  function hasRedirectCall(fnNode) {
+    let found = false;
+    function checkNode(n) {
+      if (found) return;
+      if (ts.isCallExpression(n)) {
+        const calleeText = n.expression.getText();
+        if (calleeText === "redirect") {
+          found = true;
+          return;
         }
       }
       n.forEachChild(checkNode);
@@ -241,6 +269,19 @@ export function analyzeSuspenseFallbacks(filePath, source) {
                   message: `异步页面动态空洞组件 <${childTag} /> 由 <Suspense> 挂载，必须在函数体内显式声明 'await connection()'，切断预渲染静态阶段以防止 new Date() / 会话鉴权触发 Blocking Route 异常。`,
                 });
               }
+
+              // 检查本文件挂载在 Suspense 内部的组件是否违规直接调用 redirect()
+              const fnNode = allFunctionsInFile.get(childTag);
+              if (fnNode && hasRedirectCall(fnNode)) {
+                const { line, character } = sf.getLineAndCharacterOfPosition(childNode.getStart());
+                violations.push({
+                  file: relPath,
+                  line: line + 1,
+                  column: character + 1,
+                  rule: "No-Suspense-Child-Redirect",
+                  message: `组件 <${childTag} /> 挂载于 <Suspense> 内部，严禁直接调用 redirect()。在 React 19 PPR 流式空洞中抛出 NEXT_REDIRECT 会破坏 SSR 渲染流，并在开发模式下触发 Turbopack HMR window.location.reload() 无限死循环。`,
+                });
+              }
             }
             if (ts.isJsxElement(childNode) || ts.isJsxFragment(childNode)) {
               childNode.children.forEach(checkSuspenseChildren);
@@ -255,6 +296,157 @@ export function analyzeSuspenseFallbacks(filePath, source) {
 
   sf.forEachChild(visitShellFunctions);
   sf.forEachChild(visitSuspenseTags);
+
+  return violations;
+}
+
+/**
+ * 校验 apps/web/proxy.ts 的 matcher 配置是否完全排除静态资源与元数据端点
+ * @param {string} filePath
+ * @param {string} source
+ * @returns {Array<{ file: string, line: number, column: number, rule: string, message: string }>}
+ */
+export function analyzeProxyMatcher(filePath, source) {
+  const violations = [];
+  const sf = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const relPath = relative(root, filePath).replace(/\\/g, "/");
+
+  let foundMatcher = false;
+  let matcherString = "";
+
+  sf.forEachChild(function check(node) {
+    if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        if (decl.name.getText() === "config" && decl.initializer && ts.isObjectLiteralExpression(decl.initializer)) {
+          for (const prop of decl.initializer.properties) {
+            if (ts.isPropertyAssignment(prop) && prop.name.getText() === "matcher") {
+              foundMatcher = true;
+              if (ts.isArrayLiteralExpression(prop.initializer)) {
+                matcherString = prop.initializer.elements
+                  .map((el) => (ts.isStringLiteral(el) ? el.text : ""))
+                  .join(" ");
+              } else if (ts.isStringLiteral(prop.initializer)) {
+                matcherString = prop.initializer.text;
+              }
+            }
+          }
+        }
+      }
+    }
+    node.forEachChild(check);
+  });
+
+  if (!foundMatcher) {
+    violations.push({
+      file: relPath,
+      line: 1,
+      column: 1,
+      rule: "Proxy-Matcher-Missing",
+      message: "apps/web/proxy.ts 必须导出包含 matcher 的 config 对象。",
+    });
+    return violations;
+  }
+
+  // 必须排除的关键模式：
+  // 1. icon.svg - Next.js 16 自动注入的动态/静态元数据图标
+  // 2. apple-icon - Apple 设备图标
+  // 3. manifest - PWA manifest
+  // 4. 常见静态媒体后缀 (ico, png, svg, jpg)
+  const requiredPatterns = [
+    { pattern: /icon\.svg/, name: "icon.svg" },
+    { pattern: /apple-icon/, name: "apple-icon" },
+    { pattern: /manifest/, name: "manifest" },
+    { pattern: /(?:ico|png|svg|jpg)/, name: "静态媒体格式后缀 (ico, png, svg, jpg)" },
+  ];
+
+  for (const req of requiredPatterns) {
+    if (!req.pattern.test(matcherString)) {
+      violations.push({
+        file: relPath,
+        line: 1,
+        column: 1,
+        rule: "Proxy-Matcher-Static-Assets-Excluded",
+        message: `apps/web/proxy.ts 的 matcher 必须显式排除 ${req.name}，防止浏览器拉取静态资产或元数据时被 307 重定向至 /login 引发死循环与并发连接风暴。`,
+      });
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * 校验 apps/web/platform/next-context/page-auth-guard.ts 内的守卫组件规范
+ * @param {string} filePath
+ * @param {string} source
+ * @returns {Array<{ file: string, line: number, column: number, rule: string, message: string }>}
+ */
+export function analyzePageAuthGuard(filePath, source) {
+  const violations = [];
+  const sf = ts.createSourceFile(
+    filePath,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS
+  );
+  const relPath = relative(root, filePath).replace(/\\/g, "/");
+
+  sf.forEachChild(function check(node) {
+    if (
+      (ts.isFunctionDeclaration(node) && node.name?.getText() === "PageLoginGuard") ||
+      (ts.isVariableStatement(node) &&
+        node.declarationList.declarations.some((d) => d.name.getText() === "PageLoginGuard"))
+    ) {
+      let callsRedirect = false;
+      let rendersPageLoginRedirect = false;
+
+      function inspectGuard(n) {
+        if (ts.isCallExpression(n)) {
+          const callee = n.expression.getText();
+          if (callee === "redirect" || callee === "requirePageLogin") {
+            callsRedirect = true;
+          }
+        }
+        if (ts.isIdentifier(n) && n.getText() === "PageLoginRedirect") {
+          rendersPageLoginRedirect = true;
+        }
+        n.forEachChild(inspectGuard);
+      }
+
+      node.forEachChild(inspectGuard);
+
+      if (callsRedirect) {
+        const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart());
+        violations.push({
+          file: relPath,
+          line: line + 1,
+          column: character + 1,
+          rule: "No-Suspense-Redirect-In-Guard",
+          message:
+            "PageLoginGuard 在各页面均被包裹在 <Suspense> 内部。严禁调用 redirect() 或 requirePageLogin() 抛出 NEXT_REDIRECT 异常，否则会导致 React 19 SSR 降级与 Turbopack HMR window.location.reload() 无限循环。必须使用 PageLoginRedirect 客户端跳转组件。",
+        });
+      }
+
+      if (!rendersPageLoginRedirect) {
+        const { line, character } = sf.getLineAndCharacterOfPosition(node.getStart());
+        violations.push({
+          file: relPath,
+          line: line + 1,
+          column: character + 1,
+          rule: "PageLoginGuard-Must-Use-Client-Redirect",
+          message:
+            "PageLoginGuard 必须在需要重定向时返回 PageLoginRedirect()，确保向客户端下发安全的 meta refresh / replace 跳转节点。",
+        });
+      }
+    }
+    node.forEachChild(check);
+  });
 
   return violations;
 }
@@ -277,12 +469,40 @@ export function runCheck() {
     }
   }
 
+  // 检查 apps/web/proxy.ts
+  const proxyFile = join(root, "apps/web/proxy.ts");
+  if (existsSync(proxyFile)) {
+    const proxySource = readFileSync(proxyFile, "utf8");
+    const proxyViolations = analyzeProxyMatcher(proxyFile, proxySource);
+    if (proxyViolations.length > 0) {
+      totalViolations += proxyViolations.length;
+      for (const v of proxyViolations) {
+        console.error(`  ❌ [${v.rule}] ${v.file}:${v.line}:${v.column}`);
+        console.error(`     ${v.message}\n`);
+      }
+    }
+  }
+
+  // 检查 apps/web/platform/next-context/page-auth-guard.ts
+  const guardFile = join(root, "apps/web/platform/next-context/page-auth-guard.ts");
+  if (existsSync(guardFile)) {
+    const guardSource = readFileSync(guardFile, "utf8");
+    const guardViolations = analyzePageAuthGuard(guardFile, guardSource);
+    if (guardViolations.length > 0) {
+      totalViolations += guardViolations.length;
+      for (const v of guardViolations) {
+        console.error(`  ❌ [${v.rule}] ${v.file}:${v.line}:${v.column}`);
+        console.error(`     ${v.message}\n`);
+      }
+    }
+  }
+
   if (totalViolations > 0) {
-    console.error(`💥 [gate:suspense] 检查失败：发现 ${totalViolations} 处 Suspense Fallback 或骨架规范违规！`);
+    console.error(`💥 [gate:suspense] 检查失败：发现 ${totalViolations} 处 Suspense / Proxy / 守卫规范违规！`);
     return 1;
   }
 
-  console.log(`✅ [gate:suspense] 检查通过：所有页面 Suspense Fallback 均为纯静态骨架，PPR 空洞声明严格一致！\n`);
+  console.log(`✅ [gate:suspense] 检查通过：所有页面 Suspense Fallback 均为纯静态骨架，PPR 空洞声明、Proxy 静态资源排除与 PageLoginGuard 客户端跳转契约严格一致！\n`);
   return 0;
 }
 

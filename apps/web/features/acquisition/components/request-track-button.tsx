@@ -17,6 +17,7 @@ import { isDemoModeClient } from "../../../lib/demo-mode";
 import { DemoAcquirePlayback } from "./demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import { useDemoAcquiredTmdbIds } from "../../../lib/use-demo-session";
+import { SubscriptionModal } from "./subscription-modal";
 
 /**
  * Acquire control for a movie candidate. Visual states, kept consistent with
@@ -32,6 +33,9 @@ import { useDemoAcquiredTmdbIds } from "../../../lib/use-demo-session";
 export function RequestTrackButton({
   candidateId,
   tmdbId,
+  title,
+  year,
+  posterPath,
   actionState = "can_request",
   label = "获取",
   disabled = false,
@@ -42,6 +46,9 @@ export function RequestTrackButton({
   /** Production: the candidate's tmdbId, so the in-progress badge can match this
    *  title's live run in /api/activity and show inline progress. */
   tmdbId?: number;
+  title?: string;
+  year?: number;
+  posterPath?: string | null;
   actionState?: SearchActionState;
   label?: string;
   disabled?: boolean;
@@ -54,6 +61,7 @@ export function RequestTrackButton({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
+  const [modalOpen, setModalOpen] = useState(false);
   // Read-only demo: clicking 获取 plays a scripted, client-only acquisition (no
   // server action, which is gated server-side anyway).
   const demo = isDemoModeClient();
@@ -122,15 +130,24 @@ export function RequestTrackButton({
     );
   }
 
+  const effectiveTitle = title ?? demoEntry?.title ?? (tmdbId ? `TMDB ${tmdbId}` : "电影作品");
+  const effectiveYear = year ?? demoEntry?.year ?? 0;
+  const effectivePoster = posterPath ?? demoEntry?.posterPath;
+
   return (
     <div className="request-track">
       <button
         className="primary-button"
         type="button"
         disabled={isPending}
-        onClick={() => {
+        onClick={(e) => {
           if (demo) {
             setDemoPlaying(true);
+            return;
+          }
+          // Shift+点击直接极速获取，默认常规点击弹出 MoviePilot 式订阅策略配置浮层
+          if (tmdbId && !e.shiftKey) {
+            setModalOpen(true);
             return;
           }
           startTransition(async () => {
@@ -162,6 +179,24 @@ export function RequestTrackButton({
       {/* A non-queued result (e.g. unsupported / failed) fell through to the
           requestable button — surface its reason instead of swallowing it. */}
       {result ? <p className="request-result">{result.message}</p> : null}
+
+      {modalOpen && tmdbId ? (
+        <SubscriptionModal
+          isOpen={modalOpen}
+          onClose={() => setModalOpen(false)}
+          tmdbId={tmdbId}
+          title={effectiveTitle}
+          year={effectiveYear}
+          mediaType="movie"
+          posterPath={effectivePoster}
+          initialStorageId={storageId}
+          initialTracked={actionState === "already_tracked"}
+          onSuccess={(res) => {
+            setResult({ status: res.status as never, message: res.message });
+            router.refresh();
+          }}
+        />
+      ) : null}
     </div>
   );
 }

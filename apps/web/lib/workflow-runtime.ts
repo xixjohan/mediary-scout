@@ -471,21 +471,19 @@ export function notificationWindowSince(): string {
   return new Date(Date.now() - NOTIFICATION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 }
 
-export async function getActiveWorkspaceScope(storageId?: string): Promise<WorkflowScope> {
-  const accountId = await getCurrentAccountId();
-  const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter((s) =>
-    isRegisteredStorageProvider(s.provider),
-  );
-  return { accountId, ...resolveWorkspaceFromParam(storages, storageId) };
-}
+import {
+  getActiveWorkspaceCookie,
+  getActiveWorkspaceScope,
+  resolveGlobalWorkspace,
+  resolvePreferredWorkspaceRedirect,
+} from "./runtime/workspace-resolution-runtime";
 
-export async function resolveGlobalWorkspace(w: string | undefined) {
-  const accountId = await getCurrentAccountId();
-  const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter((s) =>
-    isRegisteredStorageProvider(s.provider),
-  );
-  return { accountId, ...resolveWorkspaceFromParam(storages, w) };
-}
+export {
+  getActiveWorkspaceCookie,
+  getActiveWorkspaceScope,
+  resolveGlobalWorkspace,
+  resolvePreferredWorkspaceRedirect,
+};
 
 export async function untrackTrackedTitle(
   tmdbId: number,

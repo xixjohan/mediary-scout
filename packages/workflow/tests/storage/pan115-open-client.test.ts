@@ -12,6 +12,7 @@ describe("Pan115OpenClient", () => {
     expect(classify115OpenError(40140116).isFatal).toBe(true);
     expect(classify115OpenError(40140119).isFatal).toBe(true);
     expect(classify115OpenError(40140120).isFatal).toBe(true);
+    expect(classify115OpenError(40140137).isFatal).toBe(true);
     expect(classify115OpenError(401).isFatal).toBe(true);
 
     // 瞬态错误
@@ -69,6 +70,201 @@ describe("Pan115OpenClient", () => {
     expect(client.getCredentials().accessToken).toBe("new_valid_access_token");
   });
 
+  it("retries persistence before using a rotated token and does not refresh it again", async () => {
+    let refreshCalls = 0;
+    const mockFetch = vi.fn(async () => {
+      refreshCalls++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          state: true,
+          code: 0,
+          data: {
+            access_token: "rotated-access-token",
+            refresh_token: "rotated-refresh-token",
+            expires_in: 7200,
+          },
+        }),
+      } as unknown as Response;
+    });
+    const persist = vi.fn()
+      .mockRejectedValueOnce(new Error("database unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const client = new Pan115OpenClient({
+      credentials: {
+        accessToken: "expired-access-token",
+        refreshToken: "old-refresh-token",
+        expiresAt: Date.now() - 1000,
+      },
+      fetchImpl: mockFetch as any,
+      onCredentialsPersist: persist,
+    });
+
+    await expect(client.ensureValidToken()).rejects.toThrow("database unavailable");
+    await expect(client.ensureValidToken()).resolves.toBe("rotated-access-token");
+
+    expect(refreshCalls).toBe(1);
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenLastCalledWith(expect.objectContaining({
+      refreshToken: "rotated-refresh-token",
+    }));
+  });
+
+  it("uses credentials reloaded by the cross-process coordinator before redeeming a stale token", async () => {
+    const fetchImpl = vi.fn();
+    const currentCredentials = {
+      accessToken: "already-rotated-access-token",
+      refreshToken: "already-rotated-refresh-token",
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    };
+    const coordinateTokenRefresh = vi.fn(async (refresh: (credentials: typeof currentCredentials) => Promise<typeof currentCredentials>) =>
+      refresh(currentCredentials),
+    );
+    const client = new Pan115OpenClient({
+      credentials: {
+        accessToken: "stale-access-token",
+        refreshToken: "stale-refresh-token",
+        expiresAt: Date.now() - 1000,
+      },
+      fetchImpl: fetchImpl as any,
+      coordinateTokenRefresh,
+    });
+
+    await expect(client.ensureValidToken()).resolves.toBe("already-rotated-access-token");
+    expect(coordinateTokenRefresh).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(client.getCredentials()).toMatchObject(currentCredentials);
+  });
+
+  it("adopts a newer persisted rotation after a pending stale write is rejected", async () => {
+    const expired = {
+      accessToken: "expired-access-token",
+      refreshToken: "expired-refresh-token",
+      expiresAt: 0,
+    };
+    const latest = {
+      accessToken: "newer-persisted-access-token",
+      refreshToken: "newer-persisted-refresh-token",
+      expiresAt: Date.now() + 60 * 60 * 1000,
+    };
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        state: true,
+        code: 0,
+        data: { access_token: "stale-rotated-access", refresh_token: "stale-rotated-refresh", expires_in: 7200 },
+      }),
+    }) as unknown as Response);
+    const persist = vi.fn().mockRejectedValue(new Error("rotation was superseded"));
+    let coordinatorCalls = 0;
+    const coordinateTokenRefresh = vi.fn(async (refresh: (credentials: typeof expired) => Promise<typeof expired>) => {
+      coordinatorCalls++;
+      return refresh(coordinatorCalls === 1 ? expired : latest);
+    });
+    const client = new Pan115OpenClient({
+      credentials: expired,
+      fetchImpl: fetchImpl as any,
+      onCredentialsPersist: persist,
+      coordinateTokenRefresh,
+    });
+
+    await expect(client.ensureValidToken()).rejects.toThrow("rotation was superseded");
+    await expect(client.ensureValidToken()).resolves.toBe("newer-persisted-access-token");
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(client.getCredentials()).toMatchObject(latest);
+  });
+
+  it("coalesces refreshes across client instances sharing the same refresh token", async () => {
+    let refreshCalls = 0;
+    const mockFetch = vi.fn(async () => {
+      refreshCalls++;
+      await new Promise((r) => setTimeout(r, 20));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          state: true,
+          code: 0,
+          data: {
+            access_token: "shared-access-token",
+            refresh_token: "shared-refresh-token",
+            expires_in: 7200,
+          },
+        }),
+      } as unknown as Response;
+    });
+    const credentials = {
+      accessToken: "expired-access-token",
+      refreshToken: "same-old-refresh-token",
+      expiresAt: Date.now() - 1000,
+    };
+    const firstPersist = vi.fn();
+    const secondPersist = vi.fn();
+    const firstClient = new Pan115OpenClient({
+      credentials,
+      fetchImpl: mockFetch as any,
+      onCredentialsPersist: firstPersist,
+    });
+    const secondClient = new Pan115OpenClient({
+      credentials,
+      fetchImpl: mockFetch as any,
+      onCredentialsPersist: secondPersist,
+    });
+
+    await expect(Promise.all([
+      firstClient.ensureValidToken(),
+      secondClient.ensureValidToken(),
+    ])).resolves.toEqual(["shared-access-token", "shared-access-token"]);
+
+    expect(refreshCalls).toBe(1);
+    expect(firstPersist).toHaveBeenCalledWith(expect.objectContaining({ refreshToken: "shared-refresh-token" }));
+    expect(secondPersist).toHaveBeenCalledWith(expect.objectContaining({ refreshToken: "shared-refresh-token" }));
+  });
+
+  it("reuses a recent rotation when a stale client instance starts after the first refresh", async () => {
+    let refreshCalls = 0;
+    const mockFetch = vi.fn(async () => {
+      refreshCalls++;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          state: true,
+          code: 0,
+          data: {
+            access_token: "late-access-token",
+            refresh_token: "late-refresh-token",
+            expires_in: 7200,
+          },
+        }),
+      } as unknown as Response;
+    });
+    const staleCredentials = {
+      accessToken: "late-old-access",
+      refreshToken: "late-old-refresh",
+      expiresAt: Date.now() - 1000,
+    };
+    const firstClient = new Pan115OpenClient({
+      credentials: staleCredentials,
+      fetchImpl: mockFetch as any,
+      onCredentialsPersist: vi.fn(),
+    });
+    const lateClientPersist = vi.fn();
+    const lateClient = new Pan115OpenClient({
+      credentials: staleCredentials,
+      fetchImpl: mockFetch as any,
+      onCredentialsPersist: lateClientPersist,
+    });
+
+    await expect(firstClient.ensureValidToken()).resolves.toBe("late-access-token");
+    await expect(lateClient.ensureValidToken()).resolves.toBe("late-access-token");
+
+    expect(refreshCalls).toBe(1);
+    expect(lateClientPersist).toHaveBeenCalledWith(expect.objectContaining({ refreshToken: "late-refresh-token" }));
+  });
+
   it("throws fatal Pan115OpenAuthError when refresh_token is revoked or invalid", async () => {
     const mockFetch = vi.fn(async () => {
       return {
@@ -92,6 +288,29 @@ describe("Pan115OpenClient", () => {
     });
 
     await expect(client.ensureValidToken()).rejects.toThrowError(Pan115OpenAuthError);
+  });
+
+  it("does not retry refresh_token-invalid error 40140137", async () => {
+    const mockFetch = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        state: false,
+        code: 40140137,
+        message: "refresh_token is invalid",
+      }),
+    }) as unknown as Response);
+    const client = new Pan115OpenClient({
+      credentials: {
+        accessToken: "expired_access_token",
+        refreshToken: "revoked_refresh_token",
+        expiresAt: 0,
+      },
+      fetchImpl: mockFetch as any,
+    });
+
+    await expect(client.ensureValidToken()).rejects.toThrow("40140137");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it("fetches file list with high limit and formats items correctly", async () => {

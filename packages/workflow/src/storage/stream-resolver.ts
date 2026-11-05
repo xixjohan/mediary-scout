@@ -1,6 +1,6 @@
 import { SingleFlight } from "../strm/single-flight.js";
 import { Pan115CookieClient } from "./pan115-cookie-client.js";
-import { Pan115OpenClient } from "./pan115-open-client.js";
+import { Pan115OpenClient, type Pan115TokenRefreshCoordinator } from "./pan115-open-client.js";
 import { isPan115OpenOAuthValid, type Pan115OpenOAuthCredentials } from "./account-credentials.js";
 import { withBrandPacing } from "./brand-pacing.js";
 
@@ -57,6 +57,10 @@ export interface StorageCredentialsInfo {
   cookie?: string | undefined;
   credential?: Record<string, unknown> | null | undefined;
   status?: string | undefined;
+  persistOpenOAuthCredentials?:
+    | ((credentials: Pan115OpenOAuthCredentials) => Promise<void> | void)
+    | undefined;
+  coordinateOpenTokenRefresh?: Pan115TokenRefreshCoordinator | undefined;
 }
 
 export type StorageCredentialLookup = (storageId: string) => Promise<StorageCredentialsInfo | null>;
@@ -75,47 +79,73 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
     private readonly _fallback?: StorageStreamResolver | undefined,
   ) {}
 
-  private async resolvePan115Stream(
+  private getPan115OpenClient(
+    storageId: string,
+    credentials: Pan115OpenOAuthCredentials,
+    persistCredentials: StorageCredentialsInfo["persistOpenOAuthCredentials"],
+    coordinateTokenRefresh: StorageCredentialsInfo["coordinateOpenTokenRefresh"],
+  ): Pan115OpenClient {
+    let client = this._pan115OpenClients.get(storageId);
+    const cached = client?.getCredentials();
+    const matchesPersisted =
+      cached?.accessToken === credentials.accessToken &&
+      cached?.refreshToken === credentials.refreshToken &&
+      cached?.expiresAt === credentials.expiresAt;
+    const hasUnpersistedRotation =
+      client?.hasPendingCredentialPersistence === true &&
+      cached !== undefined &&
+      cached.expiresAt > credentials.expiresAt;
+    if (!client || (!matchesPersisted && !hasUnpersistedRotation)) {
+      client = new Pan115OpenClient({
+        credentials,
+        onCredentialsPersist: persistCredentials,
+        coordinateTokenRefresh,
+      });
+      this._pan115OpenClients.set(storageId, client);
+    }
+    return client;
+  }
+
+  private async resolvePan115OpenStream(
     creds: StorageCredentialsInfo,
     input: ResolveStreamInput,
-  ): Promise<ResolvedStream> {
+  ): Promise<ResolvedStream | null> {
     const openOAuth = (creds.credential as Record<string, unknown> | undefined)?.openOAuth as
       | Pan115OpenOAuthCredentials
       | undefined;
+    if (!isPan115OpenOAuthValid(openOAuth) || !input.pickCode) return null;
 
-    // 1. 优先尝试 115 开放平台 (Open API) 原生直链
-    if (isPan115OpenOAuthValid(openOAuth) && input.pickCode) {
-      try {
-        let openClient = this._pan115OpenClients.get(input.storageId);
-        if (!openClient) {
-          openClient = new Pan115OpenClient({ credentials: openOAuth! });
-          this._pan115OpenClients.set(input.storageId, openClient);
-        }
-        const downloadInput: { pickCode: string; userAgent?: string } = {
-          pickCode: input.pickCode,
-        };
-        if (input.userAgent !== undefined) {
-          downloadInput.userAgent = input.userAgent;
-        }
-        const res = await openClient.getDownloadUrl(downloadInput);
-
-        return {
-          url: res.url,
-          deliveryMode: "redirect",
-          headers: {
-            "User-Agent":
-              res.userAgent ||
-              input.userAgent ||
-              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-          },
-          expirationSeconds: 7200,
-        };
-      } catch (err) {
-        console.warn(`[ProductionStorageStreamResolver] 115 Open API直链解析失败，尝试降级回Cookie:`, err);
-      }
+    try {
+      const client = this.getPan115OpenClient(
+        input.storageId,
+        openOAuth!,
+        creds.persistOpenOAuthCredentials,
+        creds.coordinateOpenTokenRefresh,
+      );
+      const downloadInput: { pickCode: string; userAgent?: string } = { pickCode: input.pickCode };
+      if (input.userAgent !== undefined) downloadInput.userAgent = input.userAgent;
+      const result = await client.getDownloadUrl(downloadInput);
+      return {
+        url: result.url,
+        deliveryMode: "redirect",
+        headers: {
+          "User-Agent":
+            result.userAgent ||
+            input.userAgent ||
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        },
+        expirationSeconds: 7200,
+      };
+    } catch (err) {
+      console.warn(`[ProductionStorageStreamResolver] 115 Open API直链解析失败，尝试降级回Cookie:`, err);
+      return null;
     }
+  }
 
-    // 2. 降级或默认: 走 Cookie Client 直链解析
+  private async resolvePan115CookieStream(
+    creds: StorageCredentialsInfo,
+    input: ResolveStreamInput,
+  ): Promise<ResolvedStream> {
     const cookie = creds.cookie?.trim();
     if (!cookie) {
       throw new Error(`PAN115_CREDENTIAL_MISSING: 存储驱动 ${input.storageId} 缺少有效 Cookie 凭据`);
@@ -124,7 +154,6 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
     let client = this._pan115CookieClients.get(input.storageId);
     if (!client) {
       const rawClient = new Pan115CookieClient({ cookie });
-      // 降级使用 115 漏桶限速器 (1.2s/发)，避免并发探测击穿 Cookie 端点触发 115 风控
       client = withBrandPacing(rawClient, "pan115", {
         clock: () => Date.now(),
         sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -132,14 +161,13 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
       this._pan115CookieClients.set(input.storageId, client);
     }
 
-    const res = await client.getDownloadUrl({
+    const result = await client.getDownloadUrl({
       fileId: input.fileId,
       ...(input.pickCode !== undefined ? { pickCode: input.pickCode } : {}),
       ...(input.userAgent !== undefined ? { userAgent: input.userAgent } : {}),
     });
-
     return {
-      url: res.url,
+      url: result.url,
       deliveryMode: "redirect",
       headers: {
         "User-Agent":
@@ -148,6 +176,14 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
       },
       expirationSeconds: 7200,
     };
+  }
+
+  private async resolvePan115Stream(
+    creds: StorageCredentialsInfo,
+    input: ResolveStreamInput,
+  ): Promise<ResolvedStream> {
+    const openStream = await this.resolvePan115OpenStream(creds, input);
+    return openStream ?? this.resolvePan115CookieStream(creds, input);
   }
 
   async resolveStream(input: ResolveStreamInput): Promise<ResolvedStream> {

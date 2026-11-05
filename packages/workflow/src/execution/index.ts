@@ -21,3 +21,4 @@ export * from "./candidate-selector.js";
 export * from "./subscription-policy.js";
 export * from "./monitor-budget.js";
 export * from "./patrol-scope.js";
+export * from "./adopt-existing-media.js";

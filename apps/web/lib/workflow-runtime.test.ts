@@ -473,7 +473,7 @@ describe("getWorkflowRepository (desktop SQLite selection)", () => {
       const { getWorkflowRepository } = await import("./workflow-runtime");
       expect(getWorkflowRepository().constructor.name).toBe("SqliteWorkflowRepository");
     } finally {
-      delete process.env.MEDIA_TRACK_SQLITE_PATH;
+      if (prevSqlitePath !== undefined) { process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath; } else { process.env.MEDIA_TRACK_SQLITE_PATH = ":memory:"; }
       if (prevSqlitePath !== undefined) process.env.MEDIA_TRACK_SQLITE_PATH = prevSqlitePath;
       vi.resetModules();
     }

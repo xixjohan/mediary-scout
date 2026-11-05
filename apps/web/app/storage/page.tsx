@@ -3,11 +3,14 @@ import { connection } from "next/server";
 import Link from "next/link";
 import { FolderSync } from "lucide-react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
+import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import {
   getAccountConnectedStorages,
+  getCurrentAccountId,
   resolveGlobalWorkspace,
+  UNAUTHENTICATED_ACCOUNT_ID,
 } from "../../lib/workflow-runtime";
 import { StorageManagerView } from "../../features/storage-drives/components/storage-manager-view";
 
@@ -43,6 +46,15 @@ async function StorageSurface({
   searchParams: Promise<{ w?: string; dir?: string }>;
 }) {
   await connection();
+  const accountId = await getCurrentAccountId();
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    return (
+      <>
+        <ClientLoginRedirect />
+        <StorageShell />
+      </>
+    );
+  }
   const { w, dir } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   const storages = await getAccountConnectedStorages();

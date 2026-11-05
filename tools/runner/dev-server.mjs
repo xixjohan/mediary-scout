@@ -332,7 +332,6 @@ async function run() {
   const options = parseArgs(process.argv.slice(2));
   const dataDir = path.join(repoRoot, "run");
   const pidFile = ProcessAdapter.getPidFile(dataDir);
-  const dbPath = path.join(dataDir, "mediary.db");
 
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
@@ -360,6 +359,26 @@ async function run() {
   console.log(`\n${c.bold}⚡ 巡影 · Mediary Scout 极速启动编排器${c.reset}`);
   console.log(`${c.gray}运行模式: ${options.prod ? "生产模拟 (Production Preview)" : "开发调试 (Turbopack HMR)"} | 目标端口: ${options.port}${c.reset}\n`);
 
+  // 自动检测并加载本地环境凭据配置 (env/.envdev 优先于 .env)
+  const devEnvPath = path.join(repoRoot, "env/.envdev");
+  const rootEnvPath = path.join(repoRoot, ".env");
+  const loadedEnv = {
+    ...loadEnvFile(rootEnvPath),
+    ...loadEnvFile(devEnvPath),
+  };
+  if (fs.existsSync(devEnvPath)) {
+    console.log(`${c.green}✔ 已自动载入开发环境配置: env/.envdev${c.reset}`);
+  }
+
+  // 权威数据库路径解析：环境变量优先，其次遵循项目标准 data/mediary.db，兼顾兼容旧 run/mediary.db
+  const defaultDataDb = path.join(repoRoot, "data/mediary.db");
+  const fallbackRunDb = path.join(dataDir, "mediary.db");
+  const dbPath = process.env.MEDIA_TRACK_SQLITE_PATH || loadedEnv.MEDIA_TRACK_SQLITE_PATH || (fs.existsSync(defaultDataDb) ? defaultDataDb : fallbackRunDb);
+  const dbDir = path.dirname(dbPath);
+  if (!fs.existsSync(dbDir)) {
+    fs.mkdirSync(dbDir, { recursive: true });
+  }
+
   // --- 状态：PREFLIGHT（缓存与数据库重置）---
   if (options.cleanCache) {
     const nextDir = path.join(repoRoot, "apps/web/.next");
@@ -381,17 +400,6 @@ async function run() {
   if (portTaken) {
     console.log(`${c.yellow}检测到端口 ${options.port} 已被占用，自动执行安全回收...${c.reset}`);
     await ProcessAdapter.stopService(options.port, pidFile);
-  }
-
-  // 自动检测并加载本地环境凭据配置 (env/.envdev 优先于 .env)
-  const devEnvPath = path.join(repoRoot, "env/.envdev");
-  const rootEnvPath = path.join(repoRoot, ".env");
-  const loadedEnv = {
-    ...loadEnvFile(rootEnvPath),
-    ...loadEnvFile(devEnvPath),
-  };
-  if (fs.existsSync(devEnvPath)) {
-    console.log(`${c.green}✔ 已自动载入开发环境配置: env/.envdev${c.reset}`);
   }
 
   // --- 状态：CACHE_CHECK（增量编译感知）---

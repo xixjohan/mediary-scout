@@ -177,6 +177,7 @@ export async function connectPan115OpenOAuth(input: {
   } catch (err) {
     throw new Error(`115 开放平台 Token 校验未通过: ${err instanceof Error ? err.message : String(err)}`);
   }
+  const validatedOAuth = { ...client.getCredentials() };
 
   const repository = getWorkflowRepository();
   const connectedStorages = await repository.listConnectedStorages(input.accountId);
@@ -187,7 +188,7 @@ export async function connectPan115OpenOAuth(input: {
     const oldPayload = (existing115.payload || {}) as Record<string, unknown>;
     const newPayload = {
       ...oldPayload,
-      openOAuth,
+      openOAuth: validatedOAuth,
       engineMode: "dual_engine",
     };
 
@@ -222,7 +223,7 @@ export async function connectPan115OpenOAuth(input: {
     providerUid,
     label: "115开放平台",
     payload: {
-      openOAuth,
+      openOAuth: validatedOAuth,
       engineMode: "open_only",
       meta: { app: "115_open", connectedAt: now },
     },

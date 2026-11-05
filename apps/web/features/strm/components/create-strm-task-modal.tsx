@@ -47,7 +47,7 @@ export function StrmCreateTaskModal({
     storageId: storages[0]?.id || "",
     remoteFolderId: "0",
     remotePath: "/Media/Movies",
-    localOutputDir: "/data/strm/movies",
+    localOutputDir: "data/strm/movies",
     scanMode: "incremental_missing" as StrmScanMode,
     deliveryMode: (storages[0]?.provider === "pan115" ? "proxy" : "redirect") as StrmDeliveryMode,
     scanIntervalMinutes: 360,

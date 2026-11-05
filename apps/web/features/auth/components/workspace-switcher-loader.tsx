@@ -14,7 +14,11 @@ import { WorkspaceSwitcher } from "./workspace-switcher";
  * time and the fallback (null) prerenders. Mirrors every other DB-reading server
  * component (ForeignWorkReview / ActivitySurface / show / settings / notifications).
  */
-export async function WorkspaceSwitcherLoader() {
+export async function WorkspaceSwitcherLoader({
+  activeStorageId,
+}: {
+  activeStorageId?: string | undefined;
+} = {}) {
   await connection();
   try {
     const storages = (await getAccountConnectedStorages()).filter((storage) =>
@@ -35,7 +39,7 @@ export async function WorkspaceSwitcherLoader() {
       })),
       "/",
     ).map((item) => ({ id: item.id, href: item.href, label: item.label, frozen: item.frozen, provider: item.provider }));
-    return <WorkspaceSwitcher tabs={tabs} />;
+    return <WorkspaceSwitcher tabs={tabs} initialActiveId={activeStorageId} />;
   } catch {
     return null;
   }

@@ -14,6 +14,13 @@ describe("System FS Browse API", () => {
     return dir;
   };
 
+  const programData = path.join(process.cwd(), "data");
+  const ensureOutput = (outputPath: string) => POST(new NextRequest("http://localhost:3000/api/system/fs-browse", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: "ensure-output", outputPath }),
+  }));
+
   afterEach(() => {
     for (const d of tempDirs.splice(0)) {
       try {
@@ -79,5 +86,31 @@ describe("System FS Browse API", () => {
     const created = path.join(tempSub, "my_new_strm_folder");
     expect(fs.existsSync(created)).toBe(true);
     expect(fs.statSync(created).isDirectory()).toBe(true);
+  });
+
+  it("GET 缺失 STRM 输出目录返回结构化 404 且不创建目录", async () => {
+    const configPath = `data/fs-browse-missing-${Date.now()}`;
+    const absolutePath = path.join(programData, path.basename(configPath));
+    const res = await GET(new NextRequest(`http://localhost:3000/api/system/fs-browse?path=${encodeURIComponent(configPath)}`));
+    expect(res.status).toBe(404);
+    expect((await res.json()).code).toBe("DIRECTORY_NOT_FOUND");
+    expect(fs.existsSync(absolutePath)).toBe(false);
+  });
+
+  it("ensure-output 首次创建目标并允许幂等重复调用", async () => {
+    const configPath = `data/strm/ensure-${Date.now()}`;
+    const absolutePath = path.join(process.cwd(), ...configPath.split("/"));
+    tempDirs.push(absolutePath);
+    const first = await ensureOutput(configPath);
+    expect(first.status).toBe(200);
+    expect((await first.json()).canWrite).toBe(true);
+    const second = await ensureOutput(configPath);
+    expect(second.status).toBe(200);
+    expect(fs.statSync(absolutePath).isDirectory()).toBe(true);
+  });
+
+  it("ensure-output 拒绝根目录外和绝对路径", async () => {
+    expect((await ensureOutput("data/../../outside")).status).toBe(400);
+    expect((await ensureOutput(path.join(programData, "absolute"))).status).toBe(400);
   });
 });

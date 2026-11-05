@@ -247,11 +247,52 @@ async function checkMonorepoWorkspaceExports() {
   }
 }
 
+// ============================================================================
+// 7. 存储动态列表与 HTTP 缓存控制门禁 (Storage Dynamic Cache Gate)
+// ============================================================================
+function checkStorageCacheContracts() {
+  const storageRoutes = [
+    {
+      file: path.join(repoRoot, "apps/web/app/api/storage/files/route.ts"),
+      requireNoStore: true,
+      forbidDynamicExport: true,
+    },
+    {
+      file: path.join(repoRoot, "apps/web/app/api/storage/drives/route.ts"),
+      requireNoStore: true,
+      forbidDynamicExport: true,
+    },
+    {
+      file: path.join(repoRoot, "apps/web/app/storage/page.tsx"),
+      requireConnection: true,
+      forbidDynamicExport: true,
+    },
+  ];
+
+  for (const { file, requireNoStore, requireConnection, forbidDynamicExport } of storageRoutes) {
+    if (!fs.existsSync(file)) {
+      reportViolation(file, 1, `必要存储路由文件不存在: ${path.relative(repoRoot, file)}`);
+      continue;
+    }
+    const content = fs.readFileSync(file, "utf8");
+    if (forbidDynamicExport && content.includes('export const dynamic = "force-dynamic"')) {
+      reportViolation(file, 1, `Next 16 cacheComponents 模式下严禁使用 'export const dynamic = "force-dynamic"'（Turbopack 会直接报错拒绝编译），请使用 await connection() 或响应头 no-store 控制动态行为`);
+    }
+    if (requireNoStore && !content.includes("no-store")) {
+      reportViolation(file, 1, `动态存储 API 路由必须在响应头注入包含 'no-store' 的 Cache-Control，防止浏览器启发式缓存导致网盘资源丢失`);
+    }
+    if (requireConnection && !content.includes("await connection()")) {
+      reportViolation(file, 1, `Next 16 cacheComponents 下页面必须包含 'await connection()' 显式声明动态注水，防止 SSR 页面被误缓存`);
+    }
+  }
+}
+
 async function run() {
   console.log(`${c.bold}${c.cyan}=== 巡影 · Mediary Scout API 契约与时间线字段对齐门禁扫描 ===${c.reset}`);
   checkPhantomProperties();
   checkContractBinding();
   await checkMonorepoWorkspaceExports();
+  checkStorageCacheContracts();
 
   if (violations > 0) {
     console.error(`\n${c.red}✖ [Contract Gate] 门禁质检失败：发现 ${violations} 处契约漂移或幽灵属性访问！${c.reset}\n`);

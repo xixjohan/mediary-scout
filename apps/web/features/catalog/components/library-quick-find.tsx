@@ -31,8 +31,10 @@ export function LibraryQuickFind({
   storageId,
   mode,
   mediaType,
-  filter,
-  status,
+  filter: propFilter,
+  status: propStatus,
+  onStatusChange,
+  onFilterChange,
 }: {
   wallEntries: LibraryWallEntry[];
   inProgressTitles: InProgressTitle[];
@@ -43,11 +45,41 @@ export function LibraryQuickFind({
   filter?: "all" | "complete" | "tracking" | "partial" | undefined;
   /** "active"=订阅中；"completed"=已完成；"all"=全部 */
   status?: "active" | "completed" | "all" | undefined;
+  onStatusChange?: (status: "active" | "completed" | "all") => void;
+  onFilterChange?: (filter: "all" | "complete" | "tracking" | "partial") => void;
 }): JSX.Element {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [selectedAcquiring, setSelectedAcquiring] = useState<InProgressTitle | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+
+  const [internalStatus, setInternalStatus] = useState<"active" | "completed" | "all">(propStatus ?? "active");
+  const [internalFilter, setInternalFilter] = useState<"all" | "complete" | "tracking" | "partial">(propFilter ?? "all");
+
+  const status = propStatus ?? internalStatus;
+  const filter = propFilter ?? internalFilter;
+
+  const handleStatusClick = (newStatus: "active" | "completed" | "all") => {
+    setInternalStatus(newStatus);
+    if (onStatusChange) {
+      onStatusChange(newStatus);
+    } else if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("status", newStatus);
+      window.history.replaceState(null, "", url.toString());
+    }
+  };
+
+  const handleFilterClick = (newFilter: "all" | "complete" | "tracking" | "partial") => {
+    setInternalFilter(newFilter);
+    if (onFilterChange) {
+      onFilterChange(newFilter);
+    } else if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("filter", newFilter);
+      window.history.replaceState(null, "", url.toString());
+    }
+  };
 
   // 清空统一入口：清完把焦点还给搜索框（✕/0 匹配清空按钮随后会 unmount，
   // 不接住焦点就掉回 document）。
@@ -162,18 +194,33 @@ export function LibraryQuickFind({
           <Link
             className={`filter-pill ${status === "active" ? "is-active" : ""}`}
             href={`${workspaceBasePath(storageId)}?tab=library&status=active`}
+            prefetch={false}
+            onClick={(e) => {
+              e.preventDefault();
+              handleStatusClick("active");
+            }}
           >
             订阅中 ({activeCount})
           </Link>
           <Link
             className={`filter-pill ${status === "completed" ? "is-active" : ""}`}
             href={`${workspaceBasePath(storageId)}?tab=library&status=completed`}
+            prefetch={false}
+            onClick={(e) => {
+              e.preventDefault();
+              handleStatusClick("completed");
+            }}
           >
             已完成 ({completedCount})
           </Link>
           <Link
             className={`filter-pill ${status === "all" || !status ? "is-active" : ""}`}
             href={`${workspaceBasePath(storageId)}?tab=library&status=all`}
+            prefetch={false}
+            onClick={(e) => {
+              e.preventDefault();
+              handleStatusClick("all");
+            }}
           >
             全部 ({allCount})
           </Link>
@@ -189,7 +236,15 @@ export function LibraryQuickFind({
         <div className="quiet-state compact" style={{ marginBottom: 16 }}>
           <strong>暂无追更或缺集作品</strong>
           <span>共有 {completedCount} 部作品已完结并归档至「已完成」页面。</span>
-          <Link className="secondary-button" href={`${workspaceBasePath(storageId)}?tab=library&status=completed`}>
+          <Link
+            className="secondary-button"
+            href={`${workspaceBasePath(storageId)}?tab=library&status=completed`}
+            prefetch={false}
+            onClick={(e) => {
+              e.preventDefault();
+              handleStatusClick("completed");
+            }}
+          >
             查看已完成 ({completedCount})
           </Link>
         </div>
@@ -199,24 +254,44 @@ export function LibraryQuickFind({
           <Link
             className={`filter-pill ${filter === "all" ? "is-active" : ""}`}
             href={`${workspaceBasePath(storageId)}?tab=library&type=${mediaType}&filter=all`}
+            prefetch={false}
+            onClick={(e) => {
+              e.preventDefault();
+              handleFilterClick("all");
+            }}
           >
             全部
           </Link>
           <Link
             className={`filter-pill ${filter === "complete" ? "is-active" : ""}`}
             href={`${workspaceBasePath(storageId)}?tab=library&type=${mediaType}&filter=complete`}
+            prefetch={false}
+            onClick={(e) => {
+              e.preventDefault();
+              handleFilterClick("complete");
+            }}
           >
             已完结
           </Link>
           <Link
             className={`filter-pill ${filter === "tracking" ? "is-active" : ""}`}
             href={`${workspaceBasePath(storageId)}?tab=library&type=${mediaType}&filter=tracking`}
+            prefetch={false}
+            onClick={(e) => {
+              e.preventDefault();
+              handleFilterClick("tracking");
+            }}
           >
             追更中
           </Link>
           <Link
             className={`filter-pill ${filter === "partial" ? "is-active" : ""}`}
             href={`${workspaceBasePath(storageId)}?tab=library&type=${mediaType}&filter=partial`}
+            prefetch={false}
+            onClick={(e) => {
+              e.preventDefault();
+              handleFilterClick("partial");
+            }}
           >
             有缺集
           </Link>

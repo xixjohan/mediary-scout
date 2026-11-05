@@ -122,4 +122,139 @@ describe("ProductionStorageStreamResolver", () => {
       spy.mockRestore();
     }
   });
+
+  it("persists Open OAuth rotation when a direct-link request refreshes its token", async () => {
+    const persistOpenOAuthCredentials = vi.fn();
+    const coordinateOpenTokenRefresh = vi.fn(async (refresh: (credentials: {
+      accessToken: string;
+      refreshToken: string;
+      expiresAt: number;
+    }) => Promise<{ accessToken: string; refreshToken: string; expiresAt: number }>) =>
+      refresh({
+        accessToken: "stream-old-access",
+        refreshToken: "stream-old-refresh",
+        expiresAt: 0,
+      }),
+    );
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/open/refreshToken")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            state: true,
+            code: 0,
+            data: {
+              access_token: "stream-next-access",
+              refresh_token: "stream-next-refresh",
+              expires_in: 7200,
+            },
+          }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          state: true,
+          code: 0,
+          data: { url: "https://cdn.example.com/video.mkv" },
+        }),
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const resolver = new ProductionStorageStreamResolver(async () => ({
+        provider: "pan115",
+        status: "active",
+        credential: {
+          openOAuth: {
+            accessToken: "stream-old-access",
+            refreshToken: "stream-old-refresh",
+            expiresAt: 0,
+          },
+        },
+        persistOpenOAuthCredentials,
+        coordinateOpenTokenRefresh,
+      }));
+
+      const result = await resolver.resolveStream({
+        storageId: "cs_115_oauth",
+        fileId: "file-1",
+        pickCode: "pick-1",
+      });
+
+      expect(result.url).toBe("https://cdn.example.com/video.mkv");
+      expect(persistOpenOAuthCredentials).toHaveBeenCalledWith(expect.objectContaining({
+        accessToken: "stream-next-access",
+        refreshToken: "stream-next-refresh",
+      }));
+      expect(coordinateOpenTokenRefresh).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("retries a failed Open OAuth persistence using the cached rotated credentials", async () => {
+    const persistOpenOAuthCredentials = vi.fn()
+      .mockRejectedValueOnce(new Error("database temporarily unavailable"))
+      .mockResolvedValueOnce(undefined);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/open/refreshToken")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            state: true,
+            code: 0,
+            data: {
+              access_token: "retry-access",
+              refresh_token: "retry-refresh",
+              expires_in: 7200,
+            },
+          }),
+        } as unknown as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ state: true, code: 0, data: { url: "https://cdn.example.com/open.mkv" } }),
+      } as unknown as Response;
+    });
+    const cookieUrl = vi.spyOn(Pan115CookieClient.prototype, "getDownloadUrl").mockResolvedValue({
+      url: "https://cdn.example.com/cookie.mkv",
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      const resolver = new ProductionStorageStreamResolver(async () => ({
+        provider: "pan115",
+        status: "active",
+        cookie: "UID=mock; CID=mock",
+        credential: {
+          openOAuth: {
+            accessToken: "retry-old-access",
+            refreshToken: "retry-old-refresh",
+            expiresAt: 0,
+          },
+        },
+        persistOpenOAuthCredentials,
+      }));
+      const input = { storageId: "cs_115_retry", fileId: "file-2", pickCode: "pick-2" };
+
+      await expect(resolver.resolveStream(input)).resolves.toMatchObject({
+        url: "https://cdn.example.com/cookie.mkv",
+      });
+      await expect(resolver.resolveStream(input)).resolves.toMatchObject({
+        url: "https://cdn.example.com/open.mkv",
+      });
+
+      expect(persistOpenOAuthCredentials).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).includes("/open/refreshToken"))).toHaveLength(1);
+    } finally {
+      cookieUrl.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
 });

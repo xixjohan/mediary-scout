@@ -6,6 +6,7 @@ import { requireApiAccount } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 import { ensureStrmTaskConfigRegistry } from "../../../../../composition/runtime-container";
 import type { UpdateStrmTaskInput } from "@media-track/workflow";
+import { isValidStrmOutputPath, resolveStrmOutputPath } from "@media-track/workflow";
 
 interface RouteParams {
   params: Promise<{ id: string }>;
@@ -102,7 +103,14 @@ export async function PUT(request: NextRequest, context: RouteParams) {
     );
   }
 
+  if (body.localOutputDir?.trim() && !isValidStrmOutputPath(body.localOutputDir)) {
+    return NextResponse.json({ error: "STRM 输出目录必须是程序目录下 data/ 内的相对路径" }, { status: 400 });
+  }
+
   const updateInput = buildUpdateInput(body, id, accountId);
+  if (body.localOutputDir?.trim() && !isValidStrmOutputPath(updateInput.localOutputDir ?? "")) {
+    return NextResponse.json({ error: "STRM 输出目录必须是程序目录下 data/ 内的相对路径" }, { status: 400 });
+  }
   const updated = await repo.updateStrmTask(updateInput);
   if (!updated) {
     return NextResponse.json({ error: "更新任务失败" }, { status: 500 });
@@ -158,7 +166,10 @@ export async function DELETE(request: NextRequest, context: RouteParams) {
   let cleanedFilesCount = 0;
 
   if (purgeFiles && existing.localOutputDir) {
-    cleanedFilesCount = await safelyCleanStrmFiles(existing.localOutputDir);
+    if (!isValidStrmOutputPath(existing.localOutputDir)) {
+      return NextResponse.json({ error: "旧 STRM 路径无效；任务已保留，请先重新创建任务" }, { status: 400 });
+    }
+    cleanedFilesCount = await safelyCleanStrmFiles(resolveStrmOutputPath(existing.localOutputDir));
   }
 
   const success = await repo.deleteStrmTask(id, accountId);

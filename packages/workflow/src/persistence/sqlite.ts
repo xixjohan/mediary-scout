@@ -17,29 +17,18 @@ import {
 } from "./subscription-policy-store.js";
 import type { MediaryDatabase } from "./db-schema.js";
 import type { SqliteDbContext } from "./sqlite-context.js";
-import type {
-  CreateMediaRequestInput,
-  MediaRequest,
-  MediaRequestStatus,
-} from "../domain/media-request.js";
+import type { CreateMediaRequestInput, MediaRequest, MediaRequestStatus } from "../domain/media-request.js";
 import { SqliteStrmRepository } from "./sqlite/sqlite-strm.js";
 import { SqliteMediaServerRepository } from "./sqlite/sqlite-mediaserver.js";
 import type {
-  CreateMediaServerConfigInput,
-  CreateMediaServerRefreshRecordInput,
-  MediaServerConfig,
-  MediaServerRefreshRecord,
-  UpdateMediaServerConfigInput,
-  UpdateMediaServerRefreshRecordInput,
+  CreateMediaServerConfigInput, CreateMediaServerRefreshRecordInput,
+  MediaServerConfig, MediaServerRefreshRecord,
+  UpdateMediaServerConfigInput, UpdateMediaServerRefreshRecordInput,
 } from "../mediaserver/mediaserver-types.js";
 import type {
-  CreateStrmExecutionRecordInput,
-  CreateStrmTaskInput,
-  StrmExecutionRecord,
-  StrmLinkCacheItem,
-  StrmTask,
-  UpdateStrmExecutionRecordInput,
-  UpdateStrmTaskInput,
+  CreateStrmExecutionRecordInput, CreateStrmTaskInput,
+  StrmExecutionRecord, StrmLinkCacheItem, StrmTask,
+  UpdateStrmExecutionRecordInput, UpdateStrmTaskInput,
 } from "../strm/strm-types.js";
 import {
   CredentialStore,
@@ -56,18 +45,16 @@ import {
   isEpisodePreservingWorkflowKind,
 } from "../domain/domain.js";
 import type {
-  AgentDecision,
-  AgentStep,
-  EpisodeState,
-  MediaTitle,
-  NotificationEvent,
-  ResourceSnapshot,
-  TrackedSeason,
-  TransferAttempt,
-  WorkflowKind,
-  WorkflowRun,
-  WorkflowRunProgress,
+  AgentDecision, AgentStep, EpisodeState, MediaTitle, NotificationEvent,
+  ResourceSnapshot, TrackedSeason, TransferAttempt, WorkflowKind,
+  WorkflowRun, WorkflowRunProgress,
 } from "../domain/domain.js";
+import { SqliteReverseScanStore } from "./sqlite/sqlite-reverse-scan.js";
+import type {
+  ReverseScanJob, CreateReverseScanJobInput, UpdateReverseScanJobPatch,
+  ReverseScanItem, CreateReverseScanItemInput, UpdateReverseScanItemPatch,
+  ReverseScanItemReviewStatus,
+} from "../domain/reverse-scan-types.js";
 import type { DeadLink } from "../acquisition-v2/dead-links.js";
 import {
   agentMemoryFromRow,
@@ -126,6 +113,7 @@ import {
   claimWorkflowRun,
   cloneWorkflowValue,
   compareTrackedSeasonStates,
+  decidePan115OAuthCredentialWrite,
   DuplicateUsernameError,
   expireWorkflowRun,
   isActiveWorkflowStatus,
@@ -252,6 +240,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   private readonly credentials: CredentialStore;
   private readonly strmStore: SqliteStrmRepository;
   private readonly mediaServerStore: SqliteMediaServerRepository;
+  private readonly reverseScanStore: SqliteReverseScanStore;
 
   constructor(private readonly db: Database.Database) {
     // 凭据加密（任务单 S1.5）：工厂已按密钥文件初始化；直接 new（:memory: 测试等）
@@ -269,6 +258,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     };
     this.strmStore = new SqliteStrmRepository(ctx);
     this.mediaServerStore = new SqliteMediaServerRepository(ctx);
+    this.reverseScanStore = new SqliteReverseScanStore(ctx);
     // 黄金 PRAGMA（规约见 docs/architecture-remediation-and-governance.md §1.3，
     // 测试见 tests/sqlite-pragmas.test.ts）：WAL 读写互不阻塞；synchronous=NORMAL
     // 在 WAL 下兼顾极速与断电安全；busy_timeout 让写锁冲突退避等待而非直接报错。
@@ -1578,6 +1568,76 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return storages;
   }
 
+  async persistPan115OpenOAuthCredentials(
+    accountId: string,
+    storageId: string,
+    credentials: { accessToken: string; refreshToken: string; expiresAt: number },
+  ): Promise<"updated" | "already_current" | "stale" | "missing"> {
+    const persist = this.db.transaction(() => {
+      const row = this.db
+        .prepare(
+          "SELECT id, account_id, provider, provider_uid, label, payload, root_cid, movies_cid, tv_cid, anime_cid, status, frozen_reason, frozen_at, created_at " +
+            "FROM connected_storages WHERE id = ? AND account_id = ?",
+        )
+        .get(storageId, accountId) as Record<string, unknown> | undefined;
+      if (!row) return "missing" as const;
+
+      const storage = this.connectedStorageFromRow(row);
+      if (storage.provider !== "pan115") return "missing" as const;
+      const decision = decidePan115OAuthCredentialWrite(storage.payload, credentials);
+      if (decision !== "updated") return decision;
+      const payload = storage.payload !== null && typeof storage.payload === "object" && !Array.isArray(storage.payload)
+        ? storage.payload as Record<string, unknown>
+        : {};
+
+      const nextPayload = { ...payload, openOAuth: { ...credentials } };
+      this.db
+        .prepare("UPDATE connected_storages SET payload = ? WHERE id = ? AND account_id = ?")
+        .run(encryptSecret(JSON.stringify(nextPayload)), storageId, accountId);
+      return "updated" as const;
+    });
+    return persist();
+  }
+
+  async tryAcquirePan115OAuthRefreshLease(
+    storageId: string,
+    ownerId: string,
+    leaseExpiresAt: number,
+    now: number,
+  ): Promise<boolean> {
+    const result = this.db
+      .prepare(
+        "INSERT INTO pan115_oauth_refresh_leases (storage_id, owner_id, lease_expires_at) " +
+          "VALUES (?, ?, ?) " +
+          "ON CONFLICT(storage_id) DO UPDATE SET owner_id = excluded.owner_id, " +
+          "lease_expires_at = excluded.lease_expires_at " +
+          "WHERE pan115_oauth_refresh_leases.lease_expires_at <= ?",
+      )
+      .run(storageId, ownerId, leaseExpiresAt, now);
+    return result.changes > 0;
+  }
+
+  async renewPan115OAuthRefreshLease(
+    storageId: string,
+    ownerId: string,
+    leaseExpiresAt: number,
+    now: number,
+  ): Promise<boolean> {
+    const result = this.db
+      .prepare(
+        "UPDATE pan115_oauth_refresh_leases SET lease_expires_at = ? " +
+          "WHERE storage_id = ? AND owner_id = ? AND lease_expires_at > ?",
+      )
+      .run(leaseExpiresAt, storageId, ownerId, now);
+    return result.changes > 0;
+  }
+
+  async releasePan115OAuthRefreshLease(storageId: string, ownerId: string): Promise<void> {
+    this.db
+      .prepare("DELETE FROM pan115_oauth_refresh_leases WHERE storage_id = ? AND owner_id = ?")
+      .run(storageId, ownerId);
+  }
+
   async hasAnyConnectedStorage(): Promise<boolean> {
     return this.credentials.hasAnyConnectedStorage();
   }
@@ -1885,23 +1945,28 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     })();
   }
 
+  async updateMediaTitlePosterPath(titleId: string, posterPath: string): Promise<void> {
+    const row = this.db.prepare("SELECT payload FROM media_titles WHERE id = ?").get(titleId) as { payload: string } | undefined;
+    if (!row) return;
+    try {
+      const title = JSON.parse(row.payload) as MediaTitle;
+      if (title.posterPath !== posterPath) {
+        title.posterPath = posterPath;
+        this.db.prepare("UPDATE media_titles SET payload = ? WHERE id = ?").run(JSON.stringify(title), titleId);
+      }
+    } catch (err) {
+      console.warn(`[sqlite] failed to updateMediaTitlePosterPath for ${titleId}:`, err);
+    }
+  }
+
   async getMediaTitleName(titleKey: string): Promise<string | null> {
     const row = this.db.prepare("SELECT payload FROM media_titles WHERE id = ?").get(titleKey) as { payload: string } | undefined;
-    if (!row) return null;
-    const title = (JSON.parse(row.payload) as { title?: unknown }).title;
-    return typeof title === "string" ? title : null;
+    return typeof (row ? JSON.parse(row.payload)?.title : null) === "string" ? JSON.parse(row!.payload).title : null;
   }
 
   async summarizeAgentMemories(input: { accountId: string; since: string }): Promise<AgentMemorySummary> {
     const counts = this.db
-      .prepare(
-        "SELECT " +
-          "COALESCE(SUM(CASE WHEN scope = 'title' THEN 1 ELSE 0 END), 0) AS title_entries, " +
-          "COUNT(DISTINCT CASE WHEN scope = 'title' THEN title_key END) AS title_works, " +
-          "COALESCE(SUM(CASE WHEN scope = 'global' THEN 1 ELSE 0 END), 0) AS global_entries, " +
-          "COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) AS created_since " +
-          "FROM agent_memories WHERE account_id = ?",
-      )
+      .prepare("SELECT COALESCE(SUM(CASE WHEN scope = 'title' THEN 1 ELSE 0 END), 0) AS title_entries, COUNT(DISTINCT CASE WHEN scope = 'title' THEN title_key END) AS title_works, COALESCE(SUM(CASE WHEN scope = 'global' THEN 1 ELSE 0 END), 0) AS global_entries, COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) AS created_since FROM agent_memories WHERE account_id = ?")
       .get(input.since, input.accountId) as { title_entries: number; title_works: number; global_entries: number; created_since: number };
     const latest = this.db
       .prepare("SELECT scope, title_key, updated_at FROM agent_memories WHERE account_id = ? ORDER BY updated_at DESC LIMIT 1")
@@ -2650,5 +2715,13 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   async getLatestMediaServerRefreshRecord(configId: string, accountId: string): Promise<MediaServerRefreshRecord | null> {
     return this.mediaServerStore.getLatestMediaServerRefreshRecord(configId, accountId);
   }
+
+  async createReverseScanJob(input: CreateReverseScanJobInput): Promise<ReverseScanJob> { return this.reverseScanStore.createReverseScanJob(input); }
+  async getReverseScanJob(id: string): Promise<ReverseScanJob | null> { return this.reverseScanStore.getReverseScanJob(id); }
+  async listReverseScanJobs(accountId: string, limit?: number): Promise<ReverseScanJob[]> { return this.reverseScanStore.listReverseScanJobs(accountId, limit); }
+  async updateReverseScanJob(id: string, patch: UpdateReverseScanJobPatch): Promise<void> { return this.reverseScanStore.updateReverseScanJob(id, patch); }
+  async createReverseScanItem(input: CreateReverseScanItemInput): Promise<ReverseScanItem> { return this.reverseScanStore.createReverseScanItem(input); }
+  async listReverseScanItems(jobId: string, reviewStatus?: ReverseScanItemReviewStatus): Promise<ReverseScanItem[]> { return this.reverseScanStore.listReverseScanItems(jobId, reviewStatus); }
+  async updateReverseScanItem(id: string, patch: UpdateReverseScanItemPatch): Promise<void> { return this.reverseScanStore.updateReverseScanItem(id, patch); }
 
 }

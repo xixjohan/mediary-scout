@@ -7,6 +7,7 @@ import {
   getStorageSkill,
   brandSupportsProwlarr,
   brandSupportsSubtitleDirectLink,
+  brandSupportsOpenOAuth,
   brandsSupportingProwlarr,
   brandsSupportingSubtitleDirectLink,
   STORAGE_BRANDS,
@@ -276,5 +277,32 @@ describe("STORAGE_BRANDS 的能力声明与 executor 实现一致", () => {
       const viaDeclaration = brandSupportsSubtitleDirectLink(brand.provider);
       expect(viaDeclaration, `${brand.provider}`).toBe(viaKinds);
     }
+  });
+});
+
+describe("STORAGE_BRANDS 的 supportsOpenOAuth（双轨驱动能力门）", () => {
+  it("每家网盘都显式声明 supportsOpenOAuth 布尔值", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(typeof brand.supportsOpenOAuth, brand.provider + " 没声明 supportsOpenOAuth").toBe("boolean");
+    }
+  });
+
+  it("仅 115 声明 supportsOpenOAuth: true，其余网盘均为 false", () => {
+    for (const brand of STORAGE_BRANDS) {
+      if (brand.provider === "pan115") {
+        expect(brand.supportsOpenOAuth, "pan115 必须支持 Open OAuth").toBe(true);
+      } else {
+        expect(brand.supportsOpenOAuth, brand.provider + " 不应支持 Open OAuth").toBe(false);
+      }
+    }
+  });
+
+  it("brandSupportsOpenOAuth 与注册表条目一致且容错未登记", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(brandSupportsOpenOAuth(brand.provider)).toBe(brand.supportsOpenOAuth);
+    }
+    expect(brandSupportsOpenOAuth("quark")).toBe(false);
+    expect(brandSupportsOpenOAuth("nope")).toBe(false);
+    expect(brandSupportsOpenOAuth(undefined)).toBe(false);
   });
 });

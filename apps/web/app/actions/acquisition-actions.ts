@@ -36,7 +36,7 @@ export async function requestTrackingAction(input?: {
   candidateId?: string;
   currentState?: "can_request" | "already_tracked" | "active_workflow" | "can_reserve" | "reserved";
   /** Tree model: the active workspace drive — acquisition lands HERE, not the primary. */
-  storageId?: string;
+  storageId?: string | undefined;
 }): Promise<RequestTrackingActionResult> {
   assertNotDemo();
   if (input?.currentState === "already_tracked") {
@@ -85,7 +85,7 @@ export async function requestTrackingAction(input?: {
     if (request.status === "already_tracked") {
       return {
         status: "already_tracked",
-        message: "已追踪，后台会继续按缺集状态检查。",
+        message: request.message ?? "已追踪，后台会继续按缺集状态检查。",
       };
     }
     if (request.status === "already_running") {
@@ -104,7 +104,7 @@ export async function requestTrackingAction(input?: {
     revalidatePath("/");
     return {
       status: "requested",
-      message: "已加入后台队列，完成后会通知你。",
+      message: request.message ?? "已加入后台队列，完成后会通知你。",
     };
   }
 
@@ -128,7 +128,7 @@ export async function requestSeriesAction(input: {
   }
   const request = await queueCandidateSeries(input.candidateId, input.storageId);
   if (request.status === "already_tracked") {
-    return { status: "already_tracked", message: "全剧已追踪，后台会继续按缺集状态检查。" };
+    return { status: "already_tracked", message: request.message ?? "全剧已追踪，后台会继续按缺集状态检查。" };
   }
   if (request.status === "already_running") {
     return { status: "active_workflow", message: "全剧获取任务已在运行中。" };
@@ -137,7 +137,7 @@ export async function requestSeriesAction(input: {
     return { status: "unsupported", message: request.message };
   }
   revalidatePath("/");
-  return { status: "requested", message: "全剧获取已加入后台队列。" };
+  return { status: "requested", message: request.message ?? "全剧获取已加入后台队列。" };
 }
 
 export interface ForeignWorkImportActionResult {

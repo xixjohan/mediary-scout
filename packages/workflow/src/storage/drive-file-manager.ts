@@ -6,6 +6,16 @@ import { GuangYaClient } from "./guangya-client.js";
 
 export type DriveItemType = "folder" | "video" | "subtitle" | "audio" | "archive" | "image" | "file";
 
+export interface DriveFileMediaInfo {
+  parsedTitle?: string | undefined;
+  parsedYear?: number | undefined;
+  parsedSeason?: number | undefined;
+  tmdbId?: number | undefined;
+  confidence: number;
+  isSubscribed?: boolean | undefined;
+  subscriptionStatus?: "active" | "completed" | undefined;
+}
+
 export interface DriveFileItem {
   id: string;
   name: string;
@@ -14,6 +24,7 @@ export interface DriveFileItem {
   sizeBytes: number;
   updatedAt: string | null;
   extension: string;
+  mediaInfo?: DriveFileMediaInfo | undefined;
 }
 
 export interface DriveBreadcrumb {

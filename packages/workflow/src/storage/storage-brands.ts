@@ -13,6 +13,8 @@
  * the runtime guard that also covers callers who bypass the type).
  */
 import { parsePan115Uid } from "./account-credentials.js";
+import type { Pan115OpenOAuthCredentials } from "./account-credentials.js";
+import type { Pan115TokenRefreshCoordinator } from "./pan115-open-client.js";
 import { withBrandPacing } from "./brand-pacing.js";
 import type { ResourceType } from "../domain/domain.js";
 import { GuangYaClient } from "./guangya-client.js";
@@ -71,8 +73,7 @@ export interface StorageDriverCreateInput {
   /** Cookie credential for cookie-auth brands (115/夸克). Optional now that 光鸭
    *  authenticates with a token blob instead — pass `credential` for those. */
   cookie?: string;
-  /** Opaque credential blob for token-auth brands (光鸭: {accessToken,refreshToken,deviceId};
-   *  天翼: {sessionKey,accessToken,refreshToken,familySessionKey?}; 123: {token}). */
+  /** Opaque credential blob for token-auth brands and Pan115's nested openOAuth payload. */
   credential?: unknown;
   /** The drive's write-scope directory ids (rootCid + Movies/TV/Anime). */
   scopeCids: string[];
@@ -81,6 +82,10 @@ export interface StorageDriverCreateInput {
   /** Persist hook for refreshed token-auth credentials (光鸭 refresh rotates tokens;
    *  天翼 session 自愈轮换 sessionKey/accessToken). */
   onCredentialRefresh?: (creds: unknown) => void | Promise<void>;
+  /** Persist rotation from the 115 Open OAuth client (cookie-auth 115 still has a token lane). */
+  onOpenCredentialsPersist?: (creds: Pan115OpenOAuthCredentials) => void | Promise<void>;
+  /** Coordinate 115 token rotation across processes sharing the storage repository. */
+  coordinateOpenTokenRefresh?: Pan115TokenRefreshCoordinator;
 }
 
 export interface StorageBrand {
@@ -198,6 +203,8 @@ export interface StorageBrand {
    * 前端把它藏起来。
    */
   supportsSubtitleDirectLink: boolean;
+  /** 是否支持官方开放平台 Open OAuth 授权（双轨融合能力门）。 */
+  supportsOpenOAuth: boolean;
 }
 
 /** Input to a brand's `createBootstrap`. Cookie brands read `cookie`, token brands
@@ -229,6 +236,7 @@ export const STORAGE_BRANDS = [
         transferModelNote: "",
   // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
     supportsSubtitleDirectLink: true,
+    supportsOpenOAuth: true,
     createBootstrap: ({ cookie, env }) =>
           createBootstrapPan115CookieStorageExecutor({ cookie, ...(env === undefined ? {} : { env }) }),
     create: (input) => {
@@ -244,6 +252,8 @@ export const STORAGE_BRANDS = [
           engineMode,
           scopeCids: input.scopeCids,
           env: input.env,
+          onOpenCredentialsPersist: input.onOpenCredentialsPersist,
+          coordinateOpenTokenRefresh: input.coordinateOpenTokenRefresh,
         });
       }
 
@@ -270,6 +280,7 @@ export const STORAGE_BRANDS = [
         transferModelNote: TRANSFER_MODEL_NOTE_QUARK,
   // W5 能力声明：executor 没有 transferSubtitleUrl（无外链离线接口）。声明不支持让设置页判失真，否则用户会以为配了 token 就能落字幕。
     supportsSubtitleDirectLink: false,
+    supportsOpenOAuth: false,
     createBootstrap: ({ cookie }) =>
           new QuarkStorageExecutor({ client: new QuarkCookieClient({ cookie }), writeScopeDirectoryIds: [] }),
     create: (input) => {
@@ -298,6 +309,7 @@ export const STORAGE_BRANDS = [
     deadLinksSkill: DEAD_LINKS_BLACK_BOX_UC,
     transferModelNote: TRANSFER_MODEL_NOTE_UC,
     supportsSubtitleDirectLink: false,
+    supportsOpenOAuth: false,
     createBootstrap: ({ cookie }) =>
       new QuarkStorageExecutor({
         client: new QuarkCookieClient({ cookie, profile: UC_PROFILE }),
@@ -336,6 +348,7 @@ export const STORAGE_BRANDS = [
         transferModelNote: TRANSFER_MODEL_NOTE_GUANGYA,
   // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
     supportsSubtitleDirectLink: true,
+    supportsOpenOAuth: false,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
           const clientOptions: GuangYaClientOptions = {
@@ -388,6 +401,7 @@ export const STORAGE_BRANDS = [
         transferModelNote: TRANSFER_MODEL_NOTE_TIANYI,
   // W5 能力声明：executor 没有 transferSubtitleUrl（无外链离线接口）。声明不支持让设置页判失真，否则用户会以为配了 token 就能落字幕。
     supportsSubtitleDirectLink: false,
+    supportsOpenOAuth: false,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as Partial<TianyiCredential>;
           const clientOptions: TianyiClientOptions = {
@@ -439,6 +453,7 @@ export const STORAGE_BRANDS = [
         transferModelNote: TRANSFER_MODEL_NOTE_PAN123,
   // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
     supportsSubtitleDirectLink: true,
+    supportsOpenOAuth: false,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as Partial<Pan123Credential>;
           return new Pan123StorageExecutor({ client: new Pan123Client({ token: c.token ?? "" }), writeScopeDirectoryIds: [] });
@@ -587,4 +602,10 @@ export function brandsSupportingProwlarr(): string[] {
   return STORAGE_BRANDS.filter((brand: StorageBrand) => brand.resourceProviderKinds.includes("prowlarr")).map(
     (brand) => brand.label,
   );
+}
+
+/** 检查网盘品牌是否支持官方开放平台 OAuth（双轨模式） */
+export function brandSupportsOpenOAuth(provider: string | undefined): boolean {
+  if (provider === undefined || !isRegisteredStorageProvider(provider)) return false;
+  return getStorageBrand(provider).supportsOpenOAuth;
 }

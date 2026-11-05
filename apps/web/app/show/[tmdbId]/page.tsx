@@ -1,6 +1,7 @@
 import { buildMovieCandidateId } from "@media-track/workflow";
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../../lib/page-auth-guard";
+import { ClientLoginRedirect } from "../../../features/auth/components/client-login-redirect";
 import Link from "next/link";
 import { connection } from "next/server";
 import { cache, type ReactNode } from "react";
@@ -27,30 +28,16 @@ import { AgentMemoryNotes } from "../../../features/activity/components/agent-me
 import { UserMessageThread } from "../../../features/acquisition/components/user-message-thread";
 import { isDemoMode } from "../../../lib/demo-mode";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
-import {
-  getDetailView,
-  type MovieHubView,
-  type TitleHubSeason,
-  type TitleHubView,
-} from "../../../lib/title-hub";
+import { getDetailView, type MovieHubView, type TitleHubSeason, type TitleHubView } from "../../../lib/title-hub";
 import { nextPatrolLabel, readTitleMessages } from "../../../lib/user-message-server";
 import { showsMessageCard } from "../../../lib/user-message-state";
 import {
-  beijingDateTime,
-  getActiveWorkspaceScope,
-  getDailySweepTimes,
-  getWorkflowRepository,
-  resolveGlobalWorkspace,
-  isSharedResourceMode,
-  getCurrentAccountSummary,
+  beijingDateTime, getActiveWorkspaceScope, getCurrentAccountId, getDailySweepTimes,
+  getWorkflowRepository, resolveGlobalWorkspace, isSharedResourceMode, getCurrentAccountSummary,
+  UNAUTHENTICATED_ACCOUNT_ID,
 } from "../../../lib/workflow-runtime";
 
-const aggregateBadge = {
-  untracked: null,
-  tracking: { label: "追更中", tone: "indigo" },
-  partial: { label: "部分入库", tone: "amber" },
-  complete: { label: "已全部入库", tone: "green" },
-} as const;
+const aggregateBadge = { untracked: null, tracking: { label: "追更中", tone: "indigo" }, partial: { label: "部分入库", tone: "amber" }, complete: { label: "已全部入库", tone: "green" } } as const;
 
 function ShowPageInner({
   params,
@@ -94,6 +81,15 @@ async function ShowContent({
   searchParams: Promise<Record<string, string | string[] | undefined>> | undefined;
 }) {
   await connection();
+  const accountId = await getCurrentAccountId();
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    return (
+      <ShowShell active="none" skeleton>
+        <ClientLoginRedirect />
+        <HubSkeleton backLabel="返回" backHref="/login" />
+      </ShowShell>
+    );
+  }
   // 搜索是搜索，订阅是订阅: the title page belongs to whichever surface the
   // user came FROM. Entry links carry ?from=search|library; back keeps the
   // previous list state (history.back preserves the search query).
@@ -243,13 +239,7 @@ function TvHub({
           <div className="hub-actions">
             {view.acquiring ? (
               <AcquiringStatusTrigger
-                title={{
-                  tmdbId: view.tmdbId,
-                  title: view.title,
-                  year: view.year,
-                  type: "tv",
-                  posterPath: view.posterPath,
-                }}
+                title={{ tmdbId: view.tmdbId, title: view.title, year: view.year, type: "tv", posterPath: view.posterPath }}
                 storageId={storageId}
               />
             ) : null}
@@ -402,6 +392,9 @@ function MovieHub({
                   <RequestTrackButton
                     candidateId={movieCandidateId}
                     tmdbId={view.tmdbId}
+                    title={view.title}
+                    year={view.year}
+                    posterPath={view.posterPath}
                     actionState={unreleased ? "can_reserve" : "can_request"}
                     label={unreleased ? "预定" : "获取"}
                     storageId={storageId}
@@ -410,13 +403,7 @@ function MovieHub({
                 {view.state === "acquiring" ? (
                   <>
                     <AcquiringStatusTrigger
-                      title={{
-                        tmdbId: view.tmdbId,
-                        title: view.title,
-                        year: view.year,
-                        type: "movie",
-                        posterPath: view.posterPath,
-                      }}
+                      title={{ tmdbId: view.tmdbId, title: view.title, year: view.year, type: "movie", posterPath: view.posterPath }}
                       storageId={storageId}
                     />
                     <Link className="primary-button" href={activityHref}>

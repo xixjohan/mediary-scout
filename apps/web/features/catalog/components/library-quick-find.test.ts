@@ -95,6 +95,22 @@ function find(node: ReactNode, match: (element: ReactElement) => boolean): React
   return find(element.props.children, match);
 }
 
+function findAll(node: ReactNode, match: (element: ReactElement) => boolean): ReactElement[] {
+  const result: ReactElement[] = [];
+  function recurse(n: ReactNode) {
+    if (Array.isArray(n)) {
+      for (const child of n) recurse(child);
+      return;
+    }
+    if (!isValidElement(n)) return;
+    const element = n as ReactElement<{ children?: ReactNode }>;
+    if (match(element)) result.push(element);
+    recurse(element.props.children);
+  }
+  recurse(node);
+  return result;
+}
+
 /** Re-render at the current fake state → static markup. */
 const html = (props: Props) => renderToStaticMarkup(createElement(LibraryQuickFind, props));
 
@@ -350,6 +366,30 @@ describe("LibraryQuickFind — home 模式", () => {
     pressKey(p, "Escape");
     expect(h.query).toBe("");
     expect(h.focus).toHaveBeenCalledTimes(3);
+  });
+
+  it("状态药丸具备 prefetch=false 且点击拦截原生跳转以支持 0ms 客户端切换", () => {
+    const onStatusChange = vi.fn();
+    const tree = LibraryQuickFind({ ...props(), onStatusChange });
+    const pills = findAll(tree, (el) => (el.props as { className?: string }).className?.includes("filter-pill") ?? false);
+    expect(pills.length).toBe(3);
+
+    // Verify all pills have prefetch={false}
+    for (const pill of pills) {
+      expect((pill.props as { prefetch?: boolean }).prefetch).toBe(false);
+    }
+
+    // Simulate clicking the "已完成" pill
+    const completedPill = pills.find((el) => {
+      const children = (el.props as { children?: ReactNode }).children;
+      return Array.isArray(children) ? children.some((c) => String(c).includes("已完成")) : String(children).includes("已完成");
+    });
+    expect(completedPill).toBeDefined();
+
+    const preventDefault = vi.fn();
+    (completedPill!.props as { onClick?: (e: unknown) => void }).onClick?.({ preventDefault });
+    expect(preventDefault).toHaveBeenCalled();
+    expect(onStatusChange).toHaveBeenCalledWith("completed");
   });
 });
 

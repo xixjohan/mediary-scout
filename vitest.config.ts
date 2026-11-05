@@ -56,6 +56,9 @@ export default defineConfig({
     // 它们的相对 import 在 standalone 布局下解析不到 lib/，必红。
     exclude: ["**/node_modules/**", "**/dist/**", "**/.next/**", "**/.turbo/**"],
     environment: "node",
+    env: {
+      MEDIA_TRACK_SQLITE_PATH: ":memory:",
+    },
     passWithNoTests: false,
   },
 });

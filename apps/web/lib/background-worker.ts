@@ -1,4 +1,4 @@
-import type { QueueClaimOptions } from "@media-track/workflow";
+﻿﻿﻿﻿﻿import type { QueueClaimOptions } from "@media-track/workflow";
 import { isUpdateHoldActive, whileInFlight } from "./update-hold";
 
 /**
@@ -33,6 +33,12 @@ export interface DrainDeps {
   autoUpdate?: (() => Promise<void>) | undefined;
   /** Periodic check for STRM tasks due for scan. */
   runDueStrmTasks?: (() => Promise<number>) | undefined;
+  /**
+   * 115 Open OAuth Token 主动保活检查。
+   * 临近过期（< 60 分钟）时主动刷新，防止 refresh_token 长时间不用自然老化。
+   * Optional，缺席时跳过。
+   */
+  runTokenKeepAlive?: (() => Promise<void>) | undefined;
   /** How many queued runs may go at once (the 同时处理 setting, shared with the patrol).
    *  Absent ⇒ 1: one after another. */
   concurrency?: (() => Promise<number>) | undefined;
@@ -86,6 +92,15 @@ export async function drainQueueOnce(deps: DrainDeps): Promise<number> {
     } catch (error) {
       console.error(
         `[background-worker] STRM scheduled scan failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  if (deps.runTokenKeepAlive) {
+    try {
+      await deps.runTokenKeepAlive();
+    } catch (error) {
+      console.error(
+        `[background-worker] token keep-alive failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -207,6 +222,8 @@ export interface WorkerRuntime {
   /** How many queued runs may go at once (see DrainDeps). Optional so test runtimes can omit it. */
   concurrency?: () => Promise<number>;
   runDueStrmTasks?: () => Promise<number>;
+  /** 115 Open OAuth Token 主动保活（见 DrainDeps）。Optional so test runtimes can omit it. */
+  runTokenKeepAlive?: () => Promise<void>;
 }
 
 /**
@@ -233,6 +250,17 @@ export async function defaultRuntime(): Promise<WorkerRuntime> {
     recover: () => recoverOrphanedRuns(),
     isDriveConfigured: () => workerHasConfiguredDrive(),
     runDueStrmTasks: () => runDueStrmTasks(),
+    runTokenKeepAlive: async () => {
+      const { runPan115TokenKeepAlive } = await import("./pan115-token-keepalive");
+      const { getCurrentAccountId } = await import("./workflow-runtime");
+      const accountId = await getCurrentAccountId();
+      const keepAliveResult = await runPan115TokenKeepAlive(accountId);
+      if (keepAliveResult.fatal > 0) {
+        console.error(
+          `[token-keepalive] ${keepAliveResult.fatal} account(s) have revoked tokens and need re-authorization`,
+        );
+      }
+    },
   };
 }
 
@@ -282,6 +310,7 @@ export function startBackgroundWorker(options?: { pollMs?: number; runtime?: Wor
           autoUpdate: runtime.autoUpdate,
           concurrency: runtime.concurrency,
           runDueStrmTasks: runtime.runDueStrmTasks,
+          runTokenKeepAlive: runtime.runTokenKeepAlive,
           pollMs,
         });
         if (drained > 0) {

@@ -27,31 +27,23 @@ import {
   requireAuthenticatedAccountId,
 } from "../../../composition/runtime-container";
 import { resolveQueueStorage, frozenDriveMessage } from "../../storage-drives";
-import {
-  getAccountScopedSettings,
-  UpdateInProgressError,
-  isUpdateInProgress,
-} from "../../settings-system/application/system-settings-service";
-import {
-  getTmdbAccesses,
-  resolveAgentModelConfig,
-} from "../../../lib/runtime/settings-readers";
+import { getAccountScopedSettings, UpdateInProgressError, isUpdateInProgress } from "../../settings-system/application/system-settings-service";
+import { getTmdbAccesses, resolveAgentModelConfig } from "../../../lib/runtime/settings-readers";
 import { isLiveSearch } from "../../../lib/search-provider";
-import {
-  findDemoCandidateByTmdbId,
-  findDemoCandidateById,
-} from "../../../lib/demo-candidates";
+import { findDemoCandidateByTmdbId, findDemoCandidateById } from "../../../lib/demo-candidates";
 import { isUpdateHoldActive, whileInFlight } from "../../../lib/update-hold";
-import {
-  type CandidateTrackingRequestResult,
-  type CandidateReserveRequestResult,
-} from "../contracts/acquisition-types";
+import { type CandidateTrackingRequestResult, type CandidateReserveRequestResult } from "../contracts/acquisition-types";
 import {
   getWorkerStorageExecutor,
   getWorkerStorageParents,
   defaultQuality,
   storageDirectoryIdForCandidate,
 } from "./worker-runner-service";
+import {
+  tryInspectAndAdoptMovie,
+  tryInspectAndAdoptTv,
+  tryInspectAndAdoptSeries,
+} from "./storage-preflight-helper";
 
 export async function movieTargetFromTmdbId(
   tmdbId: number,
@@ -158,6 +150,8 @@ function targetFromSearchCandidate(
     originalTitle: candidate.originalTitle,
     year: candidate.year,
     aliases: candidate.originalTitle && candidate.originalTitle !== candidate.title ? [candidate.originalTitle] : [],
+    posterPath: candidate.posterPath ?? null,
+    backdropPath: candidate.backdropPath ?? null,
   };
   const trackedSeason: TrackedSeason = {
     id: candidateId,
@@ -253,6 +247,19 @@ export async function queueCandidateTracking(
     if (!movie) {
       return { status: "unsupported", message: "无法获取该电影的信息。" };
     }
+
+    const preflight = await tryInspectAndAdoptMovie({
+      accountId,
+      executionAccountId,
+      workspaceId: workspace.id,
+      movie,
+      repo,
+      sharedMode,
+    });
+    if (preflight.adopted && preflight.result) {
+      return preflight.result;
+    }
+
     const request = await queueMovieAcquisition({
       title: movie.title,
       keyword: movie.keyword,
@@ -316,6 +323,18 @@ export async function queueCandidateTracking(
         trackedSeasonId: `${titleKey}_s${seasonNumber}`,
       };
     }
+  }
+
+  const preflight = await tryInspectAndAdoptTv({
+    accountId,
+    executionAccountId,
+    workspaceId: workspace.id,
+    target,
+    repo,
+    sharedMode,
+  });
+  if (preflight.adopted && preflight.result) {
+    return preflight.result;
   }
 
   const request = await queueTrackingInitialization({
@@ -478,6 +497,19 @@ export async function queueCandidateSeries(
       qualityPreference: defaultQuality(),
       metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(executionAccountId))),
     });
+
+    const preflight = await tryInspectAndAdoptSeries({
+      accountId,
+      executionAccountId,
+      workspaceId: workspace.id,
+      target,
+      repo,
+      sharedMode,
+    });
+    if (preflight.adopted && preflight.result) {
+      return preflight.result;
+    }
+
     const request = await queueSeriesInitialization({
       title: target.title,
       seasons: target.seasons,
@@ -518,6 +550,8 @@ export async function queueCandidateSeries(
       year: candidate.year,
       aliases:
         candidate.originalTitle && candidate.originalTitle !== candidate.title ? [candidate.originalTitle] : [],
+      posterPath: candidate.posterPath ?? null,
+      backdropPath: candidate.backdropPath ?? null,
     },
     seasons: candidate.seasons.map((season) => ({
       seasonNumber: season.seasonNumber,

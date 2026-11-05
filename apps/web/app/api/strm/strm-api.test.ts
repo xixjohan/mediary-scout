@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -22,7 +21,8 @@ describe("STRM API Routes", () => {
   const tempDirs: string[] = [];
 
   const makeTempDir = () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "strm-api-test-"));
+    const dir = path.join(process.cwd(), "data", `strm-api-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    fs.mkdirSync(dir, { recursive: true });
     tempDirs.push(dir);
     return dir;
   };
@@ -51,7 +51,7 @@ describe("STRM API Routes", () => {
         storageId: "cs_115",
         remoteFolderId: "root_115",
         remotePath: "/Media/Movies",
-        localOutputDir: tempDir,
+        localOutputDir: path.relative(process.cwd(), tempDir).replace(/\\/g, "/"),
         scanIntervalMinutes: 120,
       }),
     });
@@ -83,7 +83,7 @@ describe("STRM API Routes", () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        directoryPath: tempDir,
+        directoryPath: path.relative(process.cwd(), tempDir).replace(/\\/g, "/"),
         newBaseUrl: "https://mediary.example.com",
       }),
     });
@@ -113,7 +113,7 @@ describe("STRM API Routes", () => {
       storageId: "cs_1",
       remoteFolderId: "rf_1",
       remotePath: "/Movies",
-      localOutputDir: dir1,
+      localOutputDir: path.relative(process.cwd(), dir1).replace(/\\/g, "/"),
     });
     await repo.createStrmTask({
       accountId: "acct_default",
@@ -121,7 +121,7 @@ describe("STRM API Routes", () => {
       storageId: "cs_2",
       remoteFolderId: "rf_2",
       remotePath: "/Anime",
-      localOutputDir: dir2,
+      localOutputDir: path.relative(process.cwd(), dir2).replace(/\\/g, "/"),
     });
 
     const file1 = path.join(dir1, "t1.strm");
@@ -236,7 +236,7 @@ describe("STRM API Routes", () => {
         storageId: "cs_115",
         remoteFolderId: "f_1",
         remotePath: "/Movies",
-        localOutputDir: tempDir,
+        localOutputDir: path.relative(process.cwd(), tempDir).replace(/\\/g, "/"),
       }),
     });
     const createRes = await createTask(createReq);

@@ -4,6 +4,9 @@ import { requireApiAccount } from "../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import { ensureStrmTaskConfigRegistry } from "../../../../composition/runtime-container";
 import type { CreateStrmTaskInput } from "@media-track/workflow";
+import { isValidStrmOutputPath } from "@media-track/workflow";
+import { resolveStrmOutputPath } from "@media-track/workflow";
+import fs from "node:fs/promises";
 
 export async function GET(request: NextRequest) {
   const gate = await requireApiAccount(request);
@@ -61,6 +64,14 @@ export async function POST(request: NextRequest) {
       { error: "name, storageId, remoteFolderId, localOutputDir 必填" },
       { status: 400 },
     );
+  }
+  if (!isValidStrmOutputPath(body.localOutputDir)) {
+    return NextResponse.json({ error: "STRM 输出目录必须是程序目录下 data/ 内的相对路径" }, { status: 400 });
+  }
+  try {
+    await fs.mkdir(resolveStrmOutputPath(body.localOutputDir), { recursive: true });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? `STRM 输出目录不可用：${error.message}` : "STRM 输出目录不可用" }, { status: 400 });
   }
 
   const repo = getWorkflowRepository();

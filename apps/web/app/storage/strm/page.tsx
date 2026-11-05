@@ -1,10 +1,13 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { PageLoginGuard } from "../../../lib/page-auth-guard";
+import { ClientLoginRedirect } from "../../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../../components/layout/app-sidebar";
 import {
   getAccountConnectedStorages,
+  getCurrentAccountId,
   resolveGlobalWorkspace,
+  UNAUTHENTICATED_ACCOUNT_ID,
 } from "../../../lib/workflow-runtime";
 import { StrmScheduleView } from "../../../features/strm/components/strm-schedule-view";
 
@@ -40,6 +43,15 @@ async function StrmSurface({
   searchParams: Promise<{ w?: string }>;
 }) {
   await connection();
+  const accountId = await getCurrentAccountId();
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    return (
+      <>
+        <ClientLoginRedirect />
+        <StrmShell />
+      </>
+    );
+  }
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   const storages = await getAccountConnectedStorages();

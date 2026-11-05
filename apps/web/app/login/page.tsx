@@ -57,6 +57,15 @@ export default function LoginPage() {
   // 单用户永远是登录（只输密码），没有注册这条路。
   const effectiveMode: "login" | "register" = singleUser ? "login" : claiming ? "register" : mode;
 
+  const getSafeRedirectUrl = () => {
+    if (typeof window === "undefined") return "/";
+    const redirectParam = new URLSearchParams(window.location.search).get("redirect");
+    if (redirectParam && redirectParam.startsWith("/") && !redirectParam.startsWith("//")) {
+      return redirectParam;
+    }
+    return "/";
+  };
+
   /** 首次设置访问密码，然后立刻用它登录换 session，最后回媒体库。 */
   const submitNewPassword = () => {
     setError(null);
@@ -78,7 +87,7 @@ export default function LoginPage() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ username: "", password }),
       }).catch(() => undefined);
-      window.location.href = "/";
+      window.location.href = getSafeRedirectUrl();
     });
   };
 
@@ -91,7 +100,7 @@ export default function LoginPage() {
         body: JSON.stringify({ username, password }),
       });
       if (res.ok) {
-        window.location.href = "/";
+        window.location.href = getSafeRedirectUrl();
         return;
       }
       const body = (await res.json().catch(() => ({}))) as { error?: string };

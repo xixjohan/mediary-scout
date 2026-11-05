@@ -1,15 +1,15 @@
 import Link from "next/link";
 import { connection } from "next/server";
-
 import { PageLoginGuard } from "../lib/page-auth-guard";
+import { ClientLoginRedirect } from "../features/auth/components/client-login-redirect";
+import { WorkspaceCookieSync } from "../features/auth/components/workspace-cookie-sync";
 import { Suspense } from "react";
 import { Library, TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../features/acquisition/components/acquiring-poller";
 import { AppSidebar } from "../components/layout/app-sidebar";
 import { CandidateCard } from "../features/acquisition/components/candidate-card";
 import { DemoSessionLibrary } from "../components/demo/demo-session-library";
-import { LibraryQuickFind } from "../features/catalog/components/library-quick-find";
-import { SubscriptionTodo } from "../features/acquisition/components/subscription-todo";
+import { LibraryWorkspaceView } from "../features/catalog/components/library-workspace-view";
 import { RememberQuery } from "../features/catalog/components/search-memory";
 import { SearchForm } from "../features/catalog/components/search-form";
 import { TrendingRow } from "../features/catalog/components/trending-row";
@@ -23,9 +23,12 @@ import { getInProgressTitles, getLibraryWall } from "../lib/title-hub";
 import {
   ensureDemoSeeded,
   getActiveWorkspaceScope,
+  getCurrentAccountId,
   getRegisteredDriveCount,
   getWorkflowRepository,
   isSharedResourceMode,
+  resolvePreferredWorkspaceRedirect,
+  UNAUTHENTICATED_ACCOUNT_ID,
 } from "../lib/workflow-runtime";
 import { showHref } from "@media-track/workflow";
 import type { SearchCandidateCard, TrackedSeasonState } from "@media-track/workflow";
@@ -137,7 +140,25 @@ async function HomeSurface({
   storageId?: string | undefined;
 }) {
   await connection();
+  const accountId = await getCurrentAccountId();
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    return (
+      <>
+        <ClientLoginRedirect />
+        <HomeShell />
+      </>
+    );
+  }
   const params = (await searchParams) ?? {};
+  const redirectTarget = await resolvePreferredWorkspaceRedirect(accountId, storageId, params);
+  if (redirectTarget) {
+    return (
+      <>
+        <ClientLoginRedirect target={redirectTarget} />
+        <HomeShell />
+      </>
+    );
+  }
   const {
     query,
     activeTab,
@@ -162,6 +183,7 @@ async function HomeSurface({
 
   return (
     <div className="app-shell">
+      <WorkspaceCookieSync storageId={storageId} />
       <AppSidebar active={activeTab} searchQuery={query} basePath={basePath} activeStorageId={storageId} />
 
       <main className="main product-main">
@@ -375,7 +397,7 @@ async function SearchResults({
   const pageSize = filterParams?.pageSize ?? 30;
   const searchView = await getSearchView(query, storageId, filterParams?.page, pageSize);
   if (searchView.state === "empty") {
-    return <TrendingRow activeKind={activeTrending} basePath={basePath} filterParams={filterParams} />;
+    return <TrendingRow activeKind={activeTrending} basePath={basePath} filterParams={filterParams} storageId={storageId} />;
   }
   if (searchView.state === "provider_error") {
     return <SearchProviderErrorView searchView={searchView} basePath={basePath} />;
@@ -513,17 +535,13 @@ async function LibrarySurface({
           详情页季行同一口径，见 lib/subscription-missing），这里不重算。
           category 视图及「已完成」视图下不显示——那一屏已被收窄，再叠一块全局
           待办会让人以为数字对应当前筛选。 */}
-      {status !== "completed" ? (
-        <SubscriptionTodo wallEntries={wall} storageId={storageId} initialCategory={category} />
-      ) : null}
-      <LibraryQuickFind
+      <LibraryWorkspaceView
         wallEntries={wall}
         inProgressTitles={inProgress}
         storageId={storageId}
-        mode={category ? "category" : "home"}
-        mediaType={category ?? undefined}
-        filter={filter === "complete" || filter === "tracking" || filter === "partial" ? filter : "all"}
-        status={status}
+        category={category}
+        initialFilter={filter === "complete" || filter === "tracking" || filter === "partial" ? filter : "all"}
+        initialStatus={status}
       />
     </section>
   );

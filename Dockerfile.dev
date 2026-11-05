@@ -23,11 +23,14 @@ COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/workflow/package.json packages/workflow/
 
-RUN npm config set registry "$NPM_REGISTRY" && npm ci && npm install better-sqlite3@12.11.1
+RUN npm config set registry "$NPM_REGISTRY" && \
+    npm ci && \
+    better_sqlite3_binary_host_mirror="https://registry.npmmirror.com/-/binary/better-sqlite3" npm install better-sqlite3@12.11.1
 
-# 2. 源码拷贝与提交哈希标记 (自验证守卫)
-RUN echo "mediary-dev build commit: ${GIT_SHA}" && echo "${GIT_SHA}" > /app/BUILD_COMMIT
+# 2. 源码拷贝（先于 GIT_SHA RUN，保证内容变动时后续层正确失效）
 COPY . .
+# 自验证守卫：写入提交哈希供 /api/health 比对
+RUN echo "mediary-dev build commit: ${GIT_SHA}" && echo "${GIT_SHA}" > /app/BUILD_COMMIT
 
 ENV MEDIA_TRACK_ALLOWED_ORIGINS=${MEDIA_TRACK_ALLOWED_ORIGINS}
 ENV NODE_ENV=production

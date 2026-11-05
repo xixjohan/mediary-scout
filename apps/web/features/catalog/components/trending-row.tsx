@@ -54,17 +54,21 @@ function TrendingCardItem({
   card,
   index,
   basePath,
+  storageId,
   douban,
 }: {
   card: Awaited<ReturnType<typeof getDiscoverFeed>>[number];
   index: number;
   basePath: string;
+  storageId?: string | undefined;
   douban?: { score: number } | undefined;
 }) {
   const typeLabel = cardMediaTypeLabel(card.genreIds, card.mediaType, card.title);
   // 海报直达优化：持有 tmdbId 时直接直达详情页，避免按片名二次重新搜索的冗余跳转与混淆
+  // 保持当前网盘工作区参数，防止进入详情页后网盘状态漂移
+  const activeStorageId = storageId ?? (/^\/w\/([^/]+)/.exec(basePath)?.[1]);
   const href = card.tmdbId
-    ? showHref(card.tmdbId, "search", undefined, card.mediaType)
+    ? showHref(card.tmdbId, "search", activeStorageId, card.mediaType)
     : `${basePath}?q=${encodeURIComponent(card.title)}`;
 
   return (
@@ -136,10 +140,12 @@ export async function TrendingRow({
   activeKind,
   basePath,
   filterParams,
+  storageId,
 }: {
   activeKind: TrendingKind;
   basePath: string;
   filterParams?: { type?: string; country?: string; genre?: string; year?: string; sort?: string; page?: number; pageSize?: number } | undefined;
+  storageId?: string | undefined;
 }) {
   const pageSize = filterParams?.pageSize ?? 30;
   const cards = await getDiscoverFeed({ ...filterParams, pageSize, trending: activeKind });
@@ -187,6 +193,7 @@ export async function TrendingRow({
             card={card}
             index={index}
             basePath={basePath}
+            storageId={storageId}
             douban={doubanMap.get(`${card.title}_${card.year ?? ""}`)}
           />
         ))}

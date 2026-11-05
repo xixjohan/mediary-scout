@@ -24,6 +24,7 @@ vi.mock("../../storage-drives", () => ({
     frozen: false,
   })),
   frozenDriveMessage: vi.fn(() => "frozen"),
+  getAccountDriveFileManager: vi.fn(async () => null),
 }));
 
 import { queueCandidateTracking } from "./acquisition-service";

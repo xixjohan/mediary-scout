@@ -33,7 +33,7 @@ function SidebarHeader({
 
       {!skeleton ? (
         <Suspense fallback={null}>
-          <WorkspaceSwitcherLoader />
+          <WorkspaceSwitcherLoader activeStorageId={activeStorageId} />
         </Suspense>
       ) : null}
 

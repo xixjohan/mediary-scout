@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InMemoryWorkflowRepository } from "../persistence/repository.js";
@@ -86,7 +85,8 @@ describe("matchStrmTasksForIngest", () => {
 describe("syncPinpointIngestedFiles", () => {
   const dirs: string[] = [];
   const makeTempDir = () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pinpoint-test-"));
+    const dir = path.join(process.cwd(), "data", `pinpoint-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    fs.mkdirSync(dir, { recursive: true });
     dirs.push(dir);
     return dir;
   };
@@ -109,7 +109,7 @@ describe("syncPinpointIngestedFiles", () => {
       storageId: "cs_115",
       remoteFolderId: "root_1",
       remotePath: "/Media/Movies",
-      localOutputDir: tempDir,
+      localOutputDir: path.relative(process.cwd(), tempDir).replace(/\\/g, "/"),
       scanIntervalMinutes: 360,
       scanMode: "incremental_missing",
       extensions: "mkv;mp4",
@@ -172,7 +172,7 @@ describe("syncPinpointIngestedFiles", () => {
       storageId: "cs_115",
       remoteFolderId: "cid_movie",
       remotePath: "/Media/Movies",
-      localOutputDir: movieDir,
+      localOutputDir: path.relative(process.cwd(), movieDir).replace(/\\/g, "/"),
       scanIntervalMinutes: 360,
       scanMode: "incremental_missing",
       extensions: "mkv;mp4",
@@ -187,7 +187,7 @@ describe("syncPinpointIngestedFiles", () => {
       storageId: "cs_115",
       remoteFolderId: "cid_tv",
       remotePath: "/Media/TV",
-      localOutputDir: tvDir,
+      localOutputDir: path.relative(process.cwd(), tvDir).replace(/\\/g, "/"),
       scanIntervalMinutes: 360,
       scanMode: "incremental_missing",
       extensions: "mkv;mp4",

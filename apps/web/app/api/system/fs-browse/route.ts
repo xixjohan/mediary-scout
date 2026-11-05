@@ -1,9 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import fs from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { requireApiAccount } from "../../../../lib/auth-chain";
+import { resolveStrmOutputPath, toStrmOutputConfigPath } from "@media-track/workflow";
 
 /**
  * 获取跨平台允许浏览的根路径列表
@@ -74,77 +76,100 @@ const FORBIDDEN_DIRS = new Set([
   "etc",
 ]);
 
-export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
-  if (gate instanceof Response) return gate;
+function rootListingResponse(roots: { name: string; fullPath: string }[]): NextResponse {
+  return NextResponse.json({
+    currentPath: "",
+    parentPath: null,
+    isRoot: true,
+    canWrite: false,
+    directories: roots.map((root) => ({
+      name: root.name,
+      fullPath: root.fullPath,
+      isDriveRoot: true,
+    })),
+  });
+}
 
-  const { searchParams } = new URL(request.url);
-  const requestedPath = searchParams.get("path")?.trim();
-  const roots = await getAvailableRoots();
+function getVisibleDirectories(
+  resolved: string,
+  entries: Dirent<string>[],
+): { name: string; fullPath: string; configPath?: string }[] {
+  const programData = path.join(process.cwd(), "data");
+  const isUnderProgramData =
+    resolved === programData || resolved.startsWith(`${programData}${path.sep}`);
+  return entries
+    .filter((entry) => entry.isDirectory() &&
+      !FORBIDDEN_DIRS.has(entry.name.toLowerCase()) &&
+      !entry.name.startsWith("."))
+    .map((entry) => {
+      const fullPath = path.join(resolved, entry.name);
+      const configPath = isUnderProgramData ? toStrmOutputConfigPath(fullPath) : undefined;
+      return { name: entry.name, fullPath, ...(configPath ? { configPath } : {}) };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+}
 
-  // 若未指定路径，直接返回可用的顶层根目录/盘符
-  if (!requestedPath) {
-    return NextResponse.json({
-      currentPath: "",
-      parentPath: null,
-      isRoot: true,
-      canWrite: false,
-      directories: roots.map((r) => ({
-        name: r.name,
-        fullPath: r.fullPath,
-        isDriveRoot: true,
-      })),
-    });
+async function resolveRequestedPath(
+  requestedPath: string,
+  roots: { fullPath: string }[],
+): Promise<string | NextResponse> {
+  let resolved: string;
+  try {
+    const normalized = requestedPath.replace(/\\/g, "/").startsWith("data/")
+      ? resolveStrmOutputPath(requestedPath)
+      : path.normalize(requestedPath);
+    resolved = path.resolve(normalized);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "STRM 路径无效" },
+      { status: 400 },
+    );
   }
 
-  const normalized = path.normalize(requestedPath);
-  const resolved = path.resolve(normalized);
+  if (requestedPath.replace(/\\/g, "/").startsWith("data/")) {
+    const isDirectory = await fs.stat(resolved).then((stat) => stat.isDirectory()).catch(
+      (error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return false;
+        throw error;
+      },
+    );
+    if (!isDirectory) {
+      return NextResponse.json({
+        code: "DIRECTORY_NOT_FOUND",
+        error: "目录尚不存在，可通过选择目标操作创建后使用",
+        currentPath: resolved,
+        canCreate: true,
+      }, { status: 404 });
+    }
+  }
 
-  // 安全检查：防止 Path Traversal 逃逸出白名单根
-  const allowed = await isPathAllowed(resolved, roots);
-  if (!allowed) {
+  if (!(await isPathAllowed(resolved, roots))) {
     return NextResponse.json(
       { error: "安全拦截：所请求的路径超出系统允许的安全浏览范围" },
       { status: 403 },
     );
   }
+  return resolved;
+}
 
+async function readDirectoryResponse(
+  resolved: string,
+  roots: { fullPath: string }[],
+): Promise<NextResponse> {
   try {
     const stat = await fs.stat(resolved);
     if (!stat.isDirectory()) {
       return NextResponse.json({ error: "目标路径不是文件夹" }, { status: 400 });
     }
 
-    let canWrite = false;
-    try {
-      await fs.access(resolved, fs.constants.W_OK);
-      canWrite = true;
-    } catch {
-      canWrite = false;
-    }
-
+    const canWrite = await fs.access(resolved, fs.constants.W_OK).then(
+      () => true,
+      () => false,
+    );
     const entries = await fs.readdir(resolved, { withFileTypes: true });
-    const directories: { name: string; fullPath: string }[] = [];
-
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        const nameLower = entry.name.toLowerCase();
-        if (FORBIDDEN_DIRS.has(nameLower) || entry.name.startsWith(".")) {
-          continue;
-        }
-        directories.push({
-          name: entry.name,
-          fullPath: path.join(resolved, entry.name),
-        });
-      }
-    }
-
-    // 排序：按字母排序
-    directories.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
-
+    const directories = getVisibleDirectories(resolved, entries);
     const parent = path.dirname(resolved);
-    const hasParent = parent !== resolved && (await isPathAllowed(parent, roots));
-
+    const hasParent = parent !== resolved && await isPathAllowed(parent, roots);
     return NextResponse.json({
       currentPath: resolved,
       parentPath: hasParent ? parent : null,
@@ -152,9 +177,98 @@ export async function GET(request: NextRequest) {
       canWrite,
       directories,
     });
-  } catch (err: any) {
+  } catch (error) {
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "读取目录失败" },
+      { error: error instanceof Error ? error.message : "读取目录失败" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function GET(request: NextRequest) {
+  const gate = await requireApiAccount(request);
+  if (gate instanceof Response) return gate;
+
+  const { searchParams } = new URL(request.url);
+  const requestedPath = searchParams.get("path")?.trim();
+  const roots = await getAvailableRoots();
+  if (!requestedPath) return rootListingResponse(roots);
+
+  const resolved = await resolveRequestedPath(requestedPath, roots);
+  if (resolved instanceof Response) return resolved;
+  return readDirectoryResponse(resolved, roots);
+}
+
+function ensureOutputErrorResponse(error: unknown): NextResponse {
+  const code = (error as NodeJS.ErrnoException).code;
+  const isUnavailable = code === "EACCES" || code === "EROFS";
+  const status = isUnavailable ? 403 : code === "ENOENT" ? 404 : 400;
+  const errorCode = isUnavailable
+    ? "OUTPUT_ROOT_NOT_WRITABLE"
+    : code === "ENOENT"
+      ? "OUTPUT_ROOT_UNAVAILABLE"
+      : "OUTPUT_PATH_INVALID";
+  return NextResponse.json({
+    code: errorCode,
+    error: error instanceof Error ? error.message : "STRM 目录不可用",
+  }, { status });
+}
+
+async function ensureOutputResponse(outputConfigPath?: string): Promise<NextResponse> {
+  if (!outputConfigPath) {
+    return NextResponse.json({ code: "INVALID_PATH", error: "outputPath 必填" }, { status: 400 });
+  }
+  try {
+    const outputPath = resolveStrmOutputPath(outputConfigPath);
+    const dataRoot = path.join(process.cwd(), "data");
+    await fs.mkdir(outputPath, { recursive: true });
+    const [realRoot, realOutput, stat] = await Promise.all([
+      fs.realpath(dataRoot), fs.realpath(outputPath), fs.stat(outputPath),
+    ]);
+    if (realOutput !== realRoot && !realOutput.startsWith(`${realRoot}${path.sep}`)) {
+      return NextResponse.json({ code: "PATH_OUTSIDE_ROOT", error: "STRM 目录超出允许范围" }, { status: 403 });
+    }
+    if (!stat.isDirectory()) {
+      return NextResponse.json({ code: "NOT_DIRECTORY", error: "目标路径不是文件夹" }, { status: 400 });
+    }
+    await fs.access(outputPath, fs.constants.W_OK);
+    return NextResponse.json({
+      ok: true,
+      configPath: outputConfigPath,
+      resolvedPath: outputPath,
+      exists: true,
+      canWrite: true,
+    });
+  } catch (error) {
+    return ensureOutputErrorResponse(error);
+  }
+}
+
+async function createChildDirectoryResponse(parentPath: string, folderName: string): Promise<NextResponse> {
+  const cleanName = folderName.trim().replace(/[\\/:*?"<>|]/g, "_");
+  let resolvedParent: string;
+  try {
+    resolvedParent = parentPath.replace(/\\/g, "/").startsWith("data/")
+      ? resolveStrmOutputPath(parentPath)
+      : parentPath;
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "STRM 路径无效" },
+      { status: 400 },
+    );
+  }
+
+  const targetDir = path.resolve(resolvedParent, cleanName);
+  const roots = await getAvailableRoots();
+  if (!(await isPathAllowed(targetDir, roots))) {
+    return NextResponse.json({ error: "安全拦截：所创建的路径超出允许范围" }, { status: 403 });
+  }
+  try {
+    await fs.mkdir(targetDir, { recursive: true });
+    return NextResponse.json({ ok: true, createdPath: targetDir });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "创建目录失败" },
       { status: 500 },
     );
   }
@@ -174,28 +288,12 @@ export async function POST(request: NextRequest) {
   const body = (await request.json().catch(() => null)) as {
     parentPath?: string;
     folderName?: string;
+    mode?: "mkdir" | "ensure-output";
+    outputPath?: string;
   } | null;
-
-  if (!body?.parentPath || !body?.folderName?.trim()) {
+  if (body?.mode === "ensure-output") return ensureOutputResponse(body.outputPath);
+  if (!body?.parentPath || !body.folderName?.trim()) {
     return NextResponse.json({ error: "parentPath 与 folderName 必填" }, { status: 400 });
   }
-
-  const cleanName = body.folderName.trim().replace(/[\\/:*?"<>|]/g, "_");
-  const targetDir = path.resolve(body.parentPath, cleanName);
-  const roots = await getAvailableRoots();
-
-  const allowed = await isPathAllowed(targetDir, roots);
-  if (!allowed) {
-    return NextResponse.json({ error: "安全拦截：所创建的路径超出允许范围" }, { status: 403 });
-  }
-
-  try {
-    await fs.mkdir(targetDir, { recursive: true });
-    return NextResponse.json({ ok: true, createdPath: targetDir });
-  } catch (err) {
-    return NextResponse.json(
-      { error: err instanceof Error ? err.message : "创建目录失败" },
-      { status: 500 },
-    );
-  }
+  return createChildDirectoryResponse(body.parentPath, body.folderName);
 }

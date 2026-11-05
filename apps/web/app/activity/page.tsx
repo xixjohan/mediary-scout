@@ -1,11 +1,12 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
+import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { ActivityFeed } from "../../features/activity/components/activity-feed";
 import { MediaRequestPanel } from "../../features/acquisition/components/media-request-panel";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
-import { resolveGlobalWorkspace } from "../../lib/workflow-runtime";
+import { getCurrentAccountId, resolveGlobalWorkspace, UNAUTHENTICATED_ACCOUNT_ID } from "../../lib/workflow-runtime";
 
 // `searchParams` (the active drive `?w`) is a dynamic input + a DB read. Reading it
 // inside a Suspense boundary lets the static app shell prerender instead of the
@@ -33,6 +34,15 @@ function ActivityShell() {
 
 async function ActivitySurface({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
   await connection();
+  const accountId = await getCurrentAccountId();
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    return (
+      <>
+        <ClientLoginRedirect />
+        <ActivityShell />
+      </>
+    );
+  }
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return (

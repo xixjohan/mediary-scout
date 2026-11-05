@@ -15,6 +15,7 @@ import {
   getCredentialStrategy,
   type RevealedCredentials,
   type Pan115OpenOAuthCredentials,
+  type Pan115TokenRefreshCoordinator,
   GuangYaClient,
   isPan115OpenOAuthValid,
   isRegisteredStorageProvider,
@@ -50,6 +51,10 @@ import {
 } from "../contracts/storage-types";
 import { customDirNamesFromEnv, resolveCategoryDirNames, type CustomDirNames } from "../core/dir-naming";
 import { extractStorageCredential } from "../core/credentials";
+import {
+  createPan115OpenOAuthPersister,
+  createPan115OpenOAuthRefreshCoordinator,
+} from "./pan115-open-oauth-persistence";
 
 export const PAN115_COOKIE_KEY = "pan115.cookie";
 export const PAN115_META_KEY = "pan115.cookieMeta";
@@ -824,6 +829,21 @@ export function makeTokenPersister(
   };
 }
 
+/** Strict storage-payload persister for rotating 115 Open OAuth credentials. */
+export function makePan115OpenOAuthPersister(
+  accountId: string,
+  storageId: string,
+): (credentials: Pan115OpenOAuthCredentials) => Promise<void> {
+  return createPan115OpenOAuthPersister(getWorkflowRepository(), accountId, storageId);
+}
+
+export function makePan115OpenOAuthRefreshCoordinator(
+  accountId: string,
+  storageId: string,
+): Pan115TokenRefreshCoordinator {
+  return createPan115OpenOAuthRefreshCoordinator(getWorkflowRepository(), accountId, storageId);
+}
+
 export async function healDriveProvisioning(
   repository: WorkflowRepository,
   accountId: string,
@@ -933,7 +953,8 @@ export async function getAccountStorageCredentials(
     if (!drive) {
       return null;
     }
-    const { cookie, credential } = extractStorageCredential(drive.provider, drive.payload);
+    const { cookie, credential: extractedCredential } = extractStorageCredential(drive.provider, drive.payload);
+    const credential = credentialWithPan115OpenOAuth(drive.provider, drive.payload, extractedCredential);
     if (!cookie && !credential) {
       return null;
     }
@@ -978,6 +999,19 @@ export async function getAccountStorageCredentials(
   }
 }
 
+function credentialWithPan115OpenOAuth(
+  provider: string,
+  rawPayload: unknown,
+  extractedCredential: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  if (provider !== "pan115" || rawPayload === null || typeof rawPayload !== "object" || Array.isArray(rawPayload)) {
+    return extractedCredential;
+  }
+  const payload = rawPayload as Record<string, unknown>;
+  const openOAuth = payload.openOAuth as Pan115OpenOAuthCredentials | undefined;
+  return isPan115OpenOAuthValid(openOAuth) ? payload : extractedCredential;
+}
+
 export async function getAccountDriveFileManager(
   accountId: string,
   connectedStorageId?: string | null,
@@ -1016,6 +1050,8 @@ export async function resolveQueueStorage(
 export interface StorageDiagnosticsReport {
   storageId: string;
   provider: string;
+  supportsOpenOAuth: boolean;
+  authKind: "cookie" | "token";
   engineMode?: "dual_engine" | "cookie_only" | "open_only" | undefined;
   cookieStatus: {
     configured: boolean;
@@ -1037,17 +1073,17 @@ export interface StorageDiagnosticsReport {
   };
 }
 
-async function probeCookieHealth(
+async function probeDriveCredentialHealth(
   provider: string,
   cookie: string,
+  credential: TokenCredential | null,
   rootCid: string | null,
 ): Promise<{ valid: boolean; latencyMs: number; error?: string | undefined }> {
   const t0 = Date.now();
   try {
-    if (provider === "pan115") {
-      await new Pan115CookieClient({ cookie, listPageDelayMs: 0 }).getDirectoryInfo({
-        directoryId: rootCid ?? "0",
-      });
+    const probe = STORAGE_PROBES[provider as StorageProvider];
+    if (probe) {
+      await probe({ cookie, credential, rootCid });
     }
     return { valid: true, latencyMs: Date.now() - t0 };
   } catch (err) {
@@ -1069,24 +1105,35 @@ async function probeOpenOAuthHealth(
   try {
     const openClient = new Pan115OpenClient({
       credentials: openOAuth,
-      onCredentialsPersist: async (creds) => {
-        await makeTokenPersister(accountId, storageId, provider)(creds);
-      },
+      onCredentialsPersist: makePan115OpenOAuthPersister(accountId, storageId),
+      coordinateTokenRefresh: makePan115OpenOAuthRefreshCoordinator(accountId, storageId),
     });
     await openClient.listItems({ directoryId: "0" });
     const now = Date.now();
-    return {
-      valid: true,
-      latencyMs: now - t0,
-      expiresInSec: Math.max(0, Math.floor((openOAuth.expiresAt - now) / 1000)),
-    };
+    const activeCredentials = openClient.getCredentials();
+    return { valid: true, latencyMs: now - t0, expiresInSec: Math.max(0, Math.floor((activeCredentials.expiresAt - now) / 1000)) };
   } catch (err) {
-    return {
-      valid: false,
-      latencyMs: Date.now() - t0,
-      error: err instanceof Error ? err.message : String(err),
-    };
+    const now = Date.now();
+    const rawTtl = typeof openOAuth.expiresAt === "number" ? Math.floor((openOAuth.expiresAt - now) / 1000) : undefined;
+    return { valid: false, latencyMs: now - t0, expiresInSec: rawTtl, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+function isCredentialConfigured(authKind: string, cookie?: string, credential?: unknown): boolean {
+  return authKind === "cookie" ? Boolean(cookie) : Boolean(credential);
+}
+
+function buildRoutingSummary(
+  isConfigured: boolean,
+  supportsOpenOAuth: boolean,
+  hasOpenOAuth: boolean,
+): StorageDiagnosticsReport["routingSummary"] {
+  const engine = supportsOpenOAuth && hasOpenOAuth ? "open" : "cookie";
+  return {
+    transferEngine: isConfigured ? "cookie" : "none",
+    listingEngine: engine,
+    streamEngine: engine,
+  };
 }
 
 export async function diagnoseStorageConnection(
@@ -1101,30 +1148,32 @@ export async function diagnoseStorageConnection(
 
   const payload = (drive.payload as Record<string, unknown> | null) ?? {};
   const provider = drive.provider;
-  const cookie = typeof payload.cookie === "string" ? payload.cookie.trim() : "";
+  const brand = getStorageBrand(provider);
+  const supportsOpenOAuth = brand.supportsOpenOAuth;
+  const authKind = brand.authKind;
+  const { cookie, credential } = extractStorageCredential(provider, drive.payload);
   const openOAuth = payload.openOAuth as Pan115OpenOAuthCredentials | undefined;
-  const hasOpenOAuth = isPan115OpenOAuthValid(openOAuth);
-  const engineMode = provider === "pan115" ? resolvePan115EngineMode(payload) : undefined;
+  const hasOpenOAuth = supportsOpenOAuth && isPan115OpenOAuthValid(openOAuth);
+  const engineMode = supportsOpenOAuth ? resolvePan115EngineMode(payload) : undefined;
+  const isConfigured = isCredentialConfigured(authKind, cookie, credential);
 
   const report: StorageDiagnosticsReport = {
     storageId,
     provider,
-    ...(engineMode ? { engineMode } : {}),
-    cookieStatus: { configured: Boolean(cookie) },
-    ...(openOAuth ? { openOAuthStatus: { configured: true } } : {}),
-    routingSummary: {
-      transferEngine: Boolean(cookie) ? "cookie" : "none",
-      listingEngine: hasOpenOAuth ? "open" : "cookie",
-      streamEngine: hasOpenOAuth ? "open" : "cookie",
-    },
+    supportsOpenOAuth,
+    authKind,
+    ...(supportsOpenOAuth && engineMode ? { engineMode } : {}),
+    cookieStatus: { configured: isConfigured },
+    ...(supportsOpenOAuth && openOAuth ? { openOAuthStatus: { configured: true } } : {}),
+    routingSummary: buildRoutingSummary(isConfigured, supportsOpenOAuth, hasOpenOAuth),
   };
 
-  if (cookie) {
-    const cookieHealth = await probeCookieHealth(provider, cookie, drive.rootCid);
-    report.cookieStatus = { configured: true, ...cookieHealth };
+  if (isConfigured) {
+    const credentialHealth = await probeDriveCredentialHealth(provider, cookie, credential, drive.rootCid);
+    report.cookieStatus = { configured: true, ...credentialHealth };
   }
 
-  if (provider === "pan115" && openOAuth) {
+  if (supportsOpenOAuth && openOAuth) {
     const oauthHealth = await probeOpenOAuthHealth(accountId, storageId, provider, openOAuth);
     report.openOAuthStatus = { configured: true, ...oauthHealth };
   }

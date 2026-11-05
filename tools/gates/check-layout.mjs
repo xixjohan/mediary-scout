@@ -19,13 +19,13 @@ const ROOT_ALLOWLIST = new Set([
   ".dockerignore", ".env.example", ".eslintignore", ".gitignore", ".gitattributes",
   ".dependency-cruiser.cjs", ".dependency-cruiser-known-violations.json",
   "eslint-suppressions.json",
-  "Dockerfile", "Dockerfile.dev", "LICENSE", "README.md", "README.en.md", "AGENT.md",
+  "Dockerfile", "Dockerfile.dev", "LICENSE", "README.md", "README.en.md", "AGENTS.md", "AGENT.md",
   "package.json", "package-lock.json", "pnpm-lock.yaml", "tsconfig.json", "vitest.config.ts",
   "eslint.config.mjs", "docker-compose.yml", "dev.bat", "smoke.bat",
 ]);
 const ROOT_DIR_ALLOWLIST = new Set([
-  ".git", ".github", ".claude", ".next", ".venv", "node_modules",
-  "apps", "packages", "workers", "scripts", "tools", "tests", "docs", "site",
+  ".git", ".github", ".claude", ".githooks", ".next", ".venv", "node_modules",
+  "apps", "packages", "workers", "scripts", "tools", "tests", "docs", "docs_secret", "site",
   "data", "backups", "env",
   "e2e-run", "test-results", "playwright-report", // E2E 运行时产物（gitignored）
   "run", // scripts/run-local-real.sh 的本地真实实例运行时产物（DB/日志/pid，gitignored）

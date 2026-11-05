@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, AlertTriangle, LoaderCircle, X, Activity, Server, Zap, ShieldCheck } from "lucide-react";
 import { diagnoseStorageConnectionAction } from "../../../app/actions/storage-drives-actions";
 import type { StorageDiagnosticsReport } from "../application/drive-service";
@@ -11,7 +12,45 @@ interface StorageDiagnosticsModalProps {
   onClose: () => void;
 }
 
-function EngineModeBanner({ mode }: { mode?: string | undefined }) {
+function EngineModeBanner({
+  mode,
+  supportsOpenOAuth,
+  providerLabel,
+  authKind,
+}: {
+  mode?: string | undefined;
+  supportsOpenOAuth: boolean;
+  providerLabel: string;
+  authKind: "cookie" | "token";
+}) {
+  if (!supportsOpenOAuth) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "12px 16px",
+          background: "rgba(16, 185, 129, 0.1)",
+          border: "1px solid rgba(16, 185, 129, 0.3)",
+          borderRadius: 8,
+        }}
+      >
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Zap size={16} style={{ color: "#10b981" }} />
+            <span style={{ fontWeight: 600, fontSize: 14 }}>
+              当前引擎模式：🟢 原生 {authKind === "token" ? "Token" : "Cookie"} 驱动 (稳态运行)
+            </span>
+          </div>
+          <p style={{ margin: "4px 0 0 24px", fontSize: 12, color: "#a1a1aa" }}>
+            专为 {providerLabel} 原生协议定制，提供稳态影视转存、目录索引与媒体直链解析。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const isDual = mode === "dual_engine";
   const isOpen = mode === "open_only";
   const title = isDual
@@ -47,13 +86,19 @@ function EngineModeBanner({ mode }: { mode?: string | undefined }) {
   );
 }
 
-function CookieTrackCard({ cookieStatus }: { cookieStatus: StorageDiagnosticsReport["cookieStatus"] }) {
+function CookieTrackCard({
+  cookieStatus,
+  authKind,
+}: {
+  cookieStatus: StorageDiagnosticsReport["cookieStatus"];
+  authKind?: "cookie" | "token";
+}) {
   return (
     <div style={{ padding: 14, background: "rgba(255, 255, 255, 0.03)", borderRadius: 8, border: "1px solid rgba(255, 255, 255, 0.08)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <span style={{ fontWeight: 600, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
           <Server size={14} style={{ color: "#38bdf8" }} />
-          Cookie 基础轨 (转存)
+          {authKind === "token" ? "Token 凭据轨 (API)" : "Cookie 基础轨 (转存)"}
         </span>
         {cookieStatus.valid ? (
           <span style={{ color: "#10b981", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
@@ -74,38 +119,114 @@ function CookieTrackCard({ cookieStatus }: { cookieStatus: StorageDiagnosticsRep
   );
 }
 
+function formatOAuthTtl(sec?: number): { text: string; isExpired: boolean } {
+  if (sec === undefined) return { text: "-", isExpired: false };
+  if (sec > 0) {
+    const days = Math.floor(sec / 86400);
+    return { text: days > 0 ? `${days} 天 (${sec}s)` : `${sec} 秒`, isExpired: false };
+  }
+  const overdueHours = Math.abs(Math.floor(sec / 3600));
+  const desc = overdueHours > 0 ? `${overdueHours} 小时前` : "刚刚";
+  return { text: `已过期 (${desc}，需重新授权)`, isExpired: true };
+}
+
+function OpenOAuthStatusBadge({ isHealthy, isConfigured }: { isHealthy: boolean; isConfigured: boolean }) {
+  if (isHealthy) {
+    return (
+      <span style={{ color: "#10b981", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
+        <CheckCircle2 size={13} /> 正常
+      </span>
+    );
+  }
+  if (isConfigured) {
+    return (
+      <span style={{ color: "#ef4444", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
+        <AlertTriangle size={13} /> 授权失效
+      </span>
+    );
+  }
+  return <span style={{ color: "#71717a", fontSize: 12 }}>未配置</span>;
+}
+
+function OpenOAuthStatusSummary({ isHealthy, isConfigured }: { isHealthy: boolean; isConfigured: boolean }) {
+  if (!isConfigured) {
+    return <span style={{ color: "#71717a" }}>未配置</span>;
+  }
+  return (
+    <span style={{ color: isHealthy ? "#10b981" : "#f59e0b" }}>
+      {isHealthy ? "已授权" : "已授权 (当前凭据不可用)"}
+    </span>
+  );
+}
+
 function OpenOAuthTrackCard({ openOAuthStatus }: { openOAuthStatus: StorageDiagnosticsReport["openOAuthStatus"] }) {
   const isHealthy = Boolean(openOAuthStatus?.valid);
+  const isConfigured = Boolean(openOAuthStatus?.configured);
+  const { text: ttlText, isExpired } = formatOAuthTtl(openOAuthStatus?.expiresInSec);
+
   return (
     <div style={{ padding: 14, background: "rgba(255, 255, 255, 0.03)", borderRadius: 8, border: "1px solid rgba(255, 255, 255, 0.08)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
         <span style={{ fontWeight: 600, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
-          <ShieldCheck size={14} style={{ color: "#10b981" }} />
+          <ShieldCheck size={14} style={{ color: isHealthy ? "#10b981" : isConfigured ? "#ef4444" : "#a1a1aa" }} />
           Open OAuth 轨 (清单/直链)
         </span>
-        {isHealthy ? (
-          <span style={{ color: "#10b981", fontSize: 12, display: "flex", alignItems: "center", gap: 4 }}>
-            <CheckCircle2 size={13} /> 正常
-          </span>
-        ) : (
-          <span style={{ color: "#f59e0b", fontSize: 12 }}>未激活</span>
-        )}
+        <OpenOAuthStatusBadge isHealthy={isHealthy} isConfigured={isConfigured} />
       </div>
       <div style={{ fontSize: 12, color: "#a1a1aa", lineHeight: 1.6 }}>
-        <div>OAuth 状态：{openOAuthStatus?.configured ? "已授权" : "未配置"}</div>
+        <div>OAuth 状态：<OpenOAuthStatusSummary isHealthy={isHealthy} isConfigured={isConfigured} /></div>
         <div>API 延迟：{openOAuthStatus?.latencyMs !== undefined ? `${openOAuthStatus.latencyMs} ms` : "-"}</div>
         <div>
           令牌剩余 TTL：
-          {openOAuthStatus?.expiresInSec !== undefined
-            ? `${Math.floor(openOAuthStatus.expiresInSec / 86400)} 天 (${openOAuthStatus.expiresInSec}s)`
-            : "-"}
+          <span style={{ color: isExpired ? "#ef4444" : "inherit" }}>{ttlText}</span>
         </div>
+        {openOAuthStatus?.error ? (
+          <div style={{ color: "#ef4444", marginTop: 4, wordBreak: "break-all" }}>
+            错误: {openOAuthStatus.error}
+          </div>
+        ) : null}
+        {isConfigured && !isHealthy ? (
+          <div style={{ marginTop: 8, fontSize: 11, color: "#f59e0b", background: "rgba(245, 158, 11, 0.08)", padding: "6px 8px", borderRadius: 4, lineHeight: 1.4 }}>
+            💡 提示：Refresh Token 已被官方注销或过期，请前往「设置 → 添加网盘 → 115网盘 → 开放OAuth」重新扫码授权。
+          </div>
+        ) : null}
       </div>
     </div>
   );
 }
 
-function RoutingSummaryCard({ routing }: { routing: StorageDiagnosticsReport["routingSummary"] }) {
+function RoutingSummaryCard({
+  routing,
+  supportsOpenOAuth,
+}: {
+  routing: StorageDiagnosticsReport["routingSummary"];
+  supportsOpenOAuth: boolean;
+}) {
+  if (!supportsOpenOAuth) {
+    const isTransferOk = routing.transferEngine === "cookie";
+    return (
+      <div style={{ padding: 14, background: "rgba(255, 255, 255, 0.02)", borderRadius: 8, border: "1px dashed rgba(255, 255, 255, 0.1)" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: "#e4e4e7" }}>
+          策略路由派发实况 (Strategy Dispatch)
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa" }}>
+          <span>影视转存 (receiveShare):</span>
+          <span style={{ color: isTransferOk ? "#10b981" : "#ef4444", fontWeight: 500 }}>
+            {isTransferOk ? "✔ 原生协议转存" : "✖ 无可用通道"}
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa", marginTop: 4 }}>
+          <span>媒体库扫库 (listItems):</span>
+          <span style={{ color: "#10b981", fontWeight: 500 }}>✔ 原生目录检索</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa", marginTop: 4 }}>
+          <span>STRM 直链与串流 (resolveStream):</span>
+          <span style={{ color: "#10b981", fontWeight: 500 }}>✔ 原生直链解析</span>
+        </div>
+      </div>
+    );
+  }
+
   const isTransferOk = routing.transferEngine === "cookie";
   const isOpenListing = routing.listingEngine === "open";
   const isOpenStream = routing.streamEngine === "open";
@@ -137,15 +258,27 @@ function RoutingSummaryCard({ routing }: { routing: StorageDiagnosticsReport["ro
   );
 }
 
-function DiagnosisReportView({ report }: { report: StorageDiagnosticsReport }) {
+function DiagnosisReportView({
+  report,
+  providerLabel,
+}: {
+  report: StorageDiagnosticsReport;
+  providerLabel: string;
+}) {
+  const isDual = report.supportsOpenOAuth;
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-      <EngineModeBanner mode={report.engineMode} />
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-        <CookieTrackCard cookieStatus={report.cookieStatus} />
-        <OpenOAuthTrackCard openOAuthStatus={report.openOAuthStatus} />
+      <EngineModeBanner
+        mode={report.engineMode}
+        supportsOpenOAuth={report.supportsOpenOAuth}
+        providerLabel={providerLabel}
+        authKind={report.authKind}
+      />
+      <div style={{ display: "grid", gridTemplateColumns: isDual ? "1fr 1fr" : "1fr", gap: 12 }}>
+        <CookieTrackCard cookieStatus={report.cookieStatus} authKind={report.authKind} />
+        {isDual ? <OpenOAuthTrackCard openOAuthStatus={report.openOAuthStatus} /> : null}
       </div>
-      <RoutingSummaryCard routing={report.routingSummary} />
+      <RoutingSummaryCard routing={report.routingSummary} supportsOpenOAuth={report.supportsOpenOAuth} />
     </div>
   );
 }
@@ -158,6 +291,11 @@ export function StorageDiagnosticsModal({
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<StorageDiagnosticsReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   async function runDiagnosis() {
     setLoading(true);
@@ -180,7 +318,13 @@ export function StorageDiagnosticsModal({
     void runDiagnosis();
   }, [storageId]);
 
-  return (
+  const modalTitle = report?.supportsOpenOAuth
+    ? `${providerLabel} · 双轨驱动诊断仪`
+    : `${providerLabel} · 驱动链路诊断仪`;
+
+  if (!mounted) return null;
+
+  return createPortal(
     <div
       style={{
         position: "fixed",
@@ -218,7 +362,7 @@ export function StorageDiagnosticsModal({
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <Activity size={18} style={{ color: "#10b981" }} />
             <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>
-              {providerLabel} · 双轨驱动诊断仪
+              {modalTitle}
             </h3>
           </div>
           <button
@@ -235,7 +379,7 @@ export function StorageDiagnosticsModal({
           {loading ? (
             <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "40px 0", gap: 12 }}>
               <LoaderCircle size={28} className="spin" style={{ color: "#10b981" }} />
-              <p style={{ margin: 0, color: "#a1a1aa", fontSize: 14 }}>正在实时探活双轨链路与测试延迟…</p>
+              <p style={{ margin: 0, color: "#a1a1aa", fontSize: 14 }}>正在实时探活驱动链路与测试延迟…</p>
             </div>
           ) : error ? (
             <div style={{ padding: "16px", background: "rgba(239, 68, 68, 0.1)", border: "1px solid rgba(239, 68, 68, 0.2)", borderRadius: 8 }}>
@@ -246,7 +390,7 @@ export function StorageDiagnosticsModal({
               <p style={{ margin: 0, fontSize: 13, color: "#fca5a5" }}>{error}</p>
             </div>
           ) : report ? (
-            <DiagnosisReportView report={report} />
+            <DiagnosisReportView report={report} providerLabel={providerLabel} />
           ) : null}
         </div>
 
@@ -273,6 +417,7 @@ export function StorageDiagnosticsModal({
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  BookmarkCheck,
   CheckSquare,
   Copy,
   CornerDownRight,
@@ -14,6 +15,7 @@ import {
   Move,
   Play,
   RefreshCw,
+  Sparkles,
   Square,
   Subtitles,
   Trash2,
@@ -74,6 +76,235 @@ interface StorageFileTableProps {
   onDelete: (item: DriveFileItem) => void;
   onPlay?: (item: DriveFileItem) => void;
   onCopyPlayLink?: (item: DriveFileItem) => void;
+  onAdoptFolder?: (item: DriveFileItem) => void;
+}
+
+function StorageMediaBadge({ mediaInfo }: { mediaInfo?: DriveFileItem["mediaInfo"] }) {
+  if (!mediaInfo) return null;
+
+  if (mediaInfo.isSubscribed) {
+    return (
+      <span
+        className="storage-media-badge is-subscribed"
+        title="该目录已在媒体库中纳管订阅"
+        style={{
+          fontSize: "0.72rem",
+          padding: "0.1rem 0.4rem",
+          borderRadius: "4px",
+          background: "rgba(34, 197, 94, 0.15)",
+          color: "var(--accent, #22c55e)",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "0.2rem",
+          marginLeft: "0.5rem",
+        }}
+      >
+        <BookmarkCheck size={12} /> 已订阅
+      </span>
+    );
+  }
+
+  if (mediaInfo.parsedTitle) {
+    return (
+      <span
+        className="storage-media-badge is-adoptable"
+        title={`已识别影视: ${mediaInfo.parsedTitle}${mediaInfo.parsedYear ? ` (${mediaInfo.parsedYear})` : ""}`}
+        style={{
+          fontSize: "0.72rem",
+          padding: "0.1rem 0.4rem",
+          borderRadius: "4px",
+          background: "rgba(59, 130, 246, 0.15)",
+          color: "#60a5fa",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "0.2rem",
+          marginLeft: "0.5rem",
+        }}
+      >
+        <Sparkles size={12} /> 可反推
+      </span>
+    );
+  }
+
+  return null;
+}
+
+interface StorageFileRowProps {
+  item: DriveFileItem;
+  isSelected: boolean;
+  onToggleSelectItem: (id: string) => void;
+  onNavigateFolder: (id: string) => void;
+  onAdoptFolder?: ((item: DriveFileItem) => void) | undefined;
+  onPlay?: ((item: DriveFileItem) => void) | undefined;
+  onCopyPlayLink?: ((item: DriveFileItem) => void) | undefined;
+  onRename: (item: DriveFileItem) => void;
+  onMove: (item: DriveFileItem) => void;
+  onCopy: (item: DriveFileItem) => void;
+  onDelete: (item: DriveFileItem) => void;
+}
+
+interface StorageRowActionsProps {
+  item: DriveFileItem;
+  canAdopt: boolean;
+  isPlayable: boolean;
+  onAdoptFolder?: ((item: DriveFileItem) => void) | undefined;
+  onPlay?: ((item: DriveFileItem) => void) | undefined;
+  onCopyPlayLink?: ((item: DriveFileItem) => void) | undefined;
+  onRename: (item: DriveFileItem) => void;
+  onMove: (item: DriveFileItem) => void;
+  onCopy: (item: DriveFileItem) => void;
+  onDelete: (item: DriveFileItem) => void;
+}
+
+function StorageRowActions({
+  item,
+  canAdopt,
+  isPlayable,
+  onAdoptFolder,
+  onPlay,
+  onCopyPlayLink,
+  onRename,
+  onMove,
+  onCopy,
+  onDelete,
+}: StorageRowActionsProps) {
+  return (
+    <div className="storage-row-actions">
+      {canAdopt && (
+        <button
+          type="button"
+          className="storage-action-icon-btn"
+          title={`一键反推纳入订阅「${item.mediaInfo?.parsedTitle}」`}
+          onClick={() => onAdoptFolder?.(item)}
+          style={{ color: "#60a5fa" }}
+        >
+          <Sparkles size={14} />
+        </button>
+      )}
+      {onPlay && isPlayable && (
+        <button
+          type="button"
+          className="storage-action-icon-btn"
+          title="在线播放"
+          onClick={() => onPlay(item)}
+          style={{ color: "var(--accent, #22c55e)" }}
+        >
+          <Play size={14} />
+        </button>
+      )}
+      {onCopyPlayLink && isPlayable && (
+        <button
+          type="button"
+          className="storage-action-icon-btn"
+          title="复制 STRM 播放直链"
+          onClick={() => onCopyPlayLink(item)}
+        >
+          <Link2 size={14} />
+        </button>
+      )}
+      <button
+        type="button"
+        className="storage-action-icon-btn"
+        title="重命名"
+        onClick={() => onRename(item)}
+      >
+        <CornerDownRight size={14} />
+      </button>
+      <button
+        type="button"
+        className="storage-action-icon-btn"
+        title="移动到..."
+        onClick={() => onMove(item)}
+      >
+        <Move size={14} />
+      </button>
+      <button
+        type="button"
+        className="storage-action-icon-btn"
+        title="复制到..."
+        onClick={() => onCopy(item)}
+      >
+        <Copy size={14} />
+      </button>
+      <button
+        type="button"
+        className="storage-action-icon-btn is-danger"
+        title="删除"
+        onClick={() => onDelete(item)}
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
+  );
+}
+
+function StorageFileRow({
+  item,
+  isSelected,
+  onToggleSelectItem,
+  onNavigateFolder,
+  onAdoptFolder,
+  onPlay,
+  onCopyPlayLink,
+  onRename,
+  onMove,
+  onCopy,
+  onDelete,
+}: StorageFileRowProps) {
+  const isPlayable = item.type === "video" || item.type === "audio";
+  const canAdopt = Boolean(onAdoptFolder && item.isFolder && !item.mediaInfo?.isSubscribed && item.mediaInfo?.parsedTitle);
+
+  return (
+    <tr className={isSelected ? "is-row-selected" : ""}>
+      <td className="col-checkbox">
+        <button
+          type="button"
+          className="storage-checkbox-btn"
+          onClick={() => onToggleSelectItem(item.id)}
+          aria-label={`选择 ${item.name}`}
+        >
+          {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
+        </button>
+      </td>
+      <td className="col-name">
+        <div className="storage-item-name-cell">
+          <ItemIcon type={item.type} />
+          {item.isFolder ? (
+            <button
+              type="button"
+              className="storage-folder-link"
+              onClick={() => onNavigateFolder(item.id)}
+            >
+              {item.name}
+            </button>
+          ) : (
+            <span className="storage-file-name" title={item.name}>
+              {item.name}
+            </span>
+          )}
+          <StorageMediaBadge mediaInfo={item.mediaInfo} />
+        </div>
+      </td>
+      <td className="col-type">
+        <ItemTypeBadge type={item.type} />
+      </td>
+      <td className="col-size">{formatBytes(item.sizeBytes)}</td>
+      <td className="col-actions">
+        <StorageRowActions
+          item={item}
+          canAdopt={canAdopt}
+          isPlayable={isPlayable}
+          onAdoptFolder={onAdoptFolder}
+          onPlay={onPlay}
+          onCopyPlayLink={onCopyPlayLink}
+          onRename={onRename}
+          onMove={onMove}
+          onCopy={onCopy}
+          onDelete={onDelete}
+        />
+      </td>
+    </tr>
+  );
 }
 
 export function StorageFileTable({
@@ -90,6 +321,7 @@ export function StorageFileTable({
   onDelete,
   onPlay,
   onCopyPlayLink,
+  onAdoptFolder,
 }: StorageFileTableProps) {
   const isAllSelected = items.length > 0 && items.every((item) => selectedIds.has(item.id));
 
@@ -134,102 +366,22 @@ export function StorageFileTable({
           )}
 
           {!loading &&
-            items.map((item) => {
-              const isSelected = selectedIds.has(item.id);
-              return (
-                <tr key={item.id} className={isSelected ? "is-row-selected" : ""}>
-                  <td className="col-checkbox">
-                    <button
-                      type="button"
-                      className="storage-checkbox-btn"
-                      onClick={() => onToggleSelectItem(item.id)}
-                      aria-label={`选择 ${item.name}`}
-                    >
-                      {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
-                    </button>
-                  </td>
-                  <td className="col-name">
-                    <div className="storage-item-name-cell">
-                      <ItemIcon type={item.type} />
-                      {item.isFolder ? (
-                        <button
-                          type="button"
-                          className="storage-folder-link"
-                          onClick={() => onNavigateFolder(item.id)}
-                        >
-                          {item.name}
-                        </button>
-                      ) : (
-                        <span className="storage-file-name" title={item.name}>
-                          {item.name}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="col-type">
-                    <ItemTypeBadge type={item.type} />
-                  </td>
-                  <td className="col-size">{formatBytes(item.sizeBytes)}</td>
-                  <td className="col-actions">
-                    <div className="storage-row-actions">
-                      {onPlay && (item.type === "video" || item.type === "audio") && (
-                        <button
-                          type="button"
-                          className="storage-action-icon-btn"
-                          title="在线播放"
-                          onClick={() => onPlay(item)}
-                          style={{ color: "var(--accent, #22c55e)" }}
-                        >
-                          <Play size={14} />
-                        </button>
-                      )}
-                      {onCopyPlayLink && (item.type === "video" || item.type === "audio") && (
-                        <button
-                          type="button"
-                          className="storage-action-icon-btn"
-                          title="复制 STRM 播放直链"
-                          onClick={() => onCopyPlayLink(item)}
-                        >
-                          <Link2 size={14} />
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        className="storage-action-icon-btn"
-                        title="重命名"
-                        onClick={() => onRename(item)}
-                      >
-                        <CornerDownRight size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="storage-action-icon-btn"
-                        title="移动到..."
-                        onClick={() => onMove(item)}
-                      >
-                        <Move size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="storage-action-icon-btn"
-                        title="复制到..."
-                        onClick={() => onCopy(item)}
-                      >
-                        <Copy size={14} />
-                      </button>
-                      <button
-                        type="button"
-                        className="storage-action-icon-btn is-danger"
-                        title="删除"
-                        onClick={() => onDelete(item)}
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
+            items.map((item) => (
+              <StorageFileRow
+                key={item.id}
+                item={item}
+                isSelected={selectedIds.has(item.id)}
+                onToggleSelectItem={onToggleSelectItem}
+                onNavigateFolder={onNavigateFolder}
+                onAdoptFolder={onAdoptFolder}
+                onPlay={onPlay}
+                onCopyPlayLink={onCopyPlayLink}
+                onRename={onRename}
+                onMove={onMove}
+                onCopy={onCopy}
+                onDelete={onDelete}
+              />
+            ))}
         </tbody>
       </table>
     </div>

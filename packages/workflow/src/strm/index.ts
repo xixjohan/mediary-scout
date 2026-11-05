@@ -1,4 +1,5 @@
 export * from "./strm-types.js";
+export * from "./output-path.js";
 export * from "./single-flight.js";
 export * from "./debounce-queue.js";
 export * from "./strm-writer.js";

@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { StorageExecutor } from "../domain/ports.js";
@@ -10,7 +9,8 @@ import type { StrmTask } from "./strm-types.js";
 describe("strm-scanner", () => {
   const dirs: string[] = [];
   const makeTempDir = () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "strm-scanner-test-"));
+    const dir = path.join(process.cwd(), "data", `strm-scanner-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    fs.mkdirSync(dir, { recursive: true });
     dirs.push(dir);
     return dir;
   };
@@ -71,7 +71,7 @@ describe("strm-scanner", () => {
 
     const scanner = new StrmScanner();
     const result = await scanner.runScan({
-      task: baseTask(outDir, "incremental_missing"),
+      task: baseTask(path.relative(process.cwd(), outDir).replace(/\\/g, "/"), "incremental_missing"),
       storage: makeMockStorage(remoteFiles),
       baseUrl: "http://localhost:3000",
     });
@@ -88,7 +88,7 @@ describe("strm-scanner", () => {
 
     const scanner = new StrmScanner();
     const result = await scanner.runScan({
-      task: baseTask(outDir, "full_sync"),
+      task: baseTask(path.relative(process.cwd(), outDir).replace(/\\/g, "/"), "full_sync"),
       storage: makeMockStorage([]), // Remote empty
       baseUrl: "http://localhost:3000",
     });
@@ -108,7 +108,7 @@ describe("strm-scanner", () => {
 
     const scanner = new StrmScanner();
     const result = await scanner.runScan({
-      task: baseTask(outDir, "full_sync"),
+      task: baseTask(path.relative(process.cwd(), outDir).replace(/\\/g, "/"), "full_sync"),
       storage: makeMockStorage(remoteFiles),
       baseUrl: "http://localhost:3000",
     });

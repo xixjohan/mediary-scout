@@ -64,6 +64,60 @@ describe("diagnoseStorageConnectionAction & revealStorageCredentialAction", () =
     expect(res.report?.routingSummary.streamEngine).toBe("open");
   });
 
+  it("diagnoseStorageConnectionAction reports expired TTL and error when openOAuth is expired", async () => {
+    const expiredDrive = testDualEngineDrive({
+      id: "cs_115_expired",
+      payload: {
+        cookie: "UID=115001; CID=c1; SEID=seid_secret_123",
+        openOAuth: {
+          accessToken: "at_expired_token",
+          refreshToken: "rt_invalid_token",
+          expiresAt: Date.now() - 3600 * 1000 * 24,
+          clientId: "client_id_test",
+        },
+      },
+    });
+    await repo.upsertConnectedStorage(expiredDrive);
+
+    const res = await diagnoseStorageConnectionAction("cs_115_expired");
+    expect(res.ok).toBe(true);
+    expect(res.report?.openOAuthStatus?.configured).toBe(true);
+    expect(res.report?.openOAuthStatus?.valid).toBe(false);
+    expect(res.report?.openOAuthStatus?.error).toBeDefined();
+    expect(res.report?.openOAuthStatus?.expiresInSec).toBeDefined();
+    expect(res.report?.openOAuthStatus?.expiresInSec).toBeLessThan(0);
+  });
+
+  it("diagnoseStorageConnectionAction for quark does not report openOAuth and sets supportsOpenOAuth to false", async () => {
+    await repo.upsertConnectedStorage({
+      id: "cs_quark_test",
+      accountId: "acct_default",
+      provider: "quark",
+      providerUid: "quark_uid_123",
+      label: "夸克网盘",
+      payload: {
+        cookie: "test_cookie=abc; __uid=123",
+      },
+      rootCid: "r_quark",
+      moviesCid: "m_quark",
+      tvCid: "t_quark",
+      animeCid: "a_quark",
+      createdAt: "2026-06-20T00:00:00.000Z",
+    });
+
+    const res = await diagnoseStorageConnectionAction("cs_quark_test");
+    expect(res.ok).toBe(true);
+    expect(res.report?.supportsOpenOAuth).toBe(false);
+    expect(res.report?.authKind).toBe("cookie");
+    expect(res.report?.openOAuthStatus).toBeUndefined();
+    expect(res.report?.engineMode).toBeUndefined();
+    expect(res.report?.cookieStatus.configured).toBe(true);
+    expect(res.report?.routingSummary.transferEngine).toBe("cookie");
+    expect(res.report?.routingSummary.listingEngine).toBe("cookie");
+    expect(res.report?.routingSummary.streamEngine).toBe("cookie");
+  });
+
+
   it("checkAccountHasPasswordAction returns false for default single user with no password", async () => {
     const hasPassword = await checkAccountHasPasswordAction();
     expect(hasPassword).toBe(false);

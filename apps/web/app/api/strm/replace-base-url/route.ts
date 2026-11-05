@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
-import { replaceBaseUrlInDirectories } from "@media-track/workflow";
+import { replaceBaseUrlInDirectories, resolveStrmOutputPath } from "@media-track/workflow";
 
 export async function POST(request: NextRequest) {
   const gate = await requireApiAccount(request);
@@ -31,13 +31,13 @@ export async function POST(request: NextRequest) {
   let targetDirs: string[] = [];
 
   if (body.directoryPaths && Array.isArray(body.directoryPaths) && body.directoryPaths.length > 0) {
-    targetDirs = body.directoryPaths.map((d) => d.trim()).filter(Boolean);
+    targetDirs = body.directoryPaths.map((d) => d.trim()).filter(Boolean).map(resolveStrmOutputPath);
   } else if (body.directoryPath?.trim()) {
-    targetDirs = [body.directoryPath.trim()];
+    targetDirs = [resolveStrmOutputPath(body.directoryPath.trim())];
   } else {
     // 自动汇聚当前账户下全部已配置 STRM 任务的本地输出路径
     const tasks = await repo.listStrmTasks(accountId);
-    targetDirs = Array.from(new Set(tasks.map((t) => t.localOutputDir.trim()).filter(Boolean)));
+    targetDirs = Array.from(new Set(tasks.map((t) => resolveStrmOutputPath(t.localOutputDir.trim())).filter(Boolean)));
   }
 
   if (targetDirs.length === 0) {

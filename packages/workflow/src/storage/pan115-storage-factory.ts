@@ -12,7 +12,11 @@ import {
   type Pan115CookieClientOptions,
   type Pan115FetchJson,
 } from "./pan115-cookie-client.js";
-import { Pan115OpenClient, type Pan115OpenClientOptions } from "./pan115-open-client.js";
+import {
+  Pan115OpenClient,
+  type Pan115OpenClientOptions,
+  type Pan115TokenRefreshCoordinator,
+} from "./pan115-open-client.js";
 import {
   Pan115UnifiedStorageApi,
   type Pan115UnifiedStorageApiOptions,
@@ -99,6 +103,7 @@ export interface UnifiedPan115StorageExecutorOptions {
   apiGuard?: Pan115ApiGuard | undefined;
   apiGuardOptions?: Pan115ApiGuardOptions | undefined;
   onOpenCredentialsPersist?: ((creds: Pan115OpenOAuthCredentials) => Promise<void> | void) | undefined;
+  coordinateOpenTokenRefresh?: Pan115TokenRefreshCoordinator | undefined;
 }
 
 /**
@@ -128,6 +133,9 @@ export function createUnifiedPan115StorageExecutor(
     };
     if (options.onOpenCredentialsPersist !== undefined) {
       openClientOpts.onCredentialsPersist = options.onOpenCredentialsPersist;
+    }
+    if (options.coordinateOpenTokenRefresh !== undefined) {
+      openClientOpts.coordinateTokenRefresh = options.coordinateOpenTokenRefresh;
     }
     openApi = new Pan115OpenClient(openClientOpts);
   }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Lock, Copy, Check, X, AlertTriangle, ShieldAlert, KeyRound, LoaderCircle } from "lucide-react";
 import { checkAccountHasPasswordAction, revealStorageCredentialAction } from "../../../app/actions/storage-drives-actions";
 import type { RevealedCredentials } from "@media-track/workflow";
@@ -253,6 +254,11 @@ export function StorageCredentialsModal({
 
   const [revealed, setRevealed] = useState<RevealedCredentials | null>(null);
   const [timeLeft, setTimeLeft] = useState(30);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -323,7 +329,9 @@ export function StorageCredentialsModal({
     }
   }
 
-  return (
+  if (!mounted) return null;
+
+  return createPortal(
     <div
       style={{
         position: "fixed",
@@ -401,6 +409,7 @@ export function StorageCredentialsModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

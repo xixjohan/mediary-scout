@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
+import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import Link from "next/link";
 import { connection } from "next/server";
 import { collapseToRanges } from "../../lib/episode-ranges";
@@ -30,6 +31,7 @@ import {
   getWorkflowRepository,
   notificationWindowSince,
   resolveGlobalWorkspace,
+  UNAUTHENTICATED_ACCOUNT_ID,
 } from "../../lib/workflow-runtime";
 
 // The kind only drives the leading ICON now — its textual label used to render
@@ -89,6 +91,15 @@ function NotificationsShell() {
 
 async function NotificationsSurface({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
   await connection();
+  const accountId = await getCurrentAccountId();
+  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+    return (
+      <>
+        <ClientLoginRedirect />
+        <NotificationsShell />
+      </>
+    );
+  }
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   return (

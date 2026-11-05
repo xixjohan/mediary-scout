@@ -7,8 +7,8 @@
  *
  * 核心架构特性:
  *   1. Token 自动续期与生命周期轮转: POST https://passportapi.115.com/open/refreshToken
- *   2. SingleFlight 请求合并: 杜绝并发媒体库扫描与播放直链请求时的惊群刷新风暴 (Thundering Herd)
- *   3. 错误分类状态机 (classify115OpenError): 致命错误 (40140115/16/19/20) 立即冻结告警; 瞬态错误退避重试
+ *   2. SingleFlight + 可选 SQLite 租约: 合并进程内并发，并协调共享数据库的 Web/Worker 刷新
+ *   3. 错误分类状态机 (classify115OpenError): 致命错误立即停止重试; 瞬态错误有限退避
  *   4. 超高清单拉取: 相比 Web Cookie 的 1200ms 防风控延时, 开放平台单次支持 1000 条极速返回
  */
 
@@ -44,7 +44,8 @@ export function classify115OpenError(code: number, msg?: string): { isFatal: boo
     code === 40140115 || // token不存在
     code === 40140116 || // refresh_token已过期
     code === 40140119 || // 用户已被踢出登录
-    code === 40140120    // 授权已被撤销或封禁
+    code === 40140120 || // 授权已被撤销或封禁
+    code === 40140137    // refresh_token 无效；必须重新授权
   ) {
     return { isFatal: true, retryable: false };
   }
@@ -69,8 +70,45 @@ export interface Pan115OpenClientOptions {
   credentials: Pan115OpenOAuthCredentials;
   fetchImpl?: typeof fetch | undefined;
   onCredentialsPersist?: ((creds: Pan115OpenOAuthCredentials) => Promise<void> | void) | undefined;
+  coordinateTokenRefresh?: Pan115TokenRefreshCoordinator | undefined;
   authBaseUrl?: string | undefined;
   apiBaseUrl?: string | undefined;
+}
+
+export type Pan115TokenRefreshCoordinator = (
+  refresh: (credentials: Pan115OpenOAuthCredentials) => Promise<Pan115OpenOAuthCredentials>,
+) => Promise<Pan115OpenOAuthCredentials>;
+
+type RefreshedPan115Token = {
+  accessToken: string;
+  refreshToken: string;
+  expiresAt: number;
+};
+
+// Separate application paths can construct distinct clients for the same
+// rotating credential. Share in-flight redemptions across those instances.
+const tokenRefreshFlights = new SingleFlight<RefreshedPan115Token>();
+const MAX_CACHED_TOKEN_ROTATIONS = 512;
+const rotatedTokenCache = new Map<string, RefreshedPan115Token>();
+
+function rememberTokenRotation(key: string, credentials: RefreshedPan115Token): void {
+  rotatedTokenCache.delete(key);
+  rotatedTokenCache.set(key, { ...credentials });
+  while (rotatedTokenCache.size > MAX_CACHED_TOKEN_ROTATIONS) {
+    const oldestKey = rotatedTokenCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    rotatedTokenCache.delete(oldestKey);
+  }
+}
+
+function cachedTokenRotation(key: string): RefreshedPan115Token | undefined {
+  const credentials = rotatedTokenCache.get(key);
+  if (!credentials) return undefined;
+  // Refreshing the insertion order makes this a small LRU cache for stale
+  // client instances that still hold a recently rotated token.
+  rotatedTokenCache.delete(key);
+  rotatedTokenCache.set(key, credentials);
+  return { ...credentials };
 }
 
 export interface Pan115OpenDownloadUrlResult {
@@ -129,6 +167,7 @@ async function performSingleTokenRefresh(
       "User-Agent": "MediaryScout/1.0 (OpenAPI)",
     },
     body: bodyParams.toString(),
+    signal: AbortSignal.timeout(15_000),
   });
 
   if (!res.ok) {
@@ -185,8 +224,10 @@ function formatPan115Item(item: Record<string, unknown>): Pan115Item {
 
 export class Pan115OpenClient {
   private credentials: Pan115OpenOAuthCredentials;
+  private pendingCredentialsPersist: Pan115OpenOAuthCredentials | null = null;
   private readonly fetchImpl: typeof fetch;
   private readonly onCredentialsPersist?: ((creds: Pan115OpenOAuthCredentials) => Promise<void> | void) | undefined;
+  private readonly coordinateTokenRefresh?: Pan115TokenRefreshCoordinator | undefined;
   private readonly authBaseUrl: string;
   private readonly apiBaseUrl: string;
   private readonly singleFlight = new SingleFlight<string>();
@@ -195,6 +236,7 @@ export class Pan115OpenClient {
     this.credentials = { ...options.credentials };
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.onCredentialsPersist = options.onCredentialsPersist;
+    this.coordinateTokenRefresh = options.coordinateTokenRefresh;
     this.authBaseUrl = (options.authBaseUrl ?? "https://passportapi.115.com").replace(/\/$/, "");
     this.apiBaseUrl = (options.apiBaseUrl ?? "https://proapi.115.com").replace(/\/$/, "");
   }
@@ -204,63 +246,137 @@ export class Pan115OpenClient {
     return { ...this.credentials };
   }
 
+  /** Whether a remote rotation still needs a durable credential write. */
+  get hasPendingCredentialPersistence(): boolean {
+    return this.pendingCredentialsPersist !== null;
+  }
+
   /**
    * 确保 Access Token 处于有效状态。
    * 当 Token 已经过期或距离过期少于 5 分钟 (300 秒) 时，利用 SingleFlight 请求合并自动换票。
    */
   async ensureValidToken(): Promise<string> {
-    const now = Date.now();
     const bufferMs = 5 * 60 * 1000;
+    const hasValidAccessToken = (credentials = this.credentials) =>
+      Boolean(credentials.accessToken) && credentials.expiresAt > Date.now() + bufferMs;
 
-    if (
-      this.credentials.accessToken &&
-      this.credentials.expiresAt > now + bufferMs
-    ) {
+    if (hasValidAccessToken() && !this.pendingCredentialsPersist) {
       return this.credentials.accessToken;
     }
 
     return this.singleFlight.do("token_refresh", async () => {
-      if (
-        this.credentials.accessToken &&
-        this.credentials.expiresAt > Date.now() + bufferMs
-      ) {
+      try {
+        await this.persistPendingCredentials();
+      } catch (error) {
+        if (!this.coordinateTokenRefresh) throw error;
+        const persistedCredentials = await this.coordinateTokenRefresh(async (credentials) => credentials);
+        this.credentials = { ...persistedCredentials };
+        this.pendingCredentialsPersist = null;
+      }
+      if (hasValidAccessToken()) {
         return this.credentials.accessToken;
       }
 
-      const refreshed = await this.executeTokenRefreshWithRetry();
-      this.credentials.accessToken = refreshed.accessToken;
-      if (refreshed.refreshToken) {
-        this.credentials.refreshToken = refreshed.refreshToken;
-      }
-      this.credentials.expiresAt = refreshed.expiresAt;
-
-      if (this.onCredentialsPersist) {
-        try {
-          await this.onCredentialsPersist({ ...this.credentials });
-        } catch (err) {
-          console.error("[Pan115OpenClient] Failed to persist refreshed token:", err);
-        }
+      const refreshIfNeeded = async (credentials: Pan115OpenOAuthCredentials) => {
+        this.credentials = { ...credentials };
+        if (hasValidAccessToken()) return { ...this.credentials };
+        return this.refreshCredentialsFromCurrentToken();
+      };
+      const nextCredentials = this.coordinateTokenRefresh
+        ? await this.coordinateTokenRefresh(refreshIfNeeded)
+        : await refreshIfNeeded(this.credentials);
+      this.credentials = { ...nextCredentials };
+      if (!hasValidAccessToken()) {
+        throw new Pan115OpenAuthError(504, "Unable to catch up with the current refresh-token rotation", false);
       }
 
       return this.credentials.accessToken;
     });
   }
 
+  private async refreshCredentialsFromCurrentToken(): Promise<Pan115OpenOAuthCredentials> {
+    let catchUpCount = 0;
+    do {
+      const refreshToken = this.credentials.refreshToken;
+      const refreshKey = `${this.authBaseUrl}:${refreshToken}`;
+      const refreshed = cachedTokenRotation(refreshKey) ?? await tokenRefreshFlights.do(
+        refreshKey,
+        async () => {
+          const result = await this.executeTokenRefreshWithRetry(refreshToken);
+          rememberTokenRotation(refreshKey, result);
+          return result;
+        },
+      );
+      this.credentials = {
+        ...this.credentials,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        expiresAt: refreshed.expiresAt,
+      };
+      await this.persistCurrentCredentials();
+      catchUpCount++;
+    } while (!this.hasValidAccessToken(this.credentials) && catchUpCount < 4);
+
+    if (!this.hasValidAccessToken(this.credentials)) {
+      throw new Pan115OpenAuthError(504, "Unable to catch up with the current refresh-token rotation", false);
+    }
+    return { ...this.credentials };
+  }
+
+  private hasValidAccessToken(credentials: Pan115OpenOAuthCredentials): boolean {
+    return Boolean(credentials.accessToken) && credentials.expiresAt > Date.now() + 5 * 60 * 1000;
+  }
+
+  private async persistCurrentCredentials(): Promise<void> {
+    if (!this.onCredentialsPersist) return;
+    this.pendingCredentialsPersist = { ...this.credentials };
+    try {
+      await this.onCredentialsPersist({ ...this.pendingCredentialsPersist });
+      this.pendingCredentialsPersist = null;
+    } catch (err) {
+      // CRITICAL: the provider has rotated the token, so the new value must be
+      // persisted before a successful request can return to its caller.
+      console.error(
+        "[Pan115OpenClient] CRITICAL: Failed to persist refreshed OAuth credentials.",
+        err,
+      );
+      throw err;
+    }
+  }
+
+  private async persistPendingCredentials(): Promise<void> {
+    const credentials = this.pendingCredentialsPersist;
+    if (!credentials || !this.onCredentialsPersist) return;
+
+    try {
+      await this.onCredentialsPersist({ ...credentials });
+      if (this.pendingCredentialsPersist === credentials) {
+        this.pendingCredentialsPersist = null;
+      }
+    } catch (err) {
+      console.error(
+        "[Pan115OpenClient] CRITICAL: Failed to persist rotated OAuth credentials; " +
+          "the refreshed token will not be used until persistence succeeds.",
+        err,
+      );
+      throw err;
+    }
+  }
+
   /**
    * 执行 Token 刷新，附带针对瞬态错误的退避重试 (最多 3 次)
    */
-  private async executeTokenRefreshWithRetry(maxRetries = 3): Promise<{
-    accessToken: string;
-    refreshToken: string;
-    expiresAt: number;
-  }> {
+  private async executeTokenRefreshWithRetry(
+    refreshToken: string = this.credentials.refreshToken,
+    maxRetries = 3,
+  ): Promise<RefreshedPan115Token> {
     let attempt = 0;
     while (attempt < maxRetries) {
       attempt++;
       try {
         const result = await performSingleTokenRefresh(
           this.authBaseUrl,
-          this.credentials.refreshToken,
+          refreshToken,
           this.fetchImpl,
         );
         return {
@@ -269,8 +385,10 @@ export class Pan115OpenClient {
           expiresAt: Date.now() + result.expiresInSeconds * 1000,
         };
       } catch (err) {
-        const isFatal = err instanceof Pan115OpenAuthError && err.isFatal;
-        if (isFatal || attempt >= maxRetries) {
+        const classification = err instanceof Pan115OpenAuthError
+          ? classify115OpenError(err.code)
+          : { isFatal: false, retryable: true };
+        if (classification.isFatal || !classification.retryable || attempt >= maxRetries) {
           throw err;
         }
         await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 500));

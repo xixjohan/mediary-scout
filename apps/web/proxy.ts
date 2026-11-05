@@ -67,7 +67,13 @@ export function proxy(request: NextRequest): NextResponse {
   // 每个出口都带上「这个页面归页面守卫管」的 cookie。/login 不在 matcher 里，
   // 它的请求压根不进这个函数，因此拿不到该 cookie，守卫会跳过它——不可能成环。
   const passThrough = () => {
-    const res = NextResponse.next();
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-page-guarded", "1");
+    const res = NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    });
     res.cookies.set(guardCookie, "1", { path: "/", httpOnly: true, sameSite: "lax" });
     return res;
   };
@@ -106,5 +112,8 @@ export function proxy(request: NextRequest): NextResponse {
 
 export const config = {
   // Gate pages; exclude the auth API, the login page, Next internals and assets.
-  matcher: ["/((?!api/auth|login|_next/static|_next/image|favicon.ico).*)"],
+  // Gate pages; exclude the auth API, the login page, Next internals, metadata routes and static assets.
+  matcher: [
+    "/((?!api/auth|login|_next/static|_next/image|favicon.ico|icon.svg|apple-icon|manifest.webmanifest|robots.txt|sitemap.xml|.*\\.(?:ico|png|svg|jpg|jpeg|gif|webp|woff2?)$).*)",
+  ],
 };

@@ -13,7 +13,7 @@ interface DriveCardExtraActionsProps {
 
 export function DriveCardExtraActions({
   storageId,
-  provider: _provider,
+  provider,
   providerLabel,
 }: DriveCardExtraActionsProps) {
   const [showDiagnostics, setShowDiagnostics] = useState(false);
@@ -25,7 +25,7 @@ export function DriveCardExtraActions({
         type="button"
         className="ghost-button"
         onClick={() => setShowDiagnostics(true)}
-        title="查看双轨链路延迟与策略路由诊断"
+        title={provider === "pan115" ? "查看双轨链路延迟与策略路由诊断" : "查看驱动链路延迟与运行状态诊断"}
         style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
       >
         <Activity size={13} style={{ color: "#10b981" }} />

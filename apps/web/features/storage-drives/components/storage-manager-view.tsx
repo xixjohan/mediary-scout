@@ -1,14 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { AlertCircle, Copy, HardDrive, Move, Trash2 } from "lucide-react";
+import { AlertCircle, Copy, HardDrive, Move, RefreshCw, Trash2 } from "lucide-react";
 import type { DriveDirectoryListing, DriveFileItem } from "@media-track/workflow";
 import type { ConnectedStorageView } from "../../../lib/workflow-runtime";
 import { StorageFileTable } from "./storage/storage-file-table";
 import { type ModalState, StorageModals } from "./storage/storage-modals";
 import { StorageNavBar } from "./storage/storage-nav-bar";
 import { StorageOfflineModal } from "./storage/storage-offline-modal";
+import { ReverseScanModal } from "./storage/reverse-scan-modal";
 import { VideoPreviewModal } from "./storage/video-preview-modal";
 import { formatProviderLabel, StorageTopBar } from "./storage/storage-top-bar";
 
@@ -98,48 +99,85 @@ export function StorageManagerView({
 
   const [modal, setModal] = useState<ModalState>({ kind: null });
   const [offlineModalOpen, setOfflineModalOpen] = useState<boolean>(false);
+  const [scanModalOpen, setScanModalOpen] = useState<boolean>(false);
   const [inputName, setInputName] = useState<string>("");
   const [targetDir, setTargetDir] = useState<string>("");
   const [customTargetDir, setCustomTargetDir] = useState<string>("");
 
-  useEffect(() => {
-    if (initialStorages !== undefined) return;
-    let cancelled = false;
-    async function loadStorages() {
-      try {
-        const res = await fetch("/api/settings/connected-storages");
-        const data = await res.json();
-        if (cancelled) return;
-        const list = Array.isArray(data.connectedStorages) ? data.connectedStorages : [];
-        setStorages(list);
-        if (list.length > 0) {
-          const active = list.find((s: ConnectedStorageView) => s.status === "active") ?? list[0];
-          if (active) setSelectedStorageId(active.id);
-        } else {
-          setLoading(false);
+  const loadStorages = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch(`/api/storage/drives?_t=${Date.now()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
+      if (!res.ok) {
+        if (res.status === 401) {
+          setError("未登录或访问已过期，请登录后再查看网盘资源。");
+          return;
         }
-      } catch (e) {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : "获取网盘列表失败");
-          setLoading(false);
-        }
+        throw new Error(`获取网盘列表失败 (${res.status})`);
       }
+      const data = await res.json();
+      const list = Array.isArray(data.drives)
+        ? data.drives
+        : Array.isArray(data.connectedStorages)
+          ? data.connectedStorages
+          : [];
+      setStorages(list);
+      if (list.length > 0) {
+        setSelectedStorageId((prev) => {
+          if (prev && list.some((s: ConnectedStorageView) => s.id === prev)) return prev;
+          const active = list.find((s: ConnectedStorageView) => s.status === "active") ?? list[0];
+          return active ? active.id : "";
+        });
+      } else {
+        setSelectedStorageId("");
+        setListing(null);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "获取网盘列表失败");
+    } finally {
+      setLoading(false);
     }
-    void loadStorages();
-    return () => {
-      cancelled = true;
-    };
-  }, [initialStorages]);
+  }, []);
 
-  const loadFiles = async (storageId: string, parentId?: string) => {
+  // 1. 同步外部 props 变更（SSR 首屏注水 / 客户端路由回填）
+  useEffect(() => {
+    if (initialStorages && initialStorages.length > 0) {
+      setStorages(initialStorages);
+      setSelectedStorageId((prev) => {
+        if (prev && initialStorages.some((s) => s.id === prev)) return prev;
+        const active = initialStorages.find((s) => s.status === "active") ?? initialStorages[0];
+        return active ? active.id : "";
+      });
+      setLoading(false);
+    } else if (initialStorages && initialStorages.length === 0) {
+      // 若服务端首屏因鉴权未就绪等返回空列表，客户端发起一次防缓存探测兜底
+      void loadStorages();
+    }
+  }, [initialStorages, loadStorages]);
+
+  // 2. 无初始 Props 时客户端独立加载
+  useEffect(() => {
+    if (initialStorages === undefined) {
+      void loadStorages();
+    }
+  }, [initialStorages, loadStorages]);
+
+  const loadFiles = useCallback(async (storageId: string, parentId?: string) => {
     if (!storageId) return;
     setLoading(true);
     setError(null);
     setSelectedIds(new Set());
     try {
-      const q = new URLSearchParams({ storageId });
+      const q = new URLSearchParams({ storageId, _t: String(Date.now()) });
       if (parentId) q.set("dirId", parentId);
-      const res = await fetch(`/api/storage/files?${q.toString()}`);
+      const res = await fetch(`/api/storage/files?${q.toString()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-cache" },
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "获取文件列表失败");
       setListing(data);
@@ -148,6 +186,21 @@ export function StorageManagerView({
       setError(e instanceof Error ? e.message : "加载失败");
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  const handleScanComplete = useCallback(() => {
+    void loadFiles(selectedStorageId, currentDirId);
+  }, [selectedStorageId, currentDirId, loadFiles]);
+
+  const handleRefresh = async () => {
+    if (!selectedStorageId || storages.length === 0) {
+      await loadStorages();
+    } else {
+      await Promise.all([
+        loadStorages(),
+        loadFiles(selectedStorageId, currentDirId),
+      ]);
     }
   };
 
@@ -231,15 +284,55 @@ export function StorageManagerView({
     }
   };
 
+  const handleAdoptFolder = async (item: DriveFileItem) => {
+    if (!item.isFolder || !selectedStorageId) return;
+    setActionBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/storage/files/adopt", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storageId: selectedStorageId,
+          folderId: item.id,
+          folderName: item.name,
+          tmdbId: item.mediaInfo?.tmdbId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "反推订阅失败");
+      setSuccessMessage(data.message || "已成功纳入媒体库并订阅！");
+      await loadFiles(selectedStorageId, currentDirId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "反推订阅出错");
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   if (!loading && storages.length === 0) {
     return (
       <div className="storage-empty-state">
         <HardDrive size={48} className="storage-empty-icon" />
         <h2>未配置已连接网盘</h2>
-        <p>请前往网盘设置页面扫码或添加网盘凭证后再使用网盘管理功能。</p>
-        <Link href="/settings" className="storage-btn primary">
-          前往网盘设置
-        </Link>
+        <p>
+          {error
+            ? error
+            : "请前往网盘设置页面扫码或添加网盘凭证后再使用网盘管理功能。若此前已添加网盘，请确认已登录对应账号或点击下方的刷新重新检测。"}
+        </p>
+        <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
+          <button
+            type="button"
+            className="storage-btn secondary"
+            onClick={() => void loadStorages()}
+            style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+          >
+            <RefreshCw size={16} /> 刷新检测
+          </button>
+          <Link href="/settings" className="storage-btn primary">
+            前往网盘设置
+          </Link>
+        </div>
       </div>
     );
   }
@@ -261,7 +354,8 @@ export function StorageManagerView({
         actionBusy={actionBusy}
         onOpenCreate={() => handleOpenAction("create")}
         onOpenOffline={() => setOfflineModalOpen(true)}
-        onRefresh={() => void loadFiles(selectedStorageId, currentDirId)}
+        onOpenScan={() => setScanModalOpen(true)}
+        onRefresh={() => void handleRefresh()}
       />
 
       <StorageNavBar
@@ -342,6 +436,7 @@ export function StorageManagerView({
         onDelete={(item) => handleOpenAction("delete", item)}
         onPlay={handlePlay}
         onCopyPlayLink={handleCopyPlayLink}
+        onAdoptFolder={handleAdoptFolder}
       />
 
       {previewItem && (
@@ -375,6 +470,14 @@ export function StorageManagerView({
         storage={currentStorage}
         listing={listing ?? undefined}
         onSuccess={() => void loadFiles(selectedStorageId, currentDirId)}
+      />
+
+      <ReverseScanModal
+        isOpen={scanModalOpen}
+        onClose={() => setScanModalOpen(false)}
+        storageId={selectedStorageId}
+        currentDirId={currentDirId}
+        onScanComplete={handleScanComplete}
       />
     </div>
   );

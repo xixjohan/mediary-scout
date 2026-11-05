@@ -6,6 +6,7 @@ import type { MediaTitle } from "../domain/domain.js";
 import { ensureMediaLibraryDirectory, mediaLibraryFolderName } from "../domain/media-library-folder.js";
 import { buildPlayUrl, safeStem, writeStrmFile } from "./strm-writer.js";
 import type { StrmTask } from "./strm-types.js";
+import { resolveStrmOutputPath } from "./output-path.js";
 
 export interface LandedMediaFile {
   id: string; // 网盘内部 fileId
@@ -142,6 +143,7 @@ async function writeStrmFilesForTask(
   files: LandedMediaFile[],
   baseUrl: string,
 ): Promise<TaskExecutionSyncResult> {
+  const outputDir = resolveStrmOutputPath(task.localOutputDir);
   const allowedExts = new Set(
     task.extensions
       .split(";")
@@ -163,8 +165,8 @@ async function writeStrmFilesForTask(
     const stem = safeStem(fileStem);
     const strmFileName = `${stem}.strm`;
     const targetDir = file.subPath
-      ? path.join(task.localOutputDir, file.subPath)
-      : task.localOutputDir;
+      ? path.join(outputDir, file.subPath)
+      : outputDir;
     const targetFilePath = path.join(targetDir, strmFileName);
     const playUrl = buildPlayUrl(baseUrl, task.id, file.id, file.name);
 
