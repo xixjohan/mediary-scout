@@ -60,22 +60,21 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
       {brand === "pan115" ? (
         <div className="brand-connect-area">
           {/* 115 双轨认证方式平铺切换卡，消除用户将 OAuth 误认为客户端类型下拉选项的困惑 */}
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}>
+          <div className="pan115-auth-mode-tabs">
             <button
               type="button"
-              className={pan115Tab === "qr" ? "primary-button" : "secondary-button"}
+              className={`pan115-auth-mode-tab ${pan115Tab === "qr" ? "primary-button" : "secondary-button"}`}
               onClick={() => setPan115Tab("qr")}
-              style={{ fontSize: 13, padding: "6px 14px" }}
+              aria-pressed={pan115Tab === "qr"}
             >
               📱 扫码快捷登录 (Cookie 基础轨 · 负责转存)
             </button>
             <button
               type="button"
-              className={pan115Tab === "oauth" ? "primary-button" : "secondary-button"}
+              className={`pan115-auth-mode-tab ${pan115Tab === "oauth" ? "primary-button" : "secondary-button"}`}
               onClick={() => setPan115Tab("oauth")}
+              aria-pressed={pan115Tab === "oauth"}
               style={{
-                fontSize: 13,
-                padding: "6px 14px",
                 ...(pan115Tab !== "oauth" ? { borderColor: "rgba(16, 185, 129, 0.4)", color: "#10b981" } : {}),
               }}
             >
@@ -83,9 +82,9 @@ export function AddDriveBrandTabs({ defaultBrand = "pan115" }: { defaultBrand?: 
             </button>
             <button
               type="button"
-              className={pan115Tab === "cookie" ? "primary-button" : "secondary-button"}
+              className={`pan115-auth-mode-tab ${pan115Tab === "cookie" ? "primary-button" : "secondary-button"}`}
               onClick={() => setPan115Tab("cookie")}
-              style={{ fontSize: 13, padding: "6px 14px" }}
+              aria-pressed={pan115Tab === "cookie"}
             >
               📋 粘贴 Cookie
             </button>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref } from "react";
 import {
   Bot,
   Cpu,
@@ -43,6 +43,9 @@ export interface ChatPanelProps {
   conversationTitle?: string | undefined;
   onTurnCompleted?: (conversationId: string) => void;
   isSidebarCollapsed?: boolean;
+  isHistoryDrawerOpen?: boolean;
+  isCompactLayout?: boolean;
+  historyToggleRef?: Ref<HTMLButtonElement>;
   onToggleSidebar?: () => void;
 }
 
@@ -63,12 +66,17 @@ export function ChatPanel({
   conversationTitle,
   onTurnCompleted,
   isSidebarCollapsed,
+  isHistoryDrawerOpen = false,
+  isCompactLayout = false,
+  historyToggleRef,
   onToggleSidebar,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([INITIAL_MESSAGE]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [historyLoadError, setHistoryLoadError] = useState(false);
+  const [historyLoadAttempt, setHistoryLoadAttempt] = useState(0);
   const [suggestedPrompts, setSuggestedPrompts] = useState<string[]>(DEFAULT_PROMPTS);
   const [showMcpDrawer, setShowMcpDrawer] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -79,11 +87,13 @@ export function ChatPanel({
     if (!conversationId) {
       setMessages([INITIAL_MESSAGE]);
       setLoadingHistory(false);
+      setHistoryLoadError(false);
       return;
     }
 
     let isSubscribed = true;
     setLoadingHistory(true);
+    setHistoryLoadError(false);
 
     fetch(`/api/chat/conversations/${conversationId}`)
       .then(async (res) => {
@@ -111,7 +121,8 @@ export function ChatPanel({
       })
       .catch(() => {
         if (!isSubscribed) return;
-        setMessages([INITIAL_MESSAGE]);
+        setMessages([]);
+        setHistoryLoadError(true);
       })
       .finally(() => {
         if (isSubscribed) setLoadingHistory(false);
@@ -120,7 +131,7 @@ export function ChatPanel({
     return () => {
       isSubscribed = false;
     };
-  }, [conversationId]);
+  }, [conversationId, historyLoadAttempt]);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -224,6 +235,10 @@ export function ChatPanel({
     [messages, send],
   );
 
+  const retryHistoryLoad = useCallback(() => {
+    setHistoryLoadAttempt((attempt) => attempt + 1);
+  }, []);
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
@@ -233,16 +248,20 @@ export function ChatPanel({
   };
 
   return (
-    <div className="chat-container">
+    <div className={`chat-container${isSidebarCollapsed ? " is-sidebar-collapsed" : ""}`}>
       <header className="chat-header">
         <div className="chat-header-left">
-          {isSidebarCollapsed && onToggleSidebar ? (
+          {onToggleSidebar ? (
             <button
+              ref={historyToggleRef}
               type="button"
-              className="chat-sidebar-toggle-btn"
+              className="chat-history-toggle-btn"
               onClick={onToggleSidebar}
-              title="展开会话侧栏"
-              aria-label="展开会话侧栏"
+              title={isCompactLayout ? "查看会话历史" : "展开会话侧栏"}
+              aria-label={isCompactLayout ? "会话历史" : "展开会话侧栏"}
+              aria-expanded={isCompactLayout ? isHistoryDrawerOpen : !isSidebarCollapsed}
+              aria-controls="chat-history-sidebar"
+              aria-haspopup={isCompactLayout ? "dialog" : undefined}
             >
               <PanelLeftOpen size={18} />
             </button>
@@ -251,19 +270,20 @@ export function ChatPanel({
           <div className="chat-avatar-bot">
             <Bot size={20} />
           </div>
-          <div>
+          <div className="chat-heading">
             <h1 className="chat-title">{conversationTitle || "智能助理"}</h1>
             <p className="chat-subtitle">Mediary Copilot · 影视检索与管理</p>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <div className="chat-header-actions">
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-secondary btn-sm chat-mcp-button"
             onClick={() => setShowMcpDrawer(true)}
-            style={{ display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
+            aria-label="打开 MCP 工具编排"
           >
-            <Cpu size={14} /> MCP 工具编排
+            <Cpu size={16} aria-hidden="true" />
+            <span className="chat-mcp-label">MCP 工具编排</span>
           </button>
           <div className="chat-status-pill">
             <Sparkles size={13} aria-hidden />
@@ -274,10 +294,18 @@ export function ChatPanel({
 
       <div className="chat-message-list">
         {loadingHistory ? (
-          <div className="chat-loading-history">
+          <div className="chat-loading-history" role="status" aria-live="polite">
             <span className="chat-loading-dot" />
             <span className="chat-loading-dot" />
             <span className="chat-loading-dot" />
+            <span className="chat-loading-history-label">正在加载会话记录…</span>
+          </div>
+        ) : historyLoadError ? (
+          <div className="chat-history-error" role="alert">
+            <p>会话记录加载失败，当前历史消息暂不可用。</p>
+            <button type="button" className="chat-history-retry-btn" onClick={retryHistoryLoad}>
+              重新加载会话记录
+            </button>
           </div>
         ) : (
           messages.map((msg, idx) => (

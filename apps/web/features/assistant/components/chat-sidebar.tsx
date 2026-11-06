@@ -24,6 +24,10 @@ export interface ChatSidebarProps {
   onDelete: (id: string) => void;
   onRename: (id: string, newTitle: string) => void;
   collapsed?: boolean;
+  isLoading?: boolean;
+  hasLoadError?: boolean;
+  onRetryLoad?: () => void;
+  collapseLabel?: string;
   onToggleCollapse?: () => void;
 }
 
@@ -35,6 +39,10 @@ export function ChatSidebar({
   onDelete,
   onRename,
   collapsed = false,
+  isLoading = false,
+  hasLoadError = false,
+  onRetryLoad,
+  collapseLabel = "收起会话侧栏",
   onToggleCollapse,
 }: ChatSidebarProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -97,8 +105,8 @@ export function ChatSidebar({
             type="button"
             className="chat-sidebar-collapse-btn"
             onClick={onToggleCollapse}
-            title="收起会话侧栏"
-            aria-label="收起会话侧栏"
+            title={collapseLabel}
+            aria-label={collapseLabel}
           >
             <PanelLeftClose size={18} />
           </button>
@@ -106,7 +114,24 @@ export function ChatSidebar({
       </div>
 
       <div className="chat-sidebar-content">
-        {conversations.length === 0 ? (
+        {isLoading ? (
+          <div className="chat-sidebar-status" role="status" aria-live="polite">
+            <span className="chat-sidebar-status-spinner" aria-hidden="true" />
+            <span>正在加载会话…</span>
+          </div>
+        ) : hasLoadError ? (
+          <div className="chat-sidebar-status is-error" role="alert">
+            <p>会话列表加载失败，请检查网络后重试。</p>
+            <button
+              type="button"
+              className="chat-sidebar-retry-btn"
+              onClick={onRetryLoad}
+              aria-label="重试加载会话"
+            >
+              重试加载会话
+            </button>
+          </div>
+        ) : conversations.length === 0 ? (
           <div className="chat-sidebar-empty">
             <MessageSquare size={28} className="chat-sidebar-empty-icon" aria-hidden />
             <p className="chat-sidebar-empty-text">暂无历史会话</p>
@@ -125,17 +150,6 @@ export function ChatSidebar({
                     <li
                       key={conv.id}
                       className={`chat-sidebar-item ${isActive ? "is-active" : ""}`}
-                      onClick={() => {
-                        if (!isEditing) onSelect(conv.id);
-                      }}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if ((e.key === "Enter" || e.key === " ") && !isEditing) {
-                          e.preventDefault();
-                          onSelect(conv.id);
-                        }
-                      }}
                     >
                       {isEditing ? (
                         <div
@@ -178,9 +192,15 @@ export function ChatSidebar({
                       ) : (
                         <>
                           <div className="chat-sidebar-item-main">
-                            <span className="chat-sidebar-item-title" title={conv.title}>
-                              {conv.title}
-                            </span>
+                            <button
+                              type="button"
+                              className="chat-sidebar-select-btn"
+                              onClick={() => onSelect(conv.id)}
+                              aria-current={isActive ? "page" : undefined}
+                              title={conv.title}
+                            >
+                              <span className="chat-sidebar-item-title">{conv.title}</span>
+                            </button>
                           </div>
 
                           <div className="chat-sidebar-item-actions">

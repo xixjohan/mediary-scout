@@ -1282,3 +1282,24 @@
 .secondary-button:hover {
   background: rgba(255, 255, 255, 0.16);
 }
+
+@media (max-width: 480px) {
+  .sidebar > nav .nav-list > li {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+
+  .sidebar > nav .nav-list > li > .nav-item {
+    width: 100%;
+    min-width: 0;
+    padding-right: 0;
+    padding-left: 0;
+    gap: 2px;
+    font-size: 10px;
+  }
+
+  .sidebar > nav .nav-list > li > .nav-item svg {
+    width: 18px;
+    height: 18px;
+  }
+}

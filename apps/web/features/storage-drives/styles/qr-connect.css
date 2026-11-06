@@ -13,6 +13,31 @@
   flex-wrap: wrap;
 }
 
+.pan115-auth-mode-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+  margin-bottom: 16px;
+}
+
+.pan115-auth-mode-tab {
+  flex: 0 1 auto;
+  width: auto;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: 44px;
+  padding: 6px 14px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+  text-align: left;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
 .qr-app-select {
   display: flex;
   flex-direction: column;
