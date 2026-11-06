@@ -326,7 +326,12 @@ export function StorageFileTable({
   const isAllSelected = items.length > 0 && items.every((item) => selectedIds.has(item.id));
 
   return (
-    <div className="storage-table-wrap">
+    <div
+      className="storage-table-wrap"
+      role="region"
+      aria-label="网盘文件列表，可横向滚动查看完整列"
+      tabIndex={0}
+    >
       <table className="storage-file-table">
         <thead>
           <tr>

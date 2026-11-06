@@ -207,6 +207,83 @@ test.describe("助手响应式工作台", () => {
     await expect(item.getByRole("button", { name: "删除会话" })).toBeVisible();
   });
 
+  test("网盘已连接数据在窄屏不撑宽页面，文件表格可局部横向滚动", async ({ page }) => {
+    await page.route("**/api/storage/drives**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          drives: [
+            {
+              id: "drive-responsive",
+              provider: "quark",
+              providerUid: "quark-user",
+              label: "AAQ69oQ5Vj9Myt5R0uGt7omX",
+              connectedAt: "2026-11-06T10:00:00.000Z",
+              createdAt: "2026-11-06T10:00:00.000Z",
+              status: "active",
+              provisioned: true,
+            },
+          ],
+        }),
+      }),
+    );
+    await page.route("**/api/storage/files**", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          storageId: "drive-responsive",
+          provider: "quark",
+          currentDirectoryId: "root",
+          currentDirectoryName: "根目录",
+          items: [
+            {
+              id: "folder-anime",
+              name: "Anime",
+              isFolder: true,
+              type: "folder",
+              sizeBytes: 0,
+              updatedAt: null,
+              extension: "",
+            },
+          ],
+          totalCount: 1,
+          folderCount: 1,
+          fileCount: 0,
+          totalSizeBytes: 0,
+          breadcrumbs: [],
+          rootCid: "root",
+          moviesCid: null,
+          tvCid: null,
+          animeCid: null,
+        }),
+      }),
+    );
+
+    for (const width of [320, 375]) {
+      await page.setViewportSize({ width, height: 812 });
+      await page.goto("/storage");
+      await expect(page.getByRole("button", { name: "Anime", exact: true })).toBeVisible();
+
+      const layout = await page.evaluate(() => {
+        const tableWrap = document.querySelector<HTMLElement>(".storage-table-wrap");
+        const table = document.querySelector<HTMLElement>(".storage-file-table");
+        return {
+          pageOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+          tableHasLocalOverflow: Boolean(tableWrap && table && tableWrap.scrollWidth > tableWrap.clientWidth),
+          tableOverflowX: tableWrap ? getComputedStyle(tableWrap).overflowX : "missing",
+          tableTabIndex: tableWrap?.getAttribute("tabindex"),
+          tableRegionLabel: tableWrap?.getAttribute("aria-label"),
+        };
+      });
+
+      expect(layout.pageOverflow, `page overflow at ${width}px`).toBeLessThanOrEqual(1);
+      expect(layout.tableHasLocalOverflow).toBe(true);
+      expect(layout.tableOverflowX).toBe("auto");
+      expect(layout.tableTabIndex).toBe("0");
+      expect(layout.tableRegionLabel).toContain("文件列表");
+    }
+  });
+
   test("相似工作台页面在手机宽度没有页面级横向溢出", async ({ page }) => {
     const routes = [
       ["/", 375],
