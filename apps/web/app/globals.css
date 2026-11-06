@@ -19,6 +19,7 @@
 @import "../features/catalog/styles/subscription-policy.css";
 @import "../features/catalog/styles/resource-filter-modal.css";
 @import "../features/acquisition/styles/acquiring-modal.css";
+@import "../features/strm/strm.css";
 @import "../features/storage-drives/styles/qr-connect.css";
 @import "../features/storage-drives/styles/storage-explorer.css";
 

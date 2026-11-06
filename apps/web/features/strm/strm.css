@@ -1,0 +1,147 @@
+.strm-view-container {
+  min-width: 0;
+  padding: 1.5rem;
+}
+
+.strm-page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  min-width: 0;
+}
+
+.strm-page-header-copy {
+  min-width: 0;
+}
+
+.strm-page-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+  min-width: 0;
+}
+
+.strm-page-title {
+  min-width: 0;
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.strm-page-description {
+  margin: 0;
+  color: var(--text-muted, #888);
+  font-size: 0.9rem;
+}
+
+.strm-page-header-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex: 0 0 auto;
+}
+
+.strm-page-header-actions .btn,
+.strm-page-heading .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.strm-task-card {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+  padding: 1.25rem;
+  background: var(--bg-card, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius-card);
+  transition: all 0.2s ease;
+}
+
+.strm-task-card-content {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.strm-task-card-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.35rem;
+}
+
+.strm-task-card-details {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+  color: var(--text-muted, #aaa);
+  font-size: 0.85rem;
+  overflow-wrap: anywhere;
+}
+
+.strm-task-card-paths {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.strm-task-card-paths code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.strm-task-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 600px) {
+  .strm-view-container {
+    padding: 0 0.5rem;
+  }
+
+  .strm-page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .strm-page-heading {
+    flex-wrap: wrap;
+  }
+
+  .strm-page-title {
+    font-size: 1.25rem;
+  }
+
+  .strm-page-header-actions {
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+    gap: 0.5rem;
+  }
+
+  .strm-page-header-actions .btn {
+    flex: 1 1 140px;
+    justify-content: center;
+    white-space: normal;
+  }
+
+  .strm-task-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    padding: 0.875rem;
+  }
+
+  .strm-task-card-actions {
+    flex-wrap: wrap;
+    flex: 1 1 auto;
+  }
+}

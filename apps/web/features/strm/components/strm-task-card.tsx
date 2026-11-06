@@ -71,21 +71,9 @@ export function StrmTaskCard({
   const isPaused = task.status === "paused" || task.isActive === false;
 
   return (
-    <div
-      style={{
-        background: "var(--bg-card, #1e1e1e)",
-        border: "1px solid var(--border, #333)",
-        borderRadius: "10px",
-        padding: "1.25rem",
-        display: "flex",
-        justifyContent: "space-between",
-        alignItems: "center",
-        opacity: isPaused ? 0.75 : 1,
-        transition: "all 0.2s ease",
-      }}
-    >
-      <div>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "0.35rem", flexWrap: "wrap" }}>
+    <div className="strm-task-card" style={{ opacity: isPaused ? 0.75 : 1 }}>
+      <div className="strm-task-card-content">
+        <div className="strm-task-card-heading">
           <FolderSync size={18} style={{ color: isPaused ? "#888" : "#3b82f6" }} />
           <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: 600 }}>{task.name}</h3>
           <DeliveryModeBadge deliveryMode={task.deliveryMode} />
@@ -108,8 +96,8 @@ export function StrmTaskCard({
           <TaskStatusBadge isRunning={isRunning} isPaused={isPaused} />
         </div>
 
-        <div style={{ fontSize: "0.85rem", color: "#aaa", display: "grid", gap: "0.25rem" }}>
-          <div>
+        <div className="strm-task-card-details">
+          <div className="strm-task-card-paths">
             网盘路径：
             <code style={{ background: "#2a2a2a", padding: "0.1rem 0.3rem", borderRadius: "4px" }}>
               {task.remotePath}
@@ -132,7 +120,7 @@ export function StrmTaskCard({
         </div>
       </div>
 
-      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+      <div className="strm-task-card-actions">
         <button
           type="button"
           className="btn btn-ghost btn-sm"

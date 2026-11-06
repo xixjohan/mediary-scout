@@ -379,25 +379,24 @@ export function StrmScheduleView({ storages }: { storages: StorageItem[] }) {
   };
 
   return (
-    <div className="strm-view-container" style={{ padding: "1.5rem" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1.5rem" }}>
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+    <div className="strm-view-container">
+      <div className="strm-page-header">
+        <div className="strm-page-header-copy">
+          <div className="strm-page-heading">
             <Link href="/storage" className="btn btn-secondary btn-sm" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
               <ArrowLeft size={14} /> 返回网盘
             </Link>
-            <h1 style={{ fontSize: "1.5rem", fontWeight: 600, margin: 0 }}>STRM 任务计划与串流中继</h1>
+            <h1 className="strm-page-title">STRM 任务计划与串流中继</h1>
           </div>
-          <p style={{ color: "var(--text-muted, #888)", margin: 0, fontSize: "0.9rem" }}>
+          <p className="strm-page-description">
             借鉴 LitePan 方案：为网盘文件生成本地 .strm 虚拟结构，支持 302 重定向直链、SingleFlight 请求合并防封控，以及秒级基址热重写。
           </p>
         </div>
-        <div style={{ display: "flex", gap: "0.75rem" }}>
+        <div className="strm-page-header-actions">
           <button
             type="button"
             className="btn btn-secondary"
             onClick={() => setShowReplaceModal(true)}
-            style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
           >
             <Wrench size={15} /> 快速修改播放基址
           </button>
@@ -405,7 +404,6 @@ export function StrmScheduleView({ storages }: { storages: StorageItem[] }) {
             type="button"
             className="btn btn-primary"
             onClick={() => setShowCreateModal(true)}
-            style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
           >
             <Plus size={15} /> 新建 STRM 任务
           </button>
