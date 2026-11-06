@@ -41,6 +41,8 @@ import {
   createBootstrapPan115CookieStorageExecutor,
   createProtectedPan115CookieStorageExecutorFromEnv,
   createUnifiedPan115StorageExecutor,
+  resolvePan115ExecutorEnv,
+  type Pan115WriteScopeSource,
 } from "./pan115-storage-factory.js";
 import { isPan123AuthError, parsePan123Uid } from "./pan123-client.js";
 import type { Pan123Credential } from "./pan123-client.js";
@@ -77,6 +79,8 @@ export interface StorageDriverCreateInput {
   credential?: unknown;
   /** The drive's write-scope directory ids (rootCid + Movies/TV/Anime). */
   scopeCids: string[];
+  /** Where the write scope comes from; connected drives never use global CID fallback. */
+  scopeSource?: Pan115WriteScopeSource;
   /** Base env for the 115 executor (guard pacing etc); defaults to process.env. */
   env?: Record<string, string | undefined>;
   /** Persist hook for refreshed token-auth credentials (光鸭 refresh rotates tokens;
@@ -251,17 +255,19 @@ export const STORAGE_BRANDS = [
           openOAuth,
           engineMode,
           scopeCids: input.scopeCids,
+          scopeSource: input.scopeSource,
           env: input.env,
           onOpenCredentialsPersist: input.onOpenCredentialsPersist,
           coordinateOpenTokenRefresh: input.coordinateOpenTokenRefresh,
         });
       }
 
-      const env = {
-        ...(input.env ?? process.env),
-        PAN115_COOKIE: cookie,
-        ...(input.scopeCids.length > 0 ? { MEDIA_TRACK_115_WRITE_SCOPE_CIDS: input.scopeCids.join(",") } : {}),
-      };
+      const env = resolvePan115ExecutorEnv({
+        env: input.env,
+        scopeCids: input.scopeCids,
+        scopeSource: input.scopeSource,
+      });
+      env["PAN115_COOKIE"] = cookie;
       return createProtectedPan115CookieStorageExecutorFromEnv({ env });
     },
   },

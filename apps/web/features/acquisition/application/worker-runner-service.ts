@@ -954,6 +954,7 @@ function createExecutorForConnectedStorage(
       cookie: creds.cookie,
       credential: creds.credential ?? {},
       scopeCids,
+      scopeSource: "connected-storage",
       env: process.env,
       onOpenCredentialsPersist: makePan115OpenOAuthPersister(accountId, creds.id),
       coordinateOpenTokenRefresh: makePan115OpenOAuthRefreshCoordinator(accountId, creds.id),
@@ -964,6 +965,7 @@ function createExecutorForConnectedStorage(
       provider: creds.provider,
       credential: creds.credential ?? {},
       scopeCids,
+      scopeSource: "connected-storage",
       env: process.env,
       onCredentialRefresh: makeTokenPersister(accountId, creds.id, creds.provider),
     });
@@ -972,6 +974,7 @@ function createExecutorForConnectedStorage(
     provider: creds.provider,
     cookie: creds.cookie,
     scopeCids,
+    scopeSource: "connected-storage",
     env: process.env,
   });
 }

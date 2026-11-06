@@ -65,6 +65,9 @@ export const LLM_RATE_LIMIT_GUIDANCE =
 export const LLM_CONTENT_FILTER_GUIDANCE =
   "AI 模型内容审查拦截(Blocked): 上游模型判定提示词或生成内容敏感并阻断(The content you provided or machine outputted is blocked) —— 这不是没有资源，已尝试提示词安全净化。建议稍后重试，或到 设置 → AI 模型 切换审查较宽松的模型渠道。";
 
+export const PAN115_WRITE_SCOPE_GUIDANCE =
+  "115 网盘未配置可用的媒体目录范围。请前往「网盘」页面检查该连接的分类目录配置并重新运行任务。";
+
 // LLM-SPECIFIC auth markers (case-insensitive). Deliberately NOT the bare numeric
 // "401"/"403" substrings — those over-match netdisk (brand) auth errors whose
 // messages carry the status number (e.g. "GUANGYA_AUTH_FAILED: 401 after refresh")
@@ -339,6 +342,10 @@ export function isLlmHttpStatusError(error: unknown, depth = 0): boolean {
  * logs keep the raw detail.
  */
 export function describeAgentRunError(error: unknown): string {
+  const rawMessage = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  if (rawMessage.includes("MEDIA_TRACK_115_WRITE_SCOPE_REQUIRED")) {
+    return PAN115_WRITE_SCOPE_GUIDANCE;
+  }
   if (isLlmAuthError(error)) {
     return LLM_AUTH_GUIDANCE;
   }

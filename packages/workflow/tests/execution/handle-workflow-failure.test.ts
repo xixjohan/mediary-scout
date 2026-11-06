@@ -62,6 +62,25 @@ function snapshot(run: Partial<WorkflowRun> = {}): PersistedWorkflowRunSnapshot 
 const now = () => "2026-06-21T05:30:00.000Z";
 
 describe("handleWorkflowRunFailure", () => {
+  it("shows actionable guidance for a missing 115 write scope without retrying", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const out = await handleWorkflowRunFailure({
+      claimed: snapshot(),
+      error: new Error(
+        "MEDIA_TRACK_115_WRITE_SCOPE_REQUIRED: set MEDIA_TRACK_115_TEST_ROOT_CID for development or MEDIA_TRACK_115_WRITE_SCOPE_CIDS for explicit live writes",
+      ),
+      repository: { saveWorkflowRunSnapshot: save },
+      now,
+    });
+
+    expect(out.status).toBe("failed");
+    expect(save.mock.calls[0]![0].workflowRun.status).toBe("failed");
+    const notification = save.mock.calls[0]![0].notifications[0];
+    expect(notification?.report?.lines.join("\n")).toContain("网盘」页面");
+    expect(notification?.body).not.toContain("MEDIA_TRACK_115_TEST_ROOT_CID");
+    expect(notification?.body).not.toContain("MEDIA_TRACK_115_WRITE_SCOPE_CIDS");
+  });
+
   it("auto-requeues a transient error under the cap (queued + retrying notification)", async () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const out = await handleWorkflowRunFailure({

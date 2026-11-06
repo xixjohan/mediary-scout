@@ -98,12 +98,40 @@ export interface UnifiedPan115StorageExecutorOptions {
   openOAuth?: Pan115OpenOAuthCredentials | undefined;
   engineMode?: Pan115EngineMode | undefined;
   scopeCids?: string[] | undefined;
+  scopeSource?: Pan115WriteScopeSource | undefined;
   env?: Record<string, string | undefined> | undefined;
   fetchJson?: Pan115FetchJson | undefined;
   apiGuard?: Pan115ApiGuard | undefined;
   apiGuardOptions?: Pan115ApiGuardOptions | undefined;
   onOpenCredentialsPersist?: ((creds: Pan115OpenOAuthCredentials) => Promise<void> | void) | undefined;
   coordinateOpenTokenRefresh?: Pan115TokenRefreshCoordinator | undefined;
+}
+
+export type Pan115WriteScopeSource = "connected-storage" | "environment";
+
+/**
+ * Build an isolated 115 executor environment. A bound drive is authoritative:
+ * it must use its own CIDs and must not inherit a process-wide write allowlist.
+ * Environment scopes remain available only to legacy/unbound execution paths.
+ */
+export function resolvePan115ExecutorEnv(input: {
+  env?: Record<string, string | undefined> | undefined;
+  scopeCids?: readonly string[] | undefined;
+  scopeSource?: Pan115WriteScopeSource | undefined;
+} = {}): Record<string, string | undefined> {
+  const env = { ...(input.env ?? process.env) };
+  const scopeCids = input.scopeCids?.filter((cid) => cid.trim().length > 0) ?? [];
+
+  if (input.scopeSource === "connected-storage") {
+    delete env["MEDIA_TRACK_115_TEST_ROOT_CID"];
+    delete env["MEDIA_TRACK_115_WRITE_SCOPE_CIDS"];
+  }
+
+  if (scopeCids.length > 0) {
+    env["MEDIA_TRACK_115_WRITE_SCOPE_CIDS"] = scopeCids.join(",");
+  }
+
+  return env;
 }
 
 /**
@@ -114,6 +142,11 @@ export function createUnifiedPan115StorageExecutor(
   options: UnifiedPan115StorageExecutorOptions,
 ): Storage115Executor {
   const env = options.env ?? process.env;
+  const executorEnv = resolvePan115ExecutorEnv({
+    env,
+    scopeCids: options.scopeCids,
+    scopeSource: options.scopeSource,
+  });
   const hasCookie = Boolean(options.cookie && options.cookie.trim().length > 0);
   const hasOpen = isPan115OpenOAuthValid(options.openOAuth);
 
@@ -163,7 +196,7 @@ export function createUnifiedPan115StorageExecutor(
 
   const executorOptions: Parameters<typeof createProtectedStorage115Executor>[0] = {
     api,
-    env,
+    env: executorEnv,
   };
   if (options.apiGuard !== undefined) {
     executorOptions.apiGuard = options.apiGuard;

@@ -16,6 +16,87 @@ describe("createExecutorForBrand", () => {
     expect(exec).toBeInstanceOf(Storage115Executor);
   });
 
+  it.each([
+    ["dual_engine", "UID=1;CID=2"],
+    ["open_only", ""],
+  ] as const)("pan115 %s OAuth executor uses its connected-drive scope", async (engineMode, cookie) => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error("unexpected network request");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const exec = createExecutorForBrand({
+      provider: "pan115",
+      cookie,
+      credential: {
+        engineMode,
+        openOAuth: {
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          expiresAt: Date.now() + 60_000,
+        },
+      },
+      scopeCids: ["connected-root"],
+      scopeSource: "connected-storage",
+      env: {},
+    });
+
+    await expect(exec.removeDirectory("connected-root")).rejects.toThrow("SAFETY_VIOLATION");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("pan115 OAuth executor prefers connected-drive scope over a process-wide scope", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error("unexpected network request");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const exec = createExecutorForBrand({
+      provider: "pan115",
+      cookie: "UID=1;CID=2",
+      credential: {
+        engineMode: "dual_engine",
+        openOAuth: {
+          accessToken: "access-token",
+          refreshToken: "refresh-token",
+          expiresAt: Date.now() + 60_000,
+        },
+      },
+      scopeCids: ["connected-root"],
+      scopeSource: "connected-storage",
+      env: { MEDIA_TRACK_115_WRITE_SCOPE_CIDS: "other-drive-root" },
+    });
+
+    await expect(exec.removeDirectory("connected-root")).rejects.toThrow("SAFETY_VIOLATION");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["cookie_only", "UID=1;CID=2", undefined],
+    ["dual_engine", "UID=1;CID=2", {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+    }],
+    ["open_only", "", {
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: Date.now() + 60_000,
+    }],
+  ] as const)("pan115 %s connected drive cannot fall back to a global scope", (engineMode, cookie, openOAuth) => {
+    expect(() => createExecutorForBrand({
+      provider: "pan115",
+      cookie,
+      credential: openOAuth === undefined ? { engineMode } : { engineMode, openOAuth },
+      scopeCids: [],
+      scopeSource: "connected-storage",
+      env: {
+        MEDIA_TRACK_115_TEST_ROOT_CID: "legacy-test-root",
+        MEDIA_TRACK_115_WRITE_SCOPE_CIDS: "legacy-global-root",
+      },
+    })).toThrow("MEDIA_TRACK_115_WRITE_SCOPE_REQUIRED");
+  });
+
   it("quark → QuarkStorageExecutor", () => {
     const exec = createExecutorForBrand({ provider: "quark", cookie: "__uid=1", scopeCids: ["ROOT"] });
     expect(exec).toBeInstanceOf(QuarkStorageExecutor);
