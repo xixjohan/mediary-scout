@@ -923,6 +923,28 @@
   gap: 8px;
 }
 
+@media (max-width: 360px) {
+  .pagination-controls {
+    max-width: 100%;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 4px;
+  }
+
+  .pagination-controls .pagination-btn {
+    gap: 3px;
+    padding-inline: 8px;
+  }
+
+  .pagination-controls .pagination-pages {
+    gap: 2px;
+  }
+
+  .pagination-controls .pagination-page-btn {
+    min-width: 28px;
+  }
+}
+
 .pagination-btn {
   display: inline-flex;
   align-items: center;
