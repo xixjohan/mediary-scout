@@ -60,6 +60,9 @@ export interface RunTvAcquisitionV2Request {
   rejectedLookup?: RunAcquisitionV2WorkflowRequest["rejectedLookup"];
   /** See orchestrator.linkHistory. */
   linkHistory?: RunAcquisitionV2WorkflowRequest["linkHistory"];
+  policyFilter?: RunAcquisitionV2WorkflowRequest["policyFilter"];
+  policyFileValidator?: RunAcquisitionV2WorkflowRequest["policyFileValidator"];
+  subscriptionSearchKeywords?: RunAcquisitionV2WorkflowRequest["subscriptionSearchKeywords"];
   /** Leftover staging dir adopted as this run's staging. See workflow-v2. */
   stagingRecovery?: RunAcquisitionV2WorkflowRequest["stagingRecovery"];
   /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping). */
@@ -113,6 +116,11 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.protectExisting ? { protectExisting: request.protectExisting } : {}),
     ...(request.rejectedLookup ? { rejectedLookup: request.rejectedLookup } : {}),
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
+    ...(request.policyFilter ? { policyFilter: request.policyFilter } : {}),
+    ...(request.policyFileValidator ? { policyFileValidator: request.policyFileValidator } : {}),
+    ...(request.subscriptionSearchKeywords === undefined
+      ? {}
+      : { subscriptionSearchKeywords: request.subscriptionSearchKeywords }),
     ...(request.stagingRecovery ? { stagingRecovery: request.stagingRecovery } : {}),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),

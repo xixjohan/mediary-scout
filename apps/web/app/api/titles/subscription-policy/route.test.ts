@@ -84,6 +84,31 @@ async function trackTitle(tmdbId: number): Promise<string> {
   return titleId;
 }
 
+async function trackMovieTitle(tmdbId: number): Promise<string> {
+  const titleId = `movie_${tmdbId}`;
+  const movie: MediaTitle = { ...TITLE, id: titleId, tmdbId, type: "movie", title: "同号电影" };
+  await repo.saveWorkflowRunSnapshot({
+    accountId: "acct_default",
+    workflowRun: {
+      id: `run_movie_${tmdbId}`,
+      kind: "movie_init" as const,
+      status: "succeeded" as const,
+      trackedSeasonId: `${titleId}_s1`,
+      startedAt: "2026-09-20T00:00:00.000Z",
+      finishedAt: "2026-09-20T00:00:00.000Z",
+      auditEvents: [],
+    },
+    title: movie,
+    season: { ...SEASON, id: `${titleId}_s1`, mediaTitleId: titleId },
+    episodes: [],
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [],
+  });
+  return titleId;
+}
+
 const POLICY = {
   mustContain: ["2160p"],
   mustNotContain: ["CAM"],
@@ -100,8 +125,9 @@ function put(body: unknown): NextRequest {
   });
 }
 
-function get(tmdbId: number): NextRequest {
-  return new NextRequest(`http://localhost/api/titles/subscription-policy?tmdbId=${tmdbId}`, {
+function get(tmdbId: number, mediaType?: "movie" | "tv"): NextRequest {
+  const mediaTypeParam = mediaType ? `&mediaType=${mediaType}` : "";
+  return new NextRequest(`http://localhost/api/titles/subscription-policy?tmdbId=${tmdbId}${mediaTypeParam}`, {
     method: "GET",
   });
 }
@@ -154,6 +180,38 @@ describe("PUT /api/titles/subscription-policy", () => {
 
   it("未追踪的标题 ⇒ 404", async () => {
     expect((await PUT(put({ tmdbId: freshTmdbId(), policy: POLICY }))).status).toBe(404);
+  });
+
+  it("新建订阅时可按媒体类型先保存策略", async () => {
+    const tmdbId = freshTmdbId();
+    const res = await PUT(put({ tmdbId, mediaType: "movie", policy: POLICY }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).policy).toMatchObject(POLICY);
+
+    const loaded = await GET(
+      new NextRequest(`http://localhost/api/titles/subscription-policy?tmdbId=${tmdbId}&mediaType=movie`),
+    );
+    expect(loaded.status).toBe(200);
+    expect((await loaded.json()).policy).toMatchObject(POLICY);
+  });
+
+  it("同号电影与剧集按媒体类型读写各自策略", async () => {
+    const tmdbId = freshTmdbId();
+    const tvTitleId = await trackTitle(tmdbId);
+    const movieTitleId = await trackMovieTitle(tmdbId);
+    await repo.upsertSubscriptionPolicy({
+      accountId: "acct_default",
+      titleKey: tvTitleId,
+      policy: POLICY,
+      now: "2026-09-20T00:00:00.000Z",
+    });
+
+    const moviePolicy = { ...POLICY, mustContain: ["1080p"] };
+    const saved = await PUT(put({ tmdbId, mediaType: "movie", policy: moviePolicy }));
+    expect((await saved.json()).policy).toMatchObject({ titleKey: movieTitleId, ...moviePolicy });
+    const loaded = await GET(get(tmdbId, "movie"));
+    expect((await loaded.json()).policy).toMatchObject({ titleKey: movieTitleId, ...moviePolicy });
+    expect((await repo.getSubscriptionPolicy({ accountId: "acct_default", titleKey: tvTitleId }))?.mustContain).toEqual(POLICY.mustContain);
   });
 
   it("body 不是 JSON ⇒ 400", async () => {

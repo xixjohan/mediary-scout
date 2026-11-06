@@ -85,7 +85,12 @@ function trackedSeason(): TrackedSeason {
 
 class HistorySpy extends InMemoryWorkflowRepository {
   readonly calls: Array<{ accountId: string; drive: string; titleKey: string; since: string; excludeRunId?: string }> = [];
+  readonly policyLookups: Array<{ accountId: string; titleKey: string }> = [];
   fail = false;
+  override async getSubscriptionPolicy(input: { accountId: string; titleKey: string }) {
+    this.policyLookups.push(input);
+    return super.getSubscriptionPolicy(input);
+  }
   override async listLinkHistory(input: {
     accountId: string;
     drive: string;
@@ -171,6 +176,13 @@ describe("runner-v2 link history lookup", () => {
       { accountId: "acct_a", drive: "cs_1", titleKey: "tmdb_tv_100", since: SINCE, excludeRunId: "run-series" },
       { accountId: "acct_a", drive: "cs_1", titleKey: "tmdb_movie_27205", since: SINCE, excludeRunId: "run-movie" },
       { accountId: "acct_a", drive: "cs_1", titleKey: "tmdb_tv_100", since: SINCE, excludeRunId: "run-replace" },
+    ]);
+    expect(repository.policyLookups).toEqual([
+      { accountId: "acct_a", titleKey: "tmdb_tv_100" },
+      { accountId: "acct_a", titleKey: "tmdb_tv_100" },
+      { accountId: "acct_a", titleKey: "tmdb_tv_100" },
+      { accountId: "acct_a", titleKey: "tmdb_movie_27205" },
+      { accountId: "acct_a", titleKey: "tmdb_tv_100" },
     ]);
   });
 

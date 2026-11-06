@@ -245,6 +245,41 @@ export async function requestRemainingAction(input: {
   return { status: "requested", message: "剩余季已加入后台队列。" };
 }
 
+export async function requestSelectedSeasonsAction(input: {
+  tmdbId: number;
+  seasonNumbers: number[];
+  storageId: string | undefined;
+}): Promise<RequestTrackingActionResult> {
+  assertNotDemo();
+  const preflight = await acquireLlmNotConfigured();
+  if (preflight) return preflight;
+  if (
+    !Number.isInteger(input.tmdbId) ||
+    input.tmdbId <= 0 ||
+    !Array.isArray(input.seasonNumbers) ||
+    input.seasonNumbers.length === 0 ||
+    input.seasonNumbers.length > 100 ||
+    input.seasonNumbers.some((number) => !Number.isInteger(number) || number < 0 || number > 99)
+  ) {
+    return { status: "unsupported", message: "季数参数无效，请重新选择追踪范围。" };
+  }
+
+  const { queueSelectedSeasons } = await import("../../lib/title-hub");
+  const request = await queueSelectedSeasons(input.tmdbId, input.seasonNumbers, input.storageId);
+  if (request.status === "already_tracked") {
+    return { status: "already_tracked", message: "所选季都已追踪。" };
+  }
+  if (request.status === "already_running") {
+    return { status: "active_workflow", message: "所选季的获取任务已在运行中。" };
+  }
+  if (request.status === "unsupported") {
+    return { status: "unsupported", message: request.message };
+  }
+  revalidatePath(`/show/${input.tmdbId}`);
+  revalidatePath("/");
+  return { status: "requested", message: "所选季已加入后台队列。" };
+}
+
 export async function untrackTitleAction(input: {
   tmdbId: number;
   // Tree model: REQUIRED (value may be undefined = primary) so the active

@@ -16,4 +16,13 @@ describe("system prompt searchHints injection", () => {
     expect(buildTvAnimeSystemPrompt({})).not.toContain("SEARCH STRATEGY");
     expect(buildMovieSystemPrompt({})).not.toContain("SEARCH STRATEGY");
   });
+
+  it("injects saved custom search keywords as bounded data and tells the agent when to use them", () => {
+    const prompt = buildTvAnimeSystemPrompt({ customSearchKeywords: ["字幕组名", "版本别名"] });
+
+    expect(prompt).toContain("字幕组名");
+    expect(prompt).toContain("版本别名");
+    expect(prompt).toContain("user data");
+    expect(prompt).toContain("searchResources");
+  });
 });

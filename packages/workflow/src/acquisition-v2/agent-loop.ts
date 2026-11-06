@@ -169,7 +169,7 @@ export function buildSandboxToolSet(
     },
     searchResources: {
       description:
-        "Search the resource provider with ONE keyword. Read-only. Returns the full snapshot of candidates (no slicing); each has id, title, postedAt (YYYY-MM-DD) when the post date is known, and linkHistory when this work has transferred that same link. Repeats are deduped; the search budget is capped — decide from gathered evidence when refused. NOTE: raw keyword already pre-searched (see viewResourceSnapshot). Use searchResources ONLY for 繁体/英文/原名 upgrades. " +
+        "Search the resource provider with ONE keyword. Read-only. Returns the full snapshot of candidates (no slicing); each has id, title, postedAt (YYYY-MM-DD) when the post date is known, and linkHistory when this work has transferred that same link. Repeats are deduped; the search budget is capped — decide from gathered evidence when refused. NOTE: raw keyword already pre-searched (see viewResourceSnapshot). Use searchResources for alternate names or the configured subscription search terms when the raw snapshot is insufficient. " +
         LINK_HISTORY_PROMPT,
       inputSchema: z.object({ keyword: z.string() }),
       execute: (args: { keyword: string }) => asEvidence(() => sandbox.searchResources(args.keyword)),

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, DownloadCloud, Layers, LoaderCircle } from "lucide-react";
+import { Check, DownloadCloud, Layers, LoaderCircle, SlidersHorizontal } from "lucide-react";
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import {
@@ -15,6 +15,8 @@ import { isDemoModeClient } from "../../../lib/demo-mode";
 import { DemoAcquirePlayback } from "../../acquisition/components/demo-acquire-playback";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import { useDemoAcquiredTmdbIds } from "../../../lib/use-demo-session";
+import { SubscriptionModal } from "../../acquisition/components/subscription-modal";
+import type { SubscriptionSeasonItem } from "../../acquisition/components/subscription-modal-fields";
 
 export function RequestSeasonButton({
   tmdbId,
@@ -185,6 +187,72 @@ export function RequestRemainingButton({
         {inFlight ? "获取中" : isLocked ? "已请求" : label}
       </button>
       <AcquireResultNotice result={result} />
+    </>
+  );
+}
+
+export function SubscriptionConfigButton({
+  tmdbId,
+  title,
+  year,
+  posterPath,
+  seasons,
+  storageId,
+  initialTracked = false,
+  titleAcquiring = false,
+}: {
+  tmdbId: number;
+  title: string;
+  year: number;
+  posterPath: string | null;
+  seasons: SubscriptionSeasonItem[];
+  storageId: string | undefined;
+  initialTracked?: boolean;
+  titleAcquiring?: boolean;
+}) {
+  const router = useRouter();
+  const demo = isDemoModeClient();
+  const [modalOpen, setModalOpen] = useState(false);
+  const [demoPlaying, setDemoPlaying] = useState(false);
+  const [result, setResult] = useState<RequestTrackingActionResult | null>(null);
+  const demoEntry: DemoAcquisitionEntry = { tmdbId, title, year, type: "tv", posterPath };
+
+  if (demo && demoPlaying) return <DemoAcquirePlayback entry={demoEntry} />;
+
+  return (
+    <>
+      <button
+        className="secondary-button"
+        type="button"
+        disabled={titleAcquiring}
+        title={titleAcquiring ? "该剧正在获取中，请稍候" : "选择季范围并配置自动筛选策略"}
+        onClick={() => {
+          if (demo) setDemoPlaying(true);
+          else setModalOpen(true);
+        }}
+      >
+        <SlidersHorizontal size={14} aria-hidden />
+        按策略获取
+      </button>
+      <AcquireResultNotice result={result} />
+      {modalOpen ? (
+        <SubscriptionModal
+          isOpen={modalOpen}
+          onClose={() => setModalOpen(false)}
+          tmdbId={tmdbId}
+          title={title}
+          year={year}
+          mediaType="tv"
+          posterPath={posterPath}
+          initialStorageId={storageId}
+          initialTracked={initialTracked}
+          seasons={seasons}
+          onSuccess={(response) => {
+            setResult({ status: response.status as RequestTrackingActionResult["status"], message: response.message });
+            router.refresh();
+          }}
+        />
+      ) : null}
     </>
   );
 }

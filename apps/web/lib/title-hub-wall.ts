@@ -165,7 +165,11 @@ export async function getInProgressTitles(storageId?: string): Promise<InProgres
   const active = snapshots.filter(
     (s) =>
       (s.workflowRun.status === "running" || s.workflowRun.status === "queued") &&
-      isUserVisibleWorkflowKind(s.workflowRun.kind),
+      isUserVisibleWorkflowKind(s.workflowRun.kind) &&
+      // A replacement request applies to an already tracked title. Keep its library
+      // card clickable so the user can edit or withdraw the request instead of
+      // covering it with the "still acquiring" placeholder used for new imports.
+      s.workflowRun.kind !== "replace_request",
   );
 
   const queuedOrder = active

@@ -3,16 +3,7 @@
 import type { PanSouAuth } from "@media-track/workflow";
 import { assertNotDemo } from "../../lib/demo-mode";
 import type { PushSettingsActionResult } from "./settings-system-actions";
-
-/** PanSou 自建源地址和认证配置。凭据只写入加密后的 account_settings。 */
-export interface PanSouConfigInput {
-  username?: string;
-  password?: string;
-  /** 直接粘贴的 JWT。与用户名密码互斥，同时给定时以它为准。 */
-  token?: string;
-}
-
-export type PanSouConfigSaveMode = "override" | "credentials" | "clear";
+import type { PanSouConfigInput, PanSouConfigSaveMode } from "../../features/settings-system/contracts/pansou-config";
 
 interface ParsedPanSouCredentials {
   ok: true;

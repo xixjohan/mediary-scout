@@ -7,7 +7,7 @@ import type { AcquisitionAgentResult } from "./agent-loop.js";
 import type { AgentToolEvent } from "./activity.js";
 import { CandidateRegistry } from "./candidate-registry.js";
 import type { DeadLinkStore } from "./dead-links.js";
-import type { PolicyResource } from "../execution/subscription-policy.js";
+import type { PolicyRejectReason, PolicyResource } from "../execution/subscription-policy.js";
 import { linkHistoryByKey } from "./link-history.js";
 import { brandSupportsSubtitleDirectLink } from "../storage/storage-brands.js";
 import { resourceLinkKey } from "./resource-link.js";
@@ -125,6 +125,10 @@ export interface RunAcquisitionV2Request {
    *  rejections, so the pre-warm and every agent search share one filter. Absent =
    *  no policy (everything passes). */
   policyFilter?: { accept: (candidate: PolicyResource) => boolean };
+  /** Recheck actual video names before they become library files. */
+  policyFileValidator?: (file: PolicyResource) => PolicyRejectReason | null;
+  /** User-authored query hints; hard policy checks remain authoritative. */
+  subscriptionSearchKeywords?: string[];
   /** Leftover staging: no search, no transfer, no memory reflection. Season files stay protected. */
   stagingRecovery?: boolean;
   /** Web-reference tools for the agent: alternate titles, and mapping a fan
@@ -361,6 +365,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.targetMovieDirectoryId === undefined
       ? {}
       : { targetMovieDirectoryId: request.targetMovieDirectoryId }),
+    ...(request.policyFileValidator === undefined ? {} : { policyFileValidator: request.policyFileValidator }),
     need,
     // The agent's search keywords must reference the title — reject genre/year-only
     // fallbacks ("2026 电影") at the tool boundary so they never burn a search.
@@ -606,6 +611,9 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
     ...(request.originCountries === undefined ? {} : { originCountries: request.originCountries }),
     ...(request.searchHints === undefined ? {} : { searchHints: request.searchHints }),
+    ...(request.subscriptionSearchKeywords === undefined
+      ? {}
+      : { customSearchKeywords: request.subscriptionSearchKeywords }),
     ...(request.qualityGuidance === undefined ? {} : { qualityGuidance: request.qualityGuidance }),
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(subtitleActive ? { subtitle: true } : {}),

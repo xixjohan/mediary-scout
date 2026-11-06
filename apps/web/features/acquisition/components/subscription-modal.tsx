@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { X, Sparkles, AlertTriangle, Loader2, CheckCircle2 } from "lucide-react";
 import { buildMovieCandidateId } from "@media-track/workflow";
 import {
   requestTrackingAction,
-  requestSeasonAction,
-  requestRemainingAction,
+  requestSelectedSeasonsAction,
 } from "../../../app/actions/acquisition-actions";
 import {
   draftToPolicy,
@@ -16,13 +13,12 @@ import {
   type PolicyDraft,
   type PreviewOutcome,
 } from "./subscription-policy-panel-model";
+import { savePolicyBeforeAcquisition } from "./subscription-modal-flow";
 import {
-  StorageSelectorSection,
-  SeasonSelectorSection,
-  PolicyFilterSection,
   type ConnectedDriveSummary,
   type SubscriptionSeasonItem,
 } from "./subscription-modal-fields";
+import { SubscriptionModalView } from "./subscription-modal-view";
 
 export interface SubscriptionModalProps {
   isOpen: boolean;
@@ -70,16 +66,9 @@ export async function dispatchImmediateAcquisition({
       storageId: selectedStorageId || undefined,
     });
   }
-  if (selectedSeasons.size === 1) {
-    const singleSeasonNum = Array.from(selectedSeasons)[0]!;
-    return requestSeasonAction({
-      tmdbId,
-      seasonNumber: singleSeasonNum,
-      storageId: selectedStorageId || undefined,
-    });
-  }
-  return requestRemainingAction({
+  return requestSelectedSeasonsAction({
     tmdbId,
+    seasonNumbers: Array.from(selectedSeasons).sort((a, b) => a - b),
     storageId: selectedStorageId || undefined,
   });
 }
@@ -155,9 +144,12 @@ export function SubscriptionModal({
 
   // 2. 季集选择 (TV/Anime)
   const isTv = mediaType !== "movie";
+  const shouldQueueAcquisition = !initialTracked || isTv;
   const normalizedSeasons = resolveNormalizedSeasons(seasonsProp, seasonNumbersProp);
   const allSeasonNums = normalizedSeasons.map((s) => s.seasonNumber);
-  const [selectedSeasons, setSelectedSeasons] = useState<Set<number>>(new Set(allSeasonNums));
+  const [selectedSeasons, setSelectedSeasons] = useState<Set<number>>(
+    new Set(allSeasonNums.filter((seasonNumber) => seasonNumber !== 0)),
+  );
   const [excludeSpecial, setExcludeSpecial] = useState(true);
 
   // 3. 画质过滤与偏好
@@ -174,7 +166,8 @@ export function SubscriptionModal({
   // 4. 预览与提交状态
   const [preview, setPreview] = useState<PreviewOutcome | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
-  const [immediateAcquire, setImmediateAcquire] = useState(true);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [step, setStep] = useState<0 | 1 | 2>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -191,70 +184,72 @@ export function SubscriptionModal({
       .then((data: { drives?: ConnectedDriveSummary[] } | null) => {
         if (data?.drives && data.drives.length > 0) {
           setDrives(data.drives);
-          if (!selectedStorageId) {
-            setSelectedStorageId(initialStorageId ?? data.drives[0]!.id);
-          }
+          setSelectedStorageId((current) => current || initialStorageId || data.drives![0]!.id);
         }
       })
       .catch(() => {});
+  }, [isOpen, initialStorageId]);
 
-    if (initialTracked) {
-      fetch(`/api/titles/subscription-policy?tmdbId=${tmdbId}`)
+  useEffect(() => {
+    if (!isOpen) return;
+    let alive = true;
+    fetch(`/api/titles/subscription-policy?tmdbId=${tmdbId}&mediaType=${mediaType}`)
         .then((res) => (res.ok ? res.json() : null))
         .then((data: { policy?: Record<string, unknown> } | null) => {
-          if (data?.policy) {
-            setDraft((prev) => mergeLoadedPolicy(prev, data.policy as Record<string, unknown>));
-            setActivePreset("custom");
-          }
-        })
-        .catch(() => {});
-    }
-  }, [isOpen, tmdbId, initialStorageId, selectedStorageId, initialTracked]);
+        if (!alive || !data?.policy) return;
+        setDraft((prev) => mergeLoadedPolicy(prev, data.policy as Record<string, unknown>));
+        setActivePreset("custom");
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isOpen, tmdbId, mediaType]);
 
-  // 防抖预览规则匹配效果
-  const previewTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const triggerPreview = useCallback((currentDraft: PolicyDraft) => {
-    if (!initialTracked) return;
-    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
-    previewTimerRef.current = setTimeout(() => {
-      void (async () => {
-        setPreviewLoading(true);
-        try {
-          const policyPayload = draftToPolicy(currentDraft);
-          const res = await fetch("/api/titles/subscription-policy/preview", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              tmdbId,
-              policy: policyPayload,
-            }),
-          });
-          const body: unknown = await res.json().catch(() => null);
-          const mapped = mapPreviewResponse(res.status, body);
-          if (mapped.kind === "previewed") {
-            setPreview(mapped.outcome);
-          }
-        } catch {
-          // best effort preview
-        } finally {
-          setPreviewLoading(false);
-        }
-      })();
-    }, 350);
-  }, [tmdbId, initialTracked]);
+  const runPreview = async (): Promise<boolean> => {
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const res = await fetch("/api/titles/subscription-policy/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          tmdbId,
+          mediaType,
+          seasonNumbers: isTv ? Array.from(selectedSeasons).sort((a, b) => a - b) : [],
+          policy: draftToPolicy(draft),
+        }),
+      });
+      const body: unknown = await res.json().catch(() => null);
+      const mapped = mapPreviewResponse(res.status, body);
+      if (mapped.kind === "previewed") {
+        setPreview(mapped.outcome);
+        return true;
+      }
+      setPreviewError(mapped.kind === "failed" || mapped.kind === "rejected" ? mapped.copy : "预览失败，请重试");
+      return false;
+    } catch {
+      setPreviewError("网络错误，预览未执行");
+      return false;
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const continueToReview = async () => {
+    if (await runPreview()) setStep(2);
+  };
 
   const applyPreset = (preset: "4k" | "1080p" | "anime" | "custom") => {
     setActivePreset(preset);
     const next = createPresetDraft(preset, draft);
     setDraft(next);
-    triggerPreview(next);
+    setPreview(null);
   };
 
   const toggleChip = (field: "mustContain" | "mustNotContain", chip: string) => {
     const nextDraft = { ...draft, [field]: toggleChipString(draft[field], chip) };
     setDraft(nextDraft);
     setActivePreset("custom");
-    triggerPreview(nextDraft);
+    setPreview(null);
   };
 
   const handleToggleSeason = (seasonNumber: number) => {
@@ -267,6 +262,22 @@ export function SubscriptionModal({
     setSelectedSeasons(next);
   };
 
+  const handleToggleExcludeSpecial = (exclude: boolean) => {
+    setExcludeSpecial(exclude);
+    setSelectedSeasons((current) => {
+      const next = new Set(current);
+      if (exclude) next.delete(0);
+      else if (allSeasonNums.includes(0)) next.add(0);
+      return next;
+    });
+  };
+
+  const selectAllSeasons = () => setSelectedSeasons(new Set(allSeasonNums.filter((number) => !excludeSpecial || number !== 0)));
+  const selectLatestSeason = () => {
+    const available = allSeasonNums.filter((number) => !excludeSpecial || number !== 0);
+    if (available.length > 0) setSelectedSeasons(new Set([available[available.length - 1]!]));
+  };
+
   // 提交并启动订阅/获取工作流
   const handleSubmit = async () => {
     setIsSubmitting(true);
@@ -274,30 +285,13 @@ export function SubscriptionModal({
 
     try {
       const calculatedEpisodeFilter = computeEpisodeFilter(isTv, selectedSeasons, allSeasonNums, draft.episodeFilter);
-
-      let actionResult = { status: "requested", message: "订阅已创建并加入后台队列。" };
-      if (immediateAcquire) {
-        const res = await dispatchImmediateAcquisition({
-          tmdbId,
-          isTv,
-          selectedStorageId,
-          selectedSeasons,
-        });
-        if (res.status === "unsupported" || res.status === "llm_not_configured") {
-          setErrorMsg(res.message);
-          setIsSubmitting(false);
-          return;
-        }
-        actionResult = res;
-      }
-
       const policyPayload = draftToPolicy({
         ...draft,
         episodeFilter: calculatedEpisodeFilter,
       });
 
-      if (initialTracked) {
-        await fetch("/api/titles/subscription-policy", {
+      const savePolicy = async () => {
+        const response = await fetch("/api/titles/subscription-policy", {
           method: "PUT",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
@@ -306,159 +300,103 @@ export function SubscriptionModal({
             policy: policyPayload,
           }),
         });
-      }
+        const body: unknown = await response.json().catch(() => null);
+        const payload = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
+        return {
+          ok: response.ok,
+          ...(typeof payload["error"] === "string" ? { error: payload["error"] } : {}),
+        };
+      };
+
+      const actionResult = shouldQueueAcquisition
+        ? await savePolicyBeforeAcquisition(savePolicy, async () => {
+            const result = await dispatchImmediateAcquisition({
+              tmdbId,
+              isTv,
+              selectedStorageId,
+              selectedSeasons,
+            });
+            if (result.status === "unsupported" || result.status === "llm_not_configured") {
+              throw new Error(result.message);
+            }
+            return result;
+          })
+        : await savePolicyBeforeAcquisition(savePolicy, async () => ({
+            status: "already_tracked",
+            message: "订阅策略已保存，后续巡检会使用新设置。",
+          }));
 
       onSuccess?.(actionResult);
       onClose();
       router.refresh();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "提交订阅配置失败");
+      setErrorMsg(err instanceof Error ? err.message : "保存失败，尚未启动获取任务");
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  if (!isOpen || !mounted) return null;
+  const handleBack = () => {
+    if (step === 0) onClose();
+    else {
+      setPreview(null);
+      setStep(step === 2 ? 1 : 0);
+    }
+  };
 
-  return createPortal(
-    <div
-      className="acquiring-modal-backdrop"
-      onClick={onClose}
-      role="dialog"
-      aria-modal="true"
-      style={{ zIndex: 9999 }}
-    >
-      <div
-        className="acquiring-modal"
-        style={{ maxWidth: 540 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="acquiring-modal-header">
-          <h2>
-            <Sparkles size={16} aria-hidden style={{ color: "#6366f1" }} />
-            配置订阅与入库策略
-          </h2>
-          <button
-            type="button"
-            className="acquiring-modal-close"
-            onClick={onClose}
-            aria-label="关闭"
-          >
-            <X size={16} aria-hidden />
-          </button>
-        </div>
+  const handleContinue = () => {
+    if (step === 0) setStep(1);
+    else if (step === 1) void continueToReview();
+    else void handleSubmit();
+  };
 
-        <div className="acquiring-modal-body" style={{ gap: 16 }}>
-          <div className="acquiring-title-summary" style={{ padding: "8px 12px", background: "rgba(255,255,255,0.03)", borderRadius: 8 }}>
-            {posterPath ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={posterPath.startsWith("http") ? posterPath : `https://image.tmdb.org/t/p/w185${posterPath}`}
-                alt=""
-                className="acquiring-modal-poster"
-              />
-            ) : (
-              <span className="acquiring-modal-poster-fallback">{title.slice(0, 4)}</span>
-            )}
-            <div className="acquiring-title-meta">
-              <h3 style={{ fontSize: 15, margin: "0 0 4px" }}>{title}</h3>
-              <div className="acquiring-meta-chips" style={{ fontSize: 12 }}>
-                <span>{year}</span>
-                <span>·</span>
-                <span>{isTv ? "剧集" : "电影"}</span>
-                {isTv && normalizedSeasons.length > 0 ? (
-                  <>
-                    <span>·</span>
-                    <span>共 {normalizedSeasons.length} 季</span>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          </div>
+  const handleDraftChange = (patch: Partial<PolicyDraft>) => {
+    setDraft((previous) => ({ ...previous, ...patch }));
+    setActivePreset("custom");
+    setPreview(null);
+  };
 
-          <StorageSelectorSection
-            drives={drives}
-            selectedStorageId={selectedStorageId}
-            onSelectStorageId={setSelectedStorageId}
-          />
-
-          <SeasonSelectorSection
-            isTv={isTv}
-            normalizedSeasons={normalizedSeasons}
-            selectedSeasons={selectedSeasons}
-            allSeasonNums={allSeasonNums}
-            excludeSpecial={excludeSpecial}
-            onToggleSeason={handleToggleSeason}
-            onSelectAll={() => setSelectedSeasons(new Set(allSeasonNums))}
-            onSelectLatest={() => setSelectedSeasons(new Set([allSeasonNums[allSeasonNums.length - 1]!]))}
-            onToggleExcludeSpecial={setExcludeSpecial}
-          />
-
-          <PolicyFilterSection
-            activePreset={activePreset}
-            draft={draft}
-            preview={preview}
-            previewLoading={previewLoading}
-            onApplyPreset={applyPreset}
-            onToggleChip={toggleChip}
-            onMustContainChange={(val) => {
-              setDraft((prev) => ({ ...prev, mustContain: val }));
-              setActivePreset("custom");
-              triggerPreview({ ...draft, mustContain: val });
-            }}
-            onMustNotContainChange={(val) => {
-              setDraft((prev) => ({ ...prev, mustNotContain: val }));
-              setActivePreset("custom");
-              triggerPreview({ ...draft, mustNotContain: val });
-            }}
-          />
-
-          <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: "1px solid rgba(255,255,255,0.06)", paddingTop: 10 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={immediateAcquire}
-                onChange={(e) => setImmediateAcquire(e.target.checked)}
-              />
-              保存配置后立即启动首次检索与入库工作流
-            </label>
-          </div>
-
-          {errorMsg ? (
-            <p style={{ color: "#f87171", fontSize: 12, margin: 0, display: "flex", alignItems: "center", gap: 6 }}>
-              <AlertTriangle size={14} aria-hidden />
-              {errorMsg}
-            </p>
-          ) : null}
-        </div>
-
-        <div className="acquiring-modal-footer">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onClose}
-            disabled={isSubmitting}
-            style={{ padding: "6px 14px", fontSize: 13 }}
-          >
-            取消
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={() => void handleSubmit()}
-            disabled={isSubmitting}
-            style={{ padding: "6px 18px", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}
-          >
-            {isSubmitting ? (
-              <Loader2 size={14} className="spin" aria-hidden />
-            ) : (
-              <CheckCircle2 size={14} aria-hidden />
-            )}
-            {isSubmitting ? "正在初始化..." : "确认并开始订阅"}
-          </button>
-        </div>
-      </div>
-    </div>,
-    document.body,
+  const handleMustContainChange = (value: string) => handleDraftChange({ mustContain: value });
+  const handleMustNotContainChange = (value: string) => handleDraftChange({ mustNotContain: value });
+  return (
+    <SubscriptionModalView
+      isOpen={isOpen}
+      mounted={mounted}
+      onClose={onClose}
+      title={title}
+      year={year}
+      posterPath={posterPath}
+      initialTracked={initialTracked}
+      step={step}
+      setStep={setStep}
+      isTv={isTv}
+      shouldQueueAcquisition={shouldQueueAcquisition}
+      normalizedSeasons={normalizedSeasons}
+      allSeasonNums={allSeasonNums}
+      selectedSeasons={selectedSeasons}
+      excludeSpecial={excludeSpecial}
+      onToggleSeason={handleToggleSeason}
+      onSelectAll={selectAllSeasons}
+      onSelectLatest={selectLatestSeason}
+      onToggleExcludeSpecial={handleToggleExcludeSpecial}
+      drives={drives}
+      selectedStorageId={selectedStorageId}
+      onSelectStorageId={setSelectedStorageId}
+      activePreset={activePreset}
+      draft={draft}
+      preview={preview}
+      previewLoading={previewLoading}
+      previewError={previewError}
+      onApplyPreset={applyPreset}
+      onToggleChip={toggleChip}
+      onDraftChange={handleDraftChange}
+      onMustContainChange={handleMustContainChange}
+      onMustNotContainChange={handleMustNotContainChange}
+      runPreview={runPreview}
+      errorMsg={errorMsg}
+      isSubmitting={isSubmitting}
+      onBack={handleBack}
+      onContinue={handleContinue}
+    />
   );
 }

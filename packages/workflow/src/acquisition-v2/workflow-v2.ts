@@ -81,6 +81,10 @@ export interface RunAcquisitionV2WorkflowRequest {
   rejectedLookup?: RunAcquisitionV2Request["rejectedLookup"];
   /** See orchestrator.linkHistory. */
   linkHistory?: RunAcquisitionV2Request["linkHistory"];
+  /** Saved title policy, enforced by the provider adapter before candidates reach the agent. */
+  policyFilter?: RunAcquisitionV2Request["policyFilter"];
+  policyFileValidator?: RunAcquisitionV2Request["policyFileValidator"];
+  subscriptionSearchKeywords?: RunAcquisitionV2Request["subscriptionSearchKeywords"];
   /** Leftover staging. The orphan dir is the staging handle; season dirs are resolved
    *  under `showDirectoryId`. The agent runs even when the DB already says complete. */
   stagingRecovery?: StagingRecoveryDirectories;
@@ -249,6 +253,11 @@ export async function runAcquisitionV2Workflow(
         : {}),
     ...(request.rejectedLookup ? { rejectedLookup: request.rejectedLookup } : {}),
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
+    ...(request.policyFilter ? { policyFilter: request.policyFilter } : {}),
+    ...(request.policyFileValidator ? { policyFileValidator: request.policyFileValidator } : {}),
+    ...(request.subscriptionSearchKeywords === undefined
+      ? {}
+      : { subscriptionSearchKeywords: request.subscriptionSearchKeywords }),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
     unmovedStaging,

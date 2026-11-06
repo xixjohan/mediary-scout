@@ -25,6 +25,7 @@ import {
   type AgentMemoryWrite,
 } from "../domain/agent-memory.js";
 import { indexSubtitleFiles, selectSubtitleChunk } from "./subtitle-renewal.js";
+import type { PolicyRejectReason, PolicyResource } from "../execution/subscription-policy.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
@@ -296,6 +297,8 @@ export interface TaskSandboxOptions {
    *  pre-search may predate a rejection; a repeated keyword returns the cached
    *  snapshot), so every transfer asks again. Absent = no transfer-time guard. */
   isRejected?: (candidate: { id: string; title: string }) => Promise<boolean>;
+  /** Recheck actual video filenames at the library move/finish boundary. */
+  policyFileValidator?: (file: PolicyResource) => PolicyRejectReason | null;
   /** Link identity of a candidate the agent names (resourceLinkKey of its url).
    *  Null when the candidate has no share/magnet identity. The agent only sees
    *  titles, so two titles of one link are indistinguishable without this. */
@@ -425,6 +428,8 @@ export class TaskSandbox {
   private transferAttempted = false;
   private readonly replace: TaskSandboxOptions["replace"];
   private readonly isRejected: TaskSandboxOptions["isRejected"];
+  private readonly policyFileValidator: TaskSandboxOptions["policyFileValidator"];
+  private readonly policyBlockedCodes = new Set<string>();
   private readonly protectExistingFiles: boolean;
   private readonly stagingListDepth: number | undefined;
   /** Set once captureProtectedFiles has listed the target dirs (see assertRejectedFirst). */
@@ -496,6 +501,7 @@ export class TaskSandbox {
     this.memory = options.memory;
     this.replace = options.replace;
     this.isRejected = options.isRejected;
+    this.policyFileValidator = options.policyFileValidator;
     this.linkOf = options.linkOf;
     this.protectExistingFiles = options.protectExistingFiles === true;
     this.stagingListDepth = options.stagingListDepth;
@@ -538,6 +544,61 @@ export class TaskSandbox {
    *  dirs, even single-season, so their staging is a separate directory. */
   private isMovieRun(): boolean {
     return this.movieDir !== undefined && this.seasonDirs.size === 0;
+  }
+
+  /** Validate every video before it can become library content. Remember its
+   *  episode as blocked too, so deleting a rejected file cannot be followed by a
+   *  false markObtained for that same episode. */
+  private rejectedPolicyFiles(files: readonly SimTreeFile[]): Array<{ file: SimTreeFile; reason: PolicyRejectReason }> {
+    if (!this.policyFileValidator) return [];
+    const rejected: Array<{ file: SimTreeFile; reason: PolicyRejectReason }> = [];
+    for (const file of files) {
+      if (!file.isVideo) continue;
+      const reason = this.policyFileValidator({ name: file.path, episodeCode: file.parsed?.episodeCode ?? null });
+      if (!reason) continue;
+      rejected.push({ file, reason });
+      const blockedCode = this.isMovieRun() ? "MOVIE" : file.parsed?.episodeCode ?? "POLICY_UNKNOWN_FILE";
+      this.policyBlockedCodes.add(blockedCode);
+      if (blockedCode === "POLICY_UNKNOWN_FILE") this.obtainedCodes.clear();
+      else this.obtainedCodes.delete(blockedCode);
+    }
+    return rejected;
+  }
+
+  private throwPolicyFileRejection(rejected: readonly { file: SimTreeFile; reason: PolicyRejectReason }[]): never {
+    const details = rejected
+      .slice(0, 8)
+      .map(({ file, reason }) => `${file.parsed?.episodeCode ?? "集数未知"} ${file.path} (${reason})`)
+      .join("; ");
+    const more = rejected.length > 8 ? `; 另有 ${rejected.length - 8} 个文件` : "";
+    throw new Error(
+      `SUBSCRIPTION_POLICY_FILE_REJECTED: configured policy rejects ${rejected.length} video file(s): ${details}${more}. Do not mark these episodes; remove rejected files from staging or select compliant files, then retry.`,
+    );
+  }
+
+  private async assertPolicyFilesInTargets(): Promise<void> {
+    if (!this.policyFileValidator || !this.storage) return;
+    const rejected: Array<{ file: SimTreeFile; reason: PolicyRejectReason }> = [];
+    for (const directoryId of this.allTargetDirIds()) {
+      const files = await this.listTreeOf(directoryId);
+      rejected.push(...this.rejectedPolicyFiles(files.filter((file) => this.materializedBy.has(file.id))));
+    }
+    if (rejected.length > 0) this.throwPolicyFileRejection(rejected);
+  }
+
+  private async hasCompliantTargetVideo(code: string): Promise<boolean> {
+    if (!this.policyFileValidator || !this.storage) return false;
+    for (const directoryId of this.allTargetDirIds()) {
+      const files = await this.listTreeOf(directoryId);
+      for (const file of files) {
+        if (!file.isVideo || !this.materializedBy.has(file.id)) continue;
+        if (code !== "MOVIE" && file.parsed?.episodeCode && file.parsed.episodeCode !== code) continue;
+        if (this.policyFileValidator({ name: file.path, episodeCode: file.parsed?.episodeCode ?? null }) === null) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   /** Remember which candidate materialized which files this run (reportReplacement
@@ -1190,6 +1251,12 @@ export class TaskSandbox {
     }
     // A movie's staging IS its movie dir, so the old film sits "in staging" too.
     this.assertNotProtected(resolved.flatMap((move) => move.fileIds));
+    const selectedVideoFiles = resolved
+      .flatMap((move) => move.fileIds)
+      .map((fileId) => stagingTree.find((file) => file.id === fileId))
+      .filter((file): file is SimTreeFile => file !== undefined && file.isVideo);
+    const rejected = this.rejectedPolicyFiles(selectedVideoFiles);
+    if (rejected.length > 0) this.throwPolicyFileRejection(rejected);
     // Hold every validated id before the first move. A throw on season 1 must not
     // leave season 2's files unmarked — the loop never reaches them.
     for (const fileId of resolved.flatMap((move) => move.fileIds)) {
@@ -1299,6 +1366,20 @@ export class TaskSandbox {
    *  mark still neither counts toward coverage nor leaves the sandbox in finish()
    *  until reportReplacement records the episode replaced (see countsAsObtained). */
   async markObtained(input: { codes: string[]; subtitleFallback?: boolean }): Promise<{ confirmed: string[] }> {
+    const policyBlocked: string[] = [];
+    for (const code of input.codes) {
+      if (!this.policyBlockedCodes.has(code) && !this.policyBlockedCodes.has("POLICY_UNKNOWN_FILE")) continue;
+      if (await this.hasCompliantTargetVideo(code)) {
+        this.policyBlockedCodes.delete(code);
+      } else {
+        policyBlocked.push(code);
+      }
+    }
+    if (policyBlocked.length > 0) {
+      throw new Error(
+        `SUBSCRIPTION_POLICY_MARK_BLOCKED: ${policyBlocked.join(", ")} has video file(s) rejected by the saved policy; choose a compliant file before marking obtained`,
+      );
+    }
     if (this.replace && this.succeededCandidates.size === 0) {
       const guarded = this.replaceGuardedEpisodes();
       const early = input.codes.filter((code) => guarded.has(code));
@@ -1362,6 +1443,8 @@ export class TaskSandbox {
     const nested = tree.filter(
       (file) => (file.isVideo || file.isSubtitle) && file.path.includes("/") && !this.protectedFiles.has(file.id),
     );
+    const rejected = this.rejectedPolicyFiles(nested.filter((file) => file.isVideo));
+    if (rejected.length > 0) this.throwPolicyFileRejection(rejected);
     // 115 answers ok:false with { moved: [] }. Those files are still inside the
     // wrapper; deleting the wrapper would delete the film.
     const moved = nested.length === 0
@@ -1429,6 +1512,7 @@ export class TaskSandbox {
   /** The honest coverage picture from the obtained marks — the workflow decides what
    *  to persist. Also the loop's own end-of-run summary, so never gated. */
   async finish(): Promise<{ coverageMet: boolean; obtained: string[]; missing: string[]; subtitleFallback: boolean }> {
+    await this.assertPolicyFilesInTargets();
     // Report the agent's marks beyond just need∩marked — a coherent full pack
     // often delivers episodes BEYOND the aired cursor (the need), and those
     // provider-ahead marks must survive finish() so syncSeasonNeed records them as

@@ -21,7 +21,7 @@ import { SwapBadgeLive, SwapKeepProvider } from "../../../features/acquisition/c
 import { EpisodeTargetProvider } from "../../../features/acquisition/components/episode-target-context";
 import { MissingEpisodesDeck } from "../../../features/acquisition/components/missing-episodes-deck";
 import { SeasonRow } from "../../../features/acquisition/components/season-row";
-import { RequestRemainingButton } from "../../../features/catalog/components/title-action-buttons";
+import { RequestRemainingButton, SubscriptionConfigButton } from "../../../features/catalog/components/title-action-buttons";
 import { UntrackButton } from "../../../features/acquisition/components/untrack-button";
 import { AcquiringStatusTrigger } from "../../../features/acquisition/components/acquiring-status-trigger";
 import { AgentMemoryNotes } from "../../../features/activity/components/agent-memory-panel";
@@ -263,6 +263,20 @@ function TvHub({
                 }}
               />
             ) : null}
+            {view.untrackedSeasonNumbers.length > 0 ? (
+              <SubscriptionConfigButton
+                tmdbId={view.tmdbId}
+                title={view.title}
+                year={view.year}
+                posterPath={view.posterPath}
+                storageId={storageId}
+                initialTracked={view.aggregate !== "untracked"}
+                titleAcquiring={view.acquiring}
+                seasons={view.seasons
+                  .filter((season) => !season.tracked)
+                  .map((season) => ({ seasonNumber: season.seasonNumber, totalEpisodes: season.totalEpisodes }))}
+              />
+            ) : null}
             {canManageMedia && view.aggregate !== "untracked" ? (
               <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="tv" basePath={basePath} />
             ) : null}
@@ -294,7 +308,7 @@ function TvHub({
 
       <OrganizePanel tmdbId={view.tmdbId} seasonNumber={view.seasons[0]?.seasonNumber} />
 
-      {canManageMedia ? <SubscriptionPolicyPanel tmdbId={view.tmdbId} /> : null}
+      {canManageMedia ? <SubscriptionPolicyPanel tmdbId={view.tmdbId} mediaType="tv" /> : null}
       {view.aggregate !== "untracked" ? (
         <TitleMessageSection
           tmdbId={view.tmdbId}
@@ -443,11 +457,9 @@ function MovieHub({
           releaseDate={view.releaseDate}
         />
         {view.state !== "untracked" ? (
-          <>
-            <OrganizePanel tmdbId={view.tmdbId} seasonNumber={undefined} />
-            <SubscriptionPolicyPanel tmdbId={view.tmdbId} />
-          </>
+          <OrganizePanel tmdbId={view.tmdbId} seasonNumber={undefined} />
         ) : null}
+        {canManageMedia ? <SubscriptionPolicyPanel tmdbId={view.tmdbId} mediaType="movie" /> : null}
         {view.state !== "untracked" ? (
           <TitleMessageSection tmdbId={view.tmdbId} mediaType="movie" storageId={storageId} hasFile={view.obtained} episodes={[]} />
         ) : null}

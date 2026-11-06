@@ -1,5 +1,5 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
-import { parseEpisodeFilter } from "@media-track/workflow";
+import { buildTitleId, parseEpisodeFilter, type MediaKind } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import type { SubscriptionPolicyWrite } from "@media-track/workflow";
@@ -95,28 +95,41 @@ function parseTitleKey(value: unknown): { ok: true; tmdbId: number } | { ok: fal
   return { ok: true, tmdbId };
 }
 
+function mediaKind(value: unknown): MediaKind | undefined {
+  if (value === "movie") return "movie";
+  if (value === "tv" || value === "anime") return "tv";
+  return undefined;
+}
+
+function findTrackedTitle(states: Awaited<ReturnType<ReturnType<typeof getWorkflowRepository>["listTrackedSeasonStates"]>>, tmdbId: number, kindHint: MediaKind | undefined) {
+  return states.find((state) =>
+    state.title.tmdbId === tmdbId &&
+    (kindHint === undefined || (kindHint === "movie" ? state.title.type === "movie" : state.title.type !== "movie")),
+  );
+}
+
 export async function GET(request: NextRequest): Promise<Response> {
   await connection();
   const accountId = await requireApiAccount(request);
   if (accountId instanceof Response) return accountId;
 
   const tmdbIdParam = new URL(request.url).searchParams.get("tmdbId");
+  const kindHint = mediaKind(new URL(request.url).searchParams.get("mediaType"));
   const parsed = parseTitleKey(Number(tmdbIdParam));
   if (!parsed.ok) {
     return NextResponse.json({ error: parsed.error }, { status: 400, headers: NO_STORE });
   }
 
-  // The title must be tracked by THIS account — an untracked title is invisible, not
-  // configurable (same fail-closed rule as the preview and resources routes).
   const states = await getWorkflowRepository().listTrackedSeasonStates(accountId);
-  const tracked = states.find((state) => state.title.tmdbId === parsed.tmdbId);
-  if (!tracked) {
+  const tracked = findTrackedTitle(states, parsed.tmdbId, kindHint);
+  const kind = tracked ? undefined : kindHint;
+  if (!tracked && !kind) {
     return NextResponse.json({ error: "title not tracked" }, { status: 404, headers: NO_STORE });
   }
 
   const stored = await getWorkflowRepository().getSubscriptionPolicy({
     accountId,
-    titleKey: tracked.title.id,
+    titleKey: tracked?.title.id ?? buildTitleId({ source: "tmdb", mediaKind: kind!, id: parsed.tmdbId }),
   });
   // null, not an empty policy: the panel must be able to say "you have not configured a
   // rule", which is a different sentence from "your rule excludes everything".
@@ -138,6 +151,7 @@ export async function PUT(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400, headers: NO_STORE });
   }
   const raw = body as Record<string, unknown>;
+  const kindHint = mediaKind(raw["mediaType"]);
   const title = parseTitleKey(raw["tmdbId"]);
   if (!title.ok) {
     return NextResponse.json({ error: title.error }, { status: 400, headers: NO_STORE });
@@ -148,14 +162,15 @@ export async function PUT(request: NextRequest): Promise<Response> {
   }
 
   const states = await getWorkflowRepository().listTrackedSeasonStates(accountId);
-  const tracked = states.find((state) => state.title.tmdbId === title.tmdbId);
-  if (!tracked) {
+  const tracked = findTrackedTitle(states, title.tmdbId, kindHint);
+  const kind = tracked ? undefined : kindHint;
+  if (!tracked && !kind) {
     return NextResponse.json({ error: "title not tracked" }, { status: 404, headers: NO_STORE });
   }
 
   const saved = await getWorkflowRepository().upsertSubscriptionPolicy({
     accountId,
-    titleKey: tracked.title.id,
+    titleKey: tracked?.title.id ?? buildTitleId({ source: "tmdb", mediaKind: kind!, id: title.tmdbId }),
     policy: policy.policy,
     now: new Date().toISOString(),
   });

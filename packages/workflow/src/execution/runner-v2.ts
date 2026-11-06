@@ -24,6 +24,7 @@ import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
 import type { PersistWorkflowRunSnapshotInput, WorkflowRepository } from "../persistence/repository.js";
 import { userMessageDrive } from "./user-requests.js";
 import { stampReplaceNotification } from "../domain/notification-report.js";
+import { loadSubscriptionPolicyFilter } from "./subscription-policy-filter.js";
 
 /**
  * Phase 7d — production persist wrappers on the V2 engine. These mirror the old
@@ -73,6 +74,14 @@ interface TvV2Common {
    * `finishedAt` as a call argument used to freeze it at run-start.)
    */
   now?: () => string;
+}
+
+async function subscriptionPolicyFilterOption(input: Pick<TvV2Common, "repository" | "accountId" | "title">) {
+  return loadSubscriptionPolicyFilter({
+    repository: input.repository,
+    accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
+    titleKey: input.title.id,
+  });
 }
 
 function resolveNow(input: { now?: () => string }): () => string {
@@ -298,6 +307,7 @@ export async function runType2InitializationV2AndPersist(
     }),
     ...passthrough(input),
     ...(await protectExistingOption(input)),
+    ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
   });
@@ -349,6 +359,7 @@ export async function runType3MonitoringV2AndPersist(
     }),
     ...passthrough(input),
     ...(await protectExistingOption(input)),
+    ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
   });
@@ -401,6 +412,7 @@ export async function runSeriesInitializationV2AndPersist(
     }),
     ...passthrough(input),
     ...(await protectExistingOption(input)),
+    ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
   });
@@ -508,6 +520,7 @@ export async function runReplaceRequestV2AndPersist(
     }),
     ...passthrough(input),
     ...(await protectExistingOption(input)),
+    ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
   });
@@ -616,6 +629,7 @@ export async function runStagingRecoveryV2AndPersist(
       storage: input.storage,
     }),
     ...passthrough(input),
+    ...(await subscriptionPolicyFilterOption(input)),
   });
 
   const lock = bridged.seasons.find((entry) => entry.season.seasonNumber === input.lockSeasonNumber);
@@ -806,6 +820,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...(input.userRequest === undefined ? {} : { userRequest: input.userRequest }),
     ...(input.priorObtained === undefined ? {} : { priorObtained: input.priorObtained }),
     ...(await protectExistingOption(input)),
+    ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
     ...memoryOption(input),

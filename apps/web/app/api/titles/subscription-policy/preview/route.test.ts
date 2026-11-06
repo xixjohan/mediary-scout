@@ -28,6 +28,15 @@ vi.mock("../../../../../lib/auth-chain", () => ({
 vi.mock("../../../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: () => repo,
   getWorkerResourceProvider: async () => provider,
+  movieTargetFromTmdbId: async () => null,
+}));
+
+vi.mock("../../../../../lib/title-hub", () => ({
+  seriesTargetFor: async (tmdbId: number) => ({
+    title: { id: `tmdb_tv_${tmdbId}`, tmdbId, type: "tv", title: "Show", originalTitle: "Show", year: 2024, aliases: [] },
+    keyword: "Show",
+    seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3 }],
+  }),
 }));
 
 const repo = new InMemoryWorkflowRepository();
@@ -200,6 +209,13 @@ describe("POST /api/titles/subscription-policy/preview", () => {
     expect(res.status).toBe(404);
   });
 
+  it("新订阅可以传媒体类型预览未追踪作品", async () => {
+    const tmdbId = freshTmdbId();
+    const res = await POST(request({ tmdbId, mediaType: "tv", seasonNumbers: [1], policy: {} }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).total).toBe(3);
+  });
+
   it("body 不是 JSON ⇒ 400", async () => {
     const res = await POST(
       new NextRequest("http://localhost/api/titles/subscription-policy/preview", { method: "POST" }),
@@ -283,11 +299,11 @@ describe("parsePreviewPolicy", () => {
 });
 
 describe("parsePreviewBody", () => {
-  it("tmdbId 正整数，seasonNumber 可缺席", () => {
+  it("tmdbId 正整数，seasonNumbers 可缺席", () => {
     expect(parsePreviewBody({ tmdbId: 1396, policy: {} })).toMatchObject({ ok: true, tmdbId: 1396 });
     const parsed = parsePreviewBody({ tmdbId: 1396, policy: {} });
     if (!parsed.ok) return;
-    expect(parsed.seasonNumber).toBeUndefined();
+    expect(parsed.seasonNumbers).toEqual([]);
   });
 
   it("**seasonNumber 缺席与显式 null 等价**（电影没有季）", () => {
@@ -296,8 +312,8 @@ describe("parsePreviewBody", () => {
     expect(a).toMatchObject({ ok: true });
     expect(b).toMatchObject({ ok: true });
     if (!a.ok || !b.ok) return;
-    expect(a.seasonNumber).toBeUndefined();
-    expect(b.seasonNumber).toBeUndefined();
+    expect(a.seasonNumbers).toEqual([]);
+    expect(b.seasonNumbers).toEqual([]);
   });
 
   it("tmdbId 必须是正整数", () => {
@@ -310,6 +326,17 @@ describe("parsePreviewBody", () => {
     for (const bad of [0, -1, 1.5, "1", true]) {
       expect(parsePreviewBody({ tmdbId: 1, seasonNumber: bad, policy: {} }).ok).toBe(false);
     }
+  });
+
+  it("selected season numbers are validated and deduplicated", () => {
+    expect(parsePreviewBody({ tmdbId: 1, seasonNumbers: [1, 2, 2], policy: {} })).toMatchObject({
+      ok: true,
+      seasonNumbers: [1, 2],
+    });
+    expect(parsePreviewBody({ tmdbId: 1, seasonNumbers: [0], policy: {} })).toMatchObject({
+      ok: true,
+      seasonNumbers: [0],
+    });
   });
 
   it("**policy 整个缺席 ⇒ 拒绝**（不是当空策略放过）", () => {

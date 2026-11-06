@@ -2,11 +2,13 @@ import { connection, NextResponse, type NextRequest } from "next/server";
 import {
   buildTitleSearchKeywords,
   previewPolicy,
+  type MediaTitle,
   type PolicyResource,
   type SubscriptionPolicy,
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../../lib/auth-chain";
-import { getWorkerResourceProvider, getWorkflowRepository } from "../../../../../lib/workflow-runtime";
+import { getWorkerResourceProvider, getWorkflowRepository, movieTargetFromTmdbId } from "../../../../../lib/workflow-runtime";
+import { seriesTargetFor } from "../../../../../lib/title-hub";
 import { resourceLimiter } from "../../resources/cache";
 
 /**
@@ -40,7 +42,68 @@ import { resourceLimiter } from "../../resources/cache";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-type PreviewRequest = { tmdbId: number; seasonNumber: number | undefined; policy: SubscriptionPolicy };
+type PreviewRequest = {
+  tmdbId: number;
+  seasonNumbers: number[];
+  mediaType: "movie" | "tv" | "anime" | undefined;
+  policy: SubscriptionPolicy;
+};
+
+type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseMediaType(value: unknown): ParseResult<PreviewRequest["mediaType"]> {
+  if (value === undefined || value === "movie" || value === "tv" || value === "anime") {
+    return { ok: true, value };
+  }
+  return { ok: false, error: "mediaType 必须是 movie、tv 或 anime" };
+}
+
+function parseSeasonNumbers(body: Record<string, unknown>): ParseResult<number[]> {
+  const values = body["seasonNumbers"];
+  if (values !== undefined) {
+    if (!Array.isArray(values) || values.length > 100) {
+      return { ok: false, error: "seasonNumbers 必须是最多 100 项的季号数组" };
+    }
+    if (!values.every((value): value is number => typeof value === "number" && Number.isInteger(value) && value >= 0)) {
+      return { ok: false, error: "seasonNumbers 只能包含非负整数" };
+    }
+    return { ok: true, value: [...new Set(values)] };
+  }
+
+  const seasonNumber = body["seasonNumber"];
+  if (seasonNumber === undefined || seasonNumber === null) return { ok: true, value: [] };
+  if (typeof seasonNumber !== "number" || !Number.isInteger(seasonNumber) || seasonNumber <= 0) {
+    return { ok: false, error: "seasonNumber 必须是正整数" };
+  }
+  return { ok: true, value: [seasonNumber] };
+}
+
+async function resolvePreviewTitle(accountId: string, request: PreviewRequest) {
+  const states = await getWorkflowRepository().listTrackedSeasonStates(accountId);
+  const tracked = states.find((state) =>
+    state.title.tmdbId === request.tmdbId &&
+    (request.mediaType === undefined || (request.mediaType === "movie" ? state.title.type === "movie" : state.title.type !== "movie")),
+  );
+  if (tracked) return tracked.title;
+  if (request.mediaType === "movie") return (await movieTargetFromTmdbId(request.tmdbId))?.title ?? null;
+  if (request.mediaType === "tv" || request.mediaType === "anime") {
+    return (await seriesTargetFor(request.tmdbId))?.title ?? null;
+  }
+  return null;
+}
+
+function previewKeywords(title: MediaTitle, request: PreviewRequest): string[] {
+  const options = request.seasonNumbers.length > 0
+    ? request.seasonNumbers.flatMap((seasonNumber) =>
+        buildTitleSearchKeywords(title, { seasonNumber, customKeywords: request.policy.customKeywords }),
+      )
+    : buildTitleSearchKeywords(title, { customKeywords: request.policy.customKeywords });
+  return [...new Set(options.map((entry) => entry.keyword))];
+}
 
 /** Read the body without throwing — a non-JSON body is a 400, not a 500. */
 async function readJson(request: NextRequest): Promise<unknown> {
@@ -57,27 +120,28 @@ async function readJson(request: NextRequest): Promise<unknown> {
  * re-derive from three separate checks.
  */
 export function parsePreviewBody(value: unknown):
-  | { ok: true; tmdbId: number; seasonNumber: number | undefined; policy: SubscriptionPolicy }
+  | ({ ok: true } & PreviewRequest)
   | { ok: false; error: string } {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return { ok: false, error: "请求体不是 JSON" };
   }
-  const body = value as Record<string, unknown>;
+  const body = value;
   const tmdbId = typeof body["tmdbId"] === "number" ? body["tmdbId"] : Number.NaN;
   if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
     return { ok: false, error: "tmdbId 必须是正整数" };
   }
-  const rawSeason = body["seasonNumber"];
-  const seasonNumber = rawSeason === undefined || rawSeason === null ? undefined : rawSeason;
-  if (
-    seasonNumber !== undefined &&
-    (typeof seasonNumber !== "number" || !Number.isInteger(seasonNumber) || seasonNumber <= 0)
-  ) {
-    return { ok: false, error: "seasonNumber 必须是正整数" };
-  }
+  const mediaType = parseMediaType(body["mediaType"]);
+  if (!mediaType.ok) return mediaType;
+  const seasons = parseSeasonNumbers(body);
+  if (!seasons.ok) return seasons;
   const policy = parsePreviewPolicy(body["policy"]);
   if (!policy.ok) return { ok: false, error: policy.error };
-  const request: PreviewRequest = { tmdbId, seasonNumber, policy: policy.policy };
+  const request: PreviewRequest = {
+    tmdbId,
+    seasonNumbers: seasons.value,
+    mediaType: mediaType.value,
+    policy: policy.policy,
+  };
   return { ok: true, ...request };
 }
 
@@ -113,6 +177,7 @@ export function parsePreviewPolicy(value: unknown): { ok: true; policy: Subscrip
       policy: {
         mustContain: terms("mustContain"),
         mustNotContain: terms("mustNotContain"),
+        customKeywords: terms("customKeywords"),
         episodeFilter: episodeFilter ?? "",
         useRegex: raw["useRegex"] === true,
         cooldownDays: cooldownDays ?? 0,
@@ -135,17 +200,15 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: parsed.error }, { status: 400, headers: NO_STORE });
   }
 
-  // 3) The title must be tracked by THIS account — same fail-closed rule as the resources
-  //    route. An untracked title is invisible, not previewable.
-  const states = await getWorkflowRepository().listTrackedSeasonStates(accountId);
-  const tracked = states.find((state) => state.title.tmdbId === parsed.tmdbId);
-  if (!tracked) {
+  // 3) Resolve a tracked title first, then fall back to the catalog for the creation flow.
+  const title = await resolvePreviewTitle(accountId, parsed);
+  if (!title) {
     return NextResponse.json({ error: "title not tracked" }, { status: 404, headers: NO_STORE });
   }
 
   // 4) Search live, reusing the resources route's cache + cooldown singletons so a preview
   //    right after a search costs nothing (and is rate-limited the same way).
-  const keywords = buildTitleSearchKeywords(tracked.title).map((entry) => entry.keyword);
+  const keywords = previewKeywords(title, parsed);
   // Same cooldown as the resources route: a preview right after a search should hit the
   // cache, and a preview fired repeatedly must not walk around the limiter the user's
   // own search just paid. Keyed by account + title, so previewing one title never throttles another.

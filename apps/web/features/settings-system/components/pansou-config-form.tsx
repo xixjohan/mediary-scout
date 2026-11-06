@@ -5,8 +5,8 @@ import { useRouter } from "../../../lib/use-router";
 import { Check, LoaderCircle, RotateCcw } from "lucide-react";
 import {
   savePanSouConfigAction,
-  type PanSouConfigSaveMode,
 } from "../../../app/actions/settings-pansou-actions";
+import type { PanSouConfigSaveMode } from "../contracts/pansou-config";
 import { runAction } from "../../../lib/run-action";
 
 /** 已保存的凭据状态，只用于决定输入框是「显示占位符」还是「显示已保存」——

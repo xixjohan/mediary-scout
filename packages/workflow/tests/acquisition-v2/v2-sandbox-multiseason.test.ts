@@ -94,4 +94,82 @@ describe("TaskSandbox — multi-season distribution", () => {
     await sandbox.markObtained({ codes: ["S02E13"] });
     expect(sandbox.isCoverageMet()).toBe(true);
   });
+
+  it("rejects out-of-policy video files at the final season move boundary", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { show: [{ id: "mixed", title: "Show S01E01-E02" }] },
+    });
+    const storage = new Storage115Simulator({
+      packs: {
+        mixed: {
+          files: [
+            { path: "Show/Show.S01E01.mkv", sizeBytes: 9 },
+            { path: "Show/Show.S01E02.mkv", sizeBytes: 9 },
+          ],
+        },
+      },
+    });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const seasonDirectoryId = await storage.createDirectory({ name: "Season 1", parentId: "root" });
+    const sandbox = new TaskSandbox({
+      provider,
+      storage,
+      stagingDirectoryId,
+      targetSeasonDirectoryIds: { 1: seasonDirectoryId },
+      need: ["S01E02"],
+      policyFileValidator: (file) => (file.episodeCode === "S01E02" ? null : "episode_filtered"),
+    });
+
+    const search = await sandbox.searchResources("show");
+    const transfer = await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "mixed" });
+    const videos = transfer.staging.filter((file) => file.isVideo);
+    const rejected = videos.find((file) => file.path.includes("S01E01"))!;
+    const accepted = videos.find((file) => file.path.includes("S01E02"))!;
+
+    await expect(
+      sandbox.moveToSeason({ moves: [{ season: 1, fileIds: [rejected.id] }] }),
+    ).rejects.toThrow(/SUBSCRIPTION_POLICY_FILE_REJECTED.*S01E01.*episode_filtered/);
+    expect((await sandbox.inspectTargetDir({ season: 1 })).filter((file) => file.isVideo)).toHaveLength(0);
+
+    await sandbox.moveToSeason({ moves: [{ season: 1, fileIds: [accepted.id] }] });
+    expect((await sandbox.inspectTargetDir({ season: 1 })).filter((file) => file.isVideo).map((file) => file.path)).toEqual([
+      "Show.S01E02.mkv",
+    ]);
+    await expect(sandbox.markObtained({ codes: ["S01E01"] })).rejects.toThrow(/SUBSCRIPTION_POLICY_MARK_BLOCKED/);
+    await expect(sandbox.markObtained({ codes: ["S01E02"] })).resolves.toMatchObject({ confirmed: ["S01E02"] });
+  });
+
+  it("blocks a movie from finishing with an out-of-policy video already at the target", async () => {
+    const provider = new FakeResourceProviderV2({ results: { film: [{ id: "film", title: "Film 2024" }] } });
+    const storage = new Storage115Simulator({
+      packs: {
+        film: {
+          files: [
+            { path: "Film 2160p.mkv", sizeBytes: 20 },
+            { path: "Film 1080p.mkv", sizeBytes: 10 },
+          ],
+        },
+      },
+    });
+    const movieDirectoryId = await storage.createDirectory({ name: "Film", parentId: "root" });
+    const sandbox = new TaskSandbox({
+      provider,
+      storage,
+      stagingDirectoryId: movieDirectoryId,
+      targetMovieDirectoryId: movieDirectoryId,
+      need: ["MOVIE"],
+      policyFileValidator: (file) => (file.name.includes("2160p") ? null : "missing_term"),
+    });
+
+    const search = await sandbox.searchResources("film");
+    await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "film" });
+    await sandbox.markObtained({ codes: ["MOVIE"] });
+    await expect(sandbox.finish()).rejects.toThrow(/SUBSCRIPTION_POLICY_FILE_REJECTED.*1080p.*missing_term/);
+
+    const landed = await sandbox.inspectStaging();
+    const rejected = landed.find((file) => file.path.includes("1080p"))!;
+    await sandbox.deleteFiles({ directory: "staging", fileIds: [rejected.id] });
+    await sandbox.markObtained({ codes: ["MOVIE"] });
+    await expect(sandbox.finish()).resolves.toMatchObject({ coverageMet: true, obtained: ["MOVIE"] });
+  });
 });

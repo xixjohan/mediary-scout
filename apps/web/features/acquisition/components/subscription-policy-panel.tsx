@@ -32,6 +32,7 @@ import {
 
 export interface SubscriptionPolicyPanelProps {
   tmdbId: number;
+  mediaType: "movie" | "tv";
 }
 
 function appendFilterChip(current: string, chip: string): string {
@@ -49,7 +50,7 @@ function appendFilterChip(current: string, chip: string): string {
 const CONTAIN_PRESETS = ["2160p", "1080p", "简日内嵌", "简中字幕"] as const;
 const EXCLUDE_PRESETS = ["CAM/枪版", "预告片", "国语配音"] as const;
 
-export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps) {
+export function SubscriptionPolicyPanel({ tmdbId, mediaType }: SubscriptionPolicyPanelProps) {
   const [draft, setDraft] = useState<PolicyDraft>({
     mustContain: "",
     mustNotContain: "",
@@ -87,7 +88,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
    */
   useEffect(() => {
     let alive = true;
-    fetch(`/api/titles/subscription-policy?tmdbId=${tmdbId}`)
+    fetch(`/api/titles/subscription-policy?tmdbId=${tmdbId}&mediaType=${mediaType}`)
       .then(async (response) => {
         const body: unknown = await response.json().catch(() => null);
         return mapPolicyLoadResponse(response.status, body);
@@ -105,7 +106,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
     return () => {
       alive = false;
     };
-  }, [tmdbId]);
+  }, [tmdbId, mediaType]);
 
   const preview = useCallback(async () => {
     // 预览同样依赖当前表单：读回在飞时预览过，表单就不能再被旧值替换，
@@ -116,14 +117,14 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
       const response = await fetch("/api/titles/subscription-policy/preview", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tmdbId, policy: draftToPolicy(draft) }),
+        body: JSON.stringify({ tmdbId, mediaType, policy: draftToPolicy(draft) }),
       });
       const body: unknown = await response.json().catch(() => null);
       setState(mapPreviewResponse(response.status, body));
     } catch {
       setState({ kind: "failed", copy: "网络错误，预览未执行" });
     }
-  }, [draft, tmdbId]);
+  }, [draft, mediaType, tmdbId]);
 
   const save = useCallback(async () => {
     // 保存即「用户动过」：迟到的挂载读回不许把刚存的新规则擦回旧值
@@ -133,7 +134,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
       const response = await fetch("/api/titles/subscription-policy", {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ tmdbId, policy: draftToPolicy(draft) }),
+        body: JSON.stringify({ tmdbId, mediaType, policy: draftToPolicy(draft) }),
       });
       const body: unknown = await response.json().catch(() => null);
       if (response.ok) {
@@ -147,7 +148,7 @@ export function SubscriptionPolicyPanel({ tmdbId }: SubscriptionPolicyPanelProps
     } catch {
       setState({ kind: "failed", copy: "网络错误，策略未保存" });
     }
-  }, [draft, router, tmdbId]);
+  }, [draft, mediaType, router, tmdbId]);
 
   // A rule that would exclude everything is worth saying out loud before it is saved:
   // "命中 0 个" from an empty search and "命中 0 个" from a rule that filters everything

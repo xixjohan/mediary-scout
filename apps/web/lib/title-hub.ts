@@ -340,4 +340,64 @@ export async function queueRemainingSeasons(
   };
 }
 
+/** Queue only the requested seasons that are not already tracked on this drive. */
+export async function queueSelectedSeasons(
+  tmdbId: number,
+  seasonNumbers: number[],
+  storageId?: string,
+): Promise<CandidateTrackingRequestResult> {
+  const selected = new Set(seasonNumbers.filter((number) => Number.isInteger(number) && number >= 0));
+  if (selected.size === 0) {
+    return { status: "unsupported", message: "请至少选择一季。" };
+  }
+
+  const repository = getWorkflowRepository();
+  const scope = await getActiveWorkspaceScope(storageId);
+  await ensureDemoSeeded(repository);
+  const target = await seriesTargetFor(tmdbId);
+  if (!target) {
+    return { status: "unsupported", message: "无法获取该剧的季信息。" };
+  }
+
+  const trackedSeasonNumbers = new Set(
+    (await repository.listTrackedSeasonStates(scope))
+      .filter((state) => state.title.tmdbId === tmdbId && state.title.type !== "movie")
+      .map((state) => state.season.seasonNumber),
+  );
+  const requested = target.seasons.filter((season) => selected.has(season.seasonNumber));
+  if (requested.length !== selected.size) {
+    return { status: "unsupported", message: "所选季信息已变化，请刷新页面后重试。" };
+  }
+  const remaining = requested.filter((season) => !trackedSeasonNumbers.has(season.seasonNumber));
+  if (remaining.length === 0) {
+    return {
+      status: "already_tracked",
+      workflowRunId: null,
+      trackedSeasonId: buildTvCandidateId({
+        source: "tmdb",
+        id: tmdbId,
+        seasonNumber: requested[0]?.seasonNumber ?? target.seasons[0]?.seasonNumber ?? 1,
+      }),
+    };
+  }
+
+  const request = await queueSeriesInitialization({
+    title: target.title,
+    seasons: remaining,
+    keyword: target.keyword,
+    repository,
+    accountId: scope.accountId,
+    connectedStorageId: scope.connectedStorageId,
+  });
+  return {
+    status: request.status === "queued" ? "queued" : request.status,
+    workflowRunId: request.workflowRunId,
+    trackedSeasonId: buildTvCandidateId({
+      source: "tmdb",
+      id: tmdbId,
+      seasonNumber: remaining[0]?.seasonNumber ?? 1,
+    }),
+  };
+}
+
 export * from "./title-hub-wall";

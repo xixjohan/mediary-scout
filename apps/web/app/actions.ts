@@ -58,10 +58,10 @@ export {
 } from "./actions/settings-system-actions";
 
 export {
-  type PanSouConfigInput,
-  type PanSouConfigSaveMode,
   savePanSouConfigAction,
 } from "./actions/settings-pansou-actions";
+
+export type { PanSouConfigInput, PanSouConfigSaveMode } from "../features/settings-system/contracts/pansou-config";
 
 export type { ConnectLoginActionResult, TestRemoteAccessResult } from "../features/auth/contracts/auth-tokens";
 export {

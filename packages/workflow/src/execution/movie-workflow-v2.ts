@@ -69,6 +69,9 @@ export interface RunMovieAcquisitionV2Request {
   rejectedLookup?: RunAcquisitionV2Request["rejectedLookup"];
   /** See orchestrator.linkHistory. */
   linkHistory?: RunAcquisitionV2Request["linkHistory"];
+  policyFilter?: RunAcquisitionV2Request["policyFilter"];
+  policyFileValidator?: RunAcquisitionV2Request["policyFileValidator"];
+  subscriptionSearchKeywords?: RunAcquisitionV2Request["subscriptionSearchKeywords"];
   /** Web-reference tools (alternate titles for a film). */
   titleResearch?: RunAcquisitionV2Request["titleResearch"];
   onProgress?: (event: AgentToolEvent) => void;
@@ -130,6 +133,11 @@ export async function runMovieAcquisitionV2(
     ...(request.protectExisting ? { protectExisting: request.protectExisting } : {}),
     ...(request.rejectedLookup ? { rejectedLookup: request.rejectedLookup } : {}),
     ...(request.linkHistory ? { linkHistory: request.linkHistory } : {}),
+    ...(request.policyFilter ? { policyFilter: request.policyFilter } : {}),
+    ...(request.policyFileValidator ? { policyFileValidator: request.policyFileValidator } : {}),
+    ...(request.subscriptionSearchKeywords === undefined
+      ? {}
+      : { subscriptionSearchKeywords: request.subscriptionSearchKeywords }),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
   });
