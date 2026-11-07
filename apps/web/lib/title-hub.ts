@@ -49,6 +49,8 @@ export interface TitleHubSeason {
   obtainedCount: number;
   missingAiredCount: number;
   trackedSeasonId: string | null;
+  /** A queued or running workflow pinned to this season; other seasons stay actionable. */
+  acquiring?: boolean;
   episodes: EpisodeStatusCell[];
 }
 
@@ -56,6 +58,7 @@ export type { TitleAggregateState };
 
 export interface TitleHubView {
   kind: "tv";
+  mediaType: "tv" | "anime";
   tmdbId: number;
   title: string;
   originalTitle: string;
@@ -122,6 +125,8 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
   };
 
   const trackedBySeason = new Map(trackedStates.map((state) => [state.season.seasonNumber, state]));
+  const activeRuns = await repository.listActiveWorkflowRuns(scope);
+  const activeSeasonIds = new Set(activeRuns.map((snapshot) => snapshot.workflowRun.trackedSeasonId));
   const seasonNumbers = [
     ...new Set([
       ...(target?.seasons.map((season) => season.seasonNumber) ?? []),
@@ -151,6 +156,7 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
         obtainedCount: view?.obtainedCount ?? 0,
         missingAiredCount: view?.missingAiredCount ?? 0,
         trackedSeasonId: tracked.season.id,
+        acquiring: activeSeasonIds.has(tracked.season.id),
         episodes: view?.episodes ?? [],
       });
     } else if (targetSeason) {
@@ -163,6 +169,7 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
         obtainedCount: 0,
         missingAiredCount: 0,
         trackedSeasonId: null,
+        acquiring: false,
         episodes: [],
       });
     }
@@ -174,12 +181,13 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
   const aggregate = aggregateStateFromSeasons(seasons);
   const airing = aggregateAiring(seasons);
 
-  const acquiring = (await repository.listActiveWorkflowRuns(scope)).some(
+  const acquiring = activeRuns.some(
     (snapshot) => snapshot.title.tmdbId === tmdbId && isUserVisibleWorkflowKind(snapshot.workflowRun.kind),
   );
 
   return {
     kind: "tv",
+    mediaType: dbTitle?.type === "anime" ? "anime" : "tv",
     tmdbId,
     ...meta,
     aggregate,

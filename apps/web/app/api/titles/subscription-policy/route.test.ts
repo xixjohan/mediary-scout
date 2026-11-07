@@ -283,6 +283,8 @@ describe("parseSubscriptionPolicyWrite", () => {
       useRegex: false,
       cooldownDays: 0,
       customKeywords: [],
+      priorityGroups: [],
+      seasonEpisodeRanges: [],
     });
   });
 
@@ -308,5 +310,37 @@ describe("parseSubscriptionPolicyWrite", () => {
     const parsed = parseSubscriptionPolicyWrite({ useRegex: "yes" });
     if (!parsed.ok) throw new Error("should be ok");
     expect(parsed.policy.useRegex).toBe(false);
+  });
+
+  it("解析有序优先级组，并限制数量与重复 ID", () => {
+    const parsed = parseSubscriptionPolicyWrite({ priorityGroups: [
+      { id: "remux", name: "无损优先", mustContain: ["REMUX"], mustNotContain: [] },
+      { id: "fallback", name: "1080p 兜底", mustContain: ["1080p"] },
+    ] });
+    expect(parsed).toMatchObject({ ok: true, policy: { priorityGroups: [
+      { id: "remux", name: "无损优先", mustContain: ["REMUX"], mustNotContain: [] },
+      { id: "fallback", name: "1080p 兜底", mustContain: ["1080p"], mustNotContain: [] },
+    ] } });
+    expect(parseSubscriptionPolicyWrite({ priorityGroups: new Array(9).fill({ id: "g", name: "g" }) }).ok).toBe(false);
+    expect(parseSubscriptionPolicyWrite({ priorityGroups: [{ id: "g", name: "g" }, { id: "g", name: "g" }] }).ok).toBe(false);
+  });
+
+  it("逐季范围允许多季度独立配置并拒绝重复季度或反向区间", () => {
+    const valid = parseSubscriptionPolicyWrite({ seasonEpisodeRanges: [
+      { seasonNumber: 1, startEpisode: 2, endEpisode: 8 },
+      { seasonNumber: 2, startEpisode: 5, endEpisode: null },
+    ] });
+    expect(valid).toMatchObject({ ok: true, policy: { seasonEpisodeRanges: [
+      { seasonNumber: 1, startEpisode: 2, endEpisode: 8 },
+      { seasonNumber: 2, startEpisode: 5, endEpisode: null },
+    ] } });
+
+    expect(parseSubscriptionPolicyWrite({ seasonEpisodeRanges: [
+      { seasonNumber: 1, startEpisode: 1, endEpisode: null },
+      { seasonNumber: 1, startEpisode: 3, endEpisode: 5 },
+    ] }).ok).toBe(false);
+    expect(parseSubscriptionPolicyWrite({ seasonEpisodeRanges: [
+      { seasonNumber: 1, startEpisode: 8, endEpisode: 7 },
+    ] }).ok).toBe(false);
   });
 });

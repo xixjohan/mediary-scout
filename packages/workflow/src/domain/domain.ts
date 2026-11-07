@@ -1,4 +1,5 @@
 import type { MergedSourceHealth } from "./resource-source-health.js";
+import type { SubscriptionPolicy } from "../execution/subscription-policy.js";
 
 /**
  * The implicit account that owns all data in a single-user (multi-user disabled)
@@ -146,6 +147,15 @@ export interface WorkflowRunProgress {
   needed?: number;
 }
 
+export interface WorkflowPolicySnapshot {
+  schemaVersion: number;
+  evaluatorVersion: number;
+  capturedAt: string;
+  policy: SubscriptionPolicy | null;
+}
+
+export type WorkflowPolicySnapshotLookup = WorkflowPolicySnapshot | { schemaVersion: 0; legacyUnknown: true };
+
 export interface WorkflowRun {
   id: string;
   kind: WorkflowKind;
@@ -165,6 +175,8 @@ export interface WorkflowRun {
    *  on worker start. Absent/0 = never orphan-recovered. Capped at
    *  ORPHAN_REQUEUE_MAX so a poison run cannot crash-loop the worker forever. */
   orphanRequeueCount?: number;
+  /** Immutable rules captured atomically when an acquisition run is reserved. */
+  subscriptionPolicySnapshot?: WorkflowPolicySnapshot;
 }
 
 export interface AuditEvent {

@@ -10,6 +10,7 @@ import { requireApiAccount } from "../../../../../lib/auth-chain";
 import { getWorkerResourceProvider, getWorkflowRepository, movieTargetFromTmdbId } from "../../../../../lib/workflow-runtime";
 import { seriesTargetFor } from "../../../../../lib/title-hub";
 import { resourceLimiter } from "../../resources/cache";
+import { parseSubscriptionPriorityGroups } from "../../../../../lib/subscription-policy-validation";
 
 /**
  * POST /api/titles/subscription-policy/preview — 规则预览 (batch 5, plan §4.1).
@@ -171,6 +172,8 @@ export function parsePreviewPolicy(value: unknown): { ok: true; policy: Subscrip
   ) {
     return { ok: false, error: "cooldownDays 必须是非负整数" };
   }
+  const groupsResult = parseSubscriptionPriorityGroups(raw["priorityGroups"]);
+  if (!groupsResult.ok) return groupsResult;
   try {
     return {
       ok: true,
@@ -181,6 +184,7 @@ export function parsePreviewPolicy(value: unknown): { ok: true; policy: Subscrip
         episodeFilter: episodeFilter ?? "",
         useRegex: raw["useRegex"] === true,
         cooldownDays: cooldownDays ?? 0,
+        priorityGroups: groupsResult.priorityGroups,
       },
     };
   } catch (error) {

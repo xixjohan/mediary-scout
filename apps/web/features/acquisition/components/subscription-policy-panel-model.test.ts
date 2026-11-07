@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  createPolicyPriorityGroupDraft,
   draftToPolicy,
   mapPolicyLoadResponse,
   mapPreviewResponse,
@@ -35,6 +36,16 @@ function outcome(overrides: Partial<PreviewOutcome> = {}): PreviewOutcome {
     ...overrides,
   };
 }
+
+describe("createPolicyPriorityGroupDraft", () => {
+  it("在没有 randomUUID 的 HTTP 浏览器上下文中仍生成组草稿", () => {
+    const draft = createPolicyPriorityGroupDraft(null);
+    expect(draft.id).toMatch(/^group_[a-z0-9]+_[a-z0-9]+$/);
+    expect(draft.name).toBe("新优先级");
+    expect(draft.mustContain).toBe("");
+    expect(draft.mustNotContain).toBe("");
+  });
+});
 
 describe("mapPreviewResponse — 200", () => {
   it("四个数 + 两份清单都读出来", () => {
@@ -156,6 +167,8 @@ describe("draftToPolicy — 草稿到线上形状", () => {
       episodeFilter: "S01-S02",
       useRegex: false,
       cooldownDays: 3,
+      priorityGroups: [],
+      seasonEpisodeRanges: [],
     });
   });
 
@@ -164,6 +177,16 @@ describe("draftToPolicy — 草稿到线上形状", () => {
     const readBack = mapSavedPolicy(policy);
     const again = readBack === null ? null : draftToPolicy(readBack);
     expect(again).toEqual(policy);
+  });
+
+  it("多个季度的起止集各自往返，不互相覆盖", () => {
+    const ranges = [
+      { seasonNumber: 1, startEpisode: 3, endEpisode: 10 },
+      { seasonNumber: 2, startEpisode: 5, endEpisode: null },
+    ];
+    const policy = draftToPolicy(draft({ seasonEpisodeRanges: ranges }));
+    expect(policy.seasonEpisodeRanges).toEqual(ranges);
+    expect(draftToPolicy(mapSavedPolicy(policy)!)).toEqual(policy);
   });
 
   it("**空项被丢掉**（2160p, , 简中 是两个词，不是三个）", () => {
@@ -198,6 +221,8 @@ describe("mapSavedPolicy", () => {
       episodeFilter: "S01-S02",
       useRegex: false,
       cooldownDays: 3,
+      priorityGroups: [],
+      seasonEpisodeRanges: [],
     });
   });
 
@@ -218,6 +243,8 @@ describe("mapSavedPolicy", () => {
       episodeFilter: "",
       useRegex: false,
       cooldownDays: 0,
+      priorityGroups: [],
+      seasonEpisodeRanges: [],
     });
   });
 });
@@ -238,6 +265,8 @@ describe("mapPolicyLoadResponse — 挂载时回填（GET /api/titles/subscripti
       episodeFilter: "S01-S02",
       useRegex: true,
       cooldownDays: 3,
+      priorityGroups: [],
+      seasonEpisodeRanges: [],
     });
   });
 

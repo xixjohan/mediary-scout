@@ -5,6 +5,11 @@ vi.mock("../../../../lib/demo-mode", () => ({ isDemoMode: vi.fn(() => false) }))
 
 const retryFailedWorkflowRun = vi.fn();
 const getWorkflowRunSnapshot = vi.fn();
+const triggerManualSubscriptionSearch = vi.fn();
+
+vi.mock("../../../../features/acquisition/application/manual-subscription-search-service", () => ({
+  triggerManualSubscriptionSearch: (...args: unknown[]) => triggerManualSubscriptionSearch(...args),
+}));
 
 // S5.4：路由经 lib/auth-chain 登录链取账号，mock 需补上链路所需导出。
 // 默认单用户 + 局域网（isMultiUserEnabled=false 且非远程请求）→ 落到默认账号，
@@ -55,36 +60,76 @@ describe("POST /api/activity/retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(isDemoMode).mockReturnValue(false);
+    getWorkflowRunSnapshot.mockResolvedValue(null);
   });
 
-  it("returns the retried result without a reason (and does not re-read the run)", async () => {
+  it("retries non-patrol failed runs and returns the retried result", async () => {
     retryFailedWorkflowRun.mockResolvedValue({ status: "retried" });
 
     const body = (await (await post({ runId: "r1" })).json()) as Record<string, unknown>;
 
     expect(body).toEqual({ status: "retried" });
-    // Happy path stays a single query — the snapshot read is refusal-path only.
-    expect(getWorkflowRunSnapshot).not.toHaveBeenCalled();
+    expect(getWorkflowRunSnapshot).toHaveBeenCalledWith("r1", "acct_default");
   });
 
-  it("reports kind_not_retriable for a patrol run so the UI can explain the real remedy", async () => {
-    // type3_monitor has no queue claimer: requeueing it would strand the run in
-    // `queued` forever and re-block the season. The user's remedy is to trigger a
-    // patrol, NOT to retry — so the UI must not say "可能已在处理".
-    retryFailedWorkflowRun.mockResolvedValue({ status: "not_retriable" });
+  it("creates a new scoped manual search for a failed tracked-season patrol", async () => {
     getWorkflowRunSnapshot.mockResolvedValue({
+      accountId: "acct_default",
+      connectedStorageId: "drive_1",
+      title: { tmdbId: 321, type: "anime" },
+      season: { seasonNumber: 2 },
       workflowRun: { id: "r2", kind: "type3_monitor", status: "failed" },
+    });
+    triggerManualSubscriptionSearch.mockResolvedValue({
+      status: "queued",
+      workflowRunId: "r2_manual",
+      message: "已加入后台队列，完成后可在活动页查看结果。",
     });
 
     const body = (await (await post({ runId: "r2" })).json()) as Record<string, unknown>;
 
-    expect(body).toEqual({ status: "not_retriable", reason: "kind_not_retriable" });
+    expect(body).toMatchObject({ status: "queued", workflowRunId: "r2_manual" });
+    expect(triggerManualSubscriptionSearch).toHaveBeenCalledWith({
+      accountId: "acct_default",
+      tmdbId: 321,
+      mediaType: "anime",
+      seasonNumber: 2,
+      storageId: "drive_1",
+      source: "activity",
+      sourceWorkflowRunId: "r2",
+    });
+    expect(retryFailedWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it("returns a clear no-missing result without requeueing the failed patrol", async () => {
+    getWorkflowRunSnapshot.mockResolvedValue({
+      accountId: "acct_default",
+      connectedStorageId: "drive_1",
+      title: { tmdbId: 321, type: "tv" },
+      season: { seasonNumber: 1 },
+      workflowRun: { id: "r2", kind: "type3_monitor", status: "failed" },
+    });
+    triggerManualSubscriptionSearch.mockResolvedValue({ status: "no_missing", message: "当前没有待搜索的已播缺失资源。" });
+
+    const body = (await (await post({ runId: "r2" })).json()) as Record<string, unknown>;
+
+    expect(body).toMatchObject({ status: "no_missing", message: "当前没有待搜索的已播缺失资源。" });
+    expect(retryFailedWorkflowRun).not.toHaveBeenCalled();
+  });
+
+  it("does not create a new task for a non-failed patrol", async () => {
+    getWorkflowRunSnapshot.mockResolvedValue({
+      workflowRun: { id: "r4", kind: "type3_monitor", status: "running" },
+    });
+    retryFailedWorkflowRun.mockResolvedValue({ status: "not_retriable" });
+
+    const body = (await (await post({ runId: "r4" })).json()) as Record<string, unknown>;
+
+    expect(body).toEqual({ status: "not_retriable", reason: "not_failed" });
+    expect(triggerManualSubscriptionSearch).not.toHaveBeenCalled();
   });
 
   it("reports not_failed for a RUNNING patrol — refused for status, not kind", async () => {
-    // Status is checked before kind: a running patrol was refused because it is
-    // not failed, so telling the user "巡检任务不能重试" would explain the wrong
-    // thing. Without the status-first ordering this returns kind_not_retriable.
     retryFailedWorkflowRun.mockResolvedValue({ status: "not_retriable" });
     getWorkflowRunSnapshot.mockResolvedValue({
       workflowRun: { id: "r4", kind: "type3_monitor", status: "running" },
@@ -106,7 +151,7 @@ describe("POST /api/activity/retry", () => {
     expect(body).toEqual({ status: "not_retriable", reason: "not_failed" });
   });
 
-  it("falls back to not_failed when the run cannot be read back", async () => {
+  it("falls back to not_failed when the run cannot be read", async () => {
     retryFailedWorkflowRun.mockResolvedValue({ status: "not_retriable" });
     getWorkflowRunSnapshot.mockResolvedValue(null);
 

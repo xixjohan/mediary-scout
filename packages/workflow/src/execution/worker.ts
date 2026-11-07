@@ -526,6 +526,185 @@ export async function runScheduledType3Monitoring(input: {
 
 type ScheduledType3Input = Parameters<typeof runScheduledType3Monitoring>[0];
 
+type ResolvedWorkerDependencies = Awaited<ReturnType<typeof resolveWorkerDeps>>;
+
+function type3RunnerOptions(deps: ResolvedWorkerDependencies) {
+  return {
+    ...(deps.preferredLanguage === undefined ? {} : { preferredLanguage: deps.preferredLanguage }),
+    ...(deps.qualityPreference === undefined ? {} : { qualityPreference: deps.qualityPreference }),
+    ...(deps.storageProvider === undefined ? {} : { storageProvider: deps.storageProvider }),
+    ...(deps.assrtToken === undefined ? {} : { assrtToken: deps.assrtToken }),
+    ...(deps.jevJudge === undefined ? {} : { jevJudge: deps.jevJudge }),
+    ...(deps.agentMemory === undefined ? {} : { agentMemory: deps.agentMemory }),
+    ...(deps.titleResearch === undefined ? {} : { titleResearch: deps.titleResearch }),
+  };
+}
+
+/** Claim and execute one durable manual search of an existing subscription. */
+export async function runQueuedType3Monitoring(input: {
+  repository: WorkflowRepository;
+  resourceProvider: ResourceProvider;
+  storage: StorageExecutor;
+  model: LanguageModel;
+  llmConfig?: { baseURL?: string; modelId?: string };
+  preferredLanguage?: string;
+  qualityPreference?: "high" | "medium";
+  titleResearch?: TitleResearchOptions;
+  storageParentDirectoryId?: string;
+  animeStorageParentDirectoryId?: string;
+  moviesParentDirectoryId?: string;
+  syncSeasonMetadata?: SeasonMetadataSync;
+  now?: () => string;
+  resolveAccountContext?: ResolveAccountWorkerContext;
+  onAuthErrorFreeze?: (storageId: string, reason: string) => Promise<void>;
+  mayStartRun?: MayStartRun;
+  claim?: QueueClaimOptions;
+}): Promise<QueuedType2WorkerResult> {
+  const now = input.now ?? (() => new Date().toISOString());
+  if (input.mayStartRun && !input.mayStartRun()) return { status: "idle" };
+  const claimed = await claimNextQueuedRun(input.repository, "type3_monitor", now(), input.claim);
+  if (!claimed) return { status: "idle" };
+
+  let resolvedLlmConfig: { baseURL?: string; modelId?: string } | undefined;
+  try {
+    const deps = await resolveWorkerDeps(
+      input.resolveAccountContext,
+      claimed.accountId,
+      claimed.connectedStorageId,
+      input,
+    );
+    resolvedLlmConfig = deps.llmConfig;
+    const userTriggered = claimed.workflowRun.auditEvents.some((event) => event.type === "manual_subscription_search_queued");
+
+    if (claimed.title.type === "movie") {
+      const workflowStatus = await runQueuedType3Movie({ request: input, claimed, deps, userTriggered, now });
+      return { status: "ran", workflowRunId: claimed.workflowRun.id, workflowStatus };
+    }
+
+    const workflowStatus = await runQueuedType3Season({ request: input, claimed, deps, userTriggered, now });
+    return { status: "ran", workflowRunId: claimed.workflowRun.id, workflowStatus };
+  } catch (error) {
+    const handled = await handleWorkflowRunFailure({
+      claimed,
+      error,
+      repository: input.repository,
+      now,
+      ...(resolvedLlmConfig === undefined ? {} : { llmConfig: resolvedLlmConfig }),
+      ...(input.onAuthErrorFreeze === undefined ? {} : { onAuthErrorFreeze: input.onAuthErrorFreeze }),
+    });
+    return handled.status === "auto_requeued"
+      ? { status: "ran", workflowRunId: handled.workflowRunId, workflowStatus: "queued" }
+      : { status: "failed", workflowRunId: handled.workflowRunId, errorMessage: handled.errorMessage };
+  }
+}
+
+async function runQueuedType3Movie(input: {
+  request: Parameters<typeof runQueuedType3Monitoring>[0];
+  claimed: PersistedWorkflowRunSnapshot;
+  deps: ResolvedWorkerDependencies;
+  userTriggered: boolean;
+  now: () => string;
+}): Promise<WorkflowStatus> {
+  const result = await runMovieAcquisitionV2AndPersist({
+    title: input.claimed.title,
+    categoryParentId: requireCategoryParent(input.deps.moviesParentDirectoryId),
+    resourceProvider: input.request.resourceProvider,
+    storage: input.request.storage,
+    model: input.request.model,
+    repository: input.request.repository,
+    accountId: input.claimed.accountId,
+    connectedStorageId: input.claimed.connectedStorageId,
+    ...type3RunnerOptions(input.deps),
+    workflowRun: {
+      id: input.claimed.workflowRun.id,
+      startedAt: input.claimed.workflowRun.startedAt,
+      finishedAt: null,
+    },
+    workflowKind: "type3_monitor",
+    ...(input.userTriggered ? { notice: { trigger: "user" as const, routineIfNothingReplaced: false } } : {}),
+    now: input.now,
+  });
+  return result.status;
+}
+
+async function syncQueuedType3Season(input: {
+  request: Parameters<typeof runQueuedType3Monitoring>[0];
+  claimed: PersistedWorkflowRunSnapshot;
+}): Promise<{ season: TrackedSeason; episodes: EpisodeState[] }> {
+  let season = input.claimed.season;
+  let episodes = input.claimed.episodes;
+  if (!input.request.syncSeasonMetadata) return { season, episodes };
+
+  try {
+    const meta = await input.request.syncSeasonMetadata({
+      tmdbId: input.claimed.title.tmdbId,
+      seasonNumber: season.seasonNumber,
+    });
+    if (meta) {
+      const synced = syncSeasonAgainstMetadata({
+        season,
+        episodes,
+        latestAiredEpisode: meta.latestAiredEpisode,
+        totalEpisodes: meta.totalEpisodes,
+      });
+      season = synced.season;
+      episodes = synced.episodes;
+    }
+  } catch (error) {
+    console.warn(
+      `[manual-search] metadata sync failed tmdbId=${input.claimed.title.tmdbId} season=${season.seasonNumber}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  return { season, episodes };
+}
+
+async function runQueuedType3Season(input: {
+  request: Parameters<typeof runQueuedType3Monitoring>[0];
+  claimed: PersistedWorkflowRunSnapshot;
+  deps: ResolvedWorkerDependencies;
+  userTriggered: boolean;
+  now: () => string;
+}): Promise<WorkflowStatus> {
+  const { season, episodes } = await syncQueuedType3Season(input);
+  const result = await runType3MonitoringV2AndPersist({
+    title: input.claimed.title,
+    season,
+    episodes,
+    categoryParentId: requireCategoryParent(
+      storageParentForTitle(
+        input.claimed.title,
+        input.deps.storageParentDirectoryId,
+        input.deps.animeStorageParentDirectoryId,
+      ),
+    ),
+    resourceProvider: input.request.resourceProvider,
+    storage: input.request.storage,
+    model: input.request.model,
+    repository: input.request.repository,
+    accountId: input.claimed.accountId,
+    connectedStorageId: input.claimed.connectedStorageId,
+    ...type3RunnerOptions(input.deps),
+    ...(input.userTriggered ? { notificationTrigger: "user" as const } : {}),
+    workflowRun: {
+      id: input.claimed.workflowRun.id,
+      startedAt: input.claimed.workflowRun.startedAt,
+      finishedAt: null,
+    },
+    now: input.now,
+  });
+  if (result.newlyObtainedCodes.length > 0) {
+    const takenAt = await input.request.repository.recordPolicyMatch({
+      accountId: input.claimed.accountId,
+      titleKey: input.claimed.title.id,
+      now: input.now(),
+    });
+    if (takenAt !== null) {
+      console.log(`[manual-search] cooldown watermark for ${input.claimed.title.title} moved to ${takenAt}`);
+    }
+  }
+  return result.status;
+}
+
 /** One tracked state's patrol; null when there is nothing to do for it. */
 async function patrolTrackedState(args: {
   input: ScheduledType3Input;

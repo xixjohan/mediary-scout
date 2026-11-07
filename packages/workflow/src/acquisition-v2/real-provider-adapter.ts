@@ -54,7 +54,7 @@ export interface RealResourceProviderV2Options {
    *  argument makes it read `undefined` and throw, and a pre-warm error is swallowed by
    *  design, so the whole policy filter silently stops filtering. Matching the domain
    *  type exactly is what lets the compiler catch that. */
-  policyFilter?: { accept: (candidate: PolicyResource) => boolean };
+  policyFilter?: { accept: (candidate: PolicyResource) => boolean; rank?: (candidate: PolicyResource) => number };
 }
 
 export class RealResourceProviderV2 implements ResourceProviderV2 {
@@ -127,6 +127,12 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
       }
       return true;
     });
+    if (this.policyFilter?.rank) {
+      kept.sort((a, b) =>
+        this.policyFilter!.rank!({ name: a.title, episodeCode: null }) - this.policyFilter!.rank!({ name: b.title, episodeCode: null }) ||
+        a.index - b.index,
+      );
+    }
     if (deadDropped > 0) {
       console.log(`[dead-link] filtered ${deadDropped} known-dead candidate(s) from search ${JSON.stringify(keyword)}`);
     }

@@ -30,6 +30,7 @@ import {
   runQueuedReplaceRequest,
   runQueuedStagingRecovery,
   runQueuedSeriesInitialization,
+  runQueuedType3Monitoring,
   runQueuedType2Workflow,
   enqueueUrgentReplaceRequests,
   runScheduledType3Monitoring,
@@ -231,6 +232,14 @@ export async function runNextQueuedWorkflow(claim?: QueueClaimOptions) {
   return whileInFlight(() => runNextQueuedWorkflowNow(claim));
 }
 
+async function enqueueUrgentReplacements(repository: WorkflowRepository): Promise<void> {
+  try {
+    await enqueueUrgentReplaceRequests({ repository });
+  } catch (error) {
+    console.error(`[user-message] urgent scan failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   const repository = getWorkflowRepository();
   // §7 form B: the worker resolves each CLAIMED run's account credentials via
@@ -263,11 +272,7 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   const claimOption = claim === undefined ? {} : { claim };
   // Urgent user messages ("现在处理", written mid-run, or retry after a failure) get a
   // replace_request as soon as the queue is free — never waiting for the patrol.
-  try {
-    await enqueueUrgentReplaceRequests({ repository });
-  } catch (error) {
-    console.error(`[user-message] urgent scan failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  await enqueueUrgentReplacements(repository);
   const type2 = await runQueuedType2Workflow({
     repository,
     resourceProvider,
@@ -335,6 +340,28 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
     await repository.completeMediaRequestsForRun(movie.workflowRunId, movie.status === "ran" ? "ready" : "failed");
     await pushNotificationsSince(repository, startedAt, { workflowRunId: movie.workflowRunId });
     return movie;
+  }
+  const seasonMetadataSync = syncOption().syncSeasonMetadata;
+  const manualSearch = await runQueuedType3Monitoring({
+    repository,
+    resourceProvider,
+    storage,
+    model,
+    llmConfig,
+    ...language,
+    ...quality,
+    storageParentDirectoryId: parents.tv,
+    animeStorageParentDirectoryId: parents.anime,
+    moviesParentDirectoryId: parents.movies,
+    ...(seasonMetadataSync === undefined ? {} : { syncSeasonMetadata: seasonMetadataSync }),
+    resolveAccountContext,
+    onAuthErrorFreeze,
+    mayStartRun,
+    ...claimOption,
+  });
+  if (manualSearch.status !== "idle") {
+    await pushNotificationsSince(repository, startedAt, { workflowRunId: manualSearch.workflowRunId });
+    return manualSearch;
   }
   const replace = await runQueuedReplaceRequest({
     repository,

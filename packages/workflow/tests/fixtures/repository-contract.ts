@@ -381,6 +381,31 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         });
       });
 
+      it("subscription policy templates are isolated by account and can be deleted", async () => {
+        const repo = await fresh();
+        const created = await repo.createSubscriptionPolicyTemplate({
+          id: "spt_account_a", accountId: "acct_a", name: "1080p 字幕", now: "2026-01-01T00:00:00.000Z",
+          policy: { mustContain: ["1080p"], mustNotContain: ["CAM"], episodeFilter: "", useRegex: false, cooldownDays: 0,
+            priorityGroups: [{ id: "preferred", name: "优先", mustContain: ["remux"], mustNotContain: [] }] },
+        });
+        expect(created.policy.priorityGroups).toHaveLength(1);
+        expect(await repo.listSubscriptionPolicyTemplates("acct_b")).toEqual([]);
+        expect(await repo.listSubscriptionPolicyTemplates("acct_a")).toHaveLength(1);
+        const updated = await repo.updateSubscriptionPolicyTemplate({
+          id: created.id, accountId: "acct_a", name: "2160p remux",
+          policy: { mustContain: ["2160p"], mustNotContain: [], episodeFilter: "", useRegex: false, cooldownDays: 3 },
+          now: "2026-01-02T00:00:00.000Z",
+        });
+        expect(updated).toMatchObject({ name: "2160p remux", updatedAt: "2026-01-02T00:00:00.000Z", policy: { mustContain: ["2160p"] } });
+        expect(await repo.updateSubscriptionPolicyTemplate({
+          id: created.id, accountId: "acct_b", name: "cross-account",
+          policy: { mustContain: [], mustNotContain: [], episodeFilter: "", useRegex: false, cooldownDays: 0 }, now: t0,
+        })).toBeNull();
+        expect(await repo.deleteSubscriptionPolicyTemplate({ id: created.id, accountId: "acct_b" })).toBe(false);
+        expect(await repo.deleteSubscriptionPolicyTemplate({ id: created.id, accountId: "acct_a" })).toBe(true);
+        expect(await repo.listSubscriptionPolicyTemplates("acct_a")).toEqual([]);
+      });
+
       describe("cooldown watermark (lastTakenAt)", () => {
         const t0 = "2026-01-01T00:00:00.000Z";
         const t1 = "2026-01-02T00:00:00.000Z";
@@ -1362,6 +1387,121 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(again.status).toBe("already_active");
       });
 
+      it("captures the policy inside the acquisition reservation and keeps it after edits", async () => {
+        const repo = await fresh();
+        await repo.upsertSubscriptionPolicy({
+          accountId: "acct_default", titleKey: "title_1",
+          policy: { mustContain: ["2160p"], mustNotContain: ["CAM"], episodeFilter: "", useRegex: false, cooldownDays: 0,
+            seasonEpisodeRanges: [
+              { seasonNumber: 1, startEpisode: 5, endEpisode: null },
+              { seasonNumber: 2, startEpisode: 3, endEpisode: 9 },
+            ] },
+          now: "2026-06-11T00:00:00.000Z",
+        });
+        const queued = reIded("run_policy_snapshot", {
+          accountId: "acct_default",
+          workflowRun: { ...workflowPersistenceFixture().workflowRun, id: "run_policy_snapshot", kind: "movie_init", status: "queued", trackedSeasonId: "season_1", finishedAt: null },
+        });
+        expect((await repo.reserveWorkflowRun(queued)).status).toBe("reserved");
+        await repo.upsertSubscriptionPolicy({
+          accountId: "acct_default", titleKey: "title_1",
+          policy: { mustContain: ["1080p"], mustNotContain: [], episodeFilter: "", useRegex: false, cooldownDays: 0,
+            seasonEpisodeRanges: [{ seasonNumber: 1, startEpisode: 1, endEpisode: 2 }] },
+          now: "2026-06-12T00:00:00.000Z",
+        });
+        expect(await repo.getWorkflowRunPolicySnapshot("run_policy_snapshot", "acct_default")).toMatchObject({
+          schemaVersion: 1,
+          policy: { mustContain: ["2160p"], mustNotContain: ["CAM"], seasonEpisodeRanges: [
+            { seasonNumber: 1, startEpisode: 5, endEpisode: null },
+            { seasonNumber: 2, startEpisode: 3, endEpisode: 9 },
+          ] },
+        });
+        const replacement = reIded("run_policy_replacement", {
+          accountId: "acct_default",
+          workflowRun: { ...workflowPersistenceFixture().workflowRun, id: "run_policy_replacement", kind: "replace_request", status: "queued", trackedSeasonId: "season_1", finishedAt: null },
+        });
+        expect((await repo.reserveWorkflowRun(replacement)).status).toBe("reserved");
+        expect(await repo.getWorkflowRunPolicySnapshot("run_policy_replacement", "acct_default")).toMatchObject({
+          schemaVersion: 1,
+          policy: { mustContain: ["1080p"], seasonEpisodeRanges: [{ seasonNumber: 1, startEpisode: 1, endEpisode: 2 }] },
+        });
+        const recovery = reIded("run_policy_recovery", {
+          accountId: "acct_default",
+          workflowRun: { ...workflowPersistenceFixture().workflowRun, id: "run_policy_recovery", kind: "staging_recovery", status: "queued", trackedSeasonId: "season_1", finishedAt: null },
+        });
+        expect((await repo.reserveWorkflowRun(recovery)).status).toBe("reserved");
+        expect(await repo.getWorkflowRunPolicySnapshot("run_policy_recovery", "acct_default")).toMatchObject({
+          schemaVersion: 1,
+          policy: { mustContain: ["1080p"] },
+        });
+      });
+
+      it("preserves a queued policy snapshot and manual-trigger lineage through the terminal write", async () => {
+        const repo = await fresh();
+        const seed = workflowPersistenceFixture();
+        await repo.saveWorkflowRunSnapshot(seed);
+        await repo.upsertSubscriptionPolicy({
+          accountId: "acct_default",
+          titleKey: seed.title.id,
+          now: "2026-06-11T00:00:00.000Z",
+          policy: {
+            mustContain: ["1080p"],
+            mustNotContain: ["CAM"],
+            episodeFilter: "",
+            useRegex: false,
+            cooldownDays: 0,
+            customKeywords: ["frozen-term"],
+          },
+        });
+        const queuedInput = {
+          ...reIded("run_manual_lineage", { accountId: "acct_default" }),
+          accountId: "acct_default",
+          workflowRun: {
+            ...seed.workflowRun,
+            id: "run_manual_lineage",
+            kind: "type3_monitor" as const,
+            status: "queued" as const,
+            startedAt: "2026-06-11T01:00:00.000Z",
+            finishedAt: null,
+            auditEvents: [{
+              type: "manual_subscription_search_queued",
+              message: "Manual subscription search queued",
+              data: { source: "activity", sourceWorkflowRunId: "run_failed_patrol" },
+            }],
+          },
+          keepCurrentEpisodes: true,
+          requireTrackedSeason: true,
+        };
+        const reservation = await repo.reserveWorkflowRun(queuedInput);
+        expect(reservation.status).toBe("reserved");
+        if (reservation.status !== "reserved") return;
+
+        await repo.saveWorkflowRunSnapshot({
+          ...reservation.snapshot,
+          keepCurrentEpisodes: true,
+          requireTrackedSeason: true,
+          workflowRun: {
+            ...reservation.snapshot.workflowRun,
+            status: "no_coverage",
+            finishedAt: "2026-06-11T01:05:00.000Z",
+            auditEvents: [{ type: "worker_finished", message: "Worker finished" }],
+          },
+        });
+
+        const completed = await repo.getWorkflowRunSnapshot("run_manual_lineage", "acct_default");
+        expect(completed?.workflowRun.subscriptionPolicySnapshot).toMatchObject({
+          schemaVersion: 1,
+          policy: { mustContain: ["1080p"], customKeywords: ["frozen-term"] },
+        });
+        expect(completed?.workflowRun.auditEvents).toEqual([
+          expect.objectContaining({
+            type: "manual_subscription_search_queued",
+            data: { source: "activity", sourceWorkflowRunId: "run_failed_patrol" },
+          }),
+          expect.objectContaining({ type: "worker_finished" }),
+        ]);
+      });
+
       it("two concurrent title-locked reservations for the same title: exactly one is reserved", async () => {
         const repo = await fresh();
         // Different seasons AND kinds, so only the title lock (not the per-season+kind
@@ -1755,7 +1895,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(await repo.listWorksWithPendingMessages({ urgentOnly: true })).toEqual([other]);
       });
 
-      it("requeueRunningWorkflowRuns terminates an orphaned type3_monitor instead of queueing it", async () => {
+      it("requeueRunningWorkflowRuns queues an orphaned type3_monitor for its worker", async () => {
         const repo = await fresh();
         const snap = queued("orphan3", { startedAt: "2026-06-11T00:00:00.000Z" });
         await repo.saveWorkflowRunSnapshot({
@@ -1770,25 +1910,20 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         });
 
         const count = await repo.requeueRunningWorkflowRuns("2026-06-11T02:00:00.000Z");
-        expect(count).toBe(0);
+        expect(count).toBe(1);
 
         const recovered = await repo.getWorkflowRunSnapshot("orphan3");
-        expect(recovered?.workflowRun.status).toBe("failed");
-        expect(recovered?.workflowRun.finishedAt).toBe("2026-06-11T02:00:00.000Z");
-        // Assert both presence and position: `.some` matches the neighbouring
-        // poison-cap test's convention and survives a future trailing event,
-        // while `.at(-1)` additionally pins that recovery appended it last.
-        expect(recovered?.workflowRun.auditEvents.some((e) => e.type === "orphan_unclaimable")).toBe(
-          true,
-        );
-        expect(recovered?.workflowRun.auditEvents.at(-1)?.type).toBe("orphan_unclaimable");
-        // The unclaimable path must NOT pretend a requeue happened.
-        expect(
-          recovered?.workflowRun.auditEvents.some((e) => e.type === "orphan_requeued"),
-        ).toBe(false);
+        expect(recovered?.workflowRun.status).toBe("queued");
+        expect(recovered?.workflowRun.finishedAt).toBeNull();
+        expect(recovered?.workflowRun.auditEvents.at(-1)?.type).toBe("orphan_requeued");
+        const claimed = await repo.claimNextQueuedWorkflowRun({
+          kind: "type3_monitor",
+          now: "2026-06-11T02:01:00.000Z",
+        });
+        expect(claimed?.workflowRun.id).toBe("orphan3");
       });
 
-      it("a recovered type3_monitor no longer blocks the season from being reserved again", async () => {
+      it("a recovered type3_monitor remains active until a worker claims it", async () => {
         const repo = await fresh();
         const snap = queued("orphan3b", { startedAt: "2026-06-11T00:00:00.000Z" });
         await repo.saveWorkflowRunSnapshot({
@@ -1801,14 +1936,8 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
             finishedAt: null,
           },
         });
-        await repo.requeueRunningWorkflowRuns("2026-06-11T02:00:00.000Z");
-
-        // Reserving the same season + kind must now succeed rather than report
-        // already_active — that was the user-visible hang: patrol permanently
-        // blocked by a dead run. Deliberately no stale-expiry field is passed,
-        // so this proves the fix works on its own rather than leaning on the
-        // 30-minute stale sweep (which also deletes episode_states).
-        const reservation = await repo.reserveWorkflowRun({
+        expect(await repo.requeueRunningWorkflowRuns("2026-06-11T02:00:00.000Z")).toBe(1);
+        const active = await repo.reserveWorkflowRun({
           connectedStorageId: snap.connectedStorageId,
           title: snap.title,
           season: snap.season,
@@ -1816,13 +1945,11 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
             ...snap.workflowRun,
             id: "fresh3",
             kind: "type3_monitor",
-            status: "running",
+            status: "queued",
             trackedSeasonId: snap.season.id,
             startedAt: "2026-06-11T03:00:00.000Z",
             finishedAt: null,
-            auditEvents: [
-              { type: "type3_scheduled", message: "Scheduled Type 3 monitoring reserved" },
-            ],
+            auditEvents: [],
           },
           episodes: snap.episodes,
           resourceSnapshots: [],
@@ -1830,10 +1957,12 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
           transferAttempts: [],
           notifications: [],
         });
-        // Pin the positive status, not merely "not already_active":
-        // WorkflowRunReservationResult has a third arm (already_has_episode_state),
-        // so a negative assertion would silently pass on it.
-        expect(reservation.status).toBe("reserved");
+        expect(active.status).toBe("already_active");
+        const claimed = await repo.claimNextQueuedWorkflowRun({
+          kind: "type3_monitor",
+          now: "2026-06-11T02:01:00.000Z",
+        });
+        expect(claimed?.workflowRun.id).toBe("orphan3b");
       });
 
       it("pruneFinishedWorkflowRuns drops old finished runs and keeps active ones", async () => {
@@ -3065,7 +3194,7 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(claimed?.workflowRun.id).toBe("failed_r");
       });
 
-      it("retryFailedWorkflowRun refuses a failed run whose kind no worker claims", async () => {
+      it("retryFailedWorkflowRun requeues a failed type3_monitor now that a worker claims it", async () => {
         const repo = await fresh();
         const snap = queuedRun({ id: "failed_r3", status: "failed", connectedStorageId: "cs_r3" });
         await repo.saveWorkflowRunSnapshot({
@@ -3078,20 +3207,11 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
           },
         });
         const scope = { accountId: "acct_default", connectedStorageId: "cs_r3" };
-        // No claimNextQueuedWorkflowRun call site asks for type3_monitor, so a run
-        // pushed back to `queued` can never leave it — and since `queued` counts as
-        // active, reserveWorkflowRun returns already_active for that season FOREVER
-        // (the user-visible "巡检永久卡在排队中"). Task 1 terminates such orphans as
-        // `failed`; letting the activity page's retry button flip them back to
-        // `queued` would re-strand the run and re-block the season — exactly the bug
-        // isQueueClaimableKind exists to prevent.
-        expect(await repo.retryFailedWorkflowRun("failed_r3", scope)).toEqual({
-          status: "not_retriable",
-        });
+        expect(await repo.retryFailedWorkflowRun("failed_r3", scope)).toEqual({ status: "retried" });
         const after = await repo.getWorkflowRunSnapshot("failed_r3", scope);
-        expect(after?.workflowRun.status).toBe("failed");
-        // retriedWorkflowRun clears finishedAt — it must not have run at all.
-        expect(after?.workflowRun.finishedAt).toBe("2026-06-11T02:00:00.000Z");
+        expect(after?.workflowRun.status).toBe("queued");
+        const claimed = await repo.claimNextQueuedWorkflowRun({ kind: "type3_monitor", now: "2026-06-11T03:00:00.000Z" });
+        expect(claimed?.workflowRun.id).toBe("failed_r3");
       });
 
       it("retryFailedWorkflowRun refuses a failed staging_recovery", async () => {

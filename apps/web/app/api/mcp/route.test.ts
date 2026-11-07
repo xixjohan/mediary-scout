@@ -5,8 +5,12 @@ import { resetRuntimeContainerForTests } from "../../../composition/runtime-cont
 
 // Mock auth-chain
 const mockSecurityContext = vi.fn();
+const mockTriggerManualSubscriptionSearch = vi.fn();
 vi.mock("../../../platform/next-context/auth-chain", () => ({
   resolveSecurityContext: () => mockSecurityContext(),
+}));
+vi.mock("../../../features/acquisition/application/manual-subscription-search-service", () => ({
+  triggerManualSubscriptionSearch: (...args: unknown[]) => mockTriggerManualSubscriptionSearch(...args),
 }));
 
 // Mock execute functions
@@ -351,12 +355,17 @@ describe("MCP Server Route (/api/mcp)", () => {
     expect(data.result.content[0].text).toContain("Inception.2010.mkv");
   });
 
-  it("executes triggerAcquisition when caller has workflow:trigger", async () => {
+  it("routes triggerAcquisition through the real scoped subscription queue", async () => {
     mockSecurityContext.mockResolvedValue({
       accountId: "acct_member",
       isMaster: false,
       roleId: "role_member",
       permissions: new Set(["workflow:trigger"]),
+    });
+    mockTriggerManualSubscriptionSearch.mockResolvedValue({
+      status: "queued",
+      workflowRunId: "run_manual_mcp",
+      message: "已加入后台队列。",
     });
 
     const res = await POST(
@@ -364,13 +373,21 @@ describe("MCP Server Route (/api/mcp)", () => {
         jsonrpc: "2.0",
         method: "tools/call",
         id: 48,
-        params: { name: "triggerAcquisition", arguments: { tmdbId: 550 } },
+        params: { name: "triggerAcquisition", arguments: { tmdbId: 550, type: "tv", seasonNumber: 1, storageId: "drive_member" } },
       })
     );
 
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.result.content[0].text).toContain("已触发 TMDB ID: 550");
+    expect(data.result.content[0].text).toContain("run_manual_mcp");
+    expect(mockTriggerManualSubscriptionSearch).toHaveBeenCalledWith({
+      accountId: "acct_member",
+      tmdbId: 550,
+      mediaType: "tv",
+      seasonNumber: 1,
+      storageId: "drive_member",
+      source: "mcp",
+    });
   });
 
   it("returns -32601 when calling an unregistered tool", async () => {

@@ -124,7 +124,7 @@ export interface RunAcquisitionV2Request {
    *  dropped before the agent sees them — the same place as dead links and user
    *  rejections, so the pre-warm and every agent search share one filter. Absent =
    *  no policy (everything passes). */
-  policyFilter?: { accept: (candidate: PolicyResource) => boolean };
+  policyFilter?: { accept: (candidate: PolicyResource) => boolean; rank?: (candidate: PolicyResource) => number };
   /** Recheck actual video names before they become library files. */
   policyFileValidator?: (file: PolicyResource) => PolicyRejectReason | null;
   /** User-authored query hints; hard policy checks remain authoritative. */

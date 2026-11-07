@@ -98,6 +98,33 @@
   line-height: 1.5;
 }
 
+.sub-policy-priority-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+}
+
+.sub-policy-template-tools { display: grid; gap: 8px; padding: 10px; border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; }
+.sub-policy-template-tools label { display: grid; gap: 4px; color: var(--text-secondary); font-size: 12px; }
+.sub-policy-template-tools input, .sub-policy-template-tools select { min-width: 0; min-height: 38px; padding: 7px 9px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 7px; background: var(--surface, #171717); color: var(--text-primary); }
+.sub-policy-template-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.sub-policy-template-tools button { min-height: 36px; padding: 5px 10px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 7px; background: transparent; color: var(--text-secondary); }
+.sub-policy-template-tools button:disabled { opacity: 0.45; }
+.sub-policy-template-tools p { margin: 0; color: var(--text-muted); font-size: 12px; }
+
+.sub-policy-priority-heading { display: flex; flex-direction: column; gap: 3px; }
+.sub-policy-priority-heading span { color: var(--text-muted); font-size: 12px; }
+.sub-policy-priority-group { display: grid; grid-template-columns: 1fr; gap: 8px; min-width: 0; margin: 0; padding: 10px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; }
+.sub-policy-priority-group legend { padding: 0 5px; color: var(--text-secondary); font-size: 12px; }
+.sub-policy-priority-group label { display: grid; gap: 4px; color: var(--text-secondary); font-size: 12px; }
+.sub-policy-priority-group input { min-width: 0; padding: 7px 9px; border: 1px solid rgba(255, 255, 255, 0.13); border-radius: 6px; background: rgba(0, 0, 0, 0.18); color: var(--text-primary); }
+.sub-policy-priority-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.sub-policy-priority-actions button, .sub-policy-priority-groups > button { min-height: 36px; padding: 5px 10px; border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 7px; background: transparent; color: var(--text-secondary); }
+.sub-policy-priority-actions button:disabled { opacity: 0.45; }
+
 .subscription-config-error {
   display: flex;
   align-items: flex-start;
@@ -240,6 +267,67 @@
 .subscription-policy-advanced-fields .subscription-policy-regex {
   flex-direction: row;
   align-items: center;
+}
+
+.sub-policy-season-ranges {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.sub-policy-season-ranges legend {
+  padding: 0 5px;
+  color: var(--text-primary);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sub-policy-season-ranges > p {
+  margin: 0 0 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.sub-policy-season-range-row {
+  display: grid;
+  grid-template-columns: minmax(68px, 0.7fr) repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 8px;
+  padding: 7px 0;
+}
+
+.sub-policy-season-range-row + .sub-policy-season-range-row {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.sub-policy-season-range-row > strong {
+  align-self: center;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.sub-policy-season-range-row label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.sub-policy-season-range-row input {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 6px;
+  padding: 6px 8px;
+  color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.2);
+  font: inherit;
+  font-size: 12px;
 }
 
 .acquiring-modal-header {
@@ -554,6 +642,14 @@
 @media (max-width: 420px) {
   .subscription-policy-advanced-fields {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .sub-policy-season-range-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .sub-policy-season-range-row > strong {
+    grid-column: 1 / -1;
   }
 
   .subscription-config-modal .acquiring-modal-footer {

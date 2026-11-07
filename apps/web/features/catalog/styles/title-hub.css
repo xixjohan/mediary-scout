@@ -265,6 +265,47 @@ li.hub-season-row.untracked {
   border-bottom-right-radius: 0;
 }
 
+.season-subscription-actions {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.season-subscription-actions .season-untrack-row {
+  margin-top: 0;
+}
+
+.manual-subscription-search-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.manual-subscription-search-action [role="status"] {
+  color: var(--text-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.manual-subscription-search-activity-link {
+  color: var(--text-muted);
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 520px) {
+  .season-subscription-actions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
 .season-cell-name {
   font-size: 14.5px;
   font-weight: 700;

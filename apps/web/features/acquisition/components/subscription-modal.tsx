@@ -9,6 +9,7 @@ import {
 } from "../../../app/actions/acquisition-actions";
 import {
   draftToPolicy,
+  mapSavedPolicy,
   mapPreviewResponse,
   type PolicyDraft,
   type PreviewOutcome,
@@ -36,15 +37,11 @@ export interface SubscriptionModalProps {
 }
 
 export function computeEpisodeFilter(
-  isTv: boolean,
-  selectedSeasons: Set<number>,
-  allSeasonNums: number[],
+  _isTv: boolean,
+  _selectedSeasons: Set<number>,
+  _allSeasonNums: number[],
   fallbackFilter: string,
 ): string {
-  if (isTv && selectedSeasons.size > 0 && selectedSeasons.size < allSeasonNums.length) {
-    const sorted = Array.from(selectedSeasons).sort((a, b) => a - b);
-    return sorted.map((num) => `S${String(num).padStart(2, "0")}`).join(";");
-  }
   return fallbackFilter;
 }
 
@@ -105,19 +102,12 @@ function resolveNormalizedSeasons(
 }
 
 function mergeLoadedPolicy(prev: PolicyDraft, policy: Record<string, unknown>): PolicyDraft {
-  const mustContain = Array.isArray(policy["mustContain"]) ? policy["mustContain"].join(", ") : prev.mustContain;
-  const mustNotContain = Array.isArray(policy["mustNotContain"]) ? policy["mustNotContain"].join(", ") : prev.mustNotContain;
-  const rawCustom = policy["customKeywords"];
-  const customKeywords = Array.isArray(rawCustom)
-    ? rawCustom.join(", ")
-    : typeof rawCustom === "string"
-      ? rawCustom
-      : (prev.customKeywords ?? "");
+  const loaded = mapSavedPolicy(policy);
+  if (!loaded) return prev;
   return {
     ...prev,
-    mustContain,
-    mustNotContain,
-    customKeywords,
+    ...loaded,
+    customKeywords: loaded.customKeywords ?? "",
   };
 }
 
@@ -161,6 +151,7 @@ export function SubscriptionModal({
     useRegex: false,
     cooldownDays: 0,
     customKeywords: "",
+    seasonEpisodeRanges: [],
   });
 
   // 4. 预览与提交状态
@@ -284,11 +275,7 @@ export function SubscriptionModal({
     setErrorMsg(null);
 
     try {
-      const calculatedEpisodeFilter = computeEpisodeFilter(isTv, selectedSeasons, allSeasonNums, draft.episodeFilter);
-      const policyPayload = draftToPolicy({
-        ...draft,
-        episodeFilter: calculatedEpisodeFilter,
-      });
+      const policyPayload = draftToPolicy(draft);
 
       const savePolicy = async () => {
         const response = await fetch("/api/titles/subscription-policy", {

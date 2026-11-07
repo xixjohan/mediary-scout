@@ -1,5 +1,6 @@
 import {
   createEpisodeStates,
+  isMovieUnreleased,
   movieAnchorSeason,
   type AcquisitionSeasonScope,
   type EpisodeState,
@@ -454,4 +455,130 @@ export async function importForeignWorkAsMovie(input: {
   }
 
   return { movieDirectoryId, movedFileIds: moved };
+}
+
+export type ManualSubscriptionSearchSource = "ui" | "mcp" | "activity";
+
+export type ManualSubscriptionSearchResult =
+  | { status: "queued" | "already_running"; workflowRunId: string; trackedSeasonId: string }
+  | { status: "not_tracked" | "no_missing" | "not_ready" | "invalid_target" };
+
+type TrackedManualSearchState = Awaited<ReturnType<WorkflowRepository["listTrackedSeasonStates"]>>[number];
+
+function isValidManualSearchTarget(input: {
+  tmdbId: number;
+  mediaType: "movie" | "tv" | "anime";
+  seasonNumber?: number;
+}): boolean {
+  if (!Number.isInteger(input.tmdbId) || input.tmdbId <= 0) return false;
+  if (input.mediaType === "movie") return input.seasonNumber === undefined;
+  return Number.isInteger(input.seasonNumber) && input.seasonNumber! >= 0 && input.seasonNumber! <= 99;
+}
+
+function findTrackedManualSearchState(
+  states: TrackedManualSearchState[],
+  target: { tmdbId: number; mediaType: "movie" | "tv" | "anime"; seasonNumber?: number },
+): TrackedManualSearchState | undefined {
+  return states.find((candidate) =>
+    candidate.title.tmdbId === target.tmdbId &&
+    candidate.title.type === target.mediaType &&
+    (target.mediaType === "movie" || candidate.season.seasonNumber === target.seasonNumber),
+  );
+}
+
+function manualSearchReadiness(
+  state: TrackedManualSearchState,
+  mediaType: "movie" | "tv" | "anime",
+  now: string,
+): "no_missing" | "not_ready" | null {
+  if (mediaType === "movie") {
+    if (isMovieUnreleased(state.title.releaseDate, now)) return "not_ready";
+    return state.episodes.some((episode) => episode.obtained) ? "no_missing" : null;
+  }
+  return state.episodes.some((episode) => episode.airStatus === "aired" && !episode.obtained)
+    ? null
+    : "no_missing";
+}
+
+/**
+ * Queue an immediate search for one already-tracked movie or season.
+ * The scoped tracked state is re-read on the server, then reserveWorkflowRun
+ * atomically applies the same per-title/per-season lock as scheduled patrols.
+ * Existing episode rows remain untouched until the acquisition runner reconciles
+ * its result, and reserveWorkflowRun captures the current subscription policy.
+ */
+export async function queueTrackedSubscriptionSearch(input: {
+  repository: WorkflowRepository;
+  accountId: string;
+  connectedStorageId: string | null;
+  tmdbId: number;
+  mediaType: "movie" | "tv" | "anime";
+  seasonNumber?: number;
+  source: ManualSubscriptionSearchSource;
+  sourceWorkflowRunId?: string;
+  now?: () => string;
+  createWorkflowRunId?: () => string;
+}): Promise<ManualSubscriptionSearchResult> {
+  if (!isValidManualSearchTarget(input)) return { status: "invalid_target" };
+
+  const now = input.now ?? (() => new Date().toISOString());
+  const states = await input.repository.listTrackedSeasonStates({
+    accountId: input.accountId,
+    connectedStorageId: input.connectedStorageId,
+  });
+  const state = findTrackedManualSearchState(states, input);
+  if (!state) return { status: "not_tracked" };
+  const readiness = manualSearchReadiness(state, input.mediaType, now());
+  if (readiness) return { status: readiness };
+
+  const queuedAt = now();
+  const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
+  const reservation = await input.repository.reserveWorkflowRun({
+    accountId: input.accountId,
+    connectedStorageId: input.connectedStorageId,
+    title: state.title,
+    season: state.season,
+    workflowRun: {
+      id: workflowRunId,
+      kind: "type3_monitor",
+      status: "queued",
+      trackedSeasonId: state.season.id,
+      startedAt: queuedAt,
+      finishedAt: null,
+      auditEvents: [
+        {
+          type: "manual_subscription_search_queued",
+          message: "Manual subscription search queued",
+          data: {
+            source: input.source,
+            ...(input.sourceWorkflowRunId === undefined ? {} : { sourceWorkflowRunId: input.sourceWorkflowRunId }),
+          },
+        },
+      ],
+    },
+    episodes: state.episodes,
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [],
+    keepCurrentEpisodes: true,
+    requireTrackedSeason: true,
+    blockIfTitleHasActiveKinds: [
+      "type1_package_init",
+      "type2_init",
+      "movie_init",
+      "replace_request",
+      "staging_recovery",
+    ],
+  });
+
+  if (reservation.status === "not_tracked") return { status: "not_tracked" };
+  if (reservation.status === "already_active") {
+    return {
+      status: "already_running",
+      workflowRunId: reservation.snapshot.workflowRun.id,
+      trackedSeasonId: state.season.id,
+    };
+  }
+  return { status: "queued", workflowRunId, trackedSeasonId: state.season.id };
 }

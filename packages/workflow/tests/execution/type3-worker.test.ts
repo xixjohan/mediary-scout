@@ -7,6 +7,8 @@ import {
   InMemoryWorkflowRepository,
   reconcileVerifiedFiles,
   reserveMovie,
+  queueTrackedSubscriptionSearch,
+  runQueuedType3Monitoring,
   runScheduledType3Monitoring,
   type JevJudge,
   type JevJudgeInput,
@@ -1081,6 +1083,156 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(outcomes[1]).toMatchObject({ trackedSeasonId: healthy.season.id, status: "ran", workflowStatus: "succeeded" });
     const failed = await repository.getWorkflowRunSnapshot("run_multi_1");
     expect(failed?.workflowRun.status).toBe("failed");
+  });
+});
+
+describe("runQueuedType3Monitoring (manual subscription search)", () => {
+  it("dispatches an already-tracked movie through the movie acquisition runner", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const title: MediaTitle = {
+      id: "tmdb_movie_manual",
+      tmdbId: 4242,
+      type: "movie",
+      title: "Manual Movie",
+      originalTitle: "Manual Movie",
+      year: 2026,
+      releaseDate: "2026-01-01",
+      aliases: [],
+    };
+    const season: TrackedSeason = {
+      id: "tmdb_movie_manual_movie",
+      mediaTitleId: title.id,
+      seasonNumber: 1,
+      status: "completed",
+      qualityPreference: "4K",
+      storageDirectoryId: "movie_dir",
+      totalEpisodes: 1,
+      latestAiredEpisode: 1,
+      latestAiredSource: "manual",
+    };
+    const episodes = createEpisodeStates({
+      trackedSeasonId: season.id,
+      seasonNumber: season.seasonNumber,
+      totalEpisodes: season.totalEpisodes,
+      latestAiredEpisode: season.latestAiredEpisode,
+    });
+    await repository.saveWorkflowRunSnapshot({
+      title,
+      season,
+      episodes,
+      workflowRun: {
+        id: "seed_manual_movie",
+        kind: "movie_init",
+        status: "no_coverage",
+        trackedSeasonId: season.id,
+        startedAt: fixedNow(),
+        finishedAt: fixedNow(),
+        auditEvents: [],
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    const queued = await queueTrackedSubscriptionSearch({
+      repository,
+      accountId: "acct_default",
+      connectedStorageId: null,
+      tmdbId: title.tmdbId,
+      mediaType: "movie",
+      source: "ui",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_manual_movie",
+    });
+    expect(queued).toMatchObject({ status: "queued", workflowRunId: "run_manual_movie" });
+
+    const outcome = await runQueuedType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: noCoverageModel(),
+      moviesParentDirectoryId: "movies_root",
+      now: fixedNow,
+    });
+
+    expect(outcome).toMatchObject({ status: "ran", workflowRunId: "run_manual_movie" });
+    expect(await repository.getWorkflowRunSnapshot("run_manual_movie", "acct_default")).toMatchObject({
+      workflowRun: { kind: "type3_monitor", status: "no_coverage" },
+      episodes,
+    });
+  });
+
+  it("claims and executes one queued tracked-season search without replacing its policy snapshot", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("manual");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: [] });
+    await repository.upsertSubscriptionPolicy({
+      accountId: "acct_default",
+      titleKey: title.id,
+      now: fixedNow(),
+      policy: {
+        mustContain: ["1080p"],
+        mustNotContain: [],
+        episodeFilter: "",
+        useRegex: false,
+        cooldownDays: 0,
+        customKeywords: ["frozen-keyword"],
+      },
+    });
+    const queued = await queueTrackedSubscriptionSearch({
+      repository,
+      accountId: "acct_default",
+      connectedStorageId: null,
+      tmdbId: title.tmdbId,
+      mediaType: "tv",
+      seasonNumber: season.seasonNumber,
+      source: "ui",
+      sourceWorkflowRunId: "source_failed_patrol",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_manual_type3",
+    });
+    expect(queued.status).toBe("queued");
+
+    await repository.upsertSubscriptionPolicy({
+      accountId: "acct_default",
+      titleKey: title.id,
+      now: "2026-06-13T00:00:00.000Z",
+      policy: {
+        mustContain: ["2160p"],
+        mustNotContain: [],
+        episodeFilter: "",
+        useRegex: false,
+        cooldownDays: 0,
+        customKeywords: ["changed-after-enqueue"],
+      },
+    });
+
+    const outcome = await runQueuedType3Monitoring({
+      repository,
+      resourceProvider: emptyProvider(),
+      storage: new FakeStorageExecutor(),
+      model: noCoverageModel(),
+      storageParentDirectoryId: "library_root",
+      now: fixedNow,
+    });
+
+    expect(outcome).toMatchObject({ status: "ran", workflowRunId: "run_manual_type3" });
+    expect(await repository.getWorkflowRunPolicySnapshot("run_manual_type3", "acct_default")).toMatchObject({
+      schemaVersion: 1,
+      policy: { customKeywords: ["frozen-keyword"] },
+    });
+    expect(await repository.getWorkflowRunSnapshot("run_manual_type3", "acct_default")).toMatchObject({
+      workflowRun: {
+        kind: "type3_monitor",
+        status: "no_coverage",
+        auditEvents: expect.arrayContaining([
+          expect.objectContaining({
+            type: "manual_subscription_search_queued",
+            data: { source: "ui", sourceWorkflowRunId: "source_failed_patrol" },
+          }),
+        ]),
+      },
+    });
   });
 });
 

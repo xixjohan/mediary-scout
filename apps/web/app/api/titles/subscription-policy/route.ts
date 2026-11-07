@@ -3,6 +3,7 @@ import { buildTitleId, parseEpisodeFilter, type MediaKind } from "@media-track/w
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import type { SubscriptionPolicyWrite } from "@media-track/workflow";
+import { parseSubscriptionPriorityGroups } from "../../../../lib/subscription-policy-validation";
 
 /**
  * GET/PUT /api/titles/subscription-policy — the strategy table's read + write (batch 5).
@@ -30,15 +31,13 @@ import type { SubscriptionPolicyWrite } from "@media-track/workflow";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
-/** Validate a write. Returns the normalized policy, or the field that was wrong. */
-export function parseSubscriptionPolicyWrite(
-  value: unknown,
-): { ok: true; policy: SubscriptionPolicyWrite } | { ok: false; error: string } {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) {
-    return { ok: false, error: "policy 缺失或类型不对" };
-  }
-  const raw = value as Record<string, unknown>;
-  const terms = (key: string): string[] => {
+function normalizeCooldownDays(value: unknown): number | null {
+  if (value === undefined) return 0;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
+}
+
+function parsePolicyTerms(raw: Record<string, unknown>): { ok: true; mustContain: string[]; mustNotContain: string[]; customKeywords: string[] } | { ok: false; error: string } {
+  const parse = (key: string): string[] => {
     const list = raw[key];
     if (list === undefined || list === null) return [];
     if (!Array.isArray(list)) throw new Error(`${key} 必须是数组`);
@@ -47,27 +46,66 @@ export function parseSubscriptionPolicyWrite(
     }
     return list as string[];
   };
+  try {
+    return { ok: true, mustContain: parse("mustContain"), mustNotContain: parse("mustNotContain"), customKeywords: parse("customKeywords") };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "policy 无法解析" };
+  }
+}
+
+function parseSeasonEpisodeRanges(value: unknown): { ok: true; ranges: Array<{ seasonNumber: number; startEpisode: number; endEpisode: number | null }> } | { ok: false; error: string } {
+  const rawRanges = value ?? [];
+  if (!Array.isArray(rawRanges) || rawRanges.length > 100) {
+    return { ok: false, error: "seasonEpisodeRanges 必须是最多 100 项的数组" };
+  }
+  const ranges: Array<{ seasonNumber: number; startEpisode: number; endEpisode: number | null }> = [];
+  const seenSeasons = new Set<number>();
+  for (const item of rawRanges) {
+    const range = parseSeasonEpisodeRange(item);
+    if (!range) return { ok: false, error: "季数或集数范围无效；起始集至少为 1，结束集须大于等于起始集" };
+    if (seenSeasons.has(range.seasonNumber)) return { ok: false, error: "同一季不能配置多个范围" };
+    seenSeasons.add(range.seasonNumber);
+    ranges.push(range);
+  }
+  return { ok: true, ranges };
+}
+
+function parseSeasonEpisodeRange(value: unknown): { seasonNumber: number; startEpisode: number; endEpisode: number | null } | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  const range = value as Record<string, unknown>;
+  const seasonNumber = range["seasonNumber"];
+  const startEpisode = range["startEpisode"];
+  const endEpisode = range["endEpisode"];
+  const validSeason = Number.isInteger(seasonNumber) && (seasonNumber as number) >= 0 && (seasonNumber as number) <= 99;
+  const validStart = Number.isInteger(startEpisode) && (startEpisode as number) >= 1;
+  const validEnd = endEpisode === null || (Number.isInteger(endEpisode) && (endEpisode as number) >= (startEpisode as number));
+  if (!validSeason || !validStart || !validEnd) return null;
+  return { seasonNumber: seasonNumber as number, startEpisode: startEpisode as number, endEpisode: endEpisode as number | null };
+}
+
+/** Validate a write. Returns the normalized policy, or the field that was wrong. */
+export function parseSubscriptionPolicyWrite(
+  value: unknown,
+): { ok: true; policy: SubscriptionPolicyWrite } | { ok: false; error: string } {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return { ok: false, error: "policy 缺失或类型不对" };
+  }
+  const raw = value as Record<string, unknown>;
   const episodeFilter = raw["episodeFilter"];
   if (episodeFilter !== undefined && typeof episodeFilter !== "string") {
     return { ok: false, error: "episodeFilter 必须是字符串" };
   }
   const cooldownDays = raw["cooldownDays"];
-  if (
-    cooldownDays !== undefined &&
-    (typeof cooldownDays !== "number" || !Number.isInteger(cooldownDays) || cooldownDays < 0)
-  ) {
+  const normalizedCooldownDays = normalizeCooldownDays(cooldownDays);
+  if (normalizedCooldownDays === null) {
     return { ok: false, error: "cooldownDays 必须是非负整数" };
   }
-  let mustContain: string[];
-  let mustNotContain: string[];
-  let customKeywords: string[] = [];
-  try {
-    mustContain = terms("mustContain");
-    mustNotContain = terms("mustNotContain");
-    customKeywords = terms("customKeywords");
-  } catch (error) {
-    return { ok: false, error: error instanceof Error ? error.message : "policy 无法解析" };
-  }
+  const groupsResult = parseSubscriptionPriorityGroups(raw["priorityGroups"]);
+  if (!groupsResult.ok) return groupsResult;
+  const rangesResult = parseSeasonEpisodeRanges(raw["seasonEpisodeRanges"]);
+  if (!rangesResult.ok) return rangesResult;
+  const termsResult = parsePolicyTerms(raw);
+  if (!termsResult.ok) return termsResult;
   const filter = episodeFilter ?? "";
   // An unreadable filter excludes everything, so it may not be saved as-is.
   if (parseEpisodeFilter(filter) === null) {
@@ -76,12 +114,14 @@ export function parseSubscriptionPolicyWrite(
   return {
     ok: true,
     policy: {
-      mustContain,
-      mustNotContain,
+      mustContain: termsResult.mustContain,
+      mustNotContain: termsResult.mustNotContain,
       episodeFilter: filter,
       useRegex: raw["useRegex"] === true,
-      cooldownDays: cooldownDays ?? 0,
-      customKeywords,
+      cooldownDays: normalizedCooldownDays,
+      customKeywords: termsResult.customKeywords,
+      priorityGroups: groupsResult.priorityGroups,
+      seasonEpisodeRanges: rangesResult.ranges,
     },
   };
 }

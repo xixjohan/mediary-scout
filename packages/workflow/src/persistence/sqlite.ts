@@ -12,6 +12,7 @@ import {
   subscriptionPolicyFromRow,
   subscriptionPolicyToColumns,
   type SubscriptionPolicyRow,
+  type StoredSubscriptionPolicyTemplate,
   type SubscriptionPolicyWrite,
   type StoredSubscriptionPolicy,
 } from "./subscription-policy-store.js";
@@ -121,6 +122,7 @@ import {
   isQueueClaimableKind,
   isStaleActiveWorkflowRun,
   passesQueuedRunDriveFilter,
+  preserveQueuedRunMetadata,
   recoverOrphanRunningRun,
   reservationRequiresTrackedSeason,
   tearsDownTrackingOnCancel,
@@ -235,6 +237,8 @@ function mediaRequestFromRow(row: MediaRequestRow): MediaRequest {
   };
 }
 
+const POLICY_SNAPSHOT_RUN_KINDS = new Set<WorkflowKind>(["type1_package_init", "type2_init", "type3_monitor", "movie_init", "replace_request", "staging_recovery"]);
+
 export class SqliteWorkflowRepository implements WorkflowRepository {
   /** 凭据相关持久化切片（Kysely 类型安全查询，任务单 S1.6）。 */
   private readonly credentials: CredentialStore;
@@ -296,6 +300,12 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     if (!cols.some((c) => c.name === "custom_keywords")) {
       this.db.exec("ALTER TABLE subscription_policies ADD COLUMN custom_keywords text NOT NULL DEFAULT '[]'");
     }
+    if (!cols.some((c) => c.name === "priority_groups")) {
+      this.db.exec("ALTER TABLE subscription_policies ADD COLUMN priority_groups text NOT NULL DEFAULT '[]'");
+    }
+    if (!cols.some((c) => c.name === "season_episode_ranges")) {
+      this.db.exec("ALTER TABLE subscription_policies ADD COLUMN season_episode_ranges text NOT NULL DEFAULT '[]'");
+    }
   }
 
   private upgradeStrmTasksShape(): void {
@@ -331,6 +341,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
           .get(snapshot.season.id, connectedStorageId);
         if (tracked === undefined) return;
       }
+      preserveQueuedRunMetadata(snapshot, this.loadSnapshot(snapshot.workflowRun.id));
       this.replaceWorkflowRunSnapshot(snapshot, { runOnly: shouldKeepEpisodes });
     })();
   }
@@ -394,6 +405,8 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       const isAuxiliary = isEpisodePreservingWorkflowKind(snapshot.workflowRun.kind);
       const shouldKeepEpisodes = input.keepCurrentEpisodes === true || isAuxiliary;
 
+      this.captureSubscriptionPolicySnapshot(snapshot, accountId);
+
       if (shouldKeepEpisodes) {
         // Only the run: the title, season record and episode states are not written at
         // all. The reply is the run as stored, with the season's current state.
@@ -410,7 +423,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         status: "reserved",
         snapshot: withDerivedEpisodeSummaries(cloneWorkflowValue(snapshot)),
       };
-    })();
+    }).immediate();
   }
 
   async getWorkflowRunSnapshot(
@@ -427,6 +440,40 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       return null;
     }
     return snapshot;
+  }
+
+  async getWorkflowRunPolicySnapshot(
+    workflowRunId: string,
+    scopeArg: ScopeArg = undefined,
+  ): Promise<import("../domain/domain.js").WorkflowPolicySnapshotLookup | null> {
+    const scope = normalizeScope(scopeArg);
+    const row = this.db.prepare("SELECT payload, account_id, connected_storage_id FROM workflow_runs WHERE id = ?")
+      .get(workflowRunId) as { payload: string; account_id: string; connected_storage_id: string | null } | undefined;
+    if (!row || (row.account_id ?? DEFAULT_ACCOUNT_ID) !== scope.accountId) return null;
+    const drive = row.connected_storage_id === UNSCOPED_STORAGE ? null : row.connected_storage_id;
+    if (scope.connectedStorageId != null && drive !== scope.connectedStorageId) return null;
+    const run = JSON.parse(row.payload) as WorkflowRun;
+    if (!POLICY_SNAPSHOT_RUN_KINDS.has(run.kind)) return null;
+    return run.subscriptionPolicySnapshot ?? { schemaVersion: 0, legacyUnknown: true };
+  }
+
+  private captureSubscriptionPolicySnapshot(snapshot: { workflowRun: WorkflowRun; title: MediaTitle }, accountId: string): void {
+    if (!POLICY_SNAPSHOT_RUN_KINDS.has(snapshot.workflowRun.kind) || snapshot.workflowRun.subscriptionPolicySnapshot) return;
+    const policyRow = this.db
+      .prepare("SELECT * FROM subscription_policies WHERE account_id = ? AND title_key = ?")
+      .get(accountId, snapshot.title.id) as SubscriptionPolicyRow | undefined;
+    const stored = policyRow ? subscriptionPolicyFromRow(policyRow) : null;
+    snapshot.workflowRun.subscriptionPolicySnapshot = {
+      schemaVersion: 1,
+      evaluatorVersion: 1,
+      capturedAt: snapshot.workflowRun.startedAt,
+      policy: stored ? {
+        mustContain: [...stored.mustContain], mustNotContain: [...stored.mustNotContain],
+        episodeFilter: stored.episodeFilter, useRegex: stored.useRegex, cooldownDays: stored.cooldownDays,
+        customKeywords: [...(stored.customKeywords ?? [])], priorityGroups: stored.priorityGroups ?? [],
+        seasonEpisodeRanges: stored.seasonEpisodeRanges ?? [],
+      } : null,
+    };
   }
 
   // ----- snapshot persist + reserve helpers -----
@@ -2190,13 +2237,13 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // created_at 用 ON CONFLICT 时**不**覆盖：一次保存只该动 updated_at。
     this.db
       .prepare(
-        "INSERT INTO subscription_policies (account_id, title_key, must_contain, must_not_contain, episode_filter, use_regex, cooldown_days, created_at, updated_at, custom_keywords) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+        "INSERT INTO subscription_policies (account_id, title_key, must_contain, must_not_contain, episode_filter, use_regex, cooldown_days, created_at, updated_at, custom_keywords, priority_groups, season_episode_ranges) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT (account_id, title_key) DO UPDATE SET " +
           "must_contain = excluded.must_contain, must_not_contain = excluded.must_not_contain, " +
           "episode_filter = excluded.episode_filter, use_regex = excluded.use_regex, " +
           "cooldown_days = excluded.cooldown_days, updated_at = excluded.updated_at, " +
-          "custom_keywords = excluded.custom_keywords",
+          "custom_keywords = excluded.custom_keywords, priority_groups = excluded.priority_groups, season_episode_ranges = excluded.season_episode_ranges",
       )
       .run(
         input.accountId,
@@ -2209,11 +2256,54 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         input.now,
         input.now,
         columns.custom_keywords,
+        columns.priority_groups,
+        columns.season_episode_ranges,
       );
     const stored = await this.getSubscriptionPolicy({ accountId: input.accountId, titleKey: input.titleKey });
     // 写完读不回来是仓库的 bug，不是「策略没了」——宁可炸也别返回一个假策略。
     if (stored === null) throw new Error(`subscription_policies: write of ${input.titleKey} did not persist`);
     return stored;
+  }
+
+  async listSubscriptionPolicyTemplates(accountId: string): Promise<StoredSubscriptionPolicyTemplate[]> {
+    const rows = this.db.prepare(
+      "SELECT id, account_id, name, payload, created_at, updated_at FROM subscription_policy_templates WHERE account_id = ? ORDER BY name, id",
+    ).all(accountId) as Array<{ id: string; account_id: string; name: string; payload: string; created_at: string; updated_at: string }>;
+    return rows.map((row) => ({
+      id: row.id, accountId: row.account_id, name: row.name,
+      policy: JSON.parse(row.payload) as SubscriptionPolicyWrite,
+      createdAt: row.created_at, updatedAt: row.updated_at,
+    }));
+  }
+
+  async createSubscriptionPolicyTemplate(input: { id: string; accountId: string; name: string; policy: SubscriptionPolicyWrite; now: string }): Promise<StoredSubscriptionPolicyTemplate> {
+    this.db.prepare(
+      "INSERT INTO subscription_policy_templates (id, account_id, name, payload, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+    ).run(input.id, input.accountId, input.name, JSON.stringify(input.policy), input.now, input.now);
+    return {
+      id: input.id, accountId: input.accountId, name: input.name,
+      policy: JSON.parse(JSON.stringify(input.policy)) as SubscriptionPolicyWrite,
+      createdAt: input.now, updatedAt: input.now,
+    };
+  }
+
+  async updateSubscriptionPolicyTemplate(input: { id: string; accountId: string; name: string; policy: SubscriptionPolicyWrite; now: string }): Promise<StoredSubscriptionPolicyTemplate | null> {
+    const result = this.db.prepare(
+      "UPDATE subscription_policy_templates SET name = ?, payload = ?, updated_at = ? WHERE id = ? AND account_id = ?",
+    ).run(input.name, JSON.stringify(input.policy), input.now, input.id, input.accountId);
+    if (result.changes === 0) return null;
+    return {
+      id: input.id, accountId: input.accountId, name: input.name,
+      policy: JSON.parse(JSON.stringify(input.policy)) as SubscriptionPolicyWrite,
+      createdAt: (this.db.prepare("SELECT created_at FROM subscription_policy_templates WHERE id = ? AND account_id = ?")
+        .get(input.id, input.accountId) as { created_at: string }).created_at,
+      updatedAt: input.now,
+    };
+  }
+
+  async deleteSubscriptionPolicyTemplate(input: { id: string; accountId: string }): Promise<boolean> {
+    const result = this.db.prepare("DELETE FROM subscription_policy_templates WHERE id = ? AND account_id = ?").run(input.id, input.accountId);
+    return result.changes > 0;
   }
 
   /**

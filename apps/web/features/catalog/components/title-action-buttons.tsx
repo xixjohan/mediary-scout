@@ -1,11 +1,14 @@
 "use client";
 
-import { Check, DownloadCloud, Layers, LoaderCircle, SlidersHorizontal } from "lucide-react";
+import { Check, DownloadCloud, Layers, LoaderCircle, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "../../../lib/use-router";
 import {
   requestRemainingAction,
   requestSeasonAction,
+  manualSubscriptionSearchAction,
+  type ManualSubscriptionSearchActionResult,
   type RequestTrackingActionResult,
 } from "../../../app/actions/acquisition-actions";
 import { runAction } from "../../../lib/run-action";
@@ -103,6 +106,61 @@ export function RequestSeasonButton({
       </button>
       <AcquireResultNotice result={result} />
     </>
+  );
+}
+
+export function ManualSubscriptionSearchButton({
+  tmdbId,
+  mediaType,
+  seasonNumber,
+  storageId,
+  activityHref,
+  isAcquiring = false,
+}: {
+  tmdbId: number;
+  mediaType: "movie" | "tv" | "anime";
+  seasonNumber?: number;
+  storageId: string | undefined;
+  activityHref: string;
+  isAcquiring?: boolean;
+}) {
+  const router = useRouter();
+  const [isPending, startTransition] = useTransition();
+  const [result, setResult] = useState<ManualSubscriptionSearchActionResult | null>(null);
+
+  return (
+    <div className="manual-subscription-search-action">
+      <button
+        className="secondary-button"
+        type="button"
+        disabled={isPending || isAcquiring}
+        onClick={() => {
+          startTransition(async () => {
+            const response = await runAction(
+              () => manualSubscriptionSearchAction({
+                tmdbId,
+                mediaType,
+                ...(seasonNumber === undefined ? {} : { seasonNumber }),
+                  ...(storageId === undefined ? {} : { storageId }),
+              }),
+              (message) => setResult({ status: "invalid_target", message }),
+            );
+            if (!response.ok) return;
+            setResult(response.value);
+            router.refresh();
+          });
+        }}
+      >
+        {isPending ? <LoaderCircle size={14} className="spin" aria-hidden /> : <RefreshCw size={14} aria-hidden />}
+        {isPending ? "正在提交" : isAcquiring ? "搜索中" : "立即搜索缺失资源"}
+      </button>
+      {isAcquiring || result?.workflowRunId ? (
+        <Link href={activityHref} className="manual-subscription-search-activity-link">
+          查看活动
+        </Link>
+      ) : null}
+      {result ? <span role="status">{result.message}</span> : null}
+    </div>
   );
 }
 

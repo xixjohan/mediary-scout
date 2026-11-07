@@ -8,6 +8,7 @@ import {
 } from "../../../features/assistant/application/chat-agent-service";
 import { executeDiscoverMedia } from "../../../features/assistant/core/chat-discover";
 import { getAccountDriveFileManager } from "../../../lib/workflow-runtime";
+import { triggerManualSubscriptionSearch } from "../../../features/acquisition/application/manual-subscription-search-service";
 
 interface McpJsonRpcRequest {
   jsonrpc: "2.0";
@@ -100,14 +101,15 @@ export const MCP_REGISTERED_TOOLS = [
   },
   {
     name: "triggerAcquisition",
-    description: "手动触发指定影视作品的后台资源搜索、解析与自动化入库工作流",
+    description: "为已追踪的电影或指定季度创建一次按当前订阅策略执行的缺失资源搜索任务",
     inputSchema: {
       type: "object",
-      required: ["tmdbId"],
+      required: ["tmdbId", "type"],
       properties: {
         tmdbId: { type: "number", description: "TMDB 作品 ID" },
-        type: { type: "string", enum: ["movie", "tv"], description: "媒体类型" },
+        type: { type: "string", enum: ["movie", "tv", "anime"], description: "媒体类型" },
         seasonNumber: { type: "number", description: "剧集季号（可选）" },
+        storageId: { type: "string", description: "目标网盘工作区 ID（可选，默认主网盘）" },
       },
     },
   },
@@ -199,11 +201,38 @@ async function dispatchToolExecution(
       if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
         throw new Error("tmdbId 必须为有效正整数");
       }
-      return {
-        ok: true,
+      const mediaType = toolArgs.type;
+      if (mediaType !== "movie" && mediaType !== "tv" && mediaType !== "anime") {
+        throw new Error("type 必须为 movie、tv 或 anime");
+      }
+      const seasonNumber = toolArgs.seasonNumber;
+      if (
+        seasonNumber !== undefined &&
+        (typeof seasonNumber !== "number" || !Number.isInteger(seasonNumber) || seasonNumber < 0 || seasonNumber > 99)
+      ) {
+        throw new Error("seasonNumber 必须为 0 到 99 的整数");
+      }
+      if (mediaType !== "movie" && seasonNumber === undefined) {
+        throw new Error("剧集手动补搜必须指定 seasonNumber");
+      }
+      if (mediaType === "movie" && seasonNumber !== undefined) {
+        throw new Error("电影不能指定 seasonNumber");
+      }
+      if (toolArgs.storageId !== undefined && typeof toolArgs.storageId !== "string") {
+        throw new Error("storageId 必须为字符串");
+      }
+      const result = await triggerManualSubscriptionSearch({
+        accountId,
         tmdbId,
-        message: `已触发 TMDB ID: ${tmdbId} 的自动化资源搜索与入库工作流`,
-        status: "triggered",
+        mediaType,
+        ...(seasonNumber === undefined ? {} : { seasonNumber }),
+        ...(typeof toolArgs.storageId === "string" ? { storageId: toolArgs.storageId } : {}),
+        source: "mcp",
+      });
+      return {
+        ok: result.status === "queued" || result.status === "already_running",
+        tmdbId,
+        ...result,
       };
     }
     case "getSystemHealth": {

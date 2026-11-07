@@ -20,16 +20,13 @@ function runningRun(kind: WorkflowKind, over: Partial<WorkflowRun> = {}): Workfl
 }
 
 describe("isQueueClaimableKind", () => {
-  it("marks the three queue-driven kinds claimable", () => {
+  it("marks the queued workflow kinds claimable", () => {
     expect(isQueueClaimableKind("type2_init")).toBe(true);
     expect(isQueueClaimableKind("type1_package_init")).toBe(true);
     expect(isQueueClaimableKind("movie_init")).toBe(true);
+    expect(isQueueClaimableKind("type3_monitor")).toBe(true);
     expect(isQueueClaimableKind("replace_request")).toBe(true);
     expect(isQueueClaimableKind("staging_recovery")).toBe(true);
-  });
-
-  it("marks type3_monitor unclaimable (no worker claims queued type3)", () => {
-    expect(isQueueClaimableKind("type3_monitor")).toBe(false);
   });
 
   // NOTE: exhaustiveness is enforced by `Record<WorkflowKind, boolean>` in
@@ -38,8 +35,8 @@ describe("isQueueClaimableKind", () => {
   // What this test CAN pin down is the claimable/unclaimable split itself, so a
   // future edit that silently flips a kind is caught.
   it("pins the exact claimable/unclaimable split", () => {
-    const claimable: WorkflowKind[] = ["type1_package_init", "type2_init", "movie_init", "replace_request", "staging_recovery"];
-    const unclaimable: WorkflowKind[] = ["type3_monitor"];
+    const claimable: WorkflowKind[] = ["type1_package_init", "type2_init", "movie_init", "type3_monitor", "replace_request", "staging_recovery"];
+    const unclaimable: WorkflowKind[] = [];
     expect(claimable.filter(isQueueClaimableKind)).toEqual(claimable);
     expect(unclaimable.filter(isQueueClaimableKind)).toEqual([]);
   });
@@ -54,36 +51,19 @@ describe("recoverOrphanRunningRun", () => {
     expect(result.run.orphanRequeueCount).toBe(1);
   });
 
-  it("fails an unclaimable kind instead of parking it in queued forever", () => {
+  it("recovers a type3_monitor run because the queue worker now claims it", () => {
     const result = recoverOrphanRunningRun(runningRun("type3_monitor"), "2026-08-05T01:00:00.000Z");
-    expect(result.action).toBe("fail");
-    expect(result.run.status).toBe("failed");
-    expect(result.run.finishedAt).toBe("2026-08-05T01:00:00.000Z");
-  });
-
-  it("records why an unclaimable orphan was failed", () => {
-    const result = recoverOrphanRunningRun(runningRun("type3_monitor"), "2026-08-05T01:00:00.000Z");
-    const last = result.run.auditEvents.at(-1);
-    expect(last?.type).toBe("orphan_unclaimable");
-    expect(last?.message).toContain("type3_monitor");
-  });
-
-  it("does not bump orphanRequeueCount when failing an unclaimable orphan", () => {
-    const result = recoverOrphanRunningRun(
-      runningRun("type3_monitor", { orphanRequeueCount: 2 }),
-      "2026-08-05T01:00:00.000Z",
-    );
-    expect(result.run.orphanRequeueCount).toBe(2);
+    expect(result.action).toBe("requeue");
+    expect(result.run.status).toBe("queued");
+    expect(result.run.orphanRequeueCount).toBe(1);
   });
 
   // The unclaimable branch deliberately sits BEFORE the cap check: unclaimability
   // is a structural property of the kind, while the cap is a history property of
-  // one run. orphan_requeue_capped says "crash-looped 5 times, investigate the
-  // payload" — actively misleading for a kind no worker ever claimed. Without this
-  // test the ordering can be swapped with every other test still green.
+  // one run. Keep a persisted-record kind as the guard for this branch.
   it("prefers orphan_unclaimable over the cap for an unclaimable kind", () => {
     const result = recoverOrphanRunningRun(
-      runningRun("type3_monitor", { orphanRequeueCount: ORPHAN_REQUEUE_MAX }),
+      runningRun("resource_search", { orphanRequeueCount: ORPHAN_REQUEUE_MAX }),
       "2026-08-05T01:00:00.000Z",
     );
     expect(result.action).toBe("fail");

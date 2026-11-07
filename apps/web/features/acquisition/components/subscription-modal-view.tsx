@@ -209,39 +209,66 @@ function PolicyStep(props: SubscriptionModalViewProps) {
         onDraftChange={props.onDraftChange}
         onMustContainChange={props.onMustContainChange}
         onMustNotContainChange={props.onMustNotContainChange}
+        seasonNumbers={[...props.selectedSeasons]}
       />
-      <p className="subscription-config-hint">同一作品的各季共用这套策略，可在作品详情中随时调整。</p>
+      <p className="subscription-config-hint">每个已选季度可单独设置起始集与结束集；资源筛选规则仍由各季共用，追踪后也可在作品详情中分别修改。</p>
     </section>
   );
 }
 
 function ReviewStep(props: SubscriptionModalViewProps) {
-  const seasonScope = [...props.selectedSeasons].sort((a, b) => a - b).map((season) => `第 ${season} 季`).join("、");
   return (
     <section className="subscription-config-section" aria-label="预览并确认订阅">
       <h3>确认订阅设置</h3>
-      <dl className="subscription-config-summary">
-        <div><dt>追踪范围</dt><dd>{props.isTv ? seasonScope : "电影"}</dd></div>
-        <div><dt>保存位置</dt><dd>{props.drives.find((drive) => drive.id === props.selectedStorageId)?.label ?? "默认网盘"}</dd></div>
-        <div><dt>包含条件</dt><dd>{props.draft.mustContain || "不限制"}</dd></div>
-        <div><dt>排除条件</dt><dd>{props.draft.mustNotContain || "不限制"}</dd></div>
-        <div><dt>集数范围</dt><dd>{props.draft.episodeFilter || "全部集数"}</dd></div>
-      </dl>
-      <div className="subscription-config-preview" aria-live="polite">
-        <div className="subscription-config-preview-head">
-          <h4>当前资源预览</h4>
-          <button type="button" onClick={() => void props.runPreview()} disabled={props.previewLoading}>
-            {props.previewLoading ? "搜索中…" : "重新预览"}
-          </button>
-        </div>
-        {props.previewLoading ? <p>正在搜索候选资源并应用这套规则…</p> : null}
-        {props.previewError ? <p className="subscription-config-error">{props.previewError}</p> : null}
-        {props.preview ? <PreviewResult preview={props.preview} /> : null}
-        {!props.preview && !props.previewLoading && !props.previewError ? <p>尚未生成预览。</p> : null}
-      </div>
+      <ReviewSummary {...props} />
+      <ReviewResources {...props} />
       <p className="subscription-config-hint">首次检索会在策略保存成功后加入后台队列；失败时可修正规则后重试。</p>
     </section>
   );
+}
+
+function ReviewSummary(props: SubscriptionModalViewProps) {
+  const seasonScope = [...props.selectedSeasons].sort((a, b) => a - b).map((season) => `第 ${season} 季`).join("、");
+  const seasonRanges = summarizeSeasonEpisodeRanges(props.selectedSeasons, props.draft.seasonEpisodeRanges ?? []);
+  return (
+    <dl className="subscription-config-summary">
+      <div><dt>追踪范围</dt><dd>{props.isTv ? seasonScope : "电影"}</dd></div>
+      <div><dt>保存位置</dt><dd>{props.drives.find((drive) => drive.id === props.selectedStorageId)?.label ?? "默认网盘"}</dd></div>
+      <div><dt>包含条件</dt><dd>{props.draft.mustContain || "不限制"}</dd></div>
+      <div><dt>排除条件</dt><dd>{props.draft.mustNotContain || "不限制"}</dd></div>
+      {props.isTv ? <div><dt>逐季起止集</dt><dd>{seasonRanges || "未选择季度"}</dd></div> : null}
+      <div><dt>额外集数筛选</dt><dd>{props.draft.episodeFilter || "不限制"}</dd></div>
+    </dl>
+  );
+}
+
+function ReviewResources(props: SubscriptionModalViewProps) {
+  return (
+    <div className="subscription-config-preview" aria-live="polite">
+      <div className="subscription-config-preview-head">
+        <h4>当前资源预览</h4>
+        <button type="button" onClick={() => void props.runPreview()} disabled={props.previewLoading}>
+          {props.previewLoading ? "搜索中…" : "重新预览"}
+        </button>
+      </div>
+      {props.previewLoading ? <p>正在搜索候选资源并应用这套规则…</p> : null}
+      {props.previewError ? <p className="subscription-config-error">{props.previewError}</p> : null}
+      {props.preview ? <PreviewResult preview={props.preview} /> : null}
+      {!props.preview && !props.previewLoading && !props.previewError ? <p>尚未生成预览。</p> : null}
+    </div>
+  );
+}
+
+function summarizeSeasonEpisodeRanges(seasons: Set<number>, ranges: NonNullable<PolicyDraft["seasonEpisodeRanges"]>): string {
+  return [...seasons].sort((a, b) => a - b).map((season) => {
+    const range = ranges.find((item) => item.seasonNumber === season);
+    const label = season === 0 ? "特别篇" : `第 ${season} 季`;
+    const start = String(range?.startEpisode ?? 1).padStart(2, "0");
+    const end = range?.endEpisode === null || range?.endEpisode === undefined
+      ? "起"
+      : `–E${String(range.endEpisode).padStart(2, "0")}`;
+    return `${label} E${start}${end}`;
+  }).join("；");
 }
 
 function PreviewResult({ preview }: { preview: PreviewOutcome }) {

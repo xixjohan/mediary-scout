@@ -50,9 +50,14 @@ describe("SubscriptionModal Episode Filter Calculation", () => {
     expect(filter).toBe("E01-E10");
   });
 
-  it("formats selected partial seasons into standard S01;S03 tokens", () => {
+  it("does not overwrite the independent episode filter when selecting partial seasons", () => {
     const filter = computeEpisodeFilter(true, new Set([3, 1]), [1, 2, 3, 4], "");
-    expect(filter).toBe("S01;S03");
+    expect(filter).toBe("");
+  });
+
+  it("preserves a manually entered episode filter for a partial season selection", () => {
+    const filter = computeEpisodeFilter(true, new Set([2]), [1, 2, 3], "E05-E10");
+    expect(filter).toBe("E05-E10");
   });
 
   it("retains fallback filter when all seasons are selected (full acquisition)", () => {

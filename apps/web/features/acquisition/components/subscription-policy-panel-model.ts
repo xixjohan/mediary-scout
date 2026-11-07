@@ -17,12 +17,40 @@ export interface PolicyDraft {
   useRegex: boolean;
   cooldownDays: number;
   customKeywords?: string;
+  priorityGroups?: PolicyPriorityGroupDraft[];
+  seasonEpisodeRanges?: SeasonEpisodeRangeDraft[];
+}
+
+export interface SeasonEpisodeRangeDraft {
+  seasonNumber: number;
+  startEpisode: number;
+  endEpisode: number | null;
+}
+
+export interface PolicyPriorityGroupDraft {
+  id: string;
+  name: string;
+  mustContain: string;
+  mustNotContain: string;
+}
+
+/**
+ * Create a stable client draft ID. `crypto.randomUUID()` is restricted to secure
+ * contexts, while this app is commonly opened over plain HTTP on a LAN address.
+ */
+export function createPolicyPriorityGroupDraft(
+  cryptoApi: Pick<Crypto, "randomUUID"> | null = typeof globalThis.crypto === "undefined" ? null : globalThis.crypto,
+): PolicyPriorityGroupDraft {
+  const id = typeof cryptoApi?.randomUUID === "function"
+    ? cryptoApi.randomUUID()
+    : `${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  return { id: `group_${id}`, name: "新优先级", mustContain: "", mustNotContain: "" };
 }
 
 /** One excluded candidate, with WHY it was excluded — 「排了 N 个」会让人回去猜是哪条规则干的。 */
 export interface PreviewExcludedEntry {
   name: string;
-  reason: "excluded" | "missing_term" | "episode_filtered";
+  reason: "excluded" | "missing_term" | "episode_filtered" | "priority_unmatched";
 }
 
 export interface PreviewOutcome {
@@ -84,6 +112,8 @@ export function previewReasonCopy(reason: PreviewExcludedEntry["reason"]): strin
       return "缺必须包含的词";
     case "episode_filtered":
       return "不在集数范围内";
+    case "priority_unmatched":
+      return "未命中任何优先级组";
   }
 }
 
@@ -108,6 +138,22 @@ export function mapSavedPolicy(policy: unknown): PolicyDraft | null {
     useRegex: parsed["useRegex"] === true,
     cooldownDays: num(parsed["cooldownDays"]),
     ...(custom ? { customKeywords: custom } : {}),
+    priorityGroups: Array.isArray(parsed["priorityGroups"])
+      ? parsed["priorityGroups"].flatMap((rawGroup): PolicyPriorityGroupDraft[] => {
+          if (typeof rawGroup !== "object" || rawGroup === null) return [];
+          const group = rawGroup as Record<string, unknown>;
+          if (typeof group["id"] !== "string" || typeof group["name"] !== "string") return [];
+          return [{ id: group["id"], name: group["name"], mustContain: joined(group["mustContain"]), mustNotContain: joined(group["mustNotContain"]) }];
+        })
+      : [],
+    seasonEpisodeRanges: Array.isArray(parsed["seasonEpisodeRanges"])
+      ? parsed["seasonEpisodeRanges"].flatMap((entry): SeasonEpisodeRangeDraft[] => {
+          if (typeof entry !== "object" || entry === null) return [];
+          const range = entry as Record<string, unknown>;
+          if (!Number.isInteger(range["seasonNumber"]) || !Number.isInteger(range["startEpisode"]) || (range["endEpisode"] !== null && !Number.isInteger(range["endEpisode"]))) return [];
+          return [{ seasonNumber: range["seasonNumber"] as number, startEpisode: range["startEpisode"] as number, endEpisode: range["endEpisode"] as number | null }];
+        })
+      : [],
   };
 }
 
@@ -149,6 +195,8 @@ export function draftToPolicy(draft: PolicyDraft): {
   useRegex: boolean;
   cooldownDays: number;
   customKeywords?: string[];
+  priorityGroups: { id: string; name: string; mustContain: string[]; mustNotContain: string[] }[];
+  seasonEpisodeRanges: SeasonEpisodeRangeDraft[];
 } {
   const custom = draft.customKeywords ? splitTerms(draft.customKeywords) : [];
   return {
@@ -158,6 +206,13 @@ export function draftToPolicy(draft: PolicyDraft): {
     useRegex: draft.useRegex,
     cooldownDays: draft.cooldownDays,
     ...(custom.length > 0 ? { customKeywords: custom } : {}),
+    priorityGroups: (draft.priorityGroups ?? []).map((group) => ({
+      id: group.id,
+      name: group.name.trim(),
+      mustContain: splitTerms(group.mustContain),
+      mustNotContain: splitTerms(group.mustNotContain),
+    })),
+    seasonEpisodeRanges: (draft.seasonEpisodeRanges ?? []).map((range) => ({ ...range })),
   };
 }
 
@@ -199,7 +254,7 @@ function excludedEntries(value: unknown): PreviewExcludedEntry[] {
     const entry = raw as Record<string, unknown>;
     const name = str(entry["name"]);
     const reason = entry["reason"];
-    if (reason !== "excluded" && reason !== "missing_term" && reason !== "episode_filtered") continue;
+    if (reason !== "excluded" && reason !== "missing_term" && reason !== "episode_filtered" && reason !== "priority_unmatched") continue;
     entries.push({ name, reason });
   }
   return entries;

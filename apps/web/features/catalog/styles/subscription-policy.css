@@ -437,6 +437,10 @@
   gap: 10px 14px;
 }
 
+.sub-policy-fields > .sub-policy-season-ranges {
+  grid-column: 1 / -1;
+}
+
 /* 标签在输入框上方，输入框撑满栅格格——浏览器默认的「标签+控件挤一行」
    在这里不存在。 */
 .sub-policy-fields label {

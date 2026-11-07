@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { SeasonEpisodeRangesSection } from "./subscription-modal-fields";
 import {
+  createPolicyPriorityGroupDraft,
   draftToPolicy,
+  mapSavedPolicy,
   mapPolicyLoadResponse,
   mapPreviewResponse,
   previewHeadlineCopy,
@@ -33,6 +36,7 @@ import {
 export interface SubscriptionPolicyPanelProps {
   tmdbId: number;
   mediaType: "movie" | "tv";
+  seasonNumbers?: number[];
 }
 
 function appendFilterChip(current: string, chip: string): string {
@@ -50,7 +54,19 @@ function appendFilterChip(current: string, chip: string): string {
 const CONTAIN_PRESETS = ["2160p", "1080p", "简日内嵌", "简中字幕"] as const;
 const EXCLUDE_PRESETS = ["CAM/枪版", "预告片", "国语配音"] as const;
 
-export function SubscriptionPolicyPanel({ tmdbId, mediaType }: SubscriptionPolicyPanelProps) {
+type PolicyTemplate = { id: string; name: string; policy: unknown };
+
+async function parsePolicyTemplateResponse(response: Response, fallback: string): Promise<{ template: PolicyTemplate | null; error: string }> {
+  const body: unknown = await response.json().catch(() => null);
+  const candidate = typeof body === "object" && body !== null ? (body as Record<string, unknown>)["template"] : null;
+  if (response.ok && typeof candidate === "object" && candidate !== null) {
+    return { template: candidate as PolicyTemplate, error: "" };
+  }
+  const error = typeof body === "object" && body !== null ? (body as Record<string, unknown>)["error"] : null;
+  return { template: null, error: typeof error === "string" ? error : fallback };
+}
+
+export function SubscriptionPolicyPanel({ tmdbId, mediaType, seasonNumbers = [] }: SubscriptionPolicyPanelProps) {
   const [draft, setDraft] = useState<PolicyDraft>({
     mustContain: "",
     mustNotContain: "",
@@ -58,6 +74,8 @@ export function SubscriptionPolicyPanel({ tmdbId, mediaType }: SubscriptionPolic
     useRegex: false,
     cooldownDays: 0,
     customKeywords: "",
+    priorityGroups: [],
+    seasonEpisodeRanges: [],
   });
   const [state, setState] = useState<PolicyPanelState>({ kind: "idle" });
   const [saved, setSaved] = useState<PolicyDraft | null>(null);
@@ -107,6 +125,12 @@ export function SubscriptionPolicyPanel({ tmdbId, mediaType }: SubscriptionPolic
       alive = false;
     };
   }, [tmdbId, mediaType]);
+
+  const applyTemplateDraft = useCallback((loaded: PolicyDraft) => {
+    touchedRef.current = true;
+    setDraft(loaded);
+    setIsExpanded(true);
+  }, []);
 
   const preview = useCallback(async () => {
     // 预览同样依赖当前表单：读回在飞时预览过，表单就不能再被旧值替换，
@@ -183,7 +207,8 @@ export function SubscriptionPolicyPanel({ tmdbId, mediaType }: SubscriptionPolic
         <PolicyCollapsedSummary saved={saved} onExpand={() => setIsExpanded(true)} />
       ) : (
         <>
-          <PolicyFields draft={draft} update={update} />
+          <SubscriptionPolicyTemplateTools draft={draft} onApply={applyTemplateDraft} />
+          <PolicyFields draft={draft} update={update} seasonNumbers={seasonNumbers} />
 
           <div className="sub-policy-actions">
             <button type="button" onClick={preview} disabled={state.kind === "previewing"}>
@@ -213,6 +238,120 @@ export function SubscriptionPolicyPanel({ tmdbId, mediaType }: SubscriptionPolic
   );
 }
 
+function SubscriptionPolicyTemplateTools({ draft, onApply }: { draft: PolicyDraft; onApply: (loaded: PolicyDraft) => void }) {
+  const [templates, setTemplates] = useState<PolicyTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [templateName, setTemplateName] = useState("");
+  const [templateMessage, setTemplateMessage] = useState("");
+  const [templateAction, setTemplateAction] = useState<"save" | "update" | "delete" | null>(null);
+  const busy = templateAction !== null;
+
+  useEffect(() => {
+    let alive = true;
+    fetch("/api/titles/subscription-policy/templates")
+      .then((response) => response.json())
+      .then((body: unknown) => {
+        if (!alive || typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>)["templates"])) return;
+        setTemplates((body as { templates: PolicyTemplate[] }).templates);
+      })
+      .catch(() => { if (alive) setTemplateMessage("模板列表暂时不可用"); });
+    return () => { alive = false; };
+  }, []);
+
+  const applyTemplate = () => {
+    const template = templates.find((item) => item.id === selectedTemplateId);
+    const loaded = template ? mapSavedPolicy(template.policy) : null;
+    if (!template || !loaded) {
+      setTemplateMessage("模板内容无法读取");
+      return;
+    }
+    onApply(loaded);
+    setTemplateMessage(`已套用「${template.name}」，保存策略后才会生效`);
+  };
+
+  const saveTemplate = async () => {
+    const name = templateName.trim();
+    if (busy) return;
+    if (!name) { setTemplateMessage("请先填写模板名称"); return; }
+    setTemplateAction("save");
+    try {
+      const response = await fetch("/api/titles/subscription-policy/templates", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name, policy: draftToPolicy(draft) }),
+      });
+      const result = await parsePolicyTemplateResponse(response, "模板保存失败");
+      if (!result.template) { setTemplateMessage(result.error); return; }
+      setTemplates((current) => [...current.filter((item) => item.id !== result.template!.id), result.template!]);
+      setSelectedTemplateId(result.template.id);
+      setTemplateName("");
+      setTemplateMessage("模板已保存");
+    } catch { setTemplateMessage("网络错误，模板未保存"); }
+    finally { setTemplateAction(null); }
+  };
+
+  const updateTemplate = async () => {
+    const name = templateName.trim();
+    if (!selectedTemplateId || busy) return;
+    if (!name) { setTemplateMessage("请填写模板名称"); return; }
+    setTemplateAction("update");
+    try {
+      const response = await fetch("/api/titles/subscription-policy/templates", {
+        method: "PUT", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: selectedTemplateId, name, policy: draftToPolicy(draft) }),
+      });
+      const result = await parsePolicyTemplateResponse(response, "模板更新失败");
+      if (!result.template) { setTemplateMessage(result.error); return; }
+      setTemplates((current) => [...current.filter((item) => item.id !== result.template!.id), result.template!]);
+      setSelectedTemplateId(result.template.id);
+      setTemplateMessage("模板已更新；已应用到作品的规则和排队任务不受影响");
+    } catch { setTemplateMessage("网络错误，模板未更新"); }
+    finally { setTemplateAction(null); }
+  };
+
+  const deleteTemplate = async () => {
+    if (!selectedTemplateId || busy) return;
+    setTemplateAction("delete");
+    try {
+      const response = await fetch("/api/titles/subscription-policy/templates", {
+        method: "DELETE", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: selectedTemplateId }),
+      });
+      if (!response.ok) { setTemplateMessage("模板删除失败"); return; }
+      setTemplates((current) => current.filter((item) => item.id !== selectedTemplateId));
+      setSelectedTemplateId("");
+      setTemplateName("");
+      setTemplateMessage("模板已删除；已应用到作品的规则不受影响");
+    } catch { setTemplateMessage("网络错误，模板未删除"); }
+    finally { setTemplateAction(null); }
+  };
+
+  return (
+    <div className="sub-policy-template-tools" aria-label="订阅策略模板">
+      <label>模板
+        <select value={selectedTemplateId} disabled={busy} onChange={(event) => {
+          const id = event.target.value;
+          setSelectedTemplateId(id);
+          setTemplateName(templates.find((item) => item.id === id)?.name ?? "");
+          setTemplateMessage("");
+        }}>
+          <option value="">选择已保存模板</option>
+          {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
+        </select>
+      </label>
+      <div className="sub-policy-template-actions">
+        <button type="button" disabled={!selectedTemplateId || busy} onClick={applyTemplate}>应用模板</button>
+        <button type="button" disabled={!selectedTemplateId || busy} onClick={updateTemplate}>{templateAction === "update" ? "更新中…" : "用当前规则更新模板"}</button>
+        <button type="button" disabled={!selectedTemplateId || busy} onClick={deleteTemplate}>{templateAction === "delete" ? "删除中…" : "删除模板"}</button>
+      </div>
+      <label>另存为模板
+        <input value={templateName} maxLength={40} onChange={(event) => setTemplateName(event.target.value)} placeholder="例如：动漫 1080p 字幕组" />
+      </label>
+      <button type="button" disabled={busy} onClick={saveTemplate}>{templateAction === "save" ? "保存中…" : "保存当前规则为模板"}</button>
+      {templateMessage ? <p role="status">{templateMessage}</p> : null}
+    </div>
+  );
+}
+
 function PolicyCollapsedSummary({
   saved,
   onExpand,
@@ -226,7 +365,9 @@ function PolicyCollapsedSummary({
         <span className="sub-policy-summary-tag">包含：{saved.mustContain || "未限"}</span>
         <span className="sub-policy-summary-tag">排除：{saved.mustNotContain || "未限"}</span>
         <span className="sub-policy-summary-tag">集数：{saved.episodeFilter || "全部"}</span>
+        <span className="sub-policy-summary-tag">逐季范围：{saved.seasonEpisodeRanges?.length ? `${saved.seasonEpisodeRanges.length} 季已设置` : "未单独限制"}</span>
         <span className="sub-policy-summary-tag">冷却：{saved.cooldownDays}天</span>
+        <span className="sub-policy-summary-tag">优先级组：{saved.priorityGroups?.length ?? 0}组</span>
       </div>
       <button type="button" className="sub-policy-toggle-btn" onClick={onExpand}>
         修改规则
@@ -238,9 +379,11 @@ function PolicyCollapsedSummary({
 function PolicyFields({
   draft,
   update,
+  seasonNumbers,
 }: {
   draft: PolicyDraft;
   update: (patch: Partial<PolicyDraft>) => void;
+  seasonNumbers: number[];
 }) {
   return (
     <div className="sub-policy-fields">
@@ -300,6 +443,13 @@ function PolicyFields({
           placeholder="S01-S03;E01-E10"
         />
       </label>
+      {seasonNumbers.length > 0 ? (
+        <SeasonEpisodeRangesSection
+          seasonNumbers={seasonNumbers}
+          ranges={draft.seasonEpisodeRanges ?? []}
+          onChange={(seasonEpisodeRanges) => update({ seasonEpisodeRanges })}
+        />
+      ) : null}
       <label>
         <span>
           冷却天数 <span className="sub-policy-field-help">（失败后暂缓重试天数）</span>
@@ -319,8 +469,40 @@ function PolicyFields({
         />
         用正则
       </label>
+      <section aria-label="优先级组" className="sub-policy-priority-groups">
+        <div className="sub-policy-priority-heading">
+          <strong>优先级组</strong>
+          <span>从上到下匹配；空白组会跳过，配置优先级组后，未命中候选会被排除。</span>
+        </div>
+        {(draft.priorityGroups ?? []).map((group, index) => (
+          <fieldset key={group.id} className="sub-policy-priority-group">
+            <legend>第 {index + 1} 组</legend>
+            <label>组名<input value={group.name} maxLength={40} onChange={(event) => updatePriorityGroup(draft, update, index, { name: event.target.value })} /></label>
+            <label>必须包含<input value={group.mustContain} placeholder="REMUX, 2160p" onChange={(event) => updatePriorityGroup(draft, update, index, { mustContain: event.target.value })} /></label>
+            <label>组内排除<input value={group.mustNotContain} placeholder="杜比视界" onChange={(event) => updatePriorityGroup(draft, update, index, { mustNotContain: event.target.value })} /></label>
+            <div className="sub-policy-priority-actions">
+              <button type="button" disabled={index === 0} onClick={() => movePriorityGroup(draft, update, index, -1)}>上移</button>
+              <button type="button" disabled={index === (draft.priorityGroups?.length ?? 0) - 1} onClick={() => movePriorityGroup(draft, update, index, 1)}>下移</button>
+              <button type="button" onClick={() => update({ priorityGroups: (draft.priorityGroups ?? []).filter((_, i) => i !== index) })}>删除</button>
+            </div>
+          </fieldset>
+        ))}
+        <button type="button" disabled={(draft.priorityGroups?.length ?? 0) >= 8} onClick={() => update({ priorityGroups: [...(draft.priorityGroups ?? []), createPolicyPriorityGroupDraft()] })}>添加优先级组</button>
+      </section>
     </div>
   );
+}
+
+function updatePriorityGroup(draft: PolicyDraft, update: (patch: Partial<PolicyDraft>) => void, index: number, patch: Partial<NonNullable<PolicyDraft["priorityGroups"]>[number]>) {
+  update({ priorityGroups: (draft.priorityGroups ?? []).map((group, i) => i === index ? { ...group, ...patch } : group) });
+}
+
+function movePriorityGroup(draft: PolicyDraft, update: (patch: Partial<PolicyDraft>) => void, index: number, delta: -1 | 1) {
+  const groups = [...(draft.priorityGroups ?? [])];
+  const target = index + delta;
+  if (target < 0 || target >= groups.length) return;
+  [groups[index], groups[target]] = [groups[target]!, groups[index]!];
+  update({ priorityGroups: groups });
 }
 
 function PolicyPreviewSection({

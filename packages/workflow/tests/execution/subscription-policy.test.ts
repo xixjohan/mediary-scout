@@ -70,6 +70,25 @@ describe("matchPolicy — mustContain / mustNotContain", () => {
     expect(matchPolicy(policy(), resource("anything.mkv")).matched).toBe(true);
   });
 
+  it("硬条件通过后按组顺序命中，并拒绝未命中任何组的资源", () => {
+    const p = policy({ priorityGroups: [
+      { id: "lossless", name: "无损优先", mustContain: ["remux"], mustNotContain: [] },
+      { id: "fallback", name: "高清兜底", mustContain: ["1080p"], mustNotContain: [] },
+    ] });
+    expect(matchPolicy(p, resource("Show.REMUX.1080p.mkv"))).toMatchObject({ matched: true, priorityGroupId: "lossless" });
+    expect(matchPolicy(p, resource("Show.1080p.mkv"))).toMatchObject({ matched: true, priorityGroupId: "fallback" });
+    expect(matchPolicy(p, resource("Show.720p.mkv"))).toMatchObject({ matched: false, reason: "priority_unmatched" });
+  });
+
+  it("空优先级组不作为全匹配规则遮蔽后续组", () => {
+    const p = policy({ priorityGroups: [
+      { id: "unfinished", name: "未填写", mustContain: [], mustNotContain: [] },
+      { id: "preferred", name: "优先", mustContain: ["remux"], mustNotContain: [] },
+    ] });
+    expect(matchPolicy(p, resource("Show.REMUX.mkv"))).toMatchObject({ matched: true, priorityGroupId: "preferred" });
+    expect(matchPolicy(p, resource("Show.1080p.mkv"))).toMatchObject({ matched: false, reason: "priority_unmatched" });
+  });
+
   it("mustContain 全中才放行", () => {
     const p = policy({ mustContain: ["2160p", "BluRay"] });
     expect(matchPolicy(p, resource("Show.S01E01.2160p.BluRay.mkv")).matched).toBe(true);
@@ -157,6 +176,38 @@ describe("matchPolicy — episodeFilter", () => {
     const p = policy({ episodeFilter: "S09E09" });
     expect(matchPolicy(p, resource("无名文件.mkv", "S09E09")).matched).toBe(true);
     expect(matchPolicy(p, resource("Show S01E01.mkv", "S09E09")).matched).toBe(true);
+  });
+});
+
+describe("matchPolicy — seasonEpisodeRanges", () => {
+  const p = policy({ seasonEpisodeRanges: [
+    { seasonNumber: 1, startEpisode: 2, endEpisode: 4 },
+    { seasonNumber: 2, startEpisode: 5, endEpisode: null },
+  ] });
+
+  it("按季度独立应用起止集，未配置的季度仍不受限制", () => {
+    expect(matchPolicy(p, resource("Show S01E01.mkv")).matched).toBe(false);
+    expect(matchPolicy(p, resource("Show S01E02.mkv")).matched).toBe(true);
+    expect(matchPolicy(p, resource("Show S01E04.mkv")).matched).toBe(true);
+    expect(matchPolicy(p, resource("Show S01E05.mkv")).matched).toBe(false);
+    expect(matchPolicy(p, resource("Show S02E04.mkv")).matched).toBe(false);
+    expect(matchPolicy(p, resource("Show S02E05.mkv")).matched).toBe(true);
+    expect(matchPolicy(p, resource("Show S03E01.mkv")).matched).toBe(true);
+  });
+
+  it("匹配到已配置季度但无法解析集号时安全排除", () => {
+    expect(matchPolicy(p, resource("Show S01.mkv")).matched).toBe(true);
+    expect(matchPolicy(p, resource("Show S01.mkv"), { requireSeasonEpisodeForRange: true })).toMatchObject({ matched: false, reason: "episode_filtered" });
+  });
+
+  it("整季候选先保留，待展开后再对视频文件逐一校验", () => {
+    expect(matchPolicy(p, resource("Show.S01E01-E12.1080p.mkv")).matched).toBe(true);
+    expect(matchPolicy(p, resource("Show.S01E01-E12.1080p.mkv"), { requireSeasonEpisodeForRange: true })).toMatchObject({ matched: false, reason: "episode_filtered" });
+  });
+
+  it("资源季集编码优先于文件名", () => {
+    expect(matchPolicy(p, resource("无季集文件.mkv", "S02E05")).matched).toBe(true);
+    expect(matchPolicy(p, resource("Show S01E01.mkv", "S02E05")).matched).toBe(true);
   });
 });
 

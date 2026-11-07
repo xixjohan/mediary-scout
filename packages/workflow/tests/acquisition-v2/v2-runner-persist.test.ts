@@ -80,9 +80,44 @@ function trackedSeason(): TrackedSeason {
 
 const workflowRun = { id: "run-x", startedAt: "2026-06-15T00:00:00.000Z", finishedAt: "2026-06-15T00:01:00.000Z" };
 
+async function reserveQueuedRun(
+  repository: InMemoryWorkflowRepository,
+  title: MediaTitle,
+  season: TrackedSeason,
+  kind: "type1_package_init" | "type2_init" | "type3_monitor" | "movie_init",
+  episodes = createEpisodeStates({
+    trackedSeasonId: season.id,
+    seasonNumber: season.seasonNumber,
+    totalEpisodes: season.totalEpisodes,
+    latestAiredEpisode: season.latestAiredEpisode,
+  }),
+) {
+  const reserved = await repository.reserveWorkflowRun({
+    title,
+    season,
+    workflowRun: {
+      ...workflowRun,
+      id: workflowRun.id,
+      kind,
+      status: "queued",
+      trackedSeasonId: season.id,
+      finishedAt: null,
+      auditEvents: [],
+    },
+    episodes,
+    resourceSnapshots: [],
+    decisions: [],
+    transferAttempts: [],
+    notifications: [],
+    ...(kind === "type3_monitor" ? { keepCurrentEpisodes: true, requireTrackedSeason: true } : {}),
+  });
+  if (reserved.status !== "reserved") throw new Error(`expected reservation; got ${reserved.status}`);
+}
+
 describe("runner-v2 persist wrappers — V2 engine results persisted in the existing record shapes", () => {
   it("type2 init: persists one type2_init snapshot with the tracked season and episodes", async () => {
     const repository = new InMemoryWorkflowRepository();
+    await reserveQueuedRun(repository, tvTitle, trackedSeason(), "type2_init");
     const result = await runType2InitializationV2AndPersist({
       title: tvTitle,
       season: trackedSeason(),
@@ -106,10 +141,31 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
 
   it("type3 patrol: persists a type3_monitor snapshot, scheduled-trigger notification", async () => {
     const repository = new InMemoryWorkflowRepository();
+    const season = trackedSeason();
+    const episodes = createEpisodeStates({ trackedSeasonId: season.id, seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3 });
+    await repository.saveWorkflowRunSnapshot({
+      title: tvTitle,
+      season,
+      episodes,
+      workflowRun: {
+        id: "seed_type3",
+        kind: "type2_init",
+        status: "succeeded",
+        trackedSeasonId: season.id,
+        startedAt: workflowRun.startedAt,
+        finishedAt: workflowRun.finishedAt,
+        auditEvents: [],
+      },
+      resourceSnapshots: [],
+      decisions: [],
+      transferAttempts: [],
+      notifications: [],
+    });
+    await reserveQueuedRun(repository, tvTitle, season, "type3_monitor", episodes);
     await runType3MonitoringV2AndPersist({
       title: tvTitle,
-      season: trackedSeason(),
-      episodes: createEpisodeStates({ trackedSeasonId: "tmdb_tv_100_s1", seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3 }),
+      season,
+      episodes,
       categoryParentId: "tv_root",
       resourceProvider: emptyProvider(),
       storage: new FakeStorageExecutor(),
@@ -126,6 +182,7 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
 
   it("series init: persists one type1_package_init record per season under _s{n} ids", async () => {
     const repository = new InMemoryWorkflowRepository();
+    await reserveQueuedRun(repository, tvTitle, trackedSeason(), "type1_package_init");
     await runSeriesInitializationV2AndPersist({
       title: tvTitle,
       seasons: [
@@ -153,6 +210,17 @@ describe("runner-v2 persist wrappers — V2 engine results persisted in the exis
 
   it("movie init: persists a movie_init snapshot via the V2 movie engine", async () => {
     const repository = new InMemoryWorkflowRepository();
+    await reserveQueuedRun(repository, movieTitle, {
+      id: "tmdb_movie_27205_movie",
+      mediaTitleId: movieTitle.id,
+      seasonNumber: 1,
+      status: "completed",
+      qualityPreference: "4K",
+      storageDirectoryId: "",
+      totalEpisodes: 1,
+      latestAiredEpisode: 1,
+      latestAiredSource: "manual",
+    }, "movie_init");
     const result = await runMovieAcquisitionV2AndPersist({
       title: movieTitle,
       categoryParentId: "movies_root",

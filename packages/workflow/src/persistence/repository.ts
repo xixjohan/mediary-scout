@@ -14,6 +14,7 @@ import {
   type TransferAttempt,
   type WorkflowKind,
   type WorkflowRun,
+  type WorkflowPolicySnapshotLookup,
   type WorkflowRunProgress,
   type WorkflowStatus,
 } from "../domain/domain.js";
@@ -49,7 +50,7 @@ import type {
   UpsertConnectedStorageInput,
 } from "../storage/account-credentials.js";
 import { normalizeScope, scopeMatches, type ScopeArg, type WorkflowScope } from "../domain/workflow-scope.js";
-import type { StoredSubscriptionPolicy, SubscriptionPolicyWrite } from "./subscription-policy-store.js";
+import type { StoredSubscriptionPolicy, StoredSubscriptionPolicyTemplate, SubscriptionPolicyWrite } from "./subscription-policy-store.js";
 import type { CreateMediaRequestInput, MediaRequest, MediaRequestStatus, MediaRequestStore } from "../domain/media-request.js";
 import type {
   CreateMediaServerConfigInput, CreateMediaServerRefreshRecordInput,
@@ -328,6 +329,14 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
     workflowRunId: string,
     scope?: ScopeArg,
   ): Promise<PersistedWorkflowRunSnapshot | null>;
+  getWorkflowRunPolicySnapshot(
+    workflowRunId: string,
+    scope?: ScopeArg,
+  ): Promise<WorkflowPolicySnapshotLookup | null>;
+  listSubscriptionPolicyTemplates(accountId: string): Promise<StoredSubscriptionPolicyTemplate[]>;
+  createSubscriptionPolicyTemplate(input: { id: string; accountId: string; name: string; policy: SubscriptionPolicyWrite; now: string }): Promise<StoredSubscriptionPolicyTemplate>;
+  updateSubscriptionPolicyTemplate(input: { id: string; accountId: string; name: string; policy: SubscriptionPolicyWrite; now: string }): Promise<StoredSubscriptionPolicyTemplate | null>;
+  deleteSubscriptionPolicyTemplate(input: { id: string; accountId: string }): Promise<boolean>;
   /** Cross-account: the single-instance worker drains every account's queue.
    *  The returned snapshot carries `accountId` so the worker can load that
    *  account's credentials. The drive filter (see QueuedRunDriveFilter) lets the
@@ -540,6 +549,42 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   // recordDeadLink + listDeadLinkKeys come from DeadLinkStore.
 }
 
+/**
+ * A queue reservation owns its policy snapshot and manual-trigger lineage for
+ * the full run lifecycle. Runner terminal writes often rebuild WorkflowRun from
+ * agent output, so preserve those immutable fields when the same scoped run is
+ * updated without explicitly carrying them forward.
+ */
+export function preserveQueuedRunMetadata(
+  next: PersistWorkflowRunSnapshotInput,
+  previous: PersistWorkflowRunSnapshotInput | null | undefined,
+): void {
+  if (!previous || previous.workflowRun.id !== next.workflowRun.id || previous.workflowRun.kind !== next.workflowRun.kind) {
+    return;
+  }
+  if ((previous.accountId ?? DEFAULT_ACCOUNT_ID) !== (next.accountId ?? DEFAULT_ACCOUNT_ID)) return;
+  const nextStorageId = next.connectedStorageId ?? previous.connectedStorageId ?? null;
+  if ((previous.connectedStorageId ?? null) !== nextStorageId) return;
+
+  if (next.workflowRun.subscriptionPolicySnapshot === undefined && previous.workflowRun.subscriptionPolicySnapshot !== undefined) {
+    next.workflowRun.subscriptionPolicySnapshot = cloneWorkflowValue(previous.workflowRun.subscriptionPolicySnapshot);
+  }
+  const queuedManualSearch = previous.workflowRun.auditEvents.find(
+    (event) => event.type === "manual_subscription_search_queued",
+  );
+  if (
+    queuedManualSearch &&
+    !next.workflowRun.auditEvents.some(
+      (event) =>
+        event.type === queuedManualSearch.type &&
+        event.data?.sourceWorkflowRunId === queuedManualSearch.data?.sourceWorkflowRunId &&
+        event.data?.source === queuedManualSearch.data?.source,
+    )
+  ) {
+    next.workflowRun.auditEvents = [cloneWorkflowValue(queuedManualSearch), ...next.workflowRun.auditEvents];
+  }
+}
+
 /** Thrown by createAccount when the username is already taken. */
 export class DuplicateUsernameError extends Error {
   constructor(username: string) {
@@ -553,6 +598,31 @@ export class DuplicateUsernameError extends Error {
  *  任何可打印分隔符都可能撞。 */
 function subscriptionPolicyRowKey(accountId: string, titleKey: string): string {
   return `${accountId}\u0000${titleKey}`;
+}
+
+const POLICY_SNAPSHOT_RUN_KINDS = new Set<WorkflowKind>(["type1_package_init", "type2_init", "type3_monitor", "movie_init", "replace_request", "staging_recovery"]);
+
+function capturePolicySnapshot(
+  snapshot: PersistWorkflowRunSnapshotInput,
+  stored: StoredSubscriptionPolicy | undefined,
+): void {
+  if (!POLICY_SNAPSHOT_RUN_KINDS.has(snapshot.workflowRun.kind) || snapshot.workflowRun.subscriptionPolicySnapshot) return;
+  const policy = stored ? {
+    mustContain: [...stored.mustContain],
+    mustNotContain: [...stored.mustNotContain],
+    episodeFilter: stored.episodeFilter,
+    useRegex: stored.useRegex,
+    cooldownDays: stored.cooldownDays,
+    customKeywords: [...(stored.customKeywords ?? [])],
+    priorityGroups: cloneWorkflowValue(stored.priorityGroups ?? []),
+    seasonEpisodeRanges: cloneWorkflowValue(stored.seasonEpisodeRanges ?? []),
+  } : null;
+  snapshot.workflowRun.subscriptionPolicySnapshot = {
+    schemaVersion: 1,
+    evaluatorVersion: 1,
+    capturedAt: snapshot.workflowRun.startedAt,
+    policy,
+  };
 }
 
 export class InMemoryWorkflowRepository implements WorkflowRepository {
@@ -573,6 +643,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
   /** 批次 5：订阅策略。键与 sqlite 的 (account_id, title_key) 主键对应，见
    *  subscriptionPolicyRowKey。 */
   private readonly subscriptionPolicies = new Map<string, StoredSubscriptionPolicy>();
+  private readonly subscriptionPolicyTemplates = new Map<string, StoredSubscriptionPolicyTemplate>();
   private readonly episodeSources = new Map<string, EpisodeSource>();
   private readonly chatConversations = new Map<string, ChatConversationSummary>();
   private readonly chatMessages = new Map<string, PersistedChatMessage>();
@@ -1207,6 +1278,8 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       mustContain: [...input.policy.mustContain],
       mustNotContain: [...input.policy.mustNotContain],
       customKeywords: input.policy.customKeywords ? [...input.policy.customKeywords] : [],
+      priorityGroups: input.policy.priorityGroups ? cloneWorkflowValue([...input.policy.priorityGroups]) : [],
+      seasonEpisodeRanges: (input.policy.seasonEpisodeRanges ?? []).map((range) => ({ ...range })),
       accountId: input.accountId,
       titleKey: input.titleKey,
       // created_at 只在首次写入时定；之后的保存只动 updated_at。
@@ -1217,6 +1290,53 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     };
     this.subscriptionPolicies.set(key, stored);
     return { ...stored };
+  }
+
+  async listSubscriptionPolicyTemplates(accountId: string): Promise<StoredSubscriptionPolicyTemplate[]> {
+    return [...this.subscriptionPolicyTemplates.values()]
+      .filter((template) => template.accountId === accountId)
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((template) => cloneWorkflowValue(template));
+  }
+
+  async createSubscriptionPolicyTemplate(input: { id: string; accountId: string; name: string; policy: SubscriptionPolicyWrite; now: string }): Promise<StoredSubscriptionPolicyTemplate> {
+    const template: StoredSubscriptionPolicyTemplate = {
+      id: input.id,
+      accountId: input.accountId,
+      name: input.name,
+      policy: cloneWorkflowValue({
+        mustContain: [...input.policy.mustContain],
+        mustNotContain: [...input.policy.mustNotContain],
+        episodeFilter: input.policy.episodeFilter,
+        useRegex: input.policy.useRegex,
+        cooldownDays: input.policy.cooldownDays,
+        customKeywords: [...(input.policy.customKeywords ?? [])],
+        priorityGroups: cloneWorkflowValue(input.policy.priorityGroups ?? []),
+        seasonEpisodeRanges: (input.policy.seasonEpisodeRanges ?? []).map((range) => ({ ...range })),
+      }),
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+    this.subscriptionPolicyTemplates.set(`${input.accountId}\u0000${input.id}`, template);
+    return cloneWorkflowValue(template);
+  }
+
+  async updateSubscriptionPolicyTemplate(input: { id: string; accountId: string; name: string; policy: SubscriptionPolicyWrite; now: string }): Promise<StoredSubscriptionPolicyTemplate | null> {
+    const key = `${input.accountId}\u0000${input.id}`;
+    const existing = this.subscriptionPolicyTemplates.get(key);
+    if (!existing) return null;
+    const updated: StoredSubscriptionPolicyTemplate = {
+      ...existing,
+      name: input.name,
+      policy: cloneWorkflowValue({ ...input.policy, mustContain: [...input.policy.mustContain], mustNotContain: [...input.policy.mustNotContain], customKeywords: [...(input.policy.customKeywords ?? [])], priorityGroups: cloneWorkflowValue(input.policy.priorityGroups ?? []), seasonEpisodeRanges: (input.policy.seasonEpisodeRanges ?? []).map((range) => ({ ...range })) }),
+      updatedAt: input.now,
+    };
+    this.subscriptionPolicyTemplates.set(key, updated);
+    return cloneWorkflowValue(updated);
+  }
+
+  async deleteSubscriptionPolicyTemplate(input: { id: string; accountId: string }): Promise<boolean> {
+    return this.subscriptionPolicyTemplates.delete(`${input.accountId}\u0000${input.id}`);
   }
 
   async recordPolicyMatch(input: {
@@ -1315,6 +1435,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const existing = this.workflowRuns.get(cloned.workflowRun.id);
     cloned.connectedStorageId =
       cloned.connectedStorageId ?? existing?.connectedStorageId ?? null;
+    preserveQueuedRunMetadata(cloned, existing);
     const isAuxiliary = isEpisodePreservingWorkflowKind(cloned.workflowRun.kind);
     const shouldKeepEpisodes = keepCurrentEpisodes === true || isAuxiliary;
 
@@ -1408,6 +1529,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const cloned = cloneWorkflowValue(snapshot);
     cloned.accountId = cloned.accountId ?? DEFAULT_ACCOUNT_ID;
     cloned.connectedStorageId = storageValue;
+    capturePolicySnapshot(cloned, this.subscriptionPolicies.get(subscriptionPolicyRowKey(cloned.accountId, cloned.title.id)));
     const bucketKey = seasonScopeKey(cloned.season.id, storageValue);
     const isAuxiliary = isEpisodePreservingWorkflowKind(snapshot.workflowRun.kind);
     const shouldKeepEpisodes = input.keepCurrentEpisodes === true || isAuxiliary;
@@ -1446,6 +1568,16 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     }
 
     return withDerivedEpisodeSummaries(cloneWorkflowValue(stored));
+  }
+
+  async getWorkflowRunPolicySnapshot(
+    workflowRunId: string,
+    scopeArg: ScopeArg = undefined,
+  ): Promise<WorkflowPolicySnapshotLookup | null> {
+    const stored = this.workflowRuns.get(workflowRunId);
+    if (!stored || !scopeMatches(normalizeScope(scopeArg), stored.accountId, stored.connectedStorageId)) return null;
+    if (!POLICY_SNAPSHOT_RUN_KINDS.has(stored.workflowRun.kind)) return null;
+    return cloneWorkflowValue(stored.workflowRun.subscriptionPolicySnapshot ?? { schemaVersion: 0, legacyUnknown: true });
   }
 
   async claimNextQueuedWorkflowRun(input: {
@@ -2652,9 +2784,9 @@ export const ORPHAN_REQUEUE_MAX = 5;
  *  active in `isActiveWorkflowStatus`, so `reserveWorkflowRun` returns
  *  already_active forever).
  *
- *  `type3_monitor` is deliberately absent: patrol runs are created directly as
- *  `running` by `reserveWorkflowRun` (worker.ts) and no `claimNextQueuedWorkflowRun`
- *  call site asks for that kind. Keep this table in sync with the claim call sites
+ *  `type3_monitor` is both a scheduled direct-run kind and the queued manual-search
+ *  kind; the worker claims queued instances while scheduled patrols still reserve
+ *  themselves directly as `running`. Keep this table in sync with claim call sites
  *  in `worker.ts` — the `Record<WorkflowKind, boolean>` annotation is what enforces
  *  this: adding a WorkflowKind without a decision here is a tsc error (TS2741),
  *  not merely a failing test. */
@@ -2662,7 +2794,7 @@ const KIND_HAS_QUEUE_CLAIMER: Record<WorkflowKind, boolean> = {
   type1_package_init: true,
   type2_init: true,
   movie_init: true,
-  type3_monitor: false,
+  type3_monitor: true,
   replace_request: true,
   staging_recovery: true,
   // resource_search is a persisted RECORD, never queued — no worker claims it.

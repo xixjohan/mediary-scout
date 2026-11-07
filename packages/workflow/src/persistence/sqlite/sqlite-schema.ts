@@ -196,8 +196,20 @@ export const SQLITE_SCHEMA = `
     -- 后者是用户改规则的时间，拿它当水位线会让每次编辑都看起来像刚匹配过。
     last_taken_at text,
     custom_keywords text NOT NULL DEFAULT '[]',
+    priority_groups text NOT NULL DEFAULT '[]',
+    season_episode_ranges text NOT NULL DEFAULT '[]',
     PRIMARY KEY (account_id, title_key)
   );
+  CREATE TABLE IF NOT EXISTS subscription_policy_templates (
+    id text PRIMARY KEY,
+    account_id text NOT NULL,
+    name text NOT NULL,
+    payload text NOT NULL,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_subscription_policy_templates_account
+    ON subscription_policy_templates (account_id, name);
   CREATE TABLE IF NOT EXISTS episode_sources (
     account_id text NOT NULL,
     drive text NOT NULL DEFAULT '',
@@ -449,6 +461,12 @@ export function upgradeSubscriptionPolicyShape(db: Database.Database): void {
   }
   if (!cols.some((c) => c.name === "custom_keywords")) {
     db.exec("ALTER TABLE subscription_policies ADD COLUMN custom_keywords text NOT NULL DEFAULT '[]'");
+  }
+  if (!cols.some((c) => c.name === "priority_groups")) {
+    db.exec("ALTER TABLE subscription_policies ADD COLUMN priority_groups text NOT NULL DEFAULT '[]'");
+  }
+  if (!cols.some((c) => c.name === "season_episode_ranges")) {
+    db.exec("ALTER TABLE subscription_policies ADD COLUMN season_episode_ranges text NOT NULL DEFAULT '[]'");
   }
 }
 

@@ -118,6 +118,8 @@ describe("subscriptionPolicyToColumns", () => {
       use_regex: 1,
       cooldown_days: 7,
       custom_keywords: "[]",
+      priority_groups: "[]",
+      season_episode_ranges: "[]",
     });
   });
 
@@ -141,8 +143,30 @@ describe("roundTripPolicy — 用户存的必须原样回来", () => {
       episodeFilter: "S01-S03;E01-E10",
       useRegex: true,
       cooldownDays: 14,
+      priorityGroups: [],
+      seasonEpisodeRanges: [
+        { seasonNumber: 1, startEpisode: 2, endEpisode: 9 },
+        { seasonNumber: 2, startEpisode: 4, endEpisode: null },
+      ],
     };
     expect(roundTripPolicy(policy)).toEqual(policy);
+  });
+
+  it("逐季范围按季度从存储列读回", () => {
+    const stored = subscriptionPolicyFromRow(row({
+      season_episode_ranges: '[{"seasonNumber":1,"startEpisode":3,"endEpisode":8},{"seasonNumber":2,"startEpisode":1,"endEpisode":null}]',
+    }));
+    expect(stored.seasonEpisodeRanges).toEqual([
+      { seasonNumber: 1, startEpisode: 3, endEpisode: 8 },
+      { seasonNumber: 2, startEpisode: 1, endEpisode: null },
+    ]);
+  });
+
+  it("损坏或重复季度的存储范围抛出明确错误", () => {
+    expect(() => subscriptionPolicyFromRow(row({ season_episode_ranges: "not-json" })).seasonEpisodeRanges).toThrow();
+    expect(() => subscriptionPolicyFromRow(row({
+      season_episode_ranges: '[{"seasonNumber":1,"startEpisode":1,"endEpisode":null},{"seasonNumber":1,"startEpisode":2,"endEpisode":3}]',
+    }))).toThrow(/duplicate season/);
   });
 
   it("**useRegex 翻转后仍能分辨**（布尔不会被 0/1 吃掉）", () => {
@@ -169,6 +193,8 @@ describe("emptyStoredPolicy", () => {
       useRegex: false,
       cooldownDays: 0,
       customKeywords: [],
+      priorityGroups: [],
+      seasonEpisodeRanges: [],
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       // 冷却期水位线：一个从没匹配过的策略是 null，不是空串（空串 Date.parse 成 NaN，

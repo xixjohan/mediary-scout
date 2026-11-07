@@ -286,14 +286,22 @@ function RetryButton({ runId, title }: { runId: string; title: string }) {
       const result = (await res.json()) as {
         status?: string;
         reason?: RetryRefusalReason;
+        message?: string;
       };
-      if (result.status !== "retried") {
+      if (result.status === "queued" || result.status === "already_running") {
         setDialogSpec({
-          title: "无法重试",
+          title: result.status === "queued" ? "已加入补搜队列" : "已有任务正在处理",
+          description: result.message ?? `「${title}」的订阅补搜任务已受理，可在活动页查看进度。`,
+          confirmLabel: "知道了",
+          hideCancel: true,
+        });
+      } else if (result.status !== "retried") {
+        setDialogSpec({
+          title: result.status === "no_missing" ? "没有待补搜资源" : "无法重试",
           description:
-            result.reason === "kind_not_retriable"
-              ? `「${title}」是巡检任务，不能单独重试。请在设置里触发一次巡检，或等待下一次自动巡检。`
-              : `「${title}」无法重试（可能已在处理）。`,
+            result.message ?? (result.reason === "kind_not_retriable"
+              ? `「${title}」对应的任务类型不能直接重试，请从对应页面重新触发。`
+              : `「${title}」无法重试（可能已在处理）。`),
           confirmLabel: "知道了",
           hideCancel: true,
         });

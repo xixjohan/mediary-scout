@@ -48,6 +48,23 @@ export interface SubscriptionPolicy {
   cooldownDays: number;
   /** User-defined custom search keywords to use during search / automated patrol. */
   customKeywords?: string[];
+  /** Ordered fallback groups. First matching group wins; empty means no ranking gate. */
+  priorityGroups?: SubscriptionPriorityGroup[];
+  /** Optional per-season inclusive episode ranges; an absent season has no extra bound. */
+  seasonEpisodeRanges?: SeasonEpisodeRange[];
+}
+
+export interface SeasonEpisodeRange {
+  seasonNumber: number;
+  startEpisode: number;
+  endEpisode: number | null;
+}
+
+export interface SubscriptionPriorityGroup {
+  id: string;
+  name: string;
+  mustContain: string[];
+  mustNotContain: string[];
 }
 
 export const EMPTY_POLICY: SubscriptionPolicy = {
@@ -57,6 +74,8 @@ export const EMPTY_POLICY: SubscriptionPolicy = {
   useRegex: false,
   cooldownDays: 0,
   customKeywords: [],
+  priorityGroups: [],
+  seasonEpisodeRanges: [],
 };
 
 /**
@@ -210,7 +229,14 @@ function resourceEpisodes(resource: PolicyResource): { season: string | null; ep
   return { season, episode };
 }
 
-export type PolicyVerdict = { matched: true } | { matched: false; reason: PolicyRejectReason };
+/** A release title can describe a whole episode interval; defer its range decision
+ * until the archive is inspected file by file. This avoids dropping a season pack
+ * because its title starts before the user's requested episode. */
+function describesEpisodePack(name: string): boolean {
+  return /[Ss]\d{1,2}[Ee]\d{1,4}\s*(?:-|~|至)\s*[Ee]?\d{1,4}/i.test(name);
+}
+
+export type PolicyVerdict = { matched: true; priorityGroupId?: string; priorityGroupName?: string } | { matched: false; reason: PolicyRejectReason };
 
 export type PolicyRejectReason =
   /** A `mustNotContain` term hit. */
@@ -218,45 +244,75 @@ export type PolicyRejectReason =
   /** A `mustContain` term was missing. */
   | "missing_term"
   /** The episode filter does not admit this episode. */
-  | "episode_filtered";
+  | "episode_filtered"
+  | "priority_unmatched";
+
+export interface MatchPolicyOptions {
+  /** File validation runs after unpacking and must reject video files without usable season/episode metadata. */
+  requireSeasonEpisodeForRange?: boolean;
+}
+
+function matchPriorityGroup(policy: SubscriptionPolicy, name: string): PolicyVerdict {
+  const groups = policy.priorityGroups ?? [];
+  for (const group of groups) {
+    if (group.mustContain.length === 0 && group.mustNotContain.length === 0) continue;
+    const excluded = group.mustNotContain.some((term) => termMatches(term, name, policy.useRegex));
+    const included = group.mustContain.every((term) => termMatches(term, name, policy.useRegex));
+    if (!excluded && included) return { matched: true, priorityGroupId: group.id, priorityGroupName: group.name };
+  }
+  return groups.length > 0 ? { matched: false, reason: "priority_unmatched" } : { matched: true };
+}
+
+function matchPolicyTerms(policy: SubscriptionPolicy, name: string): PolicyVerdict {
+  for (const term of policy.mustNotContain) {
+    if (termMatches(normalizeTerm(term, policy.useRegex), name, policy.useRegex)) return { matched: false, reason: "excluded" };
+  }
+  for (const term of policy.mustContain) {
+    if (!termMatches(normalizeTerm(term, policy.useRegex), name, policy.useRegex)) return { matched: false, reason: "missing_term" };
+  }
+  return { matched: true };
+}
+
+function matchSeasonEpisodeRanges(policy: SubscriptionPolicy, resource: PolicyResource, options: MatchPolicyOptions): PolicyVerdict {
+  const ranges = policy.seasonEpisodeRanges ?? [];
+  if (ranges.length === 0 || (!options.requireSeasonEpisodeForRange && describesEpisodePack(resource.name))) return { matched: true };
+  const { season, episode } = resourceEpisodes(resource);
+  if ((season === null || episode === null) && options.requireSeasonEpisodeForRange) return { matched: false, reason: "episode_filtered" };
+  const range = season === null ? undefined : ranges.find((entry) => entry.seasonNumber === Number(season.slice(1)));
+  if (!range || episode === null) return { matched: true };
+  const episodeNumber = Number(episode.slice(1));
+  return episodeNumber < range.startEpisode || (range.endEpisode !== null && episodeNumber > range.endEpisode)
+    ? { matched: false, reason: "episode_filtered" }
+    : { matched: true };
+}
+
+function matchEpisodeFilter(policy: SubscriptionPolicy, resource: PolicyResource): PolicyVerdict {
+  const admitted = parseEpisodeFilter(policy.episodeFilter);
+  if (admitted === null) return { matched: false, reason: "episode_filtered" };
+  if (admitted.size === 0) return { matched: true };
+  const { season, episode } = resourceEpisodes(resource);
+  const admittedResource =
+    (season !== null && admitted.has(season)) ||
+    (episode !== null && admitted.has(episode)) ||
+    // An exact `SxxEyy` clause admits only that pair.
+    (season !== null && episode !== null && admitted.has(`${season}${episode}`));
+  return admittedResource ? { matched: true } : { matched: false, reason: "episode_filtered" };
+}
 
 /**
  * Whether a resource satisfies a policy. Pure, and the single implementation both the
  * patrol and 规则预览 call — that shared core is the whole point: a preview that
  * promises what the run will not do is worse than no preview.
  */
-export function matchPolicy(policy: SubscriptionPolicy, resource: PolicyResource): PolicyVerdict {
+export function matchPolicy(policy: SubscriptionPolicy, resource: PolicyResource, options: MatchPolicyOptions = {}): PolicyVerdict {
   const name = resource.name;
-
-  for (const term of policy.mustNotContain) {
-    if (termMatches(normalizeTerm(term, policy.useRegex), name, policy.useRegex)) {
-      return { matched: false, reason: "excluded" };
-    }
-  }
-
-  for (const term of policy.mustContain) {
-    if (!termMatches(normalizeTerm(term, policy.useRegex), name, policy.useRegex)) {
-      return { matched: false, reason: "missing_term" };
-    }
-  }
-
-  const admitted = parseEpisodeFilter(policy.episodeFilter);
-  if (admitted === null) {
-    // An unparseable filter excludes everything: matching against a filter we could not
-    // read would be a guess about what the user meant.
-    return { matched: false, reason: "episode_filtered" };
-  }
-  if (admitted.size > 0) {
-    const { season, episode } = resourceEpisodes(resource);
-    const ok =
-      (season !== null && admitted.has(season)) ||
-      (episode !== null && admitted.has(episode)) ||
-      // An exact `SxxEyy` clause admits only that pair.
-      (season !== null && episode !== null && admitted.has(`${season}${episode}`));
-    if (!ok) return { matched: false, reason: "episode_filtered" };
-  }
-
-  return { matched: true };
+  const terms = matchPolicyTerms(policy, name);
+  if (!terms.matched) return terms;
+  const seasonRange = matchSeasonEpisodeRanges(policy, resource, options);
+  if (!seasonRange.matched) return seasonRange;
+  const episodeFilter = matchEpisodeFilter(policy, resource);
+  if (!episodeFilter.matched) return episodeFilter;
+  return matchPriorityGroup(policy, name);
 }
 
 export interface PolicyPreview {

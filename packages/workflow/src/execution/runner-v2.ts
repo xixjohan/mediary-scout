@@ -76,11 +76,12 @@ interface TvV2Common {
   now?: () => string;
 }
 
-async function subscriptionPolicyFilterOption(input: Pick<TvV2Common, "repository" | "accountId" | "title">) {
+async function subscriptionPolicyFilterOption(input: Pick<TvV2Common, "repository" | "accountId" | "title" | "workflowRun">) {
   return loadSubscriptionPolicyFilter({
     repository: input.repository,
     accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
     titleKey: input.title.id,
+    workflowRunId: input.workflowRun.id,
   });
 }
 
@@ -327,12 +328,17 @@ export async function runType2InitializationV2AndPersist(
 }
 
 export async function runType3MonitoringV2AndPersist(
-  input: TvV2Common & { season: TrackedSeason; episodes: EpisodeState[] },
+  input: TvV2Common & {
+    season: TrackedSeason;
+    episodes: EpisodeState[];
+    notificationTrigger?: "scheduled" | "user";
+  },
 ): Promise<BridgedV2Result> {
   const now = resolveNow(input);
   const bridged = await runTvAcquisitionV2({
     title: input.title,
     mode: "type3",
+    ...(input.notificationTrigger === undefined ? {} : { notificationTrigger: input.notificationTrigger }),
     seasons: [
       {
         seasonNumber: input.season.seasonNumber,
@@ -784,6 +790,8 @@ export async function runMovieAcquisitionV2AndPersist(input: {
   titleResearch?: TitleResearchOptions;
   /** A replace_request run (user message): persisted under kind replace_request. */
   userRequest?: RunMovieAcquisitionV2Request["userRequest"];
+  /** Used by queued manual searches of already-tracked films; avoids treating them as new tracking runs. */
+  workflowKind?: "movie_init" | "type3_monitor";
   /** Replace runs: whether the film was obtained before (see RunMovieAcquisitionV2Request). */
   priorObtained?: boolean;
   /** How the notification is pushed (see stampReplaceNotification): replace runs, and
@@ -835,7 +843,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     workflowRun: {
       ...run,
       id: input.workflowRun.id,
-      kind: input.userRequest ? "replace_request" : "movie_init",
+      kind: input.userRequest ? "replace_request" : input.workflowKind ?? "movie_init",
       trackedSeasonId: result.season.id,
       startedAt: input.workflowRun.startedAt,
       auditEvents: result.auditEvents,

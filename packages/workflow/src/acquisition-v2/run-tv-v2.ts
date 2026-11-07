@@ -67,6 +67,8 @@ export interface RunTvAcquisitionV2Request {
   stagingRecovery?: RunAcquisitionV2WorkflowRequest["stagingRecovery"];
   /** Web-reference tools (alternate titles, fan-season ↔ TMDB episode mapping). */
   titleResearch?: RunAcquisitionV2WorkflowRequest["titleResearch"];
+  /** Override the routine-patrol notification when a user explicitly reruns a tracked season. */
+  notificationTrigger?: "scheduled" | "user";
   onProgress?: (event: AgentToolEvent) => void;
   now?: () => string;
 }
@@ -133,6 +135,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     v2,
     workflowRunId: request.workflowRunId,
     now: request.now ?? defaultNowIso,
+    ...(request.notificationTrigger === undefined ? {} : { notificationTrigger: request.notificationTrigger }),
   });
   return v2.replacement ? { ...bridged, replacement: v2.replacement } : bridged;
 }

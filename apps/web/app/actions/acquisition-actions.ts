@@ -32,6 +32,67 @@ export interface RequestTrackingActionResult {
   message: string;
 }
 
+export interface ManualSubscriptionSearchActionResult {
+  status:
+    | "queued"
+    | "already_running"
+    | "not_tracked"
+    | "no_missing"
+    | "not_ready"
+    | "invalid_target"
+    | "invalid_storage"
+    | "storage_frozen"
+    | "not_configured";
+  message: string;
+  workflowRunId?: string;
+  trackedSeasonId?: string;
+}
+
+export async function manualSubscriptionSearchAction(input: {
+  tmdbId: number;
+  mediaType: "movie" | "tv" | "anime";
+  seasonNumber?: number;
+  storageId?: string;
+}): Promise<ManualSubscriptionSearchActionResult> {
+  assertNotDemo();
+  if (
+    !Number.isInteger(input.tmdbId) ||
+    input.tmdbId <= 0 ||
+    (input.mediaType === "movie"
+      ? input.seasonNumber !== undefined
+      : !Number.isInteger(input.seasonNumber) || input.seasonNumber! < 0 || input.seasonNumber! > 99)
+  ) {
+    return { status: "invalid_target", message: "作品类型或季数无效，请刷新后重试。" };
+  }
+
+  const {
+    getActiveWorkspaceScope,
+    getCurrentAccountSummary,
+    isSharedResourceMode,
+  } = await import("../../lib/workflow-runtime");
+  if (isSharedResourceMode()) {
+    const summary = await getCurrentAccountSummary();
+    if (!summary?.isOwner) {
+      return { status: "not_configured", message: "共用媒体库中只有站长可以手动触发补搜。" };
+    }
+  }
+  const scope = await getActiveWorkspaceScope(input.storageId);
+  const { triggerManualSubscriptionSearch } = await import(
+    "../../features/acquisition/application/manual-subscription-search-service"
+  );
+  const result = await triggerManualSubscriptionSearch({
+    accountId: scope.accountId,
+    storageId: scope.connectedStorageId,
+    tmdbId: input.tmdbId,
+    mediaType: input.mediaType,
+    ...(input.seasonNumber === undefined ? {} : { seasonNumber: input.seasonNumber }),
+    source: "ui",
+  });
+  revalidatePath(`/show/${input.tmdbId}`);
+  revalidatePath("/activity");
+  return result;
+}
+
 export async function requestTrackingAction(input?: {
   candidateId?: string;
   currentState?: "can_request" | "already_tracked" | "active_workflow" | "can_reserve" | "reserved";

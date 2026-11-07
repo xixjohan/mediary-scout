@@ -4,7 +4,7 @@ import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import type { TitleHubSeason } from "../../../lib/title-hub";
 import { seasonBadgeState } from "../../../lib/title-aggregate";
 import { SeasonDetails } from "../../catalog/components/season-details";
-import { RequestSeasonButton } from "../../catalog/components/title-action-buttons";
+import { ManualSubscriptionSearchButton, RequestSeasonButton } from "../../catalog/components/title-action-buttons";
 import { SwapEpisodeCell } from "./swap-keep";
 import { MissingEpisodeCell } from "./missing-episode-cell";
 import { UntrackButton } from "./untrack-button";
@@ -29,6 +29,7 @@ export interface SeasonRowProps {
   tmdbId: number;
   /** Tree model: the active workspace drive — acquisition lands HERE. */
   storageId: string | undefined;
+  mediaType: "tv" | "anime";
   /** Library path to return to after a whole-show untrack. */
   basePath: string;
   acquiring: boolean;
@@ -42,6 +43,7 @@ export function SeasonRow({
   season,
   tmdbId,
   storageId,
+  mediaType,
   basePath,
   acquiring,
   swap,
@@ -146,15 +148,27 @@ export function SeasonRow({
           })}
         </div>
         {canManageMedia ? (
-          <div className="season-untrack-row">
-            <UntrackButton
-              tmdbId={tmdbId}
-              storageId={storageId}
-              mediaKind="tv"
-              seasonNumber={season.seasonNumber}
-              basePath={basePath}
-              label={`取消第 ${season.seasonNumber} 季追踪`}
-            />
+          <div className="season-subscription-actions">
+            {season.missingAiredCount > 0 ? (
+              <ManualSubscriptionSearchButton
+                tmdbId={tmdbId}
+                mediaType={mediaType}
+                seasonNumber={season.seasonNumber}
+                storageId={storageId}
+                activityHref={storageId ? `/activity?w=${encodeURIComponent(storageId)}` : "/activity"}
+                isAcquiring={season.acquiring ?? false}
+              />
+            ) : null}
+            <div className="season-untrack-row">
+              <UntrackButton
+                tmdbId={tmdbId}
+                storageId={storageId}
+                mediaKind="tv"
+                seasonNumber={season.seasonNumber}
+                basePath={basePath}
+                label={`取消第 ${season.seasonNumber} 季追踪`}
+              />
+            </div>
           </div>
         ) : null}
       </SeasonDetails>

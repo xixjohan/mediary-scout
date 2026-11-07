@@ -28,7 +28,9 @@
 
 import {
   EMPTY_POLICY,
+  type SubscriptionPriorityGroup,
   type SubscriptionPolicy,
+  type SeasonEpisodeRange,
 } from "../execution/subscription-policy.js";
 
 /** The persisted row: the policy plus its scope and timestamps. */
@@ -62,6 +64,8 @@ export interface SubscriptionPolicyRow {
   updated_at: string;
   last_taken_at: string | null;
   custom_keywords?: string | null;
+  priority_groups?: string | null;
+  season_episode_ranges?: string | null;
 }
 
 /**
@@ -111,6 +115,8 @@ export function subscriptionPolicyFromRow(row: SubscriptionPolicyRow): StoredSub
     updatedAt: row.updated_at,
     lastTakenAt: row.last_taken_at ?? null,
     customKeywords: row.custom_keywords ? parseTermList(row.custom_keywords, "custom_keywords") : [],
+    priorityGroups: parsePriorityGroups(row.priority_groups),
+    seasonEpisodeRanges: parseSeasonEpisodeRanges(row.season_episode_ranges),
   };
 }
 
@@ -122,6 +128,57 @@ export interface SubscriptionPolicyWrite {
   useRegex: boolean;
   cooldownDays: number;
   customKeywords?: readonly string[];
+  priorityGroups?: readonly SubscriptionPriorityGroup[];
+  seasonEpisodeRanges?: readonly SeasonEpisodeRange[];
+}
+
+export interface StoredSubscriptionPolicyTemplate {
+  id: string;
+  accountId: string;
+  name: string;
+  policy: SubscriptionPolicyWrite;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function parsePriorityGroups(raw: string | null | undefined): SubscriptionPriorityGroup[] {
+  if (!raw) return [];
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error("subscription_policies.priority_groups is not an array");
+  for (const group of parsed) {
+    if (typeof group !== "object" || group === null || Array.isArray(group)) throw new Error("subscription_policies.priority_groups has invalid entry");
+    const item = group as Record<string, unknown>;
+    if (typeof item["id"] !== "string" || typeof item["name"] !== "string" || !Array.isArray(item["mustContain"]) || !Array.isArray(item["mustNotContain"]) || [...item["mustContain"], ...item["mustNotContain"]].some((term) => typeof term !== "string")) {
+      throw new Error("subscription_policies.priority_groups has invalid entry");
+    }
+  }
+  return parsed as SubscriptionPriorityGroup[];
+}
+
+function isSeasonEpisodeRangeValue(value: unknown): value is SeasonEpisodeRange {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const item = value as Record<string, unknown>;
+  const season = item["seasonNumber"];
+  const start = item["startEpisode"];
+  const end = item["endEpisode"];
+  const validSeason = Number.isInteger(season) && (season as number) >= 0 && (season as number) <= 99;
+  const validStart = Number.isInteger(start) && (start as number) >= 1;
+  const validEnd = end === null || (Number.isInteger(end) && (end as number) >= (start as number));
+  return validSeason && validStart && validEnd;
+}
+
+function parseSeasonEpisodeRanges(raw: string | null | undefined): SeasonEpisodeRange[] {
+  if (!raw) return [];
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) throw new Error("subscription_policies.season_episode_ranges is not an array");
+  if (parsed.length > 100) throw new Error("subscription_policies.season_episode_ranges has too many entries");
+  const seenSeasons = new Set<number>();
+  for (const range of parsed) {
+    if (!isSeasonEpisodeRangeValue(range)) throw new Error("subscription_policies.season_episode_ranges has invalid entry");
+    if (seenSeasons.has(range.seasonNumber)) throw new Error("subscription_policies.season_episode_ranges has duplicate season");
+    seenSeasons.add(range.seasonNumber);
+  }
+  return parsed;
 }
 
 /** The write input → the row's column values. */
@@ -132,6 +189,8 @@ export function subscriptionPolicyToColumns(policy: SubscriptionPolicyWrite): {
   use_regex: number;
   cooldown_days: number;
   custom_keywords: string;
+  priority_groups: string;
+  season_episode_ranges: string;
 } {
   return {
     must_contain: serializeTermList(policy.mustContain),
@@ -140,6 +199,8 @@ export function subscriptionPolicyToColumns(policy: SubscriptionPolicyWrite): {
     use_regex: policy.useRegex ? 1 : 0,
     cooldown_days: policy.cooldownDays,
     custom_keywords: serializeTermList(policy.customKeywords ?? []),
+    priority_groups: JSON.stringify(policy.priorityGroups ?? []),
+    season_episode_ranges: JSON.stringify(policy.seasonEpisodeRanges ?? []),
   };
 }
 
@@ -171,5 +232,7 @@ export function roundTripPolicy(policy: SubscriptionPolicyWrite): SubscriptionPo
     ...(policy.customKeywords !== undefined
       ? { customKeywords: parseTermList(columns.custom_keywords, "custom_keywords") }
       : {}),
+    priorityGroups: parsePriorityGroups(columns.priority_groups),
+    seasonEpisodeRanges: parseSeasonEpisodeRanges(columns.season_episode_ranges),
   };
 }

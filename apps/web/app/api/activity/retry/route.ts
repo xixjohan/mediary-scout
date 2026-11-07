@@ -4,16 +4,13 @@ import { getCurrentAccountId, getWorkflowRepository } from "../../../../lib/work
 import { isQueueClaimableKind } from "@media-track/workflow";
 import type { RetryRefusalReason } from "../../../../lib/activity-view";
 import { requireApiAccount } from "../../../../lib/auth-chain";
+import { triggerManualSubscriptionSearch } from "../../../../features/acquisition/application/manual-subscription-search-service";
 
 /**
- * Manually retry a terminally FAILED acquisition (user action from the activity
- * page). Resets the run to immediately-claimable queued so the worker re-runs it.
- * Returns { status: "retried" | "not_retriable" }. When not_retriable, `reason`
- * distinguishes the two causes so the UI can say something true:
- *  - "kind_not_retriable": the run's kind has no queue claimer (patrol runs), so
- *    requeueing it would strand it in `queued` forever and block the season. The
- *    user's actual remedy is to trigger a patrol, not to retry this run.
- *  - "not_failed": the run isn't in a failed state (already queued/running/done).
+ * Retry a failed task from the activity page. A failed patrol is a historical
+ * attempt: create a fresh targeted search using the current subscription policy
+ * and link it to the old run, rather than replaying its stale policy snapshot.
+ * Other queueable kinds keep the repository's same-run retry behavior.
  */
 export async function POST(request: NextRequest) {
   const gate = await requireApiAccount(request);
@@ -26,18 +23,27 @@ export async function POST(request: NextRequest) {
   }
   const repository = getWorkflowRepository();
   const accountId = await getCurrentAccountId();
+  const snapshot = await repository.getWorkflowRunSnapshot(runId, accountId);
+  if (snapshot?.workflowRun.kind === "type3_monitor" && snapshot.workflowRun.status === "failed") {
+    const result = await triggerManualSubscriptionSearch({
+      accountId,
+      tmdbId: snapshot.title.tmdbId,
+      mediaType: snapshot.title.type,
+      ...(snapshot.title.type === "movie" ? {} : { seasonNumber: snapshot.season.seasonNumber }),
+      storageId: snapshot.connectedStorageId ?? null,
+      source: "activity",
+      sourceWorkflowRunId: runId,
+    });
+    return NextResponse.json(result);
+  }
+
   const result = await repository.retryFailedWorkflowRun(runId, accountId);
   if (result.status === "retried") {
     return NextResponse.json(result);
   }
-  // Read the run back only on the refusal path (keeps the happy path a single
-  // query) to tell the two causes apart for the UI message.
-  const snapshot = await repository.getWorkflowRunSnapshot(runId, accountId);
-  // Status is checked FIRST: a patrol that is currently running was refused for
-  // its status, not its kind, so claiming "巡检任务不能重试" would be the wrong
-  // explanation. Only a run that IS failed and whose kind has no claimer gets the
-  // kind-specific message. Unreadable run (cross-account / pruned) → the vague
-  // one, which is also the right direction for not leaking existence.
+  // Status is checked before kind so a running task is not mislabeled as a
+  // permanently non-retriable kind. An unreadable run falls back to the vague
+  // response to avoid leaking whether it exists in another account.
   const reason: RetryRefusalReason =
     snapshot &&
     snapshot.workflowRun.status === "failed" &&

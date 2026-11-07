@@ -21,7 +21,7 @@ import { SwapBadgeLive, SwapKeepProvider } from "../../../features/acquisition/c
 import { EpisodeTargetProvider } from "../../../features/acquisition/components/episode-target-context";
 import { MissingEpisodesDeck } from "../../../features/acquisition/components/missing-episodes-deck";
 import { SeasonRow } from "../../../features/acquisition/components/season-row";
-import { RequestRemainingButton, SubscriptionConfigButton } from "../../../features/catalog/components/title-action-buttons";
+import { ManualSubscriptionSearchButton, RequestRemainingButton, SubscriptionConfigButton } from "../../../features/catalog/components/title-action-buttons";
 import { UntrackButton } from "../../../features/acquisition/components/untrack-button";
 import { AcquiringStatusTrigger } from "../../../features/acquisition/components/acquiring-status-trigger";
 import { AgentMemoryNotes } from "../../../features/activity/components/agent-memory-panel";
@@ -308,7 +308,7 @@ function TvHub({
 
       <OrganizePanel tmdbId={view.tmdbId} seasonNumber={view.seasons[0]?.seasonNumber} />
 
-      {canManageMedia ? <SubscriptionPolicyPanel tmdbId={view.tmdbId} mediaType="tv" /> : null}
+      {canManageMedia ? <SubscriptionPolicyPanel tmdbId={view.tmdbId} mediaType="tv" seasonNumbers={view.seasons.map((season) => season.seasonNumber)} /> : null}
       {view.aggregate !== "untracked" ? (
         <TitleMessageSection
           tmdbId={view.tmdbId}
@@ -424,6 +424,14 @@ function MovieHub({
                       查看活动
                     </Link>
                   </>
+                ) : null}
+                {canManageMedia && view.state === "missing" ? (
+                  <ManualSubscriptionSearchButton
+                    tmdbId={view.tmdbId}
+                    mediaType="movie"
+                    storageId={storageId}
+                    activityHref={activityHref}
+                  />
                 ) : null}
                 {canManageMedia && view.state !== "untracked" ? (
                   <UntrackButton tmdbId={view.tmdbId} storageId={storageId} mediaKind="movie" basePath={basePath} />
@@ -596,6 +604,7 @@ async function SeasonRowsWithSwap({
           season={season}
           tmdbId={view.tmdbId}
           storageId={storageId}
+          mediaType={view.mediaType}
           basePath={basePath}
           acquiring={view.acquiring}
           swap={swap}

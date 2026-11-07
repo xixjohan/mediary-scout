@@ -92,6 +92,7 @@ export function bridgeV2WorkflowToResult(input: {
   v2: RunAcquisitionV2WorkflowResult;
   workflowRunId: string;
   now: () => string;
+  notificationTrigger?: NotificationEvent["trigger"];
 }): BridgedV2Result {
   const { title, v2, workflowRunId } = input;
   const obtainedSet = new Set(v2.obtained);
@@ -131,6 +132,7 @@ export function bridgeV2WorkflowToResult(input: {
     newlyObtainedCodes,
     workflowRunId,
     now: input.now,
+    ...(input.notificationTrigger === undefined ? {} : { notificationTrigger: input.notificationTrigger }),
     ...(v2.replacement ? { replacementResults: v2.replacement.results } : {}),
     // A replace run's directories hold old + new files: a landed size would double-count.
     ...(input.mode !== "replace" && v2.landedFileCount !== undefined && v2.landedBytes !== undefined
@@ -260,6 +262,7 @@ function buildNotification(input: {
   newlyObtainedCodes: string[];
   workflowRunId: string;
   now: () => string;
+  notificationTrigger?: NotificationEvent["trigger"];
   fileCount?: number;
   totalBytes?: number;
   /** replace mode: the per-episode outcome of the user's request. */
@@ -354,7 +357,7 @@ function buildNotification(input: {
       title: `${report.titleName} ${report.seasonLabel}`,
       body: formatReportPushText(report),
       createdAt: input.now(),
-      trigger: "scheduled",
+      trigger: input.notificationTrigger ?? "scheduled",
       report,
     };
   }
