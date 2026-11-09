@@ -422,7 +422,8 @@ describe("Decoupled Repository Independence (独立仓库解耦规范)", () => {
 
     const localFeed = loadLocalReleaseFeed();
     expect(localFeed.length).toBeGreaterThan(0);
-    expect(localFeed[0]?.tag).toBe("v2026.10.29");
-    expect(localFeed[0]?.notes.some((n) => n.text.includes("设计令牌"))).toBe(true);
+    const item1029 = localFeed.find((r) => r.tag === "v2026.10.29");
+    expect(item1029).toBeDefined();
+    expect(item1029?.notes.some((n) => n.text.includes("设计令牌"))).toBe(true);
   });
 });

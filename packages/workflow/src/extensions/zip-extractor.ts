@@ -6,8 +6,9 @@ import type { ExtensionManifest } from "./extension-types.js";
  * Zip Slip 漏洞防护：确保目标解压路径决不会逃逸出基准目录
  */
 export function assertSafeZipPath(targetDir: string, relativePath: string): string {
+  const normalizedRelative = relativePath.replace(/\\/g, "/");
   const resolvedTarget = path.resolve(targetDir);
-  const resolvedPath = path.resolve(targetDir, relativePath);
+  const resolvedPath = path.resolve(targetDir, normalizedRelative);
   if (!resolvedPath.startsWith(resolvedTarget + path.sep) && resolvedPath !== resolvedTarget) {
     throw new Error(`[ZipSlipDetected] 检测到路径穿越攻击，禁止解压至基准目录之外: ${relativePath}`);
   }

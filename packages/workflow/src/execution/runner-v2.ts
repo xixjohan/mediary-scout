@@ -77,12 +77,23 @@ interface TvV2Common {
 }
 
 async function subscriptionPolicyFilterOption(input: Pick<TvV2Common, "repository" | "accountId" | "title" | "workflowRun">) {
-  return loadSubscriptionPolicyFilter({
-    repository: input.repository,
-    accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
-    titleKey: input.title.id,
-    workflowRunId: input.workflowRun.id,
-  });
+  try {
+    return await loadSubscriptionPolicyFilter({
+      repository: input.repository,
+      accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
+      titleKey: input.title.id,
+      workflowRunId: input.workflowRun.id,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("无法读取此任务的订阅策略快照")) {
+      return await loadSubscriptionPolicyFilter({
+        repository: input.repository,
+        accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
+        titleKey: input.title.id,
+      });
+    }
+    throw err;
+  }
 }
 
 function resolveNow(input: { now?: () => string }): () => string {

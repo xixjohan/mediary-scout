@@ -142,7 +142,32 @@ exports.default = async function afterPack(context) {
     // 没有 standalone 拷贝（不该发生）时大声失败，而不是静默出一个打不开库的桌面端。
     throw new Error(`bundled better-sqlite3 not found at ${dir} — the standalone bundle mapping changed?`);
   }
-  const electronVersion = context.packager.electronVersion;
+
+  // 若打包产物内 better-sqlite3 已成功置换为 Electron ABI（如 CI/流水线前置步骤已完成），直接校验并放行
+  let alreadyTargetAbi = false;
+  try {
+    const script = `require(${JSON.stringify(dir)}); console.log(process.versions.modules)`;
+    const out = execFileSync(electronBinary, ["-e", script], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (Number(String(out).trim()) === ELECTRON_ABI) {
+      alreadyTargetAbi = true;
+    }
+  } catch {
+    // not yet target ABI
+  }
+  if (alreadyTargetAbi) {
+    console.log(`[after-pack] better-sqlite3 already matches Electron ABI ${ELECTRON_ABI} and verified by loading it`);
+    return;
+  }
+
+  const electronVersion =
+    context.electronVersion ??
+    context.packager.electronVersion ??
+    context.packager.config?.electronVersion ??
+    process.env.ELECTRON_VERSION ??
+    "33.4.11";
   await rebuildBundledSqliteForElectron({
     dir,
     electronVersion,

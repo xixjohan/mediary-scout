@@ -182,6 +182,7 @@ jobs:
           done
 
       - name: Import signing certificate
+        if: ${{ secrets.MAC_CERT_P12_BASE64 != '' }}
         env:
           MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
@@ -197,9 +198,10 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KC_PASS" "$KC"
           rm /tmp/cert.p12
 
-      - name: Package + sign + notarize DMG
+      - name: Package DMG
         env:
-          CSC_NAME: "Qinghai Wu (P8GK36YA6D)"
+          CSC_NAME: ${{ secrets.MAC_CERT_P12_BASE64 != '' && 'Qinghai Wu (P8GK36YA6D)' || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MAC_CERT_P12_BASE64 != '' && 'true' || 'false' }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}

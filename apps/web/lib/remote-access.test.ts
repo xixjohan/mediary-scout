@@ -414,7 +414,7 @@ describe("instanceConnectHostname（connect.sh 写进 .env 的本地域名来源
   });
 
   it("带空白/大写 → normalize", () => {
-    process.env.MEDIARY_CONNECT_HOSTNAME = "  Dirtyfancy.MediaryConnect.App  ";
+    process.env.MEDIARY_CONNECT_HOSTNAME = "  Demo-Slug.MediaryConnect.App  ";
     expect(instanceConnectHostname()).toBe("demo-slug.mediaryconnect.app");
   });
 

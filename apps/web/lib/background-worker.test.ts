@@ -297,6 +297,7 @@ describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退�
       recoverOrphanedRuns: vi.fn(async () => 0),
       workerHasConfiguredDrive: vi.fn(async () => true),
       getWorkerConcurrency: vi.fn(async () => 1),
+      runDueStrmTasks: vi.fn(async () => undefined),
     }));
     const { defaultRuntime } = await import("./background-worker");
     const runtime = await defaultRuntime();
@@ -313,6 +314,7 @@ describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退�
       recoverOrphanedRuns: vi.fn(async () => 0),
       workerHasConfiguredDrive: vi.fn(async () => true),
       getWorkerConcurrency: vi.fn(async () => 1),
+      runDueStrmTasks: vi.fn(async () => undefined),
     }));
     const { defaultRuntime } = await import("./background-worker");
     return defaultRuntime();
@@ -329,6 +331,7 @@ describe("defaultRuntime — 巡检调度接线（IGNORE_TIME_GATE 特例已退�
       runAutoUpdateIfDue: vi.fn(async () => undefined),
       recoverOrphanedRuns: vi.fn(async () => 0),
       workerHasConfiguredDrive: vi.fn(async () => true),
+      runDueStrmTasks: vi.fn(async () => undefined),
     }));
     const { defaultRuntime } = await import("./background-worker");
     const runtime = await defaultRuntime();
