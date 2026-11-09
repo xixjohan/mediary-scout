@@ -1631,9 +1631,6 @@ const WAITLIST_PENDING = "pending";
  * it, as opposed to any other D1 failure. Deliberately narrow: a broad
  * catch-all here would convert real outages into cheerful 200s.
  */
-function isUniqueViolation(e: unknown): boolean {
-  return e instanceof Error && /UNIQUE constraint failed/i.test(e.message);
-}
 
 /**
  * POST /waitlist — public, unauthenticated signup.

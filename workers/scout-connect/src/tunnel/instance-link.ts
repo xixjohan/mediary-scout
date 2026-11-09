@@ -17,13 +17,13 @@ export interface InstanceLinkDeps {
   db: ConnectDb;
   now(): string;
   sessionSecret: string;
-  waffoEnvironment: string;
+  waffoEnvironment?: string | undefined;
   rootDomain: string;
   sendInstanceLinkEmail(to: string, details: {
-    verifyUrl: string;
+    url: string;
     verifyCode: string;
-    remoteIp: string;
-    requestedAtIso: string;
+    requestIp: string;
+    requestedAt: string;
   }): Promise<void>;
   newAccountId(): string;
 }

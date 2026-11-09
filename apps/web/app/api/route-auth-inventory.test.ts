@@ -101,6 +101,7 @@ const SELF_GUARDED_ROUTES = new Set([
 ]);
 
 const MCP_ROUTES = new Set(["mcp"]);
+const STRM_PLAY_ROUTES = new Set(["strm/play/[taskId]/[fileId]"]);
 
 function routeFiles(dir: string = API_ROOT): string[] {
   return readdirSync(dir).flatMap((entry) => {
@@ -111,28 +112,30 @@ function routeFiles(dir: string = API_ROOT): string[] {
 }
 
 const routes = routeFiles().map((full) => ({
-  path: full.slice(API_ROOT.length + 1, -"/route.ts".length),
+  path: full.replace(/\\/g, "/").slice(API_ROOT.replace(/\\/g, "/").length + 1, -"/route.ts".length),
   source: readFileSync(full, "utf8"),
 }));
 
 describe("S5.4 /api 路由鉴权清单", () => {
   it("枚举到的路由数量与分类稳定（新增路由必须显式归类）", () => {
-    expect(routes.length).toBe(106);
+    expect(routes.length).toBe(111);
     const open = routes.filter((r) => OPEN_ROUTES.has(r.path));
     const selfGuarded = routes.filter((r) => SELF_GUARDED_ROUTES.has(r.path));
     const mcpGuarded = routes.filter((r) => MCP_ROUTES.has(r.path));
     const guarded = routes.filter(
-      (r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path),
+      (r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path) && !STRM_PLAY_ROUTES.has(r.path),
     );
     expect(open.length).toBe(OPEN_ROUTES.size);
     expect(selfGuarded.length).toBe(SELF_GUARDED_ROUTES.size);
     expect(mcpGuarded.length).toBe(MCP_ROUTES.size);
-    expect(guarded.length).toBe(88);
+    const strmPlayGuarded = routes.filter((r) => STRM_PLAY_ROUTES.has(r.path));
+    expect(strmPlayGuarded.length).toBe(STRM_PLAY_ROUTES.size);
+    expect(guarded.length).toBe(92);
   });
 
-  it("88 个非白名单路由全部引用 requireApiAccount 登录链", () => {
+  it("92 个非白名单路由全部引用 requireApiAccount 登录链", () => {
     const missing = routes
-      .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path))
+      .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path) && !STRM_PLAY_ROUTES.has(r.path))
       .filter((r) => !usesImportedFunction(r.source, "requireApiAccount"))
       .map((r) => r.path);
     expect(missing).toEqual([]);
@@ -169,6 +172,13 @@ describe("S5.4 /api 路由鉴权清单", () => {
       const source = routes.find((r) => r.path === path)?.source ?? "";
       expect(callsFunction(source, "agentApiGuard"), `${path} 必须真的调用 agentApiGuard`).toBe(true);
     }
+  });
+
+  it("strm/play 与 mcp 独立协议路由各自的鉴权机制仍在位", () => {
+    const playSource = routes.find((r) => r.path === "strm/play/[taskId]/[fileId]")?.source ?? "";
+    expect(callsFunction(playSource, "verifyStrmPlayToken"), "strm/play 必须调用 verifyStrmPlayToken").toBe(true);
+    const mcpSource = routes.find((r) => r.path === "mcp")?.source ?? "";
+    expect(callsFunction(mcpSource, "resolveSecurityContext"), "mcp 必须调用 resolveSecurityContext").toBe(true);
   });
 });
 

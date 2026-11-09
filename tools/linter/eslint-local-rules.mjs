@@ -6,6 +6,8 @@
  *   · /api/workflows/run-next|run-type3                 —— worker secret（workerApiGuard）
  *   · /api/update/hold|busy|status                      —— updater token / owner session
  *   · /api/agent/*                                      —— 独立 Bearer token（agentApiGuard）
+ *   · /api/mcp                                          —— MCP 独立安全凭据（resolveSecurityContext）
+ *   · /api/strm/play/[taskId]/[fileId]                  —— 播放令牌（verifyStrmPlayToken）
  * 其余 apps/web/app/api 下的 route.ts（含顶层 /api/route.ts）必须引用
  * requireApiAccount 登录链；
  * agent/* 必须引用 agentApiGuard。新增路由忘记挂鉴权 → lint 直接红。
@@ -19,6 +21,8 @@
 const OPEN_PATTERN =
   /\/app\/api\/(health|auth\/(bootstrap|login|logout|password|register|token)|workflows\/(run-next|run-type3)|update\/(hold|busy|status))\/route\.ts$/;
 const AGENT_PATTERN = /\/app\/api\/agent\/[^/]+\/route\.ts$/;
+const MCP_PATTERN = /\/app\/api\/mcp\/route\.ts$/;
+const STRM_PLAY_PATTERN = /\/app\/api\/strm\/play\/\[taskId\]\/\[fileId\]\/route\.ts$/;
 const API_ROUTE_PATTERN = /\/app\/api\/(?:.+?\/)?route\.ts$/;
 
 /** @type {import("eslint").Rule.RuleModule} */
@@ -35,28 +39,49 @@ const apiAuthRequired = {
         "S5.4 违规：{{path}} 是非白名单 /api 路由，必须调用 requireApiAccount(request) 登录链（session cookie → Bearer JWT → 单用户局域网默认账号）。",
       missingAgentGuard:
         "S5.4 违规：{{path}} 是 agent /api 路由，必须调用 agentApiGuard(request) 独立 token 守卫。",
+      missingMcpGuard:
+        "S5.4 违规：{{path}} 是 MCP /api 路由，必须调用 resolveSecurityContext(request) 协议鉴权。",
+      missingStrmGuard:
+        "S5.4 违规：{{path}} 是 STRM 播放路由，必须调用 verifyStrmPlayToken(...) 进行令牌鉴权。",
     },
   },
   create(context) {
-    const filename = context.filename ?? context.getFilename?.() ?? "";
+    const rawFilename = context.filename ?? context.getFilename?.() ?? "";
+    const filename = rawFilename.replace(/\\/g, "/");
     if (!API_ROUTE_PATTERN.test(filename)) return {};
 
     // 「有没有真的调用」：只看 CallExpression 的 callee 标识符，注释与字符串都
     // 不是 CallExpression，天然排除。
     let callsChain = false;
     let callsAgentGuard = false;
+    let callsMcpGuard = false;
+    let callsStrmGuard = false;
     return {
       CallExpression(node) {
         const callee = node.callee;
         if (callee?.type !== "Identifier") return;
         if (callee.name === "requireApiAccount") callsChain = true;
         if (callee.name === "agentApiGuard") callsAgentGuard = true;
+        if (callee.name === "resolveSecurityContext") callsMcpGuard = true;
+        if (callee.name === "verifyStrmPlayToken") callsStrmGuard = true;
       },
       "Program:exit"(node) {
         if (OPEN_PATTERN.test(filename)) return;
         if (AGENT_PATTERN.test(filename)) {
           if (!callsAgentGuard) {
             context.report({ node, messageId: "missingAgentGuard", data: { path: filename } });
+          }
+          return;
+        }
+        if (MCP_PATTERN.test(filename)) {
+          if (!callsMcpGuard) {
+            context.report({ node, messageId: "missingMcpGuard", data: { path: filename } });
+          }
+          return;
+        }
+        if (STRM_PLAY_PATTERN.test(filename)) {
+          if (!callsStrmGuard) {
+            context.report({ node, messageId: "missingStrmGuard", data: { path: filename } });
           }
           return;
         }
