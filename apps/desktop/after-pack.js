@@ -20,6 +20,8 @@ function resolveBundledSqliteDir(appOutDir, platform, productName) {
     platform === "darwin"
       ? path.join(appOutDir, `${productName}.app`, "Contents", "Resources")
       : path.join(appOutDir, "resources");
+  const directPath = path.join(resourcesDir, "app", "node_modules", "better-sqlite3");
+  if (existsSync(directPath)) return directPath;
   return path.join(
     resourcesDir,
     "app",
@@ -75,13 +77,28 @@ async function rebuildBundledSqliteForElectron(options) {
     stdio: "inherit",
   });
 
-  // 2) 杀死 silent no-op：二进制内容必须真的变了。
+  // 2) 杀死 silent no-op：二进制内容必须真的变了（或者已被前置流程成功换至目标 ABI）。
   const after = hash(nativeBinary);
   if (before === after) {
-    throw new Error(
-      `better-sqlite3 binary did not change after the Electron ABI swap in ${dir} — ` +
-        "the packaged app would crash with ERR_DLOPEN_FAILED on launch. Refusing to ship.",
-    );
+    let alreadyValid = false;
+    try {
+      const script = `require(${JSON.stringify(dir)}); console.log(process.versions.modules)`;
+      const out = exec(electronBin, ["-e", script], {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (Number(String(out).trim()) === ELECTRON_ABI) {
+        alreadyValid = true;
+      }
+    } catch {
+      // ignore check failure, fall through to throw
+    }
+    if (!alreadyValid) {
+      throw new Error(
+        `better-sqlite3 binary did not change after the Electron ABI swap in ${dir} — ` +
+          "the packaged app would crash with ERR_DLOPEN_FAILED on launch. Refusing to ship.",
+      );
+    }
   }
 
   // 3) 终验：让 Electron 自己以 Node 模式 require 这份二进制，并读回 ABI。

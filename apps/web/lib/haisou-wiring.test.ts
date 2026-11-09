@@ -34,8 +34,7 @@ describe("getWorkerResourceProvider — haisou mounting", () => {
   it("mounts haisou when an api key is configured", async () => {
     const { getWorkerResourceProvider } = await import("./workflow-runtime");
     const provider = await getWorkerResourceProvider(settingsWith({ haisou_api_key: "idr_test" }));
-    // A Composite means "more than one source" — PanSou alone is returned bare.
-    expect(provider.constructor.name).toBe("CompositeResourceProvider");
+    expect(provider.constructor.name).toBe("SearchProviderRegistry");
     const names = (provider as unknown as { providers: Array<{ name: string }> }).providers.map((p) => p.name);
     expect(names).toContain("haisou");
     expect(names).toContain("pansou");
@@ -44,20 +43,14 @@ describe("getWorkerResourceProvider — haisou mounting", () => {
   it("leaves haisou out when no key is configured", async () => {
     const { getWorkerResourceProvider } = await import("./workflow-runtime");
     const provider = await getWorkerResourceProvider(settingsWith({}));
-    const isComposite = provider.constructor.name === "CompositeResourceProvider";
-    const names = isComposite
-      ? (provider as unknown as { providers: Array<{ name: string }> }).providers.map((p) => p.name)
-      : [];
+    const names = (provider as unknown as { providers: Array<{ name: string }> }).providers.map((p) => p.name);
     expect(names).not.toContain("haisou");
   });
 
   it("treats a blank/whitespace key as unconfigured", async () => {
     const { getWorkerResourceProvider } = await import("./workflow-runtime");
     const provider = await getWorkerResourceProvider(settingsWith({ haisou_api_key: "   " }));
-    const isComposite = provider.constructor.name === "CompositeResourceProvider";
-    const names = isComposite
-      ? (provider as unknown as { providers: Array<{ name: string }> }).providers.map((p) => p.name)
-      : [];
+    const names = (provider as unknown as { providers: Array<{ name: string }> }).providers.map((p) => p.name);
     expect(names).not.toContain("haisou");
   });
 

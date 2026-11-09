@@ -116,6 +116,14 @@ jobs:
           TAG: ${{ needs.preflight.outputs.tag }}
         run: node apps/desktop/scripts/stamp-release.cjs "$TAG"
 
+      - name: Copy better-sqlite3 and native dependencies into Next standalone
+        shell: bash
+        run: |
+          mkdir -p apps/web/.next/standalone/node_modules
+          cp -r node_modules/better-sqlite3 apps/web/.next/standalone/node_modules/
+          [ -d node_modules/bindings ] && cp -r node_modules/bindings apps/web/.next/standalone/node_modules/ || true
+          [ -d node_modules/file-uri-to-path ] && cp -r node_modules/file-uri-to-path apps/web/.next/standalone/node_modules/ || true
+
       # Turbopack also emits a hashed copy of better-sqlite3 under
       # standalone/apps/web/.next/node_modules/ and the generated server code
       # requires THAT copy — so every better_sqlite3.node in the standalone
@@ -253,6 +261,14 @@ jobs:
         env:
           TAG: ${{ needs.preflight.outputs.tag }}
         run: node apps/desktop/scripts/stamp-release.cjs "$TAG"
+
+      - name: Copy better-sqlite3 and native dependencies into Next standalone
+        shell: bash
+        run: |
+          mkdir -p apps/web/.next/standalone/node_modules
+          cp -r node_modules/better-sqlite3 apps/web/.next/standalone/node_modules/
+          [ -d node_modules/bindings ] && cp -r node_modules/bindings apps/web/.next/standalone/node_modules/ || true
+          [ -d node_modules/file-uri-to-path ] && cp -r node_modules/file-uri-to-path apps/web/.next/standalone/node_modules/ || true
 
       # Turbopack also emits a hashed copy of better-sqlite3 under
       # standalone/apps/web/.next/node_modules/ and the generated server code

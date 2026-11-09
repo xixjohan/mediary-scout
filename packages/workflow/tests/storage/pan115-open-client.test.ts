@@ -403,4 +403,198 @@ describe("Pan115OpenClient", () => {
     expect(res.url).toBe("https://115-direct-cdn.com/download/test.mkv?sign=abc");
     expect(res.userAgent).toBe("Infuse/7.7");
   });
+
+  // =========================================================================
+  // 开放平台 REST 端点规范契约与防回归门禁测试
+  // =========================================================================
+
+  it("createFolder calls /open/folder/add with file_name and pid parameters", async () => {
+    let capturedUrl = "";
+    let capturedBody = "";
+    const mockFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedBody = String(init?.body || "");
+      if (url.includes("/open/folder/add")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            state: true,
+            code: 0,
+            data: {
+              file_id: "cid_new_folder_999",
+              file_name: "TestFolder",
+            },
+          }),
+        } as unknown as Response;
+      }
+      return { ok: false, status: 404 } as unknown as Response;
+    });
+
+    const client = new Pan115OpenClient({
+      credentials: {
+        accessToken: "active_token",
+        refreshToken: "valid_rt",
+        expiresAt: Date.now() + 3600000,
+      },
+      fetchImpl: mockFetch as any,
+    });
+
+    const createdId = await client.createFolder({ name: "TestFolder", parentId: "123456" });
+
+    // 核心契约断言: 绝对不能请求旧的 /open/ufile/dir_add
+    expect(capturedUrl).toContain("/open/folder/add");
+    expect(capturedUrl).not.toContain("/open/ufile/dir_add");
+
+    // 入参契约断言: 必须包含 file_name 和 pid
+    const params = new URLSearchParams(capturedBody);
+    expect(params.get("file_name")).toBe("TestFolder");
+    expect(params.get("pid")).toBe("123456");
+    expect(createdId).toBe("cid_new_folder_999");
+  });
+
+  it("addOfflineTask calls /open/offline/add_task_urls with urls and wp_path_id parameters", async () => {
+    let capturedUrl = "";
+    let capturedBody = "";
+    const mockFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedBody = String(init?.body || "");
+      if (url.includes("/open/offline/add_task_urls")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            state: true,
+            code: 0,
+            data: [
+              {
+                state: true,
+                info_hash: "abcd1234efgh5678",
+                url: "magnet:?xt=urn:btih:abcd1234efgh5678",
+              },
+            ],
+          }),
+        } as unknown as Response;
+      }
+      return { ok: false, status: 404 } as unknown as Response;
+    });
+
+    const client = new Pan115OpenClient({
+      credentials: {
+        accessToken: "active_token",
+        refreshToken: "valid_rt",
+        expiresAt: Date.now() + 3600000,
+      },
+      fetchImpl: mockFetch as any,
+    });
+
+    const res = await client.addOfflineTask({
+      url: "magnet:?xt=urn:btih:abcd1234efgh5678",
+      directoryId: "dir_target_888",
+    });
+
+    expect(capturedUrl).toContain("/open/offline/add_task_urls");
+    const params = new URLSearchParams(capturedBody);
+    // 核心契约断言: 官方要求参数名必须为 urls 和 wp_path_id
+    expect(params.get("urls")).toBe("magnet:?xt=urn:btih:abcd1234efgh5678");
+    expect(params.get("wp_path_id")).toBe("dir_target_888");
+    expect(res.ok).toBe(true);
+  });
+
+  it("listOfflineTasks calls /open/offline/get_task_list and maps status codes correctly", async () => {
+    let capturedUrl = "";
+    const mockFetch = vi.fn(async (url: string) => {
+      capturedUrl = url;
+      if (url.includes("/open/offline/get_task_list")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            state: true,
+            code: 0,
+            data: {
+              page: 1,
+              count: 4,
+              tasks: [
+                { info_hash: "hash1", name: "Done.mkv", status: 2, percentDone: 100 },
+                { info_hash: "hash2", name: "Downloading.mkv", status: 1, percentDone: 45 },
+                { info_hash: "hash3", name: "Waiting.mkv", status: 0, percentDone: 0 },
+                { info_hash: "hash4", name: "Failed.mkv", status: -1, percentDone: 10 },
+              ],
+            },
+          }),
+        } as unknown as Response;
+      }
+      return { ok: false, status: 404 } as unknown as Response;
+    });
+
+    const client = new Pan115OpenClient({
+      credentials: {
+        accessToken: "active_token",
+        refreshToken: "valid_rt",
+        expiresAt: Date.now() + 3600000,
+      },
+      fetchImpl: mockFetch as any,
+    });
+
+    const tasks = await client.listOfflineTasks({ page: 1 });
+
+    // 核心契约断言: 绝对不能请求旧的 /open/offline/task_list
+    expect(capturedUrl).toContain("/open/offline/get_task_list?page=1");
+    expect(capturedUrl).not.toContain("/open/offline/task_list");
+
+    expect(tasks).toHaveLength(4);
+    // 状态码官方映射断言:
+    // status 2 -> done
+    expect(tasks[0]).toMatchObject({ infoHash: "hash1", status: 2, statusText: "done", percentDone: 100 });
+    // status 1 -> downloading
+    expect(tasks[1]).toMatchObject({ infoHash: "hash2", status: 1, statusText: "downloading", percentDone: 45 });
+    // status 0 -> waiting
+    expect(tasks[2]).toMatchObject({ infoHash: "hash3", status: 0, statusText: "waiting", percentDone: 0 });
+    // status -1 -> failed
+    expect(tasks[3]).toMatchObject({ infoHash: "hash4", status: -1, statusText: "failed" });
+  });
+
+  it("deleteItems calls /open/ufile/delete and renameFile calls /open/ufile/update", async () => {
+    const urlsCalled: string[] = [];
+    const bodiesCalled: string[] = [];
+    const mockFetch = vi.fn(async (url: string, init?: RequestInit) => {
+      urlsCalled.push(url);
+      bodiesCalled.push(String(init?.body || ""));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ state: true, code: 0 }),
+      } as unknown as Response;
+    });
+
+    const client = new Pan115OpenClient({
+      credentials: {
+        accessToken: "active_token",
+        refreshToken: "valid_rt",
+        expiresAt: Date.now() + 3600000,
+      },
+      fetchImpl: mockFetch as any,
+    });
+
+    await client.deleteItems({ fileIds: ["fid_1", "fid_2"] });
+    await client.renameFile({ fileId: "fid_1", newName: "Renamed.mkv" });
+    await client.removeOfflineTask({ infoHashes: ["hash_del_1"] });
+
+    // 删除契约断言: /open/ufile/delete (而非旧 /open/ufile/del)
+    expect(new URL(urlsCalled[0]!).pathname).toBe("/open/ufile/delete");
+    const delParams = new URLSearchParams(bodiesCalled[0]);
+    expect(delParams.get("file_ids")).toBe("fid_1,fid_2");
+
+    // 重命名契约断言: /open/ufile/update (而非旧 /open/ufile/rename)
+    expect(new URL(urlsCalled[1]!).pathname).toBe("/open/ufile/update");
+    const renameParams = new URLSearchParams(bodiesCalled[1]);
+    expect(renameParams.get("file_id")).toBe("fid_1");
+    expect(renameParams.get("file_name")).toBe("Renamed.mkv");
+
+    // 取消离线任务契约断言: /open/offline/del_task
+    expect(new URL(urlsCalled[2]!).pathname).toBe("/open/offline/del_task");
+    const removeParams = new URLSearchParams(bodiesCalled[2]);
+    expect(removeParams.get("info_hash")).toBe("hash_del_1");
+  });
 });

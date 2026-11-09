@@ -289,6 +289,18 @@ export class Pan115UnifiedStorageApi implements Pan115StorageApi {
   }
 
   async removeOfflineTask(input: { infoHashes: string[] }): Promise<Pan115ActionResult> {
+    if (this.openApi) {
+      try {
+        return await this.openApi.removeOfflineTask(input);
+      } catch (err) {
+        if (this.cookieApi) {
+          this.onFallback?.("removeOfflineTask", err);
+          return await this.cookieApi.removeOfflineTask(input);
+        }
+        throw err;
+      }
+    }
+
     if (this.cookieApi) {
       return await this.cookieApi.removeOfflineTask(input);
     }

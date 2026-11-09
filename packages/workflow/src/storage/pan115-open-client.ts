@@ -118,6 +118,26 @@ export interface Pan115OpenDownloadUrlResult {
   fileName?: string | undefined;
 }
 
+/** 115 开放平台官方 REST 端点字典 (严格对标 115 开放平台 OpenAPI 规范) */
+export const PAN115_OPEN_ENDPOINTS = {
+  // 认证与令牌
+  REFRESH_TOKEN: "/open/refreshToken",
+
+  // 文件系统与目录管理
+  FILES_LIST: "/open/ufile/files",
+  FOLDER_ADD: "/open/folder/add",
+  FOLDER_GET_INFO: "/open/folder/get_info",
+  FILE_MOVE: "/open/ufile/move",
+  FILE_UPDATE: "/open/ufile/update",
+  FILE_DELETE: "/open/ufile/delete",
+  FILE_DOWN_URL: "/open/ufile/downurl",
+
+  // 离线任务管理
+  OFFLINE_ADD_URLS: "/open/offline/add_task_urls",
+  OFFLINE_GET_TASK_LIST: "/open/offline/get_task_list",
+  OFFLINE_DEL_TASK: "/open/offline/del_task",
+} as const;
+
 /** 断言 115 开放平台 Token 刷新响应正常 */
 function assertTokenRefreshResponseOk(data: any): void {
   const code = Number(data?.code ?? 0);
@@ -482,7 +502,7 @@ export class Pan115OpenClient {
     const res = await this.request<{
       data?: Array<Record<string, unknown>>;
       count?: number;
-    }>(`/open/ufile/files?${query.toString()}`);
+    }>(`${PAN115_OPEN_ENDPOINTS.FILES_LIST}?${query.toString()}`);
 
     const rawList = Array.isArray(res.data) ? res.data : [];
     return rawList.map(formatPan115Item);
@@ -506,7 +526,7 @@ export class Pan115OpenClient {
         file_name?: string;
         file_size?: number;
       };
-    }>("/open/ufile/downurl", {
+    }>(PAN115_OPEN_ENDPOINTS.FILE_DOWN_URL, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -541,23 +561,26 @@ export class Pan115OpenClient {
   }
 
   /**
-   * 创建目录: 调用 /open/ufile/dir_add
+   * 创建目录: 调用 /open/folder/add
+   * 官方入参规范: pid (父目录ID), file_name (文件夹名称)
    */
   async createFolder(input: { name: string; parentId: string }): Promise<string> {
     const body = new URLSearchParams();
-    body.set("cname", input.name.trim());
+    body.set("file_name", input.name.trim());
     body.set("pid", String(input.parentId || "0"));
+    // 冗余注入 cname 保持最强向后兼容
+    body.set("cname", input.name.trim());
 
     const res = await this.request<{
       data?: { category_id?: string | number; file_id?: string | number; id?: string | number };
-    }>("/open/ufile/dir_add", {
+    }>(PAN115_OPEN_ENDPOINTS.FOLDER_ADD, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
 
     const createdId =
-      res.data?.category_id ?? res.data?.file_id ?? res.data?.id;
+      res.data?.file_id ?? res.data?.category_id ?? res.data?.id;
     if (!createdId) {
       throw new Error(`Create folder succeeded but no directory ID returned for "${input.name}"`);
     }
@@ -579,7 +602,7 @@ export class Pan115OpenClient {
     body.set("file_ids", input.fileIds.join(","));
     body.set("to_cid", String(input.targetDirectoryId || "0"));
 
-    await this.request("/open/ufile/move", {
+    await this.request(PAN115_OPEN_ENDPOINTS.FILE_MOVE, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -589,7 +612,7 @@ export class Pan115OpenClient {
   }
 
   /**
-   * 删除文件或目录: 调用 /open/ufile/del
+   * 删除文件或目录: 调用 /open/ufile/delete
    */
   async deleteItems(input: { fileIds: string[] }): Promise<Pan115ActionResult> {
     if (input.fileIds.length === 0) {
@@ -599,7 +622,7 @@ export class Pan115OpenClient {
     const body = new URLSearchParams();
     body.set("file_ids", input.fileIds.join(","));
 
-    await this.request("/open/ufile/del", {
+    await this.request(PAN115_OPEN_ENDPOINTS.FILE_DELETE, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -609,14 +632,14 @@ export class Pan115OpenClient {
   }
 
   /**
-   * 重命名文件/目录: 调用 /open/ufile/rename
+   * 重命名文件/目录: 调用 /open/ufile/update
    */
   async renameFile(input: { fileId: string; newName: string }): Promise<Pan115ActionResult> {
     const body = new URLSearchParams();
     body.set("file_id", input.fileId);
     body.set("file_name", input.newName.trim());
 
-    await this.request("/open/ufile/rename", {
+    await this.request(PAN115_OPEN_ENDPOINTS.FILE_UPDATE, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -627,13 +650,17 @@ export class Pan115OpenClient {
 
   /**
    * 提交磁力/HTTP 离线下载任务: 调用 /open/offline/add_task_urls
+   * 官方入参规范: urls (链接字符串，多条以 \n 分隔), wp_path_id (目标保存目录ID)
    */
   async addOfflineTask(input: { url: string; directoryId: string }): Promise<Pan115ActionResult> {
     const body = new URLSearchParams();
+    body.set("urls", input.url.trim());
+    body.set("wp_path_id", String(input.directoryId || "0"));
+    // 冗余字段兼容
     body.set("url", input.url.trim());
     body.set("savepath", String(input.directoryId || "0"));
 
-    await this.request("/open/offline/add_task_urls", {
+    const res = await this.request<any>(PAN115_OPEN_ENDPOINTS.OFFLINE_ADD_URLS, {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
@@ -641,34 +668,61 @@ export class Pan115OpenClient {
 
     return {
       ok: true,
-      message: "",
+      message: String(res?.message || res?.msg || ""),
     };
   }
 
   /**
-   * 查询当前离线任务列表: 调用 /open/offline/task_list
+   * 删除/取消离线任务: 调用 /open/offline/del_task
    */
-  async listOfflineTasks(): Promise<Pan115OfflineTask[]> {
-    const res = await this.request<{
-      data?: Array<{
-        info_hash?: string;
-        name?: string;
-        status?: number;
-        percentDone?: number;
-        file_size?: number;
-      }>;
-    }>("/open/offline/task_list");
+  async removeOfflineTask(input: { infoHashes: string[] }): Promise<Pan115ActionResult> {
+    for (const hash of input.infoHashes) {
+      if (!hash) continue;
+      const body = new URLSearchParams();
+      body.set("info_hash", hash);
+      body.set("del_source_file", "0");
+      await this.request(PAN115_OPEN_ENDPOINTS.OFFLINE_DEL_TASK, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+      });
+    }
+    return { ok: true, message: "" };
+  }
 
-    const tasks = Array.isArray(res.data) ? res.data : [];
-    return tasks.map((t) => {
-      const status = Number(t.status ?? 0);
+  /**
+   * 查询当前离线任务列表: 调用 /open/offline/get_task_list
+   */
+  async listOfflineTasks(input?: { page?: number }): Promise<Pan115OfflineTask[]> {
+    const page = input?.page ?? 1;
+    const res = await this.request<{
+      data?: {
+        tasks?: Array<Record<string, unknown>>;
+        count?: number;
+        page?: number;
+      } | Array<Record<string, unknown>>;
+    }>(`${PAN115_OPEN_ENDPOINTS.OFFLINE_GET_TASK_LIST}?page=${page}`);
+
+    const tasksRaw = Array.isArray(res.data)
+      ? res.data
+      : Array.isArray(res.data?.tasks)
+      ? res.data.tasks
+      : [];
+
+    return tasksRaw.map((t) => {
+      const status = Number(t["status"] ?? 0);
+      // 115 开放平台官方状态码规范:
+      // -1: failed, 0: waiting/allocating, 1: downloading, 2: success/done
+      const statusText =
+        status === 2 ? "done" : status === 1 ? "downloading" : status === -1 ? "failed" : "waiting";
+
       return {
-        infoHash: String(t.info_hash || ""),
-        name: String(t.name || ""),
-        percentDone: Number(t.percentDone ?? 0),
+        infoHash: String(t["info_hash"] || ""),
+        name: String(t["name"] || ""),
+        percentDone: Number(t["percentDone"] ?? (status === 2 ? 100 : 0)),
         status,
-        statusText: status === 2 ? "downloading" : status === 1 ? "waiting" : "done",
-        url: "",
+        statusText,
+        url: String(t["url"] || ""),
       };
     });
   }

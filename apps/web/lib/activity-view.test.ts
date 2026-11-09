@@ -366,6 +366,17 @@ describe("getActivityView — L1 agent 时间线", () => {
     await repo.saveWorkflowRunSnapshot(scopedRun);
 
     // 2. 未绑盘（unscoped）的任务（如未追踪电影手动入库）
+    const unscopedInit = run({
+      id: "r_unscoped_init",
+      tmdbId: 102,
+      name: "Wildwood",
+      status: "succeeded",
+      startedAt: "2026-06-17T00:00:00Z",
+    });
+    unscopedInit.accountId = "acct_user";
+    unscopedInit.connectedStorageId = null;
+    await repo.saveWorkflowRunSnapshot(unscopedInit);
+
     const unscopedRun = run({
       id: "r_unscoped",
       tmdbId: 102,

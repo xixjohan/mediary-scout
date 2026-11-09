@@ -40,7 +40,7 @@ const DEFAULT_CIRCUIT_FAILURE_THRESHOLD = 3;
 const DEFAULT_CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000;
 
 export class SearchProviderRegistry implements ResourceProvider {
-  private readonly providers = new Map<string, RegisteredProviderEntry>();
+  private readonly _providers = new Map<string, RegisteredProviderEntry>();
   private readonly inFlightSearches = new Map<string, Promise<ResourceSnapshot>>();
   private readonly strategy: SearchExecutionStrategy;
   private readonly failureThreshold: number;
@@ -56,6 +56,10 @@ export class SearchProviderRegistry implements ResourceProvider {
     this.now = options.now ?? (() => new Date().toISOString());
   }
 
+  public get providers(): RegisteredProviderEntry[] {
+    return Array.from(this._providers.values());
+  }
+
   public registerProvider(entry: {
     id: string;
     name: string;
@@ -63,7 +67,7 @@ export class SearchProviderRegistry implements ResourceProvider {
     enabled?: boolean;
     isDynamic?: boolean;
   }): void {
-    this.providers.set(entry.id, {
+    this._providers.set(entry.id, {
       id: entry.id,
       name: entry.name,
       provider: entry.provider,
@@ -79,22 +83,22 @@ export class SearchProviderRegistry implements ResourceProvider {
   }
 
   public unregisterProvider(id: string): boolean {
-    return this.providers.delete(id);
+    return this._providers.delete(id);
   }
 
   public setProviderEnabled(id: string, enabled: boolean): boolean {
-    const entry = this.providers.get(id);
+    const entry = this._providers.get(id);
     if (!entry) return false;
     entry.enabled = enabled;
     return true;
   }
 
   public getProvider(id: string): RegisteredProviderEntry | undefined {
-    return this.providers.get(id);
+    return this._providers.get(id);
   }
 
   public listProviders(): RegisteredProviderEntry[] {
-    return Array.from(this.providers.values());
+    return Array.from(this._providers.values());
   }
 
   /**
@@ -107,10 +111,10 @@ export class SearchProviderRegistry implements ResourceProvider {
       for (const ext of exts) {
         const providerId = `ext_${ext.manifest.id}`;
         if (!ext.manifest.enabled) {
-          this.providers.delete(providerId);
+          this._providers.delete(providerId);
           continue;
         }
-        const existing = this.providers.get(providerId);
+        const existing = this._providers.get(providerId);
         if (!existing) {
           const adapter = new DynamicSearchProviderAdapter(ext);
           this.registerProvider({
@@ -185,7 +189,7 @@ export class SearchProviderRegistry implements ResourceProvider {
 
   private async doSearch(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {
     const nowMs = Date.now();
-    const activeEntries = Array.from(this.providers.values()).filter((e) => this.checkCircuit(e, nowMs));
+    const activeEntries = Array.from(this._providers.values()).filter((e) => this.checkCircuit(e, nowMs));
 
     if (activeEntries.length === 0) {
       const snapshotId = `snap_empty_${Date.now()}`;
