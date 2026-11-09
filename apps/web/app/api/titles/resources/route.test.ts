@@ -37,6 +37,11 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
   getAccountStorageCredentials: vi.fn().mockResolvedValue(null),
   getWorkerResourceProvider: vi.fn().mockImplementation(async () => provider),
   movieTargetFromTmdbId: (tmdbId: number) => movieTargetFromTmdbId(tmdbId),
+  getAcquisitionFilterPreferences: vi.fn().mockResolvedValue({
+    mode: "lenient",
+    negativeKeywords: [],
+    allowedContainers: [],
+  }),
   resolveGlobalWorkspace: vi.fn().mockResolvedValue({
     accountId: "acct_default",
     connectedStorageId: null,

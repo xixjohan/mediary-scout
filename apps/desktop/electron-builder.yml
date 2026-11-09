@@ -31,8 +31,8 @@ files:
 #   standalone/apps/web/server.js -> Contents/Resources/app/apps/web/server.js
 #
 # The standalone bundle ROOT contains apps/web/server.js, a traced node_modules,
-# and packages/workflow/dist etc. — all land under app/. Next does NOT copy
-# .next/static or public into standalone, so those are mapped explicitly.
+# and packages/workflow/dist etc. — all land under app/. Next standalone already
+# copies public into standalone/apps/web/public, but does NOT copy .next/static.
 extraResources:
   - from: ../web/.next/standalone
     to: app
@@ -40,10 +40,6 @@ extraResources:
       - "**/*"
   - from: ../web/.next/static
     to: app/apps/web/.next/static
-    filter:
-      - "**/*"
-  - from: ../web/public
-    to: app/apps/web/public
     filter:
       - "**/*"
 
@@ -72,3 +68,8 @@ win:
   target:
     - nsis
   icon: build/icon.ico
+
+nsis:
+  oneClick: true
+  perMachine: false
+  runAfterFinish: false

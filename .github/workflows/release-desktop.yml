@@ -374,6 +374,9 @@ jobs:
           if (-not $installer) { throw "no installer exe found in dist-app" }
           Write-Host "Installing $($installer.FullName)"
           Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
+          Start-Sleep -Seconds 3
+          Get-Process -Name "Mediary Scout" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+
           # electron-builder's per-user NSIS always installs under
           # LOCALAPPDATA\Programs — bounded-depth search there only; if the
           # install location ever changes this fails loud and we update it.
@@ -381,26 +384,42 @@ jobs:
           if (-not $exe) { throw "installed Mediary Scout.exe not found under $env:LOCALAPPDATA\Programs" }
           Write-Host "EXE: $exe"
           $env:ELECTRON_ENABLE_LOGGING = "1"
-          $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput "$env:TEMP\electron-stdout.txt" -RedirectStandardError "$env:TEMP\electron-stderr.txt"
+          $stdoutLog = "$env:TEMP\electron-stdout.txt"
+          $stderrLog = "$env:TEMP\electron-stderr.txt"
+          Remove-Item $stdoutLog, $stderrLog -ErrorAction SilentlyContinue
+
+          $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
           $manifest = Join-Path $env:USERPROFILE ".mediary\agent.json"
+          Remove-Item $manifest -ErrorAction SilentlyContinue
+
           $deadline = (Get-Date).AddSeconds(120)
           $healthy = $false
           $crashed = $false
+          $baseUrl = $null
           while ((Get-Date) -lt $deadline) {
             if ($proc.HasExited) { $crashed = $true; break }
             if (Test-Path $manifest) {
               try {
-                $baseUrl = (Get-Content $manifest | ConvertFrom-Json).baseUrl
+                $raw = Get-Content $manifest -Raw
+                $baseUrl = ($raw | ConvertFrom-Json).baseUrl
+                Write-Host "Found manifest: baseUrl=$baseUrl"
                 $resp = Invoke-WebRequest -Uri $baseUrl -TimeoutSec 5
+                Write-Host "Probe status: $($resp.StatusCode)"
                 if ($resp.StatusCode -eq 200) { $healthy = $true; break }
-              } catch {}
+              } catch {
+                Write-Host "Probe error: $_"
+              }
+            } else {
+              Write-Host "Waiting for manifest at $manifest..."
             }
             Start-Sleep -Seconds 3
           }
           if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
-          Write-Host "=== ELECTRON STDERR (first 40 lines) ==="
-          Get-Content "$env:TEMP\electron-stderr.txt" -ErrorAction SilentlyContinue | Select-Object -First 40
-          if (Select-String -Path "$env:TEMP\electron-stderr.txt" -Pattern "NODE_MODULE_VERSION" -Quiet) {
+          Write-Host "=== ELECTRON STDOUT (first 50 lines) ==="
+          Get-Content $stdoutLog -ErrorAction SilentlyContinue | Select-Object -First 50
+          Write-Host "=== ELECTRON STDERR (first 50 lines) ==="
+          Get-Content $stderrLog -ErrorAction SilentlyContinue | Select-Object -First 50
+          if (Select-String -Path $stderrLog -Pattern "NODE_MODULE_VERSION" -Quiet) {
             throw "ABI mismatch in packaged app"
           }
           if ($crashed) { throw "Electron process exited early with code $($proc.ExitCode)" }
