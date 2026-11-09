@@ -7,7 +7,9 @@ import {
   replaceBaseUrlInFiles,
   replaceBaseUrlInLine,
   replaceBaseUrlInDirectories,
+  resolveEffectiveStrmBaseUrl,
 } from "./base-url-replacer.js";
+import { STRM_BASE_URL_SETTING_KEY } from "./strm-types.js";
 
 describe("base-url-replacer", () => {
   const dirs: string[] = [];
@@ -95,5 +97,58 @@ describe("base-url-replacer", () => {
     expect(result.directories).toEqual([root1, root2]);
     expect(fs.readFileSync(f1, "utf8").trim()).toBe("https://media.newserver.com/api/strm/play/1/f1");
     expect(fs.readFileSync(f2, "utf8").trim()).toBe("https://media.newserver.com/api/strm/play/2/f2");
+  });
+
+  describe("resolveEffectiveStrmBaseUrl SSOT priority", () => {
+    it("优先使用显式指定的 explicitUrl", async () => {
+      const mockRepo = {
+        getSetting: async () => "http://db-server:3000",
+      };
+      const res = await resolveEffectiveStrmBaseUrl(mockRepo, "https://explicit.domain.com:8443/");
+      expect(res).toBe("https://explicit.domain.com:8443");
+    });
+
+    it("explicitUrl 为空时命中数据库设置 (STRM_BASE_URL_SETTING_KEY)", async () => {
+      const mockRepo = {
+        getSetting: async (k: string) => {
+          if (k === STRM_BASE_URL_SETTING_KEY) return "http://192.168.1.100:3000/";
+          return null;
+        },
+      };
+      const res = await resolveEffectiveStrmBaseUrl(mockRepo);
+      expect(res).toBe("http://192.168.1.100:3000");
+    });
+
+    it("数据库未配置时优先命中环境变量 APP_BASE_URL", async () => {
+      const oldEnv = process.env.APP_BASE_URL;
+      try {
+        process.env.APP_BASE_URL = "http://192.168.1.88:3000/";
+        const mockRepo = {
+          getSetting: async () => null,
+        };
+        const res = await resolveEffectiveStrmBaseUrl(mockRepo);
+        expect(res).toBe("http://192.168.1.88:3000");
+      } finally {
+        if (oldEnv === undefined) delete process.env.APP_BASE_URL;
+        else process.env.APP_BASE_URL = oldEnv;
+      }
+    });
+
+    it("全部未配置时安全降级到本地端口并输出控制台警告", async () => {
+      const oldApp = process.env.APP_BASE_URL;
+      const oldMed = process.env.MEDIARY_URL;
+      try {
+        delete process.env.APP_BASE_URL;
+        delete process.env.MEDIARY_URL;
+        const mockRepo = {
+          getSetting: async () => null,
+        };
+        const res = await resolveEffectiveStrmBaseUrl(mockRepo);
+        expect(res).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      } finally {
+        if (oldApp !== undefined) process.env.APP_BASE_URL = oldApp;
+        if (oldMed !== undefined) process.env.MEDIARY_URL = oldMed;
+      }
+    });
   });
 });

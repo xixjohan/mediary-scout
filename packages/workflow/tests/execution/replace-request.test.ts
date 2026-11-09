@@ -1093,7 +1093,7 @@ describe("runQueuedReplaceRequest — scope, metadata and bookkeeping", () => {
       },
     });
 
-    expect(synced).toEqual([{ tmdbId: 42, seasonNumber: 1 }]);
+    expect(synced).toEqual([{ tmdbId: 42, seasonNumber: 1, accountId: "acct_1" }]);
     expect(seen.prompt).toContain("S01E03");
     const state = await repository.getTrackedSeasonState(season.id, SCOPE);
     expect(state?.season).toMatchObject({ totalEpisodes: 3, latestAiredEpisode: 3 });

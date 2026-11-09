@@ -61,6 +61,7 @@ function CredentialChallengeForm({
           </label>
           <input
             type="password"
+            aria-label="账户登录密码"
             autoFocus
             value={password}
             onChange={(e) => onPasswordChange(e.target.value)}
@@ -71,7 +72,7 @@ function CredentialChallengeForm({
         </div>
       ) : (
         <div style={{ fontSize: 13, color: "#a1a1aa" }}>
-          💡 当前系统运行于单用户免密环境。点击下方按钮确认后即刻解密查看。
+          当前系统运行于单用户免密环境。点击下方按钮确认后即刻解密查看。
         </div>
       )}
 
@@ -162,6 +163,7 @@ function RevealedCredentialsView({
             </button>
           </div>
           <textarea
+            aria-label="Cookie 明文"
             readOnly
             rows={4}
             value={revealed.cookie}
@@ -197,6 +199,7 @@ function RevealedCredentialsView({
             </div>
             <input
               type="text"
+              aria-label="OAuth Access Token"
               readOnly
               value={revealed.openOAuth.accessToken}
               className="setting-input"
@@ -219,6 +222,7 @@ function RevealedCredentialsView({
             </div>
             <input
               type="text"
+              aria-label="OAuth Refresh Token"
               readOnly
               value={revealed.openOAuth.refreshToken}
               className="setting-input"

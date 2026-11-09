@@ -31,6 +31,7 @@ export class Pan115UnifiedStorageApi implements Pan115StorageApi {
   private readonly openApi?: Pan115OpenClient | undefined;
   private readonly mode: Pan115EngineMode;
   private readonly onFallback?: ((operation: string, error: unknown) => void) | undefined;
+  private readonly parentMap = new Map<string, { parentId: string; name: string }>();
 
   constructor(options: Pan115UnifiedStorageApiOptions) {
     this.cookieApi = options.cookieApi;
@@ -79,7 +80,7 @@ export class Pan115UnifiedStorageApi implements Pan115StorageApi {
   // 2. 媒体库大清单查询: 优先 Open API (极速 1000 条，免 1200ms 防封延迟)，异常降级 Cookie
   // =========================================================================
 
-  async listItems(input: { directoryId: string }): Promise<Pan115Item[]> {
+  private async fetchItemsWithDriver(input: { directoryId: string }): Promise<Pan115Item[]> {
     if (this.openApi) {
       try {
         return await this.openApi.listItems({ directoryId: input.directoryId, limit: 1000 });
@@ -91,22 +92,75 @@ export class Pan115UnifiedStorageApi implements Pan115StorageApi {
         throw err;
       }
     }
-
     if (this.cookieApi) {
-      return await this.cookieApi.listItems(input);
+      return this.cookieApi.listItems(input);
     }
-
     throw new Error("[Pan115UnifiedStorageApi] No available driver to listItems");
+  }
+
+  private recordSubdirectories(items: Pan115Item[], parentId: string): void {
+    for (const item of items) {
+      const isDir = Boolean(item.isDirectory || (item.cid !== undefined && item.cid !== "0" && item.cid !== 0));
+      const id = String(item.cid ?? item.id ?? item.fid ?? item.file_id ?? "");
+      const name = String(item.name ?? item.n ?? "");
+      if (isDir && id && id !== "0") {
+        this.parentMap.set(id, { parentId, name });
+      }
+    }
+  }
+
+  async listItems(input: { directoryId: string }): Promise<Pan115Item[]> {
+    const items = await this.fetchItemsWithDriver(input);
+    this.recordSubdirectories(items, String(input.directoryId || "0"));
+    return items;
   }
 
   // =========================================================================
   // 3. 目录信息查询
   // =========================================================================
 
+  private recordBreadcrumbs(pathEntries: Array<{ cid?: string | number; name?: string }>): void {
+    for (let i = 0; i < pathEntries.length; i++) {
+      const current = pathEntries[i];
+      const parent = i > 0 ? pathEntries[i - 1] : undefined;
+      if (current && parent && current.cid && parent.cid) {
+        this.parentMap.set(String(current.cid), { parentId: String(parent.cid), name: current.name ?? "" });
+      }
+    }
+  }
+
+  private reconstructAncestryPath(directoryId: string): Array<{ cid: string; name: string }> {
+    const path: Array<{ cid: string; name: string }> = [];
+    const visited = new Set<string>();
+    let curr = String(directoryId || "0");
+
+    while (curr && curr !== "0" && !visited.has(curr)) {
+      visited.add(curr);
+      const parentInfo = this.parentMap.get(curr);
+      if (parentInfo) {
+        path.unshift({ cid: curr, name: parentInfo.name || "Folder" });
+        curr = parentInfo.parentId;
+      } else {
+        path.unshift({ cid: curr, name: "Folder" });
+        break;
+      }
+    }
+
+    if (curr === "0" && !path.some((p) => p.cid === "0")) {
+      path.unshift({ cid: "0", name: "Root" });
+    }
+
+    return path.length > 0 ? path : [{ cid: directoryId, name: "Folder" }];
+  }
+
   async getDirectoryInfo(input: { directoryId: string }): Promise<Pan115DirectoryInfo | null> {
     if (this.cookieApi) {
       try {
-        return await this.cookieApi.getDirectoryInfo(input);
+        const info = await this.cookieApi.getDirectoryInfo(input);
+        if (info && info.state && Array.isArray(info.path) && info.path.length > 0) {
+          this.recordBreadcrumbs(info.path);
+          return info;
+        }
       } catch (err) {
         this.onFallback?.("getDirectoryInfo", err);
       }
@@ -114,7 +168,7 @@ export class Pan115UnifiedStorageApi implements Pan115StorageApi {
 
     return {
       state: true,
-      path: [{ cid: input.directoryId, name: "Folder" }],
+      path: this.reconstructAncestryPath(input.directoryId),
     };
   }
 
@@ -123,23 +177,28 @@ export class Pan115UnifiedStorageApi implements Pan115StorageApi {
   // =========================================================================
 
   async createFolder(input: { name: string; parentId: string }): Promise<string> {
+    let createdId: string;
     if (this.openApi) {
       try {
-        return await this.openApi.createFolder(input);
+        createdId = await this.openApi.createFolder(input);
       } catch (err) {
         if (this.cookieApi) {
           this.onFallback?.("createFolder", err);
-          return await this.cookieApi.createFolder(input);
+          createdId = await this.cookieApi.createFolder(input);
+        } else {
+          throw err;
         }
-        throw err;
       }
+    } else if (this.cookieApi) {
+      createdId = await this.cookieApi.createFolder(input);
+    } else {
+      throw new Error("[Pan115UnifiedStorageApi] No available driver to createFolder");
     }
 
-    if (this.cookieApi) {
-      return await this.cookieApi.createFolder(input);
+    if (createdId) {
+      this.parentMap.set(String(createdId), { parentId: String(input.parentId), name: input.name });
     }
-
-    throw new Error("[Pan115UnifiedStorageApi] No available driver to createFolder");
+    return createdId;
   }
 
   async moveItems(input: {

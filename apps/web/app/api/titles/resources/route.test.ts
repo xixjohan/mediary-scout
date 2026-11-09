@@ -34,7 +34,8 @@ vi.mock("../../../../lib/auth-chain", () => ({
 vi.mock("../../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: () => repo,
   getAccountScopedSettings: () => repo,
-  getWorkerResourceProvider: async () => provider,
+  getAccountStorageCredentials: vi.fn().mockResolvedValue(null),
+  getWorkerResourceProvider: vi.fn().mockImplementation(async () => provider),
   movieTargetFromTmdbId: (tmdbId: number) => movieTargetFromTmdbId(tmdbId),
   resolveGlobalWorkspace: vi.fn().mockResolvedValue({
     accountId: "acct_default",
@@ -335,5 +336,29 @@ describe("POST /api/titles/resources — 上游失败", () => {
       const res = await POST(request({ tmdbId: 283428, customKeyword: "孤独摇滚 喵萌奶茶屋" }));
       expect(res.status).toBe(200);
       expect(provider.search).toHaveBeenCalledWith(expect.objectContaining({ keyword: "孤独摇滚 喵萌奶茶屋" }));
+    });
+
+    it("透传存储驱动品牌到 getWorkerResourceProvider，消除硬编码 115", async () => {
+      const { requireApiAccount } = await import("../../../../lib/auth-chain");
+      const { getWorkerResourceProvider, getAccountStorageCredentials } = await import("../../../../lib/workflow-runtime");
+      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      repo.listTrackedSeasonStates.mockResolvedValue([{
+        ...trackedTitle(),
+        connectedStorageId: "cs_quark_1",
+      }]);
+      vi.mocked(getAccountStorageCredentials).mockResolvedValue({
+        provider: "quark",
+        cookie: "mock",
+        credential: null,
+        status: "connected",
+      } as any);
+      provider.search.mockResolvedValue(snapshot([]));
+
+      await POST(request({ tmdbId: 283428 }));
+      expect(getWorkerResourceProvider).toHaveBeenCalledWith(
+        expect.anything(),
+        "quark",
+        "acct_default",
+      );
     });
   });

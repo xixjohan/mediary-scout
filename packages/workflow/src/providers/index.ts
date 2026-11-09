@@ -20,3 +20,4 @@ export * from "./media-title-parser.js";
 export * from "./jev-client.js";
 export * from "./jev-judge.js";
 export * from "./jev-prefilter-provider.js";
+export * from "./search-provider-registry.js";

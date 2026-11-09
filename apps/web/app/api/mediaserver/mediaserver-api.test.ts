@@ -93,6 +93,29 @@ describe("MediaServer API Routes", () => {
     expect(data.version).toBe("1.32.0");
     expect(mockCoordinator.testConnection).toHaveBeenCalled();
   });
+  it("POST /api/mediaserver/test 拦截 SSRF 攻击并返回 400", async () => {
+    const mockCoordinator = {
+      testConnection: vi.fn().mockImplementation(() => {
+        throw new Error("MEDIA_SERVER_SSRF_BLOCKED: 禁止访问保留的云元数据或链路本地地址 [169.254.169.254]");
+      }),
+    };
+    setMediaServerCoordinatorForTest(mockCoordinator as any);
+
+    const req = new NextRequest("http://localhost:3000/api/mediaserver/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        serverType: "plex",
+        hostUrl: "http://169.254.169.254/latest/meta-data/",
+        apiToken: "test_token",
+      }),
+    });
+
+    const res = await testConnection(req);
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.error).toContain("MEDIA_SERVER_SSRF_BLOCKED");
+  });
 
   it("POST /api/mediaserver/probe-libraries 实时探测远端媒体库", async () => {
     const mockCoordinator = {

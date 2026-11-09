@@ -99,11 +99,19 @@ function StorageBreadcrumbs({ breadcrumbs, onNavigate }: StorageBreadcrumbsProps
 interface StorageNavBarProps {
   listing: DriveDirectoryListing | null;
   currentDirId: string;
+  breadcrumbs?: DriveBreadcrumb[];
   onNavigate: (dirId: string) => void;
 }
 
-export function StorageNavBar({ listing, currentDirId, onNavigate }: StorageNavBarProps) {
-  const breadcrumbs = listing?.breadcrumbs || [];
+export function StorageNavBar({
+  listing,
+  currentDirId,
+  breadcrumbs: customBreadcrumbs,
+  onNavigate,
+}: StorageNavBarProps) {
+  const breadcrumbs = customBreadcrumbs && customBreadcrumbs.length > 0
+    ? customBreadcrumbs
+    : (listing?.breadcrumbs || []);
 
   return (
     <div className="storage-nav-bar">

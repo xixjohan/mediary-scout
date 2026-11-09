@@ -1,73 +1,28 @@
+import {
+  DriveDirectoryCache,
+  buildListing,
+  resolveCurrentDirectoryName,
+} from "./drive-directory-cache.js";
+export {
+  DriveDirectoryCache,
+  buildListing,
+  resolveCurrentDirectoryName,
+};
 import { Pan115CookieClient } from "./pan115-cookie-client.js";
 import { QuarkCookieClient } from "./quark-cookie-client.js";
 import { Pan123Client } from "./pan123-client.js";
 import { TianyiClient } from "./tianyi-client.js";
 import { GuangYaClient } from "./guangya-client.js";
-
-export type DriveItemType = "folder" | "video" | "subtitle" | "audio" | "archive" | "image" | "file";
-
-export interface DriveFileMediaInfo {
-  parsedTitle?: string | undefined;
-  parsedYear?: number | undefined;
-  parsedSeason?: number | undefined;
-  tmdbId?: number | undefined;
-  confidence: number;
-  isSubscribed?: boolean | undefined;
-  subscriptionStatus?: "active" | "completed" | undefined;
-}
-
-export interface DriveFileItem {
-  id: string;
-  name: string;
-  isFolder: boolean;
-  type: DriveItemType;
-  sizeBytes: number;
-  updatedAt: string | null;
-  extension: string;
-  mediaInfo?: DriveFileMediaInfo | undefined;
-}
-
-export interface DriveBreadcrumb {
-  id: string;
-  name: string;
-}
-
-export interface DriveDirectoryListing {
-  storageId: string;
-  provider: string;
-  currentDirectoryId: string;
-  currentDirectoryName: string;
-  items: DriveFileItem[];
-  totalCount: number;
-  folderCount: number;
-  fileCount: number;
-  totalSizeBytes: number;
-  breadcrumbs: DriveBreadcrumb[];
-  rootCid: string | null;
-  moviesCid: string | null;
-  tvCid: string | null;
-  animeCid: string | null;
-}
-
-export interface DriveFileManager {
-  listDirectory(directoryId?: string): Promise<DriveDirectoryListing>;
-  createFolder(input: { parentId: string; name: string }): Promise<{ id: string; name: string }>;
-  renameItem(input: { itemId: string; newName: string; isFolder: boolean }): Promise<void>;
-  deleteItems(items: Array<{ id: string; isFolder: boolean; name?: string }>): Promise<{ deletedCount: number }>;
-  moveItems(input: { items: Array<{ id: string; isFolder: boolean }>; targetDirectoryId: string }): Promise<{ movedCount: number }>;
-  copyItems(input: { items: Array<{ id: string; isFolder: boolean }>; targetDirectoryId: string }): Promise<{ copiedCount: number }>;
-}
-
-export interface DriveFileManagerOptions {
-  storageId: string;
-  provider: string;
-  cookie?: string;
-  credential?: unknown;
-  rootCid?: string | null;
-  moviesCid?: string | null;
-  tvCid?: string | null;
-  animeCid?: string | null;
-}
+export * from "./drive-file-manager-types.js";
+import type {
+  DriveItemType,
+  DriveFileMediaInfo,
+  DriveFileItem,
+  DriveBreadcrumb,
+  DriveDirectoryListing,
+  DriveFileManager,
+  DriveFileManagerOptions,
+} from "./drive-file-manager-types.js";
 
 const VIDEO_EXTENSIONS = new Set([
   ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".rmvb", ".ts", ".m2ts", ".webm", ".iso", ".m4v",
@@ -94,91 +49,17 @@ export function inferFileType(fileName: string, isFolder: boolean): DriveItemTyp
   return "file";
 }
 
-export function resolveCurrentDirectoryName(
-  dirId: string,
-  opts: {
-    rootCid?: string | null;
-    moviesCid?: string | null;
-    tvCid?: string | null;
-    animeCid?: string | null;
-  },
-): string {
-  if (opts.moviesCid && dirId === opts.moviesCid) return "电影";
-  if (opts.tvCid && dirId === opts.tvCid) return "剧集";
-  if (opts.animeCid && dirId === opts.animeCid) return "动漫";
-  if (!dirId || dirId === "0" || dirId === opts.rootCid) return "根目录";
-  return `目录 (${dirId.slice(0, 8)}…)`;
-}
 
-function summarizeItems(items: DriveFileItem[]): {
-  folderCount: number;
-  fileCount: number;
-  totalSizeBytes: number;
-} {
-  let folderCount = 0;
-  let fileCount = 0;
-  let totalSizeBytes = 0;
-
-  for (const item of items) {
-    if (item.isFolder) {
-      folderCount += 1;
-    } else {
-      fileCount += 1;
-      totalSizeBytes += item.sizeBytes;
-    }
-  }
-
-  return { folderCount, fileCount, totalSizeBytes };
-}
-
-function sortDriveItems(items: DriveFileItem[]): DriveFileItem[] {
-  return [...items].sort((a, b) => {
-    if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
-    return a.name.localeCompare(b.name, "zh-CN", { sensitivity: "base" });
-  });
-}
-
-function buildListing(
-  opts: DriveFileManagerOptions,
-  dirId: string,
-  rawItems: DriveFileItem[],
-): DriveDirectoryListing {
-  const items = sortDriveItems(rawItems);
-  const summary = summarizeItems(items);
-  const dirName = resolveCurrentDirectoryName(dirId, opts);
-
-  const breadcrumbs: DriveBreadcrumb[] = [
-    { id: opts.rootCid || "0", name: "根目录" },
-  ];
-  if (dirId !== (opts.rootCid || "0")) {
-    breadcrumbs.push({ id: dirId, name: dirName });
-  }
-
-  return {
-    storageId: opts.storageId,
-    provider: opts.provider,
-    currentDirectoryId: dirId,
-    currentDirectoryName: dirName,
-    items,
-    totalCount: items.length,
-    folderCount: summary.folderCount,
-    fileCount: summary.fileCount,
-    totalSizeBytes: summary.totalSizeBytes,
-    breadcrumbs,
-    rootCid: opts.rootCid ?? null,
-    moviesCid: opts.moviesCid ?? null,
-    tvCid: opts.tvCid ?? null,
-    animeCid: opts.animeCid ?? null,
-  };
-}
 
 export class QuarkFileManagerAdapter implements DriveFileManager {
   private readonly client: QuarkCookieClient;
   private readonly opts: DriveFileManagerOptions;
+  private readonly dirCache: DriveDirectoryCache;
 
   constructor(opts: DriveFileManagerOptions) {
     this.opts = opts;
     this.client = new QuarkCookieClient({ cookie: opts.cookie ?? "" });
+    this.dirCache = new DriveDirectoryCache(opts);
   }
 
   async listDirectory(directoryId?: string): Promise<DriveDirectoryListing> {
@@ -197,7 +78,27 @@ export class QuarkFileManagerAdapter implements DriveFileManager {
         extension: inferExtension(name),
       };
     });
-    return buildListing(this.opts, targetDir, items);
+
+    this.dirCache.recordChildren(targetDir, items);
+
+    let realName: string | undefined = this.dirCache.resolveCurrentName(targetDir);
+    if ((!realName || realName === "目录") && targetDir !== (this.opts.rootCid || "0")) {
+      try {
+        const info = await this.client.getFileInfo(targetDir);
+        if (info.file_name) {
+          realName = info.file_name;
+          this.dirCache.setNode(targetDir, {
+            name: info.file_name,
+            parentId: info.pdir_fid || this.opts.rootCid || "0",
+          });
+        }
+      } catch {
+        // Fallback gracefully
+      }
+    }
+
+    const breadcrumbs = this.dirCache.buildBreadcrumbs(targetDir, realName);
+    return buildListing(this.opts, targetDir, items, breadcrumbs, realName);
   }
 
   async createFolder(input: { parentId: string; name: string }): Promise<{ id: string; name: string }> {
@@ -245,8 +146,8 @@ export class Pan115FileManagerAdapter implements DriveFileManager {
 
   async listDirectory(directoryId?: string): Promise<DriveDirectoryListing> {
     const targetDir = directoryId || this.opts.rootCid || "0";
-    const raw = await this.client.listItems({ directoryId: targetDir });
-    const items: DriveFileItem[] = raw.map((r) => {
+    const res = await this.client.listItemsWithBreadcrumbs({ directoryId: targetDir });
+    const items: DriveFileItem[] = res.items.map((r) => {
       const isFolder = r.fc === 0 || r.fc === "0" || (r.cid !== undefined && r.fid === undefined && r.file_id === undefined);
       const id = String(isFolder ? (r.cid ?? r.id) : (r.fid ?? r.file_id ?? r.id));
       const name = String(r.name ?? r.n ?? "");
@@ -261,7 +162,20 @@ export class Pan115FileManagerAdapter implements DriveFileManager {
         extension: inferExtension(name),
       };
     });
-    return buildListing(this.opts, targetDir, items);
+
+    let breadcrumbs: DriveBreadcrumb[] | undefined;
+    if (res.breadcrumbs && res.breadcrumbs.length > 0) {
+      breadcrumbs = res.breadcrumbs.map((p) => ({
+        id: String(p.cid),
+        name: p.name || "目录",
+      }));
+    }
+
+    const currentName = breadcrumbs && breadcrumbs.length > 0
+      ? breadcrumbs[breadcrumbs.length - 1]?.name
+      : undefined;
+
+    return buildListing(this.opts, targetDir, items, breadcrumbs, currentName);
   }
 
   async createFolder(input: { parentId: string; name: string }): Promise<{ id: string; name: string }> {
@@ -537,7 +451,28 @@ export class FakeFileManagerAdapter implements DriveFileManager {
         });
       }
     }
-    return buildListing(this.opts, targetDir, items);
+
+    const breadcrumbs: DriveBreadcrumb[] = [];
+    let curr: string | undefined = targetDir;
+    const visited = new Set<string>();
+    while (curr && !visited.has(curr)) {
+      visited.add(curr);
+      const rec = this.records.get(curr);
+      if (rec) {
+        breadcrumbs.unshift({ id: rec.id, name: rec.name });
+        curr = rec.parentId;
+      } else {
+        break;
+      }
+    }
+
+    const rootId = this.opts.rootCid || "0";
+    if (!breadcrumbs.some((b) => b.id === rootId)) {
+      breadcrumbs.unshift({ id: rootId, name: "根目录" });
+    }
+
+    const targetRec = this.records.get(targetDir);
+    return buildListing(this.opts, targetDir, items, breadcrumbs, targetRec?.name);
   }
 
   async createFolder(input: { parentId: string; name: string }): Promise<{ id: string; name: string }> {

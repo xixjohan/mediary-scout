@@ -5,6 +5,7 @@ import type { StorageExecutor } from "../domain/ports.js";
 import type { MediaTitle } from "../domain/domain.js";
 import { ensureMediaLibraryDirectory, mediaLibraryFolderName } from "../domain/media-library-folder.js";
 import { buildPlayUrl, safeStem, writeStrmFile } from "./strm-writer.js";
+import { resolveEffectiveStrmBaseUrl } from "./base-url-replacer.js";
 import type { StrmTask } from "./strm-types.js";
 import { resolveStrmOutputPath } from "./output-path.js";
 
@@ -168,7 +169,7 @@ async function writeStrmFilesForTask(
       ? path.join(outputDir, file.subPath)
       : outputDir;
     const targetFilePath = path.join(targetDir, strmFileName);
-    const playUrl = buildPlayUrl(baseUrl, task.id, file.id, file.name);
+    const playUrl = buildPlayUrl(baseUrl, task.id, file.id, file.name, { sign: true });
 
     await writeStrmFile({ targetFilePath, playUrl });
     generatedPaths.push(targetFilePath);
@@ -260,9 +261,10 @@ export async function syncPinpointIngestedFiles(
 
   const allGeneratedPaths: string[] = [];
   let refreshed = false;
+  const effectiveBaseUrl = await resolveEffectiveStrmBaseUrl(repository, baseUrl);
 
   for (const task of matchedTasks) {
-    const taskRes = await executeTaskSync(task, files, accountId, baseUrl, repository);
+    const taskRes = await executeTaskSync(task, files, accountId, effectiveBaseUrl, repository);
     for (const p of taskRes.generatedPaths) {
       allGeneratedPaths.push(p);
     }
@@ -395,7 +397,7 @@ export async function triggerPostIngestSync(input: PostIngestSyncTriggerInput): 
 
     const landedFiles = await collectLandedFiles(storage, title, targetDirId);
     if (landedFiles.length > 0) {
-      const resolvedBaseUrl = baseUrl || process.env.APP_BASE_URL || "http://127.0.0.1:3000";
+      const resolvedBaseUrl = await resolveEffectiveStrmBaseUrl(repository, baseUrl);
       await syncPinpointIngestedFiles({
         accountId,
         storageId: effectiveStorageId,

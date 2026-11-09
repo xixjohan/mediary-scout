@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Check, FolderSync, LoaderCircle } from "lucide-react";
+import { AlertCircle, Check, FolderSync, LoaderCircle } from "lucide-react";
 import {
   saveLibraryDirNamingAction,
   type LibraryDirNamingInput,
@@ -14,7 +14,7 @@ export function LibraryDirNamingForm({ initial }: { initial: LibraryDirNamingInp
   const [moviesName, setMoviesName] = useState(initial.moviesName || "Movies");
   const [tvName, setTvName] = useState(initial.tvName || "TV");
   const [animeName, setAnimeName] = useState(initial.animeName || "Anime");
-  const [result, setResult] = useState<string | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   const handleSave = () => {
     startTransition(async () => {
@@ -27,13 +27,16 @@ export function LibraryDirNamingForm({ initial }: { initial: LibraryDirNamingInp
             animeName,
           }),
         (msg) => {
-          setResult(`❌ ${msg}`);
+          setResult({ ok: false, message: msg });
           setTimeout(() => setResult(null), 3500);
         },
       );
       if (!r.ok) return;
       const res = r.value;
-      setResult(res.success ? "✅ 媒体库目录偏好已保存" : `❌ ${res.message}`);
+      setResult({
+        ok: res.success,
+        message: res.success ? "媒体库目录偏好已保存" : (res.message ?? "保存失败"),
+      });
       setTimeout(() => setResult(null), 3500);
     });
   };
@@ -53,10 +56,11 @@ export function LibraryDirNamingForm({ initial }: { initial: LibraryDirNamingInp
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 12 }}>
         <div>
-          <label className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
+          <label htmlFor="naming-root-dir" className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
             媒体库根目录
           </label>
           <input
+            id="naming-root-dir"
             type="text"
             className="setting-control w-full"
             placeholder="Mediary Scout"
@@ -65,10 +69,11 @@ export function LibraryDirNamingForm({ initial }: { initial: LibraryDirNamingInp
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
+          <label htmlFor="naming-movies-dir" className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
             电影子目录
           </label>
           <input
+            id="naming-movies-dir"
             type="text"
             className="setting-control w-full"
             placeholder="Movies"
@@ -77,10 +82,11 @@ export function LibraryDirNamingForm({ initial }: { initial: LibraryDirNamingInp
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
+          <label htmlFor="naming-tv-dir" className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
             剧集子目录
           </label>
           <input
+            id="naming-tv-dir"
             type="text"
             className="setting-control w-full"
             placeholder="TV"
@@ -89,10 +95,11 @@ export function LibraryDirNamingForm({ initial }: { initial: LibraryDirNamingInp
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
+          <label htmlFor="naming-anime-dir" className="text-xs font-medium text-muted block" style={{ marginBottom: 4 }}>
             番剧子目录
           </label>
           <input
+            id="naming-anime-dir"
             type="text"
             className="setting-control w-full"
             placeholder="Anime"
@@ -124,8 +131,12 @@ export function LibraryDirNamingForm({ initial }: { initial: LibraryDirNamingInp
       </div>
 
       {result ? (
-        <p className="panel-note" style={{ marginTop: 10 }}>
-          {result}
+        <p
+          className={`panel-note ${result.ok ? "text-success" : "text-danger"}`}
+          style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 6 }}
+        >
+          {result.ok ? <Check size={14} aria-hidden /> : <AlertCircle size={14} aria-hidden />}
+          <span>{result.message}</span>
         </p>
       ) : null}
     </div>

@@ -8,9 +8,16 @@ import type { StorageExecutor } from "../../src/domain/ports.js";
 
 describe("StrmScanner with Progress Tracking", () => {
   let tmpDir: string;
+  let configPath: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "strm-scanner-test-"));
+    tmpDir = path.join(
+      process.cwd(),
+      "data",
+      `strm-scanner-test-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    fs.mkdirSync(tmpDir, { recursive: true });
+    configPath = path.relative(process.cwd(), tmpDir).replace(/\\/g, "/");
   });
 
   afterEach(() => {
@@ -27,7 +34,7 @@ describe("StrmScanner with Progress Tracking", () => {
       storageId: "storage-115-test",
       remoteFolderId: "remote-root",
       remotePath: "/movies",
-      localOutputDir: tmpDir,
+      localOutputDir: configPath,
       scanIntervalMinutes: 60,
       status: "idle",
       scanMode: "incremental_missing",
@@ -162,5 +169,46 @@ describe("StrmScanner with Progress Tracking", () => {
 
     const cleaningPhase = progressReports.find((p) => p.phase === "cleaning_orphans");
     expect(cleaningPhase).toBeDefined();
+  });
+
+  it("normalizes anime episode files into canonical STRM names for Emby/Jellyfin scraping", async () => {
+    const scanner = new StrmScanner();
+    const task = createMockTask({ scanMode: "incremental_missing" });
+
+    const storage = {
+      listVideoFiles: async () => [],
+      listTree: async () => [
+        {
+          providerFileId: "f_anime_02",
+          path: "桃源暗鬼 (2025) {tmdb-253811}/Season 01/[ReleaseGroup] TOUGEN ANKI - 02 [WebRip 1080p HEVC-10bit AAC SRTx2].mkv",
+          sizeBytes: 596 * 1024 * 1024,
+        },
+      ],
+      createDirectory: async () => "d1",
+      deleteFiles: async () => ({ deleted: [] }),
+      moveFiles: async () => ({ moved: [] }),
+      listChildDirectories: async () => [],
+      renameFile: async () => {},
+      copyFiles: async () => {},
+    } as unknown as StorageExecutor;
+
+    const result = await scanner.runScan({
+      task,
+      storage,
+      baseUrl: "http://127.0.0.1:3000",
+    });
+
+    expect(result.generatedCount).toBe(1);
+
+    const generatedPath = path.join(
+      tmpDir,
+      "桃源暗鬼 (2025) {tmdb-253811}",
+      "Season 01",
+      "桃源暗鬼 - S01E02.strm",
+    );
+    expect(fs.existsSync(generatedPath)).toBe(true);
+    const content = fs.readFileSync(generatedPath, "utf8");
+    expect(content).toContain("/api/strm/play/");
+    expect(content).toContain("f_anime_02");
   });
 });

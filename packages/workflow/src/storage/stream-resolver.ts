@@ -1,6 +1,7 @@
 import { SingleFlight } from "../strm/single-flight.js";
 import { Pan115CookieClient } from "./pan115-cookie-client.js";
 import { Pan115OpenClient, type Pan115TokenRefreshCoordinator } from "./pan115-open-client.js";
+import { QuarkCookieClient, QUARK_PROFILE, UC_PROFILE } from "./quark-cookie-client.js";
 import { isPan115OpenOAuthValid, type Pan115OpenOAuthCredentials } from "./account-credentials.js";
 import { withBrandPacing } from "./brand-pacing.js";
 
@@ -57,6 +58,7 @@ export interface StorageCredentialsInfo {
   cookie?: string | undefined;
   credential?: Record<string, unknown> | null | undefined;
   status?: string | undefined;
+  persistCookie?: ((cookie: string) => Promise<void> | void) | undefined;
   persistOpenOAuthCredentials?:
     | ((credentials: Pan115OpenOAuthCredentials) => Promise<void> | void)
     | undefined;
@@ -178,6 +180,40 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
     };
   }
 
+  private readonly _quarkCookieClients = new Map<string, QuarkCookieClient>();
+
+  private async resolveQuarkFamilyStream(
+    creds: StorageCredentialsInfo,
+    input: ResolveStreamInput,
+  ): Promise<ResolvedStream> {
+    const cookie = creds.cookie?.trim();
+    if (!cookie) {
+      throw new Error(`QUARK_CREDENTIAL_MISSING: 存储驱动 ${input.storageId} 缺少有效 Cookie 凭据`);
+    }
+
+    let client = this._quarkCookieClients.get(input.storageId);
+    if (!client || client.getCookie() !== cookie) {
+      client = new QuarkCookieClient({
+        cookie,
+        profile: creds.provider === "uc" ? UC_PROFILE : QUARK_PROFILE,
+        ...(creds.persistCookie ? { onCookiePersist: creds.persistCookie } : {}),
+      });
+      this._quarkCookieClients.set(input.storageId, client);
+    }
+
+    const res = await client.getDownloadUrl({
+      fid: input.fileId,
+      ...(input.userAgent !== undefined ? { userAgent: input.userAgent } : {}),
+    });
+
+    return {
+      url: res.url,
+      deliveryMode: "proxy",
+      headers: res.headers,
+      expirationSeconds: 3600,
+    };
+  }
+
   private async resolvePan115Stream(
     creds: StorageCredentialsInfo,
     input: ResolveStreamInput,
@@ -201,6 +237,10 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
 
     if (creds.provider === "pan115") {
       return this.resolvePan115Stream(creds, input);
+    }
+
+    if (creds.provider === "quark" || creds.provider === "uc") {
+      return this.resolveQuarkFamilyStream(creds, input);
     }
 
     if (this._fallback) {

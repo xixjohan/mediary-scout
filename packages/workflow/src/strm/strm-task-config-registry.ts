@@ -40,52 +40,89 @@ export class StrmTaskConfigRegistry {
     this._ttlMs = ttlSeconds * 1000;
   }
 
+  private determineEffectiveMode(provider: string, taskMode?: StrmDeliveryMode): StrmDeliveryMode {
+    if (provider === "pan115") {
+      return "proxy";
+    }
+    return taskMode || "redirect";
+  }
+
+  private async createConfigFromStorage(storageId: string): Promise<StrmTaskDeliveryConfig> {
+    const storage = await this._lookup.getStorageById(storageId);
+    if (!storage) {
+      throw new Error(`STORAGE_NOT_FOUND: 未找到 ID 为 [${storageId}] 的网盘存储驱动`);
+    }
+    const provider = storage.provider || "generic";
+    const effectiveMode: StrmDeliveryMode =
+      provider === "pan115" || provider === "quark" || provider === "uc" ? "proxy" : "redirect";
+    return {
+      taskId: storageId,
+      storageId,
+      provider,
+      deliveryMode: effectiveMode,
+      accountId: storage.accountId || "acct_default",
+      isActive: storage.status !== "frozen",
+      cachedAt: Date.now(),
+    };
+  }
+
+  private async createConfigFromTask(task: StrmTask): Promise<StrmTaskDeliveryConfig> {
+    const storage = await this._lookup.getStorageById(task.storageId);
+    if (!storage) {
+      throw new Error(`STORAGE_NOT_FOUND: 任务关联的网盘存储 [${task.storageId}] 不存在`);
+    }
+    const provider = storage.provider || "generic";
+    return {
+      taskId: task.id,
+      storageId: task.storageId,
+      provider,
+      deliveryMode: this.determineEffectiveMode(provider, task.deliveryMode),
+      accountId: task.accountId || storage.accountId || "acct_default",
+      isActive: task.isActive ?? true,
+      cachedAt: Date.now(),
+    };
+  }
+
+  private async resolveConfigUncached(id: string): Promise<StrmTaskDeliveryConfig> {
+    if (id.startsWith("cs_")) {
+      return this.createConfigFromStorage(id);
+    }
+
+    const task = await this._lookup.getTaskById(id);
+    if (task) {
+      return this.createConfigFromTask(task);
+    }
+
+    try {
+      return await this.createConfigFromStorage(id);
+    } catch {
+      throw new Error(`STRM_TASK_OR_STORAGE_NOT_FOUND: 未找到 ID 为 [${id}] 的 STRM 任务或存储源`);
+    }
+  }
+
   /**
-   * 根据 taskId 纳秒级快速获取已缓存的任务交付配置
+   * 根据 taskId 或 storageId 纳秒级快速获取已缓存的任务或存储交付配置（多态适配器模式）
    */
-  async resolveConfig(taskId: string): Promise<StrmTaskDeliveryConfig> {
+  async resolveConfig(taskIdOrStorageId: string): Promise<StrmTaskDeliveryConfig> {
+    const id = taskIdOrStorageId?.trim();
+    if (!id) {
+      throw new Error("STRM_TASK_OR_STORAGE_ID_REQUIRED: 任务或存储驱动 ID 不能为空");
+    }
+
     const now = Date.now();
-    const hit = this._cache.get(taskId);
+    const hit = this._cache.get(id);
     if (hit && now - hit.cachedAt < this._ttlMs) {
       return hit;
     }
 
-    return this._singleFlight.do(`task-cfg:${taskId}`, async () => {
-      // 双重检查防并发击穿
-      const doubleCheck = this._cache.get(taskId);
+    return this._singleFlight.do(`task-cfg:${id}`, async () => {
+      const doubleCheck = this._cache.get(id);
       if (doubleCheck && Date.now() - doubleCheck.cachedAt < this._ttlMs) {
         return doubleCheck;
       }
 
-      const task = await this._lookup.getTaskById(taskId);
-      if (!task) {
-        throw new Error(`STRM_TASK_NOT_FOUND: 未找到 ID 为 [${taskId}] 的 STRM 任务`);
-      }
-
-      const storage = await this._lookup.getStorageById(task.storageId);
-      if (!storage) {
-        throw new Error(`STORAGE_NOT_FOUND: 任务关联的网盘存储 [${task.storageId}] 不存在`);
-      }
-
-      const provider = storage.provider || "generic";
-      let effectiveMode: StrmDeliveryMode = task.deliveryMode || "redirect";
-
-      // 存储驱动物理特性协商：115 CDN 绑定 UA 且强制 attachment，必须以 proxy 代理中继输出
-      if (provider === "pan115") {
-        effectiveMode = "proxy";
-      }
-
-      const config: StrmTaskDeliveryConfig = {
-        taskId: task.id,
-        storageId: task.storageId,
-        provider,
-        deliveryMode: effectiveMode,
-        accountId: task.accountId || storage.accountId || "acct_default",
-        isActive: task.isActive ?? true,
-        cachedAt: Date.now(),
-      };
-
-      this._cache.set(taskId, config);
+      const config = await this.resolveConfigUncached(id);
+      this._cache.set(id, config);
       return config;
     });
   }

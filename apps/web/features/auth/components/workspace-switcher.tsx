@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
+import { ChevronDown } from "lucide-react";
 import { lastQueryKey, switcherTabHref, workspaceSection } from "@media-track/workflow/scope";
 import { WORKSPACE_COOKIE_NAME } from "@media-track/workflow";
 
@@ -97,9 +98,7 @@ export function WorkspaceSwitcher({
             ⚠
           </span>
         ) : null}
-        <span className="ws-caret" aria-hidden>
-          ⌄
-        </span>
+        <ChevronDown className="ws-caret" size={14} aria-hidden />
       </summary>
       <nav className="ws-menu" aria-label="网盘工作区">
         {tabs.map((tab) => {

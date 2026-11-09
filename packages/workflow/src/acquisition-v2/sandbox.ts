@@ -25,6 +25,7 @@ import {
   type AgentMemoryWrite,
 } from "../domain/agent-memory.js";
 import { indexSubtitleFiles, selectSubtitleChunk } from "./subtitle-renewal.js";
+import { executeSubtitleRenames, executeTargetFileRenames } from "./sandbox-renamer.js";
 import type { PolicyRejectReason, PolicyResource } from "../execution/subscription-policy.js";
 
 /** Quality / subtitle / source tokens that PanSou share titles almost never carry,
@@ -2588,46 +2589,36 @@ export class TaskSandbox {
     if (!this.storage || !this.stagingDirectoryId) {
       throw new Error("SANDBOX: no storage/staging handle configured for subtitle rename");
     }
-    if (input.renames.length === 0) {
-      throw new Error(
-        "SANDBOX_EMPTY_RENAMES: renames must not be empty — decide every subtitle↔episode pairing first (至少一项)",
-      );
-    }
-    const staging = await this.listTreeOf(this.stagingDirectoryId);
-    const renamed: string[] = [];
-    const errors: Array<{ fileId: string; error: string }> = [];
-    for (const { fileId, newName } of input.renames) {
-      try {
-        const target = staging.find((file) => file.id === fileId);
-        if (!target) {
-          throw new Error(`SANDBOX_FILE_NOT_IN_STAGING: ${fileId} is not in this task's staging`);
-        }
-        if (!target.isSubtitle) {
-          throw new Error(
-            `SANDBOX_NOT_A_SUBTITLE: ${fileId} is not a subtitle file; only subtitles may be renamed`,
-          );
-        }
-        this.assertNotProtected([fileId]);
-        if (/[\\/]/.test(newName)) {
-          throw new Error(
-            `SANDBOX_INVALID_SUBTITLE_NAME: newName must be a bare filename without path separators`,
-          );
-        }
-        if (!SUBTITLE_NAME_PATTERN.test(newName)) {
-          throw new Error(
-            `SANDBOX_INVALID_SUBTITLE_NAME: newName must keep a subtitle extension (.srt/.ass/.ssa/.sub/.idx/.vtt/.sup/.smi)`,
-          );
-        }
-        await this.storage.renameFile({
-          directoryId: this.stagingDirectoryId,
-          fileId,
-          newName,
-        });
-        renamed.push(newName);
-      } catch (error) {
-        errors.push({ fileId, error: error instanceof Error ? error.message : String(error) });
-      }
-    }
-    return { renamed, ...(errors.length > 0 ? { errors } : {}) };
+    return executeSubtitleRenames({
+      storage: this.storage,
+      stagingDirectoryId: this.stagingDirectoryId,
+      listTreeOf: (dirId) => this.listTreeOf(dirId),
+      assertNotProtected: (ids) => this.assertNotProtected(ids),
+      renames: input.renames,
+    });
   }
+
+  public getPrimaryTitle(): string | undefined {
+    return this.titleTerms[0];
+  }
+
+  async renameTargetFiles(input: {
+    renames: Array<{ fileId: string; newName: string }>;
+    season?: number;
+  }): Promise<{ renamed: string[]; errors?: Array<{ fileId: string; error: string }> }> {
+    if (!this.storage) {
+      throw new Error("SANDBOX: no storage configured for renameTargetFiles");
+    }
+    const targetDir = this.resolveTargetDir(input.season);
+    if (!targetDir) {
+      throw new Error(`SANDBOX_NO_TARGET_DIR: cannot resolve target directory for season ${input.season}`);
+    }
+    return executeTargetFileRenames({
+      storage: this.storage,
+      targetDir,
+      listTreeOf: (dirId) => this.listTreeOf(dirId),
+      renames: input.renames,
+    });
+  }
+
 }

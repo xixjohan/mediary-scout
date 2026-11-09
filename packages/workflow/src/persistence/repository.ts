@@ -72,6 +72,7 @@ import type {
   UpdateReverseScanItemPatch, ReverseScanItemReviewStatus,
 } from "../domain/reverse-scan-types.js";
 import { InMemoryReverseScanStore } from "./in-memory-reverse-scan.js";
+import { hasIncompleteEpisodeStates, syncSeasonAgainstMetadata } from "../execution/season-sync.js";
 
 /**
  * Tree model: the value stored in `connected_storage_id` for the degenerate
@@ -83,6 +84,48 @@ import { InMemoryReverseScanStore } from "./in-memory-reverse-scan.js";
  * so the SAME title can be tracked independently on multiple drives.
  */
 export const UNSCOPED_STORAGE = "__unscoped__";
+
+/** Merge a finished run with newer scoped episode state without losing landed files. */
+export function mergeEpisodeStatesPreservingObtained(incoming: EpisodeState[], current: EpisodeState[]): EpisodeState[] {
+  const merged = new Map(incoming.map((episode) => [episode.episodeCode, episode]));
+  for (const saved of current) {
+    const next = merged.get(saved.episodeCode);
+    if (!next) {
+      merged.set(saved.episodeCode, saved);
+    } else {
+      const landed = saved.obtained ? { ...next, ...saved, obtained: true } : next;
+      merged.set(saved.episodeCode, { ...landed,
+        verifiedFileIds: Array.from(new Set([...saved.verifiedFileIds, ...next.verifiedFileIds])) });
+    }
+  }
+  return Array.from(merged.values());
+}
+
+export function mergeSeasonPreservingCurrent(current: TrackedSeason, incoming: TrackedSeason, episodes: EpisodeState[]): TrackedSeason {
+  if (current.status === "completed" || incoming.status !== "completed" ||
+      current.totalEpisodes <= 0 || current.latestAiredEpisode < current.totalEpisodes) return current;
+  const obtained = new Set(episodes.filter((episode) => episode.obtained).map((episode) => episode.episodeCode));
+  const prefix = `S${String(current.seasonNumber).padStart(2, "0")}E`;
+  for (let number = 1; number <= current.totalEpisodes; number++) {
+    if (!obtained.has(`${prefix}${String(number).padStart(2, "0")}`)) return current;
+  }
+  return { ...current, status: "completed" };
+}
+
+export function hasUnresolvedManualEpisodes(season: TrackedSeason, episodes: EpisodeState[]): boolean {
+  return hasIncompleteEpisodeStates(season, episodes) || episodes.some((episode) =>
+    !episode.obtained && (episode.airStatus === "aired" || episode.airStatus === "unknown"));
+}
+
+export interface ManualSeasonSyncInput {
+  workflowRunId: string; trackedSeasonId: string; accountId: string; connectedStorageId: string | null;
+  totalEpisodes: number; latestAiredEpisode: number; expectedTotalEpisodes: number; expectedLatestAiredEpisode: number;
+}
+
+export function manualSyncLatestAired(season: TrackedSeason, input: ManualSeasonSyncInput): number {
+  return season.totalEpisodes !== input.expectedTotalEpisodes || season.latestAiredEpisode !== input.expectedLatestAiredEpisode
+    ? season.latestAiredEpisode : input.latestAiredEpisode;
+}
 
 export type Pan115OAuthCredentialWriteDecision = "updated" | "already_current" | "stale" | "missing";
 
@@ -311,6 +354,7 @@ export type WorkflowRunReservationResult =
     };
 
 export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore, ChatConversationStore, MediaRequestStore, StrmStore, MediaServerStore, ReverseScanStore {
+  syncTrackedSeasonForManualSearch(input: ManualSeasonSyncInput): Promise<TrackedSeasonState | null>;
   saveWorkflowRunSnapshot(
     input: PersistWorkflowRunSnapshotInput & {
       /** Write the run only. The season's episode bucket stays as stored.
@@ -319,6 +363,10 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
       /** Write nothing at all when this (season, drive) is no longer tracked.
        *  A recovery's late sibling write must not undo the user's untrack. */
       requireTrackedSeason?: boolean;
+      /** Finalize only the still-running scoped run and merge the latest episode bucket. */
+      requireRunningWorkflowRun?: boolean;
+      mergeCurrentEpisodes?: boolean;
+      requireNoMissingEpisodes?: boolean;
     },
   ): Promise<void>;
   reserveWorkflowRun(input: ReserveWorkflowRunInput): Promise<WorkflowRunReservationResult>;
@@ -626,6 +674,25 @@ function capturePolicySnapshot(
 }
 
 export class InMemoryWorkflowRepository implements WorkflowRepository {
+  async syncTrackedSeasonForManualSearch(input: ManualSeasonSyncInput): Promise<TrackedSeasonState | null> {
+    const run = this.workflowRuns.get(input.workflowRunId);
+    if (!run || run.workflowRun.status !== "running" || run.season.id !== input.trackedSeasonId ||
+        run.accountId !== input.accountId || run.connectedStorageId !== input.connectedStorageId ||
+        !this.isSeasonTracked(input.trackedSeasonId, input.connectedStorageId)) return null;
+    const candidates = Array.from(this.workflowRuns.values()).filter((item) =>
+      item.season.id === input.trackedSeasonId && item.accountId === input.accountId &&
+      item.connectedStorageId === input.connectedStorageId && isVisibleTrackedSnapshot(item),
+    ).sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt));
+    const current = candidates[0];
+    if (!current) return null;
+    const key = seasonScopeKey(input.trackedSeasonId, input.connectedStorageId);
+    const synced = syncSeasonAgainstMetadata({ season: current.season, episodes: this.episodesBySeason.get(key) ?? current.episodes,
+      totalEpisodes: input.totalEpisodes, latestAiredEpisode: manualSyncLatestAired(current.season, input) });
+    this.episodesBySeason.set(key, cloneWorkflowValue(synced.episodes));
+    for (const item of candidates) item.season = cloneWorkflowValue(synced.season);
+    return cloneWorkflowValue({ accountId: input.accountId, connectedStorageId: input.connectedStorageId,
+      title: current.title, season: synced.season, episodes: synced.episodes });
+  }
   private readonly workflowRuns = new Map<string, PersistWorkflowRunSnapshotInput>();
   private readonly episodesBySeason = new Map<string, EpisodeState[]>();
   private readonly settings = new Map<string, string>();
@@ -1420,10 +1487,35 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return out;
   }
 
+  private latestScopedSeasonSnapshot(snapshot: PersistWorkflowRunSnapshotInput): PersistWorkflowRunSnapshotInput | undefined {
+    return Array.from(this.workflowRuns.values()).filter((item) => item.season.id === snapshot.season.id &&
+      item.accountId === snapshot.accountId && item.connectedStorageId === snapshot.connectedStorageId && isVisibleTrackedSnapshot(item))
+      .sort((a, b) => b.workflowRun.startedAt.localeCompare(a.workflowRun.startedAt))[0];
+  }
+
+  private canSaveManualSnapshot(snapshot: PersistWorkflowRunSnapshotInput, existing: PersistWorkflowRunSnapshotInput | undefined,
+    options: { requireRunning: boolean; requireTracked: boolean; requireNoMissing: boolean }): boolean {
+    if (options.requireRunning && (!existing || existing.workflowRun.status !== "running" ||
+        existing.accountId !== snapshot.accountId || existing.connectedStorageId !== snapshot.connectedStorageId)) return false;
+    if (options.requireTracked && !this.isSeasonTracked(snapshot.season.id, snapshot.connectedStorageId)) return false;
+    if (options.requireNoMissing) {
+      const latest = this.latestScopedSeasonSnapshot(snapshot);
+      const key = seasonScopeKey(snapshot.season.id, snapshot.connectedStorageId);
+      if (!latest || hasUnresolvedManualEpisodes(latest.season, this.episodesBySeason.get(key) ?? [])) return false;
+    }
+    return true;
+  }
+
+  private mergeCurrentManualSnapshot(snapshot: PersistWorkflowRunSnapshotInput, key: string): void {
+    snapshot.episodes = mergeEpisodeStatesPreservingObtained(snapshot.episodes, this.episodesBySeason.get(key) ?? []);
+    const latest = this.latestScopedSeasonSnapshot(snapshot);
+    if (latest) snapshot.season = mergeSeasonPreservingCurrent(latest.season, snapshot.season, snapshot.episodes);
+  }
+
   async saveWorkflowRunSnapshot(
-    input: PersistWorkflowRunSnapshotInput & { keepCurrentEpisodes?: boolean; requireTrackedSeason?: boolean },
+    input: PersistWorkflowRunSnapshotInput & { keepCurrentEpisodes?: boolean; requireTrackedSeason?: boolean; requireRunningWorkflowRun?: boolean; mergeCurrentEpisodes?: boolean; requireNoMissingEpisodes?: boolean },
   ): Promise<void> {
-    const { keepCurrentEpisodes, requireTrackedSeason: _requireTrackedSeason, ...snapshot } = input;
+    const { keepCurrentEpisodes, requireTrackedSeason: _requireTrackedSeason, requireRunningWorkflowRun, mergeCurrentEpisodes, requireNoMissingEpisodes, ...snapshot } = input;
     validateWorkflowRunSnapshot(snapshot);
 
     const cloned = cloneWorkflowValue(snapshot);
@@ -1441,17 +1533,14 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
     // Synchronous with the write below: no await, so an untrack cannot land between them.
     const isSearchRecord = cloned.workflowRun.kind === "resource_search";
-    if (
-      !isSearchRecord &&
-      reservationRequiresTrackedSeason({
+    const requireTracked = !isSearchRecord && reservationRequiresTrackedSeason({
         ...(input.requireTrackedSeason === true ? { requireTrackedSeason: true } : {}),
         ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}),
-      }) &&
-      !this.isSeasonTracked(cloned.season.id, cloned.connectedStorageId)
-    ) {
-      return;
-    }
+      });
+    if (!this.canSaveManualSnapshot(cloned, existing, { requireRunning: requireRunningWorkflowRun === true,
+      requireTracked, requireNoMissing: requireNoMissingEpisodes === true })) return;
     const bucketKey = seasonScopeKey(cloned.season.id, cloned.connectedStorageId);
+    if (mergeCurrentEpisodes && !shouldKeepEpisodes) this.mergeCurrentManualSnapshot(cloned, bucketKey);
     if (shouldKeepEpisodes) {
       const current = this.episodesBySeason.get(bucketKey);
       if (current) cloned.episodes = cloneWorkflowValue(current);

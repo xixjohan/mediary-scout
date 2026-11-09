@@ -144,6 +144,8 @@ async function seedTrackedSeason(input: {
   season: TrackedSeason;
   obtainedCodes: string[];
   accountId?: string;
+  connectedStorageId?: string;
+  emptyEpisodes?: boolean;
 }) {
   const files = input.obtainedCodes.map((code, index) =>
     verifiedFile(input.season.storageDirectoryId, `seed_${index}`, code),
@@ -160,6 +162,7 @@ async function seedTrackedSeason(input: {
   });
   await input.repository.saveWorkflowRunSnapshot({
     ...(input.accountId === undefined ? {} : { accountId: input.accountId }),
+    ...(input.connectedStorageId === undefined ? {} : { connectedStorageId: input.connectedStorageId }),
     title: input.title,
     season: input.season,
     workflowRun: {
@@ -171,7 +174,7 @@ async function seedTrackedSeason(input: {
       finishedAt: fixedNow(),
       auditEvents: [],
     },
-    episodes,
+    episodes: input.emptyEpisodes ? [] : episodes,
     resourceSnapshots: [],
     decisions: [],
     transferAttempts: [],
@@ -1087,6 +1090,82 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
 });
 
 describe("runQueuedType3Monitoring (manual subscription search)", () => {
+  it("synchronizes an incomplete tracked season before searching", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("needs_sync");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: [], emptyEpisodes: true });
+    const queued = await queueTrackedSubscriptionSearch({ repository, accountId: "acct_default", connectedStorageId: null,
+      tmdbId: title.tmdbId, mediaType: "tv", seasonNumber: 1, source: "ui", now: fixedNow, createWorkflowRunId: () => "sync_manual" });
+    expect(queued.status).toBe("queued");
+    const outcome = await runQueuedType3Monitoring({ repository, resourceProvider: emptyProvider(), storage: new FakeStorageExecutor(),
+      model: noCoverageModel(), storageParentDirectoryId: "library_root", now: fixedNow,
+      syncSeasonMetadata: async () => ({ totalEpisodes: 2, latestAiredEpisode: 2 }) });
+    expect(outcome).toMatchObject({ status: "ran", workflowRunId: "sync_manual" });
+    expect((await repository.getTrackedSeasonState(season.id, "acct_default"))?.episodes).toHaveLength(2);
+  });
+
+  it("fails safely when incomplete episode state cannot be synchronized", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("sync_failure");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: [], emptyEpisodes: true });
+    const queued = await queueTrackedSubscriptionSearch({ repository, accountId: "acct_default", connectedStorageId: null,
+      tmdbId: title.tmdbId, mediaType: "tv", seasonNumber: 1, source: "ui", now: fixedNow, createWorkflowRunId: () => "sync_failure" });
+    expect(queued.status).toBe("queued");
+    const outcome = await runQueuedType3Monitoring({ repository, resourceProvider: emptyProvider(), storage: new FakeStorageExecutor(),
+      model: noCoverageModel(), storageParentDirectoryId: "library_root", now: fixedNow });
+    expect(outcome.status).toBe("failed");
+    expect((await repository.getTrackedSeasonState(season.id, "acct_default"))?.episodes).toEqual([]);
+  });
+
+  it("finishes without searching when synchronization finds no aired gaps", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("sync_no_missing");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: [], emptyEpisodes: true });
+    await queueTrackedSubscriptionSearch({ repository, accountId: "acct_default", connectedStorageId: null,
+      tmdbId: title.tmdbId, mediaType: "tv", seasonNumber: 1, source: "ui", now: fixedNow, createWorkflowRunId: () => "sync_no_missing" });
+    const outcome = await runQueuedType3Monitoring({ repository, resourceProvider: emptyProvider(), storage: new FakeStorageExecutor(),
+      model: noCoverageModel(), storageParentDirectoryId: "library_root", now: fixedNow,
+      syncSeasonMetadata: async () => ({ totalEpisodes: 2, latestAiredEpisode: 0 }) });
+    expect(outcome).toMatchObject({ status: "ran", workflowStatus: "succeeded" });
+    expect(await repository.getWorkflowRunSnapshot("sync_no_missing", "acct_default")).toMatchObject({ workflowRun: {
+      status: "succeeded", auditEvents: expect.arrayContaining([expect.objectContaining({ type: "manual_subscription_no_missing" })]),
+    } });
+  });
+
+  it("preserves obtained episode state when metadata synchronization fails", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("sync_existing");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: ["S01E01"] });
+    await queueTrackedSubscriptionSearch({ repository, accountId: "acct_default", connectedStorageId: null,
+      tmdbId: title.tmdbId, mediaType: "tv", seasonNumber: 1, source: "ui", now: fixedNow, createWorkflowRunId: () => "sync_existing" });
+    const outcome = await runQueuedType3Monitoring({ repository, resourceProvider: emptyProvider(), storage: new FakeStorageExecutor(),
+      model: noCoverageModel(), storageParentDirectoryId: "library_root", now: fixedNow,
+      syncSeasonMetadata: async () => { throw new Error("metadata unavailable"); } });
+    expect(outcome.status).toBe("failed");
+    expect((await repository.getTrackedSeasonState(season.id, "acct_default"))?.episodes.find((episode) => episode.episodeCode === "S01E01"))
+      .toMatchObject({ obtained: true, verifiedFileIds: ["seed_0"] });
+  });
+
+  it("does not recreate a cancelled manual task after metadata synchronization completes", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("sync_cancel");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: [], emptyEpisodes: true });
+    await queueTrackedSubscriptionSearch({ repository, accountId: "acct_default", connectedStorageId: null,
+      tmdbId: title.tmdbId, mediaType: "tv", seasonNumber: 1, source: "ui", now: fixedNow, createWorkflowRunId: () => "sync_cancel" });
+    let resolveMetadata!: (value: { totalEpisodes: number; latestAiredEpisode: number }) => void;
+    let notifyStarted!: () => void;
+    const started = new Promise<void>((resolve) => { notifyStarted = resolve; });
+    const metadata = new Promise<{ totalEpisodes: number; latestAiredEpisode: number }>((resolve) => { resolveMetadata = resolve; });
+    const running = runQueuedType3Monitoring({ repository, resourceProvider: emptyProvider(), storage: new FakeStorageExecutor(),
+      model: noCoverageModel(), storageParentDirectoryId: "library_root", now: fixedNow,
+      syncSeasonMetadata: async () => { notifyStarted(); return metadata; } });
+    await started;
+    expect(await repository.cancelQueuedWorkflowRun("sync_cancel", "acct_default", { allowRunning: true })).toMatchObject({ status: "cancelled" });
+    resolveMetadata({ totalEpisodes: 2, latestAiredEpisode: 2 });
+    await running;
+    expect(await repository.getWorkflowRunSnapshot("sync_cancel", "acct_default")).toBeNull();
+    expect((await repository.getTrackedSeasonState(season.id, "acct_default"))?.episodes).toEqual([]);
+  });
   it("dispatches an already-tracked movie through the movie acquisition runner", async () => {
     const repository = new InMemoryWorkflowRepository();
     const title: MediaTitle = {
@@ -1233,6 +1312,187 @@ describe("runQueuedType3Monitoring (manual subscription search)", () => {
         ]),
       },
     });
+  });
+
+  it("isolates storage executor and category parents to the claimed connected storage instead of base deps", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = trackedFixture("manual_isolation");
+    await seedTrackedSeason({ repository, title, season, obtainedCodes: [], connectedStorageId: "cs_115_bound" });
+    const queued = await queueTrackedSubscriptionSearch({
+      repository,
+      accountId: "acct_default",
+      connectedStorageId: "cs_115_bound",
+      tmdbId: title.tmdbId,
+      mediaType: "tv",
+      seasonNumber: season.seasonNumber,
+      source: "ui",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_manual_drive_isolation",
+    });
+    expect(queued.status).toBe("queued");
+
+    const baseStorage = new FakeStorageExecutor();
+    vi.spyOn(baseStorage, "createDirectory").mockImplementation(async () => {
+      throw new Error("WRITE_SCOPE_VIOLATION: unable to verify create directory target fid=base_trap");
+    });
+    const boundStorage = new FakeStorageExecutor({
+      transferOutcomes: {
+        snapshot_1_candidate_1: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [{
+            id: "landed_1",
+            storageDirectoryId: "dir_1",
+            name: "Show S01E01.mp4",
+            sizeBytes: 1024,
+            episodeCode: "S01E01",
+            providerFileId: "prov_1",
+          }],
+        },
+      },
+    });
+    const boundCreateSpy = vi.spyOn(boundStorage, "createDirectory");
+
+    let step = 0;
+    const tool = (name: string, input: unknown) => ({
+      content: [{ type: "tool-call" as const, toolCallId: "c" + step, toolName: name, input: JSON.stringify(input) }],
+      finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+      usage: USAGE,
+      warnings: [],
+    });
+    const transferModel = new MockLanguageModelV3({
+      doGenerate: async () => {
+        step += 1;
+        if (step === 1) return tool("searchResources", { keyword: "Show" });
+        if (step === 2) return tool("transferCandidate", { snapshotId: "snapshot_1", candidateId: "snapshot_1_candidate_1" });
+        if (step === 3) return tool("moveToSeason", { moves: [{ season: 1, fileIds: ["landed_1"] }] });
+        if (step === 4) return tool("markObtained", { codes: ["S01E01"] });
+        if (step === 5) return tool("reportNoCoverage", { reason: "remaining" });
+        return { content: [{ type: "text", text: "done" }], finishReason: { unified: "stop", raw: "stop" }, usage: USAGE, warnings: [] };
+      },
+    });
+
+    const outcome = await runQueuedType3Monitoring({
+      repository,
+      resourceProvider: new FakeResourceProvider({
+        keywordResults: {
+          Show: [{ title: "Show S01 1080p" }],
+        },
+      }),
+      storage: baseStorage,
+      model: transferModel,
+      storageParentDirectoryId: "base_tv_root",
+      animeStorageParentDirectoryId: "base_anime_root",
+      now: fixedNow,
+      resolveAccountContext: async (_accountId, connectedStorageId) => {
+        if (connectedStorageId === "cs_115_bound") {
+          return {
+            storage: boundStorage,
+            storageParentDirectoryId: "bound_tv_root",
+            animeStorageParentDirectoryId: "bound_anime_root",
+          };
+        }
+        return {};
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: "ran", workflowRunId: "run_manual_drive_isolation" });
+    expect(boundCreateSpy).toHaveBeenCalled();
+  });
+
+  it("isolates storage executor and category parents for movie manual search to the claimed connected storage", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const movie: MediaTitle = {
+      id: "title_manual_movie_iso",
+      tmdbId: 889,
+      type: "movie",
+      title: "Solo Movie Iso",
+      originalTitle: "Solo Movie Iso",
+      year: 2024,
+      aliases: [],
+    };
+    await reserveMovie({
+      repository,
+      title: movie,
+      accountId: "acct_default",
+      connectedStorageId: "cs_115_bound",
+      now: fixedNow,
+    });
+    const queued = await queueTrackedSubscriptionSearch({
+      repository,
+      accountId: "acct_default",
+      connectedStorageId: "cs_115_bound",
+      tmdbId: movie.tmdbId,
+      mediaType: "movie",
+      source: "ui",
+      now: fixedNow,
+      createWorkflowRunId: () => "run_manual_movie_iso",
+    });
+    expect(queued).toMatchObject({ status: "queued", workflowRunId: "run_manual_movie_iso" });
+
+    const baseStorage = new FakeStorageExecutor();
+    vi.spyOn(baseStorage, "createDirectory").mockImplementation(async () => {
+      throw new Error("WRITE_SCOPE_VIOLATION: unable to verify create directory target fid=base_trap");
+    });
+    const boundStorage = new FakeStorageExecutor({
+      transferOutcomes: {
+        snapshot_1_candidate_1: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [{
+            id: "movie_1",
+            storageDirectoryId: "dir_movie",
+            name: "Solo Movie Iso (2024).mp4",
+            sizeBytes: 1024,
+            episodeCode: null,
+            providerFileId: "prov_movie",
+          }],
+        },
+      },
+    });
+    const boundCreateSpy = vi.spyOn(boundStorage, "createDirectory");
+
+    let step = 0;
+    const tool = (name: string, input: unknown) => ({
+      content: [{ type: "tool-call" as const, toolCallId: "c" + step, toolName: name, input: JSON.stringify(input) }],
+      finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const },
+      usage: USAGE,
+      warnings: [],
+    });
+    const movieModel = new MockLanguageModelV3({
+      doGenerate: async () => {
+        step += 1;
+        if (step === 1) return tool("searchResources", { keyword: "Solo Movie Iso" });
+        if (step === 2) return tool("transferCandidate", { snapshotId: "snapshot_1", candidateId: "snapshot_1_candidate_1" });
+        if (step === 3) return tool("markMovieObtained", {});
+        return { content: [{ type: "text", text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
+      },
+    });
+
+    const outcome = await runQueuedType3Monitoring({
+      repository,
+      resourceProvider: new FakeResourceProvider({
+        keywordResults: {
+          "Solo Movie Iso": [{ title: "Solo Movie Iso 2024 1080p" }],
+        },
+      }),
+      storage: baseStorage,
+      model: movieModel,
+      moviesParentDirectoryId: "base_movies_root",
+      now: fixedNow,
+      resolveAccountContext: async (_accountId, connectedStorageId) => {
+        if (connectedStorageId === "cs_115_bound") {
+          return {
+            storage: boundStorage,
+            moviesParentDirectoryId: "bound_movies_root",
+          };
+        }
+        return {};
+      },
+    });
+
+    expect(outcome).toMatchObject({ status: "ran", workflowRunId: "run_manual_movie_iso" });
+    expect(boundCreateSpy).toHaveBeenCalled();
   });
 });
 

@@ -134,11 +134,11 @@ export function CandidateCard({
               <span>{candidate.year} · {isTv ? "剧集" : "电影"}</span>
               {doubanRating ? (
                 <span className="douban-badge" title={`豆瓣评分 ${doubanRating.score}${doubanRating.voteCount ? ` (${doubanRating.voteCount}人评价)` : ""}`}>
-                  <span className="douban-dot">🟢</span> 豆瓣 {doubanRating.score.toFixed(1)}
+                  <span className="douban-dot" aria-hidden="true" /> 豆瓣 {doubanRating.score.toFixed(1)}
                 </span>
               ) : candidate.source === "douban" && candidate.voteAverage ? (
                 <span className="douban-badge" title={`豆瓣评分 ${candidate.voteAverage.toFixed(1)}`}>
-                  <span className="douban-dot">🟢</span> 豆瓣 {candidate.voteAverage.toFixed(1)}
+                  <span className="douban-dot" aria-hidden="true" /> 豆瓣 {candidate.voteAverage.toFixed(1)}
                 </span>
               ) : null}
             </p>

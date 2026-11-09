@@ -1,4 +1,5 @@
 import { nativeFs as fs, nativePath as path } from "../domain/native-require.js";
+import { STRM_BASE_URL_SETTING_KEY } from "./strm-types.js";
 
 /**
  * 快速访问路径基址秒级替换引擎
@@ -123,4 +124,52 @@ export async function replaceBaseUrlInDirectories(
   }
 
   return aggregateResult;
+}
+
+/**
+ * 解析并确定当前生效的 STRM 播放基址（SSOT 单一事实源）。
+ *
+ * 优先级规范：
+ * 1. explicitUrl（本次调用显式指定的基址）
+ * 2. 数据库全局设置（STRM_BASE_URL_SETTING_KEY = "strm_base_url"）
+ * 3. 环境变量 APP_BASE_URL 或 MEDIARY_URL
+ * 4. 本地回环地址兜底 http://127.0.0.1:${PORT || 3000}（附带控制台警告）
+ */
+export async function resolveEffectiveStrmBaseUrl(
+  repo?: { getSetting(key: string): Promise<string | null> } | null,
+  explicitUrl?: string,
+): Promise<string> {
+  if (explicitUrl?.trim()) {
+    try {
+      return normalizeBaseUrl(explicitUrl.trim());
+    } catch {
+      // 若显式传入的非法则继续向下尝试
+    }
+  }
+
+  if (repo) {
+    try {
+      const dbValue = await repo.getSetting(STRM_BASE_URL_SETTING_KEY);
+      if (dbValue?.trim()) {
+        return normalizeBaseUrl(dbValue.trim());
+      }
+    } catch {
+      // 容错读取
+    }
+  }
+
+  const envValue = process.env.APP_BASE_URL || process.env.MEDIARY_URL;
+  if (envValue?.trim()) {
+    try {
+      return normalizeBaseUrl(envValue.trim());
+    } catch {
+      // 容错非法环境变量
+    }
+  }
+
+  const fallbackPort = process.env.PORT || "3000";
+  console.warn(
+    `[STRM] 警告：未在数据库 (${STRM_BASE_URL_SETTING_KEY}) 或环境变量 (APP_BASE_URL) 中配置外部播放基址！当前降级为回环地址 http://127.0.0.1:${fallbackPort}，外部播放设备（如电视/Emby）可能无法播放。`,
+  );
+  return `http://127.0.0.1:${fallbackPort}`;
 }

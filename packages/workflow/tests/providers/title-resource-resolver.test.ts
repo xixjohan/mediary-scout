@@ -96,10 +96,22 @@ describe("resolveTitleResources — scope fail-closed", () => {
 });
 
 describe("resolveTitleResources — 60s 冷却", () => {
-  it("冷却期内第二次被拒，并给出 retryAfterMs", async () => {
+  it("冷却期内相同查询命中缓存返回 ok (cached=true)，不触发 429 报错", async () => {
+    const d = deps();
+    const first = await resolveTitleResources(d);
+    expect(first.kind).toBe("ok");
+    const second = await resolveTitleResources(d);
+    expect(second.kind).toBe("ok");
+    if (second.kind === "ok") {
+      expect(second.cached).toBe(true);
+    }
+    expect(d.searches()).toBe(1);
+  });
+
+  it("冷却期内未命中缓存的查询被限流拒绝，并给出 retryAfterMs", async () => {
     const d = deps();
     expect((await resolveTitleResources(d)).kind).toBe("ok");
-    const second = await resolveTitleResources(d);
+    const second = await resolveTitleResources({ ...d, cacheKeySuffix: "uncached_suffix" });
     expect(second.kind).toBe("throttled");
     if (second.kind === "throttled") {
       expect(second.retryAfterMs).toBeGreaterThan(0);

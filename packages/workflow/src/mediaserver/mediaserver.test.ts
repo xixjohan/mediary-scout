@@ -6,6 +6,7 @@ import {
   MediaServerCoordinator,
   mapLocalToRemote,
   normalizePathSeparators,
+  assertValidMediaServerUrl,
 } from "./coordinator.js";
 
 describe("mapLocalToRemote", () => {
@@ -421,5 +422,27 @@ describe("MediaServerCoordinator", () => {
     expect(embyCalls).toHaveLength(0);
 
     coordinator.dispose();
+  });
+});
+
+describe("assertValidMediaServerUrl SSRF 防护", () => {
+  it("拦截云元数据服务、链路本地地址与非法协议", () => {
+    // 拦截 169.254.169.254 IMDS
+    expect(() => assertValidMediaServerUrl("http://169.254.169.254/latest/meta-data/")).toThrow(/MEDIA_SERVER_SSRF_BLOCKED/);
+    expect(() => assertValidMediaServerUrl("http://169.254.10.20:8096")).toThrow(/MEDIA_SERVER_SSRF_BLOCKED/);
+    // 拦截 GCP 元数据
+    expect(() => assertValidMediaServerUrl("http://metadata.google.internal/computeMetadata/v1/")).toThrow(/MEDIA_SERVER_SSRF_BLOCKED/);
+    // 拦截阿里元数据与 IPv6 链路本地
+    expect(() => assertValidMediaServerUrl("http://100.100.100.200/latest/meta-data/")).toThrow(/MEDIA_SERVER_SSRF_BLOCKED/);
+    expect(() => assertValidMediaServerUrl("http://[fd00:ec2::254]/latest/meta-data/")).toThrow(/MEDIA_SERVER_SSRF_BLOCKED/);
+    // 拦截非 http/https
+    expect(() => assertValidMediaServerUrl("ftp://192.168.1.100:8096")).toThrow(/MEDIA_SERVER_SSRF_BLOCKED/);
+    expect(() => assertValidMediaServerUrl("file:///etc/passwd")).toThrow(/MEDIA_SERVER_SSRF_BLOCKED/);
+    // 拦截非法端口
+    expect(() => assertValidMediaServerUrl("http://192.168.1.100:70000")).toThrow(/MEDIA_SERVER_URL_INVALID/);
+    // 允许合法内网与公网地址
+    expect(() => assertValidMediaServerUrl("http://192.168.1.100:32400")).not.toThrow();
+    expect(() => assertValidMediaServerUrl("http://127.0.0.1:8096")).not.toThrow();
+    expect(() => assertValidMediaServerUrl("https://plex.example.com:443")).not.toThrow();
   });
 });

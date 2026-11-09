@@ -107,7 +107,10 @@ export class Pan115CookieClient implements Pan115StorageApi {
     return response;
   }
 
-  async listItems(input: { directoryId: string }): Promise<Pan115Item[]> {
+  async listItemsWithBreadcrumbs(input: { directoryId: string }): Promise<{
+    items: Pan115Item[];
+    breadcrumbs: Pan115DirectoryInfo["path"];
+  }> {
     const first = await this.listPage(input.directoryId, 0);
     // 115 silently treats a deleted/invalid cid as the account ROOT and returns
     // root's children. The /files response echoes the cid it actually resolved;
@@ -120,6 +123,7 @@ export class Pan115CookieClient implements Pan115StorageApi {
           `refusing to operate on the fallback (root) directory.`,
       );
     }
+    const breadcrumbs = breadcrumbFromFilesResponse(first);
     const totalCount = numberValue(recordValue(first, "count"));
     // Hard cap: a directory bigger than this is a real outlier — fail loud rather
     // than paginate forever (and re-fetch it every step). 335-file donghua packs
@@ -142,7 +146,12 @@ export class Pan115CookieClient implements Pan115StorageApi {
       }
       items.push(...pageItems);
     }
-    return items;
+    return { items, breadcrumbs };
+  }
+
+  async listItems(input: { directoryId: string }): Promise<Pan115Item[]> {
+    const res = await this.listItemsWithBreadcrumbs(input);
+    return res.items;
   }
 
   async getDirectoryInfo(input: { directoryId: string }): Promise<Pan115DirectoryInfo | null> {

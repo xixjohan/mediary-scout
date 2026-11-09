@@ -13,7 +13,10 @@ import {
   PUT as updateTask,
   DELETE as deleteTask,
 } from "./tasks/[id]/route";
-import { POST as replaceBaseUrl } from "./replace-base-url/route";
+import {
+  GET as getReplaceBaseUrl,
+  POST as replaceBaseUrl,
+} from "./replace-base-url/route";
 import { GET as playStream, HEAD as playHead } from "./play/[taskId]/[fileId]/route";
 
 describe("STRM API Routes", () => {
@@ -93,6 +96,16 @@ describe("STRM API Routes", () => {
     const data = await res.json();
     expect(data.ok).toBe(true);
     expect(data.updated).toBe(2);
+    // 验证原子双写：数据库全局基址必须同步落盘
+    expect(await repo.getSetting("strm_base_url")).toBe("https://mediary.example.com");
+
+    // 验证 GET /api/strm/replace-base-url 能读取已配置的基址
+    const getReq = new NextRequest("http://localhost:3000/api/strm/replace-base-url");
+    const getRes = await getReplaceBaseUrl(getReq);
+    expect(getRes.status).toBe(200);
+    const getData = await getRes.json();
+    expect(getData.configuredUrl).toBe("https://mediary.example.com");
+    expect(getData.effectiveUrl).toBe("https://mediary.example.com");
 
     expect(fs.readFileSync(strmFile1, "utf8").trim()).toBe(
       "https://mediary.example.com/api/strm/play/115/f1",
@@ -143,6 +156,16 @@ describe("STRM API Routes", () => {
     const data = await res.json();
     expect(data.ok).toBe(true);
     expect(data.updated).toBe(2);
+    // 验证第二次双写落盘覆盖为 auto-tasks.example.com
+    expect(await repo.getSetting("strm_base_url")).toBe("https://auto-tasks.example.com");
+
+    // 验证 GET 读取最新基址
+    const getReq2 = new NextRequest("http://localhost:3000/api/strm/replace-base-url");
+    const getRes2 = await getReplaceBaseUrl(getReq2);
+    expect(getRes2.status).toBe(200);
+    const getData2 = await getRes2.json();
+    expect(getData2.configuredUrl).toBe("https://auto-tasks.example.com");
+    expect(getData2.effectiveUrl).toBe("https://auto-tasks.example.com");
     expect(data.directories).toEqual(expect.arrayContaining([dir1, dir2]));
 
     expect(fs.readFileSync(file1, "utf8").trim()).toBe("https://auto-tasks.example.com/api/strm/play/1/f1");
@@ -325,6 +348,23 @@ describe("STRM API Routes", () => {
     });
 
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      const urlStr = String(input);
+      if (urlStr.includes("clouddrive/file/download")) {
+        return new Response(
+          JSON.stringify({
+            code: 0,
+            data: [
+              {
+                download_url: "https://mock-cdn.cloudpan.com/download/cs_quark/video_proxy",
+                file_name: "video_proxy.mp4",
+                size: 10485760,
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+
       const isHead = init?.method === "HEAD";
       const headers = new Headers();
       headers.set("Content-Range", "bytes 0-1024/10485760");
@@ -366,7 +406,11 @@ describe("STRM API Routes", () => {
 
       // 验证 upstream fetch 调用传参
       expect(fetchSpy).toHaveBeenCalled();
-      const [calledUrl, calledInit] = fetchSpy.mock.calls[0]!;
+      const cdnCall = fetchSpy.mock.calls.find(([callUrl]) =>
+        String(callUrl).includes("mock-cdn.cloudpan.com/download/cs_quark/video_proxy"),
+      );
+      expect(cdnCall).toBeDefined();
+      const [calledUrl, calledInit] = cdnCall!;
       expect(String(calledUrl)).toContain("mock-cdn.cloudpan.com/download/cs_quark/video_proxy");
       expect((calledInit?.headers as Record<string, string>)?.["Range"]).toBe("bytes=0-1024");
 

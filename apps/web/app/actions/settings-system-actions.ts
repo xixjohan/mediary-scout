@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { assertNotDemo } from "../../lib/demo-mode";
+import type { AcquisitionFilterPreferences, AcquisitionEpisodePolicies } from "@media-track/workflow";
 
 export interface PushSettingsActionResult {
   success: boolean;
@@ -141,6 +142,48 @@ export async function saveQualityPreferenceAction(
     );
     const repository = getWorkflowRepository();
     await repository.setAccountSetting(await getCurrentAccountId(), QUALITY_PREFERENCE_SETTING_KEY, quality.trim());
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function saveAcquisitionFilterPreferencesAction(
+  preferences: AcquisitionFilterPreferences,
+): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, ACQUISITION_FILTER_PREFERENCES_SETTING_KEY } = await import(
+      "../../lib/workflow-runtime"
+    );
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    await repository.setAccountSetting(
+      accountId,
+      ACQUISITION_FILTER_PREFERENCES_SETTING_KEY,
+      JSON.stringify(preferences),
+    );
+    return { success: true };
+  } catch (error) {
+    return { success: false, message: `保存失败：${String(error)}` };
+  }
+}
+
+export async function saveAcquisitionEpisodePoliciesAction(
+  policies: AcquisitionEpisodePolicies,
+): Promise<PushSettingsActionResult> {
+  assertNotDemo();
+  try {
+    const { getWorkflowRepository, getCurrentAccountId, ACQUISITION_EPISODE_POLICIES_SETTING_KEY } = await import(
+      "../../lib/workflow-runtime"
+    );
+    const repository = getWorkflowRepository();
+    const accountId = await getCurrentAccountId();
+    await repository.setAccountSetting(
+      accountId,
+      ACQUISITION_EPISODE_POLICIES_SETTING_KEY,
+      JSON.stringify(policies),
+    );
     return { success: true };
   } catch (error) {
     return { success: false, message: `保存失败：${String(error)}` };

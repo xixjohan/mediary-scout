@@ -13,9 +13,14 @@ import {
 describe("Post-Ingest Automation", () => {
   const dirs: string[] = [];
   const makeTempDir = () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "post-ingest-test-"));
+    const dir = path.join(
+      process.cwd(),
+      "data",
+      `post-ingest-test-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    fs.mkdirSync(dir, { recursive: true });
     dirs.push(dir);
-    return dir;
+    return path.relative(process.cwd(), dir).replace(/\\/g, "/");
   };
 
   afterEach(() => {

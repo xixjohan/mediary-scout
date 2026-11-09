@@ -144,6 +144,8 @@ async function persistFailureSnapshot(
   };
 
   const silent = claimed.workflowRun.kind === "staging_recovery";
+  const manualSubscription = claimed.workflowRun.kind === "type3_monitor" &&
+    claimed.workflowRun.auditEvents.some((event) => event.type === "manual_subscription_search_queued");
   const keepEpisodes = willRetry || claimed.workflowRun.kind === "replace_request";
   await repository.saveWorkflowRunSnapshot({
     accountId: claimed.accountId,
@@ -156,7 +158,8 @@ async function persistFailureSnapshot(
     decisions: willRetry ? claimed.decisions : [],
     transferAttempts: willRetry ? claimed.transferAttempts : [],
     notifications: silent ? [] : [notification],
-    ...(silent ? { keepCurrentEpisodes: true } : {}),
+    ...(silent || manualSubscription ? { keepCurrentEpisodes: true } : {}),
+    ...(manualSubscription ? { requireTrackedSeason: true, requireRunningWorkflowRun: true } : {}),
   });
 }
 

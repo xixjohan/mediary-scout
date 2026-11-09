@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { Film, RefreshCw, Search } from "lucide-react";
+import { Film, RefreshCw, Search, Star } from "lucide-react";
 import { showHref } from "@media-track/workflow";
 import { getDiscoverFeed, type TrendingKind } from "../../../lib/trending";
 import { getDoubanRatings } from "../../../lib/douban-rating";
@@ -37,14 +37,14 @@ function TrendingRatingBadge({
   if (douban) {
     return (
       <span className="douban-badge" title={`豆瓣评分 ${douban.score}`}>
-        <span className="douban-dot">🟢</span> {douban.score.toFixed(1)}
+        <span className="douban-dot" aria-hidden="true" /> {douban.score.toFixed(1)}
       </span>
     );
   }
   if (voteAverage) {
     return (
       <span className="douban-badge" title={`TMDB评分 ${voteAverage.toFixed(1)}`}>
-        <span className="douban-dot">⭐</span> {voteAverage.toFixed(1)}
+        <Star size={11} aria-hidden="true" fill="currentColor" strokeWidth={0} /> {voteAverage.toFixed(1)}
       </span>
     );
   }

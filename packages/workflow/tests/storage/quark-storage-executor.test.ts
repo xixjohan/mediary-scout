@@ -34,6 +34,7 @@ function makeFakeClient(opts?: {
         .map((f) => ({ fid: f.fid, file_name: f.file_name, dir: f.dir, size: f.size }));
     },
     async getFileInfo(fid: string) {
+      calls.push(`getFileInfo:${fid}`);
       const f = files.get(fid);
       if (!f) throw new Error(`no such fid ${fid}`);
       return { fid: f.fid, file_name: f.file_name, pdir_fid: f.pdir_fid, dir: f.dir };
@@ -229,6 +230,26 @@ describe("QuarkStorageExecutor", () => {
       /SAFETY_VIOLATION/,
     );
     expect(calls.filter((c) => c.startsWith("deleteFiles:"))).toEqual([]);
+  });
+
+  it("caches ancestor lookups in memory so repeated checks to child directories avoid redundant getFileInfo calls", async () => {
+    const { client, files, calls } = makeFakeClient();
+    files.set("DEEP_1", { fid: "DEEP_1", file_name: "Sub1", dir: true, size: 0, pdir_fid: "ROOT" });
+    files.set("DEEP_2", { fid: "DEEP_2", file_name: "Sub2", dir: true, size: 0, pdir_fid: "DEEP_1" });
+    files.set("f1", { fid: "f1", file_name: "1.mkv", dir: false, size: 100, pdir_fid: "ROOT" });
+    files.set("f2", { fid: "f2", file_name: "2.mkv", dir: false, size: 100, pdir_fid: "ROOT" });
+
+    const exec = quarkExecutor(client);
+    // First move: walks DEEP_2 -> DEEP_1 -> ROOT and caches both
+    await exec.moveFiles({ fileIds: ["f1"], targetDirectoryId: "DEEP_2" });
+    const callsAfterFirst = calls.filter((c) => c.startsWith("getFileInfo:")).length;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+
+    // Second move: DEEP_2 is already learned in writeScopeDirectoryIds, zero getFileInfo calls!
+    await exec.moveFiles({ fileIds: ["f2"], targetDirectoryId: "DEEP_2" });
+    const callsAfterSecond = calls.filter((c) => c.startsWith("getFileInfo:")).length;
+
+    expect(callsAfterSecond).toBe(callsAfterFirst);
   });
 });
 

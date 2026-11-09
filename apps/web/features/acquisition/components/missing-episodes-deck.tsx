@@ -5,6 +5,7 @@ import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Search } from "lu
 import type { TitleHubSeason } from "../../../lib/title-hub";
 import {
   extractMissingEpisodes,
+  isSeasonEpisodeStateIncomplete,
   filterMissingBySeason,
   paginateMissingEpisodes,
   type MissingEpisodeItem,
@@ -39,6 +40,7 @@ export function MissingEpisodesDeck({ seasons }: MissingEpisodesDeckProps) {
     () => seasons.some((season) => season.tracked),
     [seasons],
   );
+  const needsSync = seasons.some(isSeasonEpisodeStateIncomplete);
 
   // 根据当前季筛选器过滤
   const filteredItems = useMemo(
@@ -75,8 +77,10 @@ export function MissingEpisodesDeck({ seasons }: MissingEpisodesDeckProps) {
     return (
       <div className="missing-episodes-deck is-complete">
         <div className="missing-deck-complete-wrap">
-          <CheckCircle2 size={16} className="missing-deck-complete-icon" aria-hidden />
-          <span>已开播集数已全部入库，暂无缺失已播集。</span>
+          {needsSync
+            ? <AlertCircle size={16} className="missing-deck-alert-icon" aria-hidden />
+            : <CheckCircle2 size={16} className="missing-deck-complete-icon" aria-hidden />}
+          <span>{needsSync ? "逐集状态尚未同步完整，缺集情况待确认。" : "已开播集数已全部入库，暂无缺失已播集。"}</span>
         </div>
       </div>
     );
@@ -115,6 +119,7 @@ export function MissingEpisodesDeck({ seasons }: MissingEpisodesDeckProps) {
           </div>
         ) : null}
       </div>
+      {needsSync ? <p role="status">部分季度的逐集状态尚未同步完整，缺集列表可能不完整。</p> : null}
 
       <div className="missing-deck-grid">
         {paginated.items.map((item) => {

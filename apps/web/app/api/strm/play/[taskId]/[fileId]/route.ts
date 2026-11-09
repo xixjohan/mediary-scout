@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { verifyStrmPlayToken } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../../../lib/workflow-runtime";
 import {
   ensureStorageStreamResolver,
@@ -164,104 +165,162 @@ async function handleStreamProxy(
   }
 }
 
+function validatePlayToken(
+  taskId: string,
+  fileId: string,
+  token: string | null,
+  exp: number | null,
+): NextResponse | null {
+  if (token || exp) {
+    const verification = verifyStrmPlayToken({
+      taskId,
+      fileId,
+      token,
+      expiresAtEpochSeconds: exp,
+    });
+    if (!verification.valid) {
+      return NextResponse.json(
+        { error: `STRM 播放签名鉴权失败: ${verification.reason === "token_expired" ? "播放令牌已过期" : "签名无效"}` },
+        { status: 401 },
+      );
+    }
+    return null;
+  }
+  if (process.env.STRM_AUTH_STRICT === "true") {
+    return NextResponse.json(
+      { error: "STRM 播放请求必须携带签名令牌 (缺少 token 与 exp 参数)" },
+      { status: 401 },
+    );
+  }
+  return null;
+}
+
+async function serveStream(
+  request: NextRequest,
+  url: string,
+  deliveryMode: string,
+  headers?: Record<string, string>,
+  fileName?: string,
+): Promise<Response> {
+  if (deliveryMode === "proxy") {
+    return handleStreamProxy(request, url, {
+      customHeaders: headers,
+      fileName,
+    });
+  }
+  return handleRedirect(url);
+}
+
+async function resolveTaskConfig(taskId: string) {
+  try {
+    const config = await ensureStrmTaskConfigRegistry().resolveConfig(taskId);
+    if (!config.isActive) {
+      return {
+        error: NextResponse.json(
+          { error: `STRM 任务或存储驱动 [${taskId}] 已暂停或处于冻结状态，拒绝串流。` },
+          { status: 403 },
+        ),
+      };
+    }
+    return { config };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      error: NextResponse.json(
+        { error: `STRM 任务或存储配置解析失败: ${message}` },
+        { status: 404 },
+      ),
+    };
+  }
+}
+
+async function resolveAndCacheStream(options: {
+  repo: ReturnType<typeof getWorkflowRepository>;
+  resolver: ReturnType<typeof ensureStorageStreamResolver>;
+  storageId: string;
+  fileId: string;
+  cacheKey: string;
+  deliveryMode: string;
+  fileName?: string | undefined;
+  pickCode?: string | undefined;
+  userAgent?: string | null | undefined;
+}) {
+  const { repo, resolver, storageId, fileId, cacheKey, deliveryMode, fileName, pickCode, userAgent } = options;
+  const doubleCheck = await repo.getStrmLinkCache(cacheKey);
+  if (doubleCheck && !doubleCheck.downloadUrl.includes("mock-cdn.cloudpan.com")) {
+    const headers = doubleCheck.headersJson ? (JSON.parse(doubleCheck.headersJson) as Record<string, string>) : undefined;
+    return {
+      url: doubleCheck.downloadUrl,
+      deliveryMode: doubleCheck.deliveryMode,
+      ...(headers ? { headers } : {}),
+      expirationSeconds: 7200,
+    };
+  }
+
+  const resolved = await resolver.resolveStream({
+    storageId,
+    fileId,
+    ...(fileName !== undefined ? { fileName } : {}),
+    ...(pickCode !== undefined ? { pickCode } : {}),
+    ...(userAgent ? { userAgent } : {}),
+  });
+
+  await repo.setStrmLinkCache({
+    cacheKey,
+    downloadUrl: resolved.url,
+    deliveryMode: resolved.deliveryMode || deliveryMode,
+    headersJson: resolved.headers ? JSON.stringify(resolved.headers) : null,
+    expiresAt: Math.floor(Date.now() / 1000) + resolved.expirationSeconds,
+  });
+
+  return resolved;
+}
+
 export async function GET(request: NextRequest, context: RouteParams) {
   const { taskId, fileId } = await context.params;
   const fileName = request.nextUrl.searchParams.get("name") ?? undefined;
   const pickCode = request.nextUrl.searchParams.get("pickCode") ?? undefined;
+  const token = request.nextUrl.searchParams.get("token");
+  const expStr = request.nextUrl.searchParams.get("exp");
+  const exp = expStr ? Number(expStr) : null;
 
-  // 1. 纯内存字典 O(1) 检索 STRM 任务交付配置（带 SingleFlight 防并发击穿与物理特性协商）
-  const registry = ensureStrmTaskConfigRegistry();
-  let config;
-  try {
-    config = await registry.resolveConfig(taskId);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json(
-      { error: `STRM 任务配置解析失败: ${message}` },
-      { status: 404 },
-    );
-  }
+  const authError = validatePlayToken(taskId, fileId, token, exp);
+  if (authError) return authError;
 
-  // 2. 状态机防护：若任务已被用户暂停或未启用，直接 403 熔断
-  if (!config.isActive) {
-    return NextResponse.json(
-      { error: `STRM 同步任务 [${taskId}] 已暂停或未启用，拒绝串流。` },
-      { status: 403 },
-    );
-  }
+  const taskResult = await resolveTaskConfig(taskId);
+  if (taskResult.error) return taskResult.error;
+  const config = taskResult.config;
 
   const { storageId, deliveryMode } = config;
   const cacheKey = `${storageId}:${fileId}`;
   const repo = getWorkflowRepository();
 
-  // 3. Link Cache 快速查询（带 TTL 检查，防 mock 污染）
   const cached = await repo.getStrmLinkCache(cacheKey);
-  const isMockCached = cached?.downloadUrl?.includes("mock-cdn.cloudpan.com");
-  if (cached && !isMockCached) {
-    const headers = cached.headersJson
-      ? (JSON.parse(cached.headersJson) as Record<string, string>)
-      : undefined;
-    if (deliveryMode === "proxy") {
-      return handleStreamProxy(request, cached.downloadUrl, {
-        customHeaders: headers,
-        fileName,
-      });
-    }
-    return handleRedirect(cached.downloadUrl);
+  if (cached && !cached.downloadUrl.includes("mock-cdn.cloudpan.com")) {
+    const headers = cached.headersJson ? (JSON.parse(cached.headersJson) as Record<string, string>) : undefined;
+    return serveStream(request, cached.downloadUrl, cached.deliveryMode || deliveryMode, headers, fileName);
   }
 
-  // 4. SingleFlight 请求合并（防止 Infuse/Plex 播放器并发 Range 请求击穿网盘 API）
   const singleFlight = getStrmSingleFlight();
   const resolver = ensureStorageStreamResolver();
   try {
-    const stream = await singleFlight.do(cacheKey, async () => {
-      const doubleCheck = await repo.getStrmLinkCache(cacheKey);
-      if (doubleCheck && !doubleCheck.downloadUrl.includes("mock-cdn.cloudpan.com")) {
-        return {
-          url: doubleCheck.downloadUrl,
-          deliveryMode: doubleCheck.deliveryMode,
-          ...(doubleCheck.headersJson
-            ? { headers: JSON.parse(doubleCheck.headersJson) as Record<string, string> }
-            : {}),
-          expirationSeconds: 7200,
-        };
-      }
-
-      const resolved = await resolver.resolveStream({
+    const stream = await singleFlight.do(cacheKey, () =>
+      resolveAndCacheStream({
+        repo,
+        resolver,
         storageId,
         fileId,
-        ...(fileName !== undefined ? { fileName } : {}),
-        ...(pickCode !== undefined ? { pickCode } : {}),
-        ...(request.headers.get("user-agent")
-          ? { userAgent: request.headers.get("user-agent")! }
-          : {}),
-      });
-
-      await repo.setStrmLinkCache({
         cacheKey,
-        downloadUrl: resolved.url,
-        deliveryMode: deliveryMode,
-        headersJson: resolved.headers ? JSON.stringify(resolved.headers) : null,
-        expiresAt: Math.floor(Date.now() / 1000) + resolved.expirationSeconds,
-      });
-
-      return resolved;
-    });
-
-    if (deliveryMode === "proxy") {
-      return handleStreamProxy(request, stream.url, {
-        customHeaders: stream.headers,
+        deliveryMode,
         fileName,
-      });
-    }
-
-    return handleRedirect(stream.url);
+        pickCode,
+        userAgent: request.headers.get("user-agent"),
+      }),
+    );
+    return serveStream(request, stream.url, stream.deliveryMode || deliveryMode, stream.headers, fileName);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json(
-      { error: `流媒体解析失败: ${message}` },
-      { status: 502 },
-    );
+    return NextResponse.json({ error: `流媒体解析失败: ${message}` }, { status: 502 });
   }
 }
 

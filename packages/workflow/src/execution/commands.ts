@@ -15,6 +15,7 @@ import {
 } from "../domain/media-library-folder.js";
 import type { StorageExecutor } from "../domain/ports.js";
 import type { WorkflowRepository } from "../persistence/repository.js";
+import { hasIncompleteEpisodeStates } from "./season-sync.js";
 
 export type TrackingInitializationRequestStatus = "already_running" | "already_tracked" | "queued" | "completed";
 
@@ -495,6 +496,8 @@ function manualSearchReadiness(
     if (isMovieUnreleased(state.title.releaseDate, now)) return "not_ready";
     return state.episodes.some((episode) => episode.obtained) ? "no_missing" : null;
   }
+  if (hasIncompleteEpisodeStates(state.season, state.episodes)) return null;
+  if (state.episodes.some((episode) => !episode.obtained && episode.airStatus === "unknown")) return null;
   return state.episodes.some((episode) => episode.airStatus === "aired" && !episode.obtained)
     ? null
     : "no_missing";
@@ -518,6 +521,7 @@ export async function queueTrackedSubscriptionSearch(input: {
   sourceWorkflowRunId?: string;
   now?: () => string;
   createWorkflowRunId?: () => string;
+  staleActiveRunTimeoutMs?: number;
 }): Promise<ManualSubscriptionSearchResult> {
   if (!isValidManualSearchTarget(input)) return { status: "invalid_target" };
 
@@ -532,6 +536,10 @@ export async function queueTrackedSubscriptionSearch(input: {
   if (readiness) return { status: readiness };
 
   const queuedAt = now();
+  const staleActiveRunStartedBefore = staleStartedBefore(
+    queuedAt,
+    input.staleActiveRunTimeoutMs ?? 2 * 3600 * 1000,
+  );
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
   const reservation = await input.repository.reserveWorkflowRun({
     accountId: input.accountId,
@@ -570,6 +578,9 @@ export async function queueTrackedSubscriptionSearch(input: {
       "replace_request",
       "staging_recovery",
     ],
+    ...(staleActiveRunStartedBefore
+      ? { staleActiveRunStartedBefore, staleFinishedAt: queuedAt }
+      : {}),
   });
 
   if (reservation.status === "not_tracked") return { status: "not_tracked" };

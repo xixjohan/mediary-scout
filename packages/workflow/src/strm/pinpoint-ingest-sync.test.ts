@@ -152,9 +152,10 @@ describe("syncPinpointIngestedFiles", () => {
     const generatedPath = result.generatedPaths[0]!;
     expect(fs.existsSync(generatedPath)).toBe(true);
     const content = fs.readFileSync(generatedPath, "utf8").trim();
-    expect(content).toBe(
+    expect(content).toContain(
       `http://192.168.1.100:3000/api/strm/play/${task.id}/file_101?name=Oppenheimer.2023.2160p.mkv`,
     );
+    expect(content).toContain("token=");
 
     expect(mockCoordinator.notifyFilesChanged).toHaveBeenCalledWith("acct_1", [
       generatedPath,

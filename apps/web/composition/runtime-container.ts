@@ -231,6 +231,7 @@ export function ensureStorageStreamResolver(): StorageStreamResolver {
           : null;
       const openOAuth = storage.provider === "pan115" ? payload?.openOAuth : undefined;
       const hasOpenOAuth = isPan115OpenOAuthValid(openOAuth as Pan115OpenOAuthCredentials | undefined);
+      const isQuarkFamily = storage.provider === "quark" || storage.provider === "uc";
       return {
         provider: storage.provider,
         cookie,
@@ -240,6 +241,23 @@ export function ensureStorageStreamResolver(): StorageStreamResolver {
           ? {
               persistOpenOAuthCredentials: createPan115OpenOAuthPersister(repo, storage.accountId, storage.id),
               coordinateOpenTokenRefresh: createPan115OpenOAuthRefreshCoordinator(repo, storage.accountId, storage.id),
+            }
+          : {}),
+        ...(isQuarkFamily
+          ? {
+              persistCookie: async (newCookie: string) => {
+                const currentPayload =
+                  storage.payload !== null && typeof storage.payload === "object" && !Array.isArray(storage.payload)
+                    ? (storage.payload as Record<string, unknown>)
+                    : {};
+                await repo.upsertConnectedStorage({
+                  ...storage,
+                  payload: {
+                    ...currentPayload,
+                    cookie: newCookie,
+                  },
+                });
+              },
             }
           : {}),
       };

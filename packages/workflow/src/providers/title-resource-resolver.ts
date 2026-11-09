@@ -4,6 +4,8 @@ import type { MergedSourceHealth } from "../domain/resource-source-health.js";
 import { toCandidateViews, type ResourceCandidateView } from "./resource-candidate-view.js";
 import { TitleResourceCache } from "./title-resource-cache.js";
 import { buildMergedSearchSnapshot } from "./merged-search-snapshot.js";
+import type { AcquisitionFilterPreferences } from "@media-track/contracts";
+import { applyAcquisitionFilters } from "../execution/acquisition-filter-pipeline.js";
 
 /**
  * Decision core for `POST /api/titles/resources` (W2).
@@ -48,6 +50,8 @@ export interface TitleResourceDeps {
   cacheKeySuffix?: string | undefined;
   /** Optional streaming chunk callback for progressive candidate emission. */
   onChunk?: ((event: TitleResourceProgressEvent) => void) | undefined;
+  /** 可选的资源排毒与过滤偏好配置 */
+  filterPreferences?: AcquisitionFilterPreferences | undefined;
 }
 
 export type TitleResourceResult =
@@ -73,13 +77,8 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
   const baseKey = TitleResourceCache.key(deps.accountId, deps.titleId);
   const scopeKey = deps.cacheKeySuffix ? `${baseKey}:${deps.cacheKeySuffix}` : baseKey;
 
-  // 2) Cooldown. Checked before the cache so a throttled user cannot probe the
-  // cache for free — and so a throttled response still reports a useful delay.
-  if (!deps.limiter.tryAcquire(baseKey)) {
-    return { kind: "throttled", retryAfterMs: deps.limiter.remainingMs(baseKey) };
-  }
-
-  // 3) Cache.
+  // 2) Cache (30 min TTL). Checked before cooldown so fresh cached hits never consume
+  // rate-limiting budget and never reject legitimate page reloads or tab switches with 429.
   const cached = deps.cache.get(scopeKey);
   if (cached !== null) {
     // No snapshot on a cache hit: the merged snapshot was persisted on the miss that
@@ -95,6 +94,11 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
       ...(cachedSnapshotId === undefined ? {} : { snapshotId: cachedSnapshotId }),
       sourceHealth: { status: "healthy", unhealthySources: [] },
     };
+  }
+
+  // 3) Cooldown (60s). Only enforced on cache misses that actually spend indexer / drive budget.
+  if (!deps.limiter.tryAcquire(baseKey)) {
+    return { kind: "throttled", retryAfterMs: deps.limiter.remainingMs(baseKey) };
   }
 
   try {
@@ -128,7 +132,10 @@ export async function resolveTitleResources(deps: TitleResourceDeps): Promise<Ti
         }
       }),
     );
-    const views = [...byId.values()];
+    const rawViews = [...byId.values()];
+    const views = deps.filterPreferences
+      ? applyAcquisitionFilters(rawViews, deps.filterPreferences).passed
+      : rawViews;
     // The ONE snapshot the user actually saw: the ladder produced several, but the
     // panel shows the deduped list, and the import path's "does this candidate belong
     // to this snapshot?" check needs exactly one snapshot to answer against.

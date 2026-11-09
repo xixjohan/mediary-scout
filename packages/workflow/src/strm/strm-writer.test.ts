@@ -5,6 +5,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildPlayPath,
   buildPlayUrl,
+  buildSignedPlayUrl,
+  verifyStrmPlayToken,
   removeStrmFile,
   safeDirSegments,
   safeStem,
@@ -76,5 +78,47 @@ describe("strm-writer", () => {
     expect(fs.existsSync(strmPath)).toBe(false);
     // SubDir should have been cleaned up because it was empty
     expect(fs.existsSync(path.join(base, "Movies", "SubDir"))).toBe(false);
+  });
+
+  it("generates signed play URL and verifies HMAC token signature and expiration", () => {
+    const baseUrl = "http://192.168.1.100:3000";
+    const taskId = "task_video_1";
+    const fileId = "file_video_99";
+    const secret = "test-secret-key-12345";
+
+    const signedUrl = buildPlayUrl(baseUrl, taskId, fileId, "movie.mkv", {
+      sign: true,
+      ttlSeconds: 3600,
+      secret,
+    });
+
+    const parsed = new URL(signedUrl);
+    expect(parsed.pathname).toBe("/api/strm/play/task_video_1/file_video_99");
+    expect(parsed.searchParams.get("name")).toBe("movie.mkv");
+    const token = parsed.searchParams.get("token");
+    const exp = Number(parsed.searchParams.get("exp"));
+    expect(token).toBeTruthy();
+    expect(exp).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+    // 1. 正常验证通过
+    const validCheck = verifyStrmPlayToken({ taskId, fileId, token, expiresAtEpochSeconds: exp, secret });
+    expect(validCheck.valid).toBe(true);
+
+    // 2. 篡改 fileId -> 拒绝
+    const tamperedFile = verifyStrmPlayToken({ taskId, fileId: "file_tampered", token, expiresAtEpochSeconds: exp, secret });
+    expect(tamperedFile.valid).toBe(false);
+    expect(tamperedFile.reason).toBe("invalid_signature");
+
+    // 3. 过期时间伪造或超时 -> 拒绝
+    const expiredCheck = verifyStrmPlayToken({
+      taskId,
+      fileId,
+      token,
+      expiresAtEpochSeconds: exp,
+      secret,
+      nowEpochSeconds: exp + 10,
+    });
+    expect(expiredCheck.valid).toBe(false);
+    expect(expiredCheck.reason).toBe("token_expired");
   });
 });

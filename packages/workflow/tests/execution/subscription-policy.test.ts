@@ -5,6 +5,8 @@ import {
   parseEpisodeFilter,
   previewPolicy,
   withinCooldown,
+  isQualityCutoffMet,
+  parseQualityTier,
   type SubscriptionPolicy,
 } from "../../src/execution/subscription-policy.js";
 
@@ -279,5 +281,29 @@ describe("withinCooldown", () => {
     expect(withinCooldown({ policy: p, lastTakenAt: "2026-01-28T00:00:00.000Z", now: "nope" })).toBe(
       false,
     );
+  });
+});
+
+describe("画质截止线 (Quality Cutoff) 与解析", () => {
+  it("parseQualityTier 正确解析画质档位", () => {
+    expect(parseQualityTier("Avatar.2009.2160p.UHD.Remux")).toBe("2160p");
+    expect(parseQualityTier("Inception.1080p.BDRip.x264")).toBe("1080p");
+    expect(parseQualityTier("Show.S01E01.720p.HDTV")).toBe("720p");
+    expect(parseQualityTier("Unknown.Video.avi")).toBe("none");
+  });
+
+  it("isQualityCutoffMet 达到或超过截止线即判定达标以阻止洗版", () => {
+    // 设为 1080p 截止
+    expect(isQualityCutoffMet("Show.1080p.WebRip", "1080p")).toBe(true);
+    expect(isQualityCutoffMet("Show.2160p.Remux", "1080p")).toBe(true);
+    expect(isQualityCutoffMet("Show.720p.HDTV", "1080p")).toBe(false);
+
+    // 设为 720p 截止
+    expect(isQualityCutoffMet("Show.720p.HDTV", "720p")).toBe(true);
+    expect(isQualityCutoffMet("Show.1080p.WebRip", "720p")).toBe(true);
+
+    // 未设定或 none
+    expect(isQualityCutoffMet("Show.2160p.Remux", "none")).toBe(false);
+    expect(isQualityCutoffMet("Show.2160p.Remux", undefined)).toBe(false);
   });
 });

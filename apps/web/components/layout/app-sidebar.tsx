@@ -31,8 +31,10 @@ function SidebarHeader({
         </span>
       </div>
 
-      {!skeleton ? (
-        <Suspense fallback={null}>
+      {activeStorageId && skeleton ? (
+        <div className="ws-skeleton" />
+      ) : !skeleton ? (
+        <Suspense fallback={activeStorageId ? <div className="ws-skeleton" /> : null}>
           <WorkspaceSwitcherLoader activeStorageId={activeStorageId} />
         </Suspense>
       ) : null}
@@ -69,6 +71,7 @@ function SidebarNav({
         </li>
         <li>
           <Link
+            prefetch={true}
             className={`nav-item ${active === "library" ? "is-active" : ""}`}
             href={`${basePath}?tab=library`}
           >
@@ -78,6 +81,7 @@ function SidebarNav({
         </li>
         <li>
           <Link
+            prefetch={true}
             className={`nav-item ${active === "chat" ? "is-active" : ""}`}
             href={globalNavHref("/chat", activeStorageId)}
           >
@@ -87,6 +91,7 @@ function SidebarNav({
         </li>
         <li>
           <Link
+            prefetch={true}
             className={`nav-item ${active === "storage" ? "is-active" : ""}`}
             href={globalNavHref("/storage", activeStorageId)}
           >
@@ -96,6 +101,7 @@ function SidebarNav({
         </li>
         <li>
           <Link
+            prefetch={true}
             className={`nav-item ${active === "notifications" ? "is-active" : ""}`}
             href={globalNavHref("/notifications", activeStorageId)}
           >
@@ -106,6 +112,7 @@ function SidebarNav({
         </li>
         <li className="nav-activity-item">
           <Link
+            prefetch={true}
             className={`nav-item ${active === "activity" ? "is-active" : ""}`}
             href={globalNavHref("/activity", activeStorageId)}
           >
@@ -116,6 +123,7 @@ function SidebarNav({
         </li>
         <li className="nav-settings-item">
           <Link
+            prefetch={true}
             className={`nav-item ${active === "settings" ? "is-active" : ""}`}
             href={globalNavHref("/settings", activeStorageId)}
           >
@@ -141,11 +149,14 @@ function SidebarFooter({
   return (
     <div className="sidebar-footer">
       {!skeleton ? (
-        <Suspense fallback={null}>
+        <Suspense fallback={<div className="account-identity-skeleton" />}>
           <AccountIdentityLoader storageId={activeStorageId} />
         </Suspense>
-      ) : null}
+      ) : (
+        <div className="account-identity-skeleton" />
+      )}
       <Link
+        prefetch={true}
         className={`nav-item nav-secondary ${active === "activity" ? "is-active" : ""}`}
         href={globalNavHref("/activity", activeStorageId)}
       >
@@ -153,7 +164,7 @@ function SidebarFooter({
         活动
         {!skeleton ? <ActivityNavBadge storageId={activeStorageId} /> : null}
       </Link>
-      <Link className="health-card" href={globalNavHref("/settings", activeStorageId)} style={{ textDecoration: "none", color: "inherit" }}>
+      <Link prefetch={true} className="health-card" href={globalNavHref("/settings", activeStorageId)} style={{ textDecoration: "none", color: "inherit" }}>
         <span className="health-icon">
           <Settings size={16} aria-hidden />
         </span>

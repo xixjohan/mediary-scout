@@ -81,6 +81,47 @@ describe("queueTrackedSubscriptionSearch", () => {
     expect(await repository.getWorkflowRunSnapshot("run_second", "acct_1")).toBeNull();
   });
 
+  it("expires stale zombie run and queues new manual search when timeout is exceeded", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = await seedTrackedSeries(repository);
+    const staleNow = "2026-11-07T08:00:00.000Z";
+    const freshNow = "2026-11-07T12:00:00.000Z";
+
+    const staleResult = await queueTrackedSubscriptionSearch({
+      repository,
+      accountId: "acct_1",
+      connectedStorageId: "drive_1",
+      tmdbId: title.tmdbId,
+      mediaType: "tv",
+      seasonNumber: season.seasonNumber,
+      source: "ui",
+      now: () => staleNow,
+      createWorkflowRunId: () => "run_zombie",
+    });
+    expect(staleResult).toMatchObject({ status: "queued", workflowRunId: "run_zombie" });
+
+    // 4 hours later, previous run hung or crashed
+    const retryResult = await queueTrackedSubscriptionSearch({
+      repository,
+      accountId: "acct_1",
+      connectedStorageId: "drive_1",
+      tmdbId: title.tmdbId,
+      mediaType: "tv",
+      seasonNumber: season.seasonNumber,
+      source: "ui",
+      now: () => freshNow,
+      staleActiveRunTimeoutMs: 2 * 3600 * 1000,
+      createWorkflowRunId: () => "run_recovered",
+    });
+
+    expect(retryResult).toMatchObject({ status: "queued", workflowRunId: "run_recovered" });
+    const zombieSnapshot = await repository.getWorkflowRunSnapshot("run_zombie", {
+      accountId: "acct_1",
+      connectedStorageId: "drive_1",
+    });
+    expect(zombieSnapshot?.workflowRun.status).toBe("failed");
+  });
+
   it("does not queue a target outside the account and drive scope", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = await seedTrackedSeries(repository);
@@ -117,6 +158,16 @@ describe("queueTrackedSubscriptionSearch", () => {
     expect(result).toMatchObject({ status: "no_missing" });
   });
 
+  it("queues incomplete episode state for synchronization", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const { title, season } = await seedTrackedSeries(repository, [], true);
+    const result = await queueTrackedSubscriptionSearch({
+      repository, accountId: "acct_1", connectedStorageId: "drive_1", tmdbId: title.tmdbId,
+      mediaType: "tv", seasonNumber: season.seasonNumber, source: "ui", now: () => now,
+    });
+    expect(result).toMatchObject({ status: "queued" });
+  });
+
   it("requires a season for series and rejects invalid season numbers", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title } = await seedTrackedSeries(repository);
@@ -138,6 +189,7 @@ describe("queueTrackedSubscriptionSearch", () => {
 async function seedTrackedSeries(
   repository: InMemoryWorkflowRepository,
   obtainedCodes: string[] = [],
+  emptyEpisodes = false,
 ): Promise<{ title: MediaTitle; season: TrackedSeason; episodes: ReturnType<typeof createEpisodeStates> }> {
   const title: MediaTitle = {
     id: "title_tv_123",
@@ -179,7 +231,7 @@ async function seedTrackedSeries(
       finishedAt: now,
       auditEvents: [],
     },
-    episodes,
+    episodes: emptyEpisodes ? [] : episodes,
     resourceSnapshots: [],
     decisions: [],
     transferAttempts: [],

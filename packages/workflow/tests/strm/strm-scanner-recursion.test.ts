@@ -8,9 +8,16 @@ import type { DriveDirectoryListing, DriveFileManager } from "../../src/storage/
 
 describe("StrmScanner Recursive Traversal & Hierarchy Preservation", () => {
   let tmpDir: string;
+  let configPath: string;
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "strm-recursion-test-"));
+    tmpDir = path.join(
+      process.cwd(),
+      "data",
+      `strm-recursion-test-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    );
+    fs.mkdirSync(tmpDir, { recursive: true });
+    configPath = path.relative(process.cwd(), tmpDir).replace(/\\/g, "/");
   });
 
   afterEach(() => {
@@ -27,7 +34,7 @@ describe("StrmScanner Recursive Traversal & Hierarchy Preservation", () => {
       storageId: "cs_115",
       remoteFolderId: "root_anime",
       remotePath: "/Mediary Scout/Anime",
-      localOutputDir: tmpDir,
+      localOutputDir: configPath,
       scanIntervalMinutes: 360,
       scanMode: "incremental_missing",
       extensions: "mp4;mkv;ts;avi;mov;wmv;iso;flv",
@@ -126,10 +133,10 @@ describe("StrmScanner Recursive Traversal & Hierarchy Preservation", () => {
     expect(result.generatedCount).toBe(3);
     expect(result.protected).toBe(false);
 
-    // Verify hierarchical files created on local disk
-    const expectedE01 = path.join(tmpDir, "龙珠超：比鲁斯 (2026)", "Season 01", "DragonBall_S01E01.strm");
-    const expectedE02 = path.join(tmpDir, "龙珠超：比鲁斯 (2026)", "Season 01", "DragonBall_S01E02.strm");
-    const expectedE03 = path.join(tmpDir, "龙珠超：比鲁斯 (2026)", "Season 01", "DragonBall_S01E03.strm");
+    // Verify hierarchical files created on local disk (with canonical naming: CleanTitle - SxxExx.strm)
+    const expectedE01 = path.join(tmpDir, "龙珠超：比鲁斯 (2026)", "Season 01", "龙珠超：比鲁斯 - S01E01.strm");
+    const expectedE02 = path.join(tmpDir, "龙珠超：比鲁斯 (2026)", "Season 01", "龙珠超：比鲁斯 - S01E02.strm");
+    const expectedE03 = path.join(tmpDir, "龙珠超：比鲁斯 (2026)", "Season 01", "龙珠超：比鲁斯 - S01E03.strm");
 
     expect(fs.existsSync(expectedE01)).toBe(true);
     expect(fs.existsSync(expectedE02)).toBe(true);
@@ -137,7 +144,8 @@ describe("StrmScanner Recursive Traversal & Hierarchy Preservation", () => {
 
     // Verify .strm file content
     const e01Content = fs.readFileSync(expectedE01, "utf8");
-    expect(e01Content).toBe("http://192.168.1.50:3000/api/strm/play/cs_115/f1?name=DragonBall_S01E01.mkv\n");
+    expect(e01Content).toContain("http://192.168.1.50:3000/api/strm/play/task-rec-1/f1?name=DragonBall_S01E01.mkv");
+    expect(e01Content).toContain("token=");
 
     // Second run with incremental_missing should skip existing files
     const secondResult = await scanner.runScan({

@@ -1,3 +1,6 @@
+import path from "node:path";
+import { arbitrateReleasePack } from "../execution/pack-episode-arbitrator.js";
+import { canonicalEpisodeFileName, episodeCodeFromFileName } from "../domain/episode-code.js";
 import type { ResourceSnapshotV2 } from "./fake-provider.js";
 import type { TaskSandbox } from "./sandbox.js";
 
@@ -8,9 +11,34 @@ export interface CandidateLike {
   sizeBytes?: number;
 }
 
+export interface PackArbitrationContext {
+  missingEpisodesCount: number;
+  totalEpisodesCount: number;
+}
+
 /**
  * 确定性规则降级选择器（Deterministic Rule Fallback Strategy）。
  */
+
+function scorePoisonAndJunk(title: string, sizeBytes?: number): number {
+  // 密码、压缩包、可执行文件等假种特征
+  if (
+    /(?:解压密码|有密码|带密码|密码在|password|解压码)/i.test(title) ||
+    /\.(?:exe|bat|cmd|apk|iso|scr)\b/i.test(title) ||
+    /(?:最新网址|澳门|博彩|荷官|发布页)/i.test(title)
+  ) {
+    return -1000;
+  }
+  // 纯压缩包且无主视频特征
+  if (/\.(?:rar|zip|7z)\b/i.test(title) && !/(?:mkv|mp4|avi|ts|mov)/i.test(title)) {
+    return -500;
+  }
+  // 体积过小（如 < 100MB 通常为虚假广告或诱导程序）
+  if (sizeBytes !== undefined && sizeBytes > 0 && sizeBytes < 100 * 1024 * 1024) {
+    return -200;
+  }
+  return 0;
+}
 
 function scoreNegativeKeywords(title: string): number {
   if (title.includes("trailer") || title.includes("预告") || title.includes("sample") || title.includes("花絮")) {
@@ -55,25 +83,41 @@ function scoreBonusFeatures(title: string, candidate: CandidateLike): number {
   return score;
 }
 
-export function scoreCandidate(candidate: CandidateLike, qualityPreference = "4K"): number {
+export function scoreCandidate(
+  candidate: CandidateLike,
+  qualityPreference = "4K",
+  packContext?: PackArbitrationContext,
+): number {
   const title = (candidate.title || "").toLowerCase();
+  let packScore = 0;
+  if (packContext && packContext.totalEpisodesCount > 0) {
+    const verdict = arbitrateReleasePack({
+      resourceName: candidate.title,
+      missingEpisodesCount: packContext.missingEpisodesCount,
+      totalEpisodesCount: packContext.totalEpisodesCount,
+    });
+    packScore = verdict.scoreModifier;
+  }
   return (
     scoreNegativeKeywords(title) +
+    scorePoisonAndJunk(title, candidate.sizeBytes) +
     scoreResolution(title, qualityPreference) +
-    scoreBonusFeatures(title, candidate)
+    scoreBonusFeatures(title, candidate) +
+    packScore
   );
 }
 
 export function pickBestCandidate<T extends CandidateLike>(
   candidates: readonly T[],
   qualityPreference = "4K",
+  packContext?: PackArbitrationContext,
 ): T | null {
   if (candidates.length === 0) return null;
   let bestCandidate: T | null = null;
   let highestScore = -Infinity;
 
   for (const c of candidates) {
-    const score = scoreCandidate(c, qualityPreference);
+    const score = scoreCandidate(c, qualityPreference, packContext);
     if (score > highestScore) {
       highestScore = score;
       bestCandidate = c;
@@ -83,15 +127,57 @@ export function pickBestCandidate<T extends CandidateLike>(
   return highestScore > 0 ? bestCandidate : candidates[0] ?? null;
 }
 
-async function organizeMediaAfterTransfer(sandbox: TaskSandbox, isMovie: boolean): Promise<void> {
-  if (isMovie) {
-    try {
-      await sandbox.flattenMovie?.();
-    } catch {
-      // 已经在顶层目录时略过
+async function handleMovieMedia(sandbox: TaskSandbox): Promise<void> {
+  try {
+    await sandbox.flattenMovie?.();
+  } catch {
+    // 已经在顶层目录时略过
+  }
+  await sandbox.markObtained({ codes: ["MOVIE"] });
+  await sandbox.finish();
+}
+
+async function performEpisodeRenames(
+  sandbox: TaskSandbox,
+  videoFiles: Array<{ id: string; path: string }>,
+  title: string,
+): Promise<void> {
+  if (typeof sandbox.renameTargetFiles !== "function") return;
+  try {
+    const renames: Array<{ fileId: string; newName: string }> = [];
+    for (let idx = 0; idx < videoFiles.length; idx++) {
+      const vf = videoFiles[idx];
+      if (!vf) continue;
+      const fileName = path.basename(vf.path);
+      const code =
+        episodeCodeFromFileName(fileName, 1) ??
+        `S01E${String(idx + 1).padStart(2, "0")}`;
+      const newName = canonicalEpisodeFileName({
+        title,
+        episodeCode: code,
+        sourceName: fileName,
+        preserveMetadata: true,
+      });
+      if (newName && newName !== fileName) {
+        renames.push({ fileId: vf.id, newName });
+      }
     }
-    await sandbox.markObtained({ codes: ["MOVIE"] });
-    await sandbox.finish();
+    if (renames.length > 0) {
+      await sandbox.renameTargetFiles({ renames, season: 1 });
+    }
+  } catch (err) {
+    // 重命名异常安全略过，绝不阻断主流程
+    console.warn("[DeterministicSelector] renameTargetFiles failed:", err);
+  }
+}
+
+async function organizeMediaAfterTransfer(
+  sandbox: TaskSandbox,
+  isMovie: boolean,
+  preferredTitle?: string,
+): Promise<void> {
+  if (isMovie) {
+    await handleMovieMedia(sandbox);
     return;
   }
 
@@ -101,8 +187,18 @@ async function organizeMediaAfterTransfer(sandbox: TaskSandbox, isMovie: boolean
     await sandbox.moveToSeason({
       moves: [{ season: 1, fileIds: videoFiles.map((f) => f.id) }],
     });
+
+    const title = sandbox.getPrimaryTitle?.() || preferredTitle || "Video";
+    await performEpisodeRenames(sandbox, videoFiles, title);
+
     await sandbox.markObtained({
-      codes: videoFiles.map((_, idx) => `S01E${String(idx + 1).padStart(2, "0")}`),
+      codes: videoFiles.map((vf, idx) => {
+        const fileName = path.basename(vf.path);
+        return (
+          episodeCodeFromFileName(fileName, 1) ??
+          `S01E${String(idx + 1).padStart(2, "0")}`
+        );
+      }),
     });
   }
   try {
@@ -135,6 +231,7 @@ export async function executeDeterministicFallback(
     movie: boolean;
     qualityPreference?: string;
     keyword?: string;
+    packContext?: PackArbitrationContext;
   },
 ): Promise<{ success: boolean; candidateTitle?: string; reason?: string }> {
   try {
@@ -150,7 +247,11 @@ export async function executeDeterministicFallback(
       return { success: false, reason: "快照中候选资源为空" };
     }
 
-    const best = pickBestCandidate(allCandidates.map((i) => i.candidate), options.qualityPreference ?? "4K");
+    const best = pickBestCandidate(
+      allCandidates.map((i) => i.candidate),
+      options.qualityPreference ?? "4K",
+      options.packContext,
+    );
     if (!best) {
       return { success: false, reason: "未找到评分合格的候选资源" };
     }
@@ -161,7 +262,7 @@ export async function executeDeterministicFallback(
     }
 
     await sandbox.transferCandidate({ snapshotId: matched.snapshot.id, candidateId: best.id });
-    await organizeMediaAfterTransfer(sandbox, options.movie);
+    await organizeMediaAfterTransfer(sandbox, options.movie, options.keyword);
 
     return { success: true, candidateTitle: best.title };
   } catch (err) {

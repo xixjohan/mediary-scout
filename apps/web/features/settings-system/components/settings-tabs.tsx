@@ -33,13 +33,20 @@ export function SettingsTabs(props: {
   update: ReactNode;
   account: ReactNode;
   remote: ReactNode;
+  canViewUpdate?: boolean | undefined;
+  canViewRemote?: boolean | undefined;
 }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   // 每个受观察 tab 一个 ref/可见性位。ref 存在 map 里而不是各自 useRef，
   // 是为了让「加一个受观察 tab」只改 OBSERVED_SETTINGS_TABS 一处。
   const observedRefs = useRef(new Map<ObservedSettingsTabId, HTMLDivElement | null>());
-  const [observedVisible, setObservedVisible] = useState<SettingsTabVisibility>({});
+  const [observedVisible, setObservedVisible] = useState<SettingsTabVisibility>(() => {
+    const initial: SettingsTabVisibility = {};
+    if (typeof props.canViewUpdate === "boolean") initial.update = props.canViewUpdate;
+    if (typeof props.canViewRemote === "boolean") initial.remote = props.canViewRemote;
+    return initial;
+  });
   const [hash, setHash] = useState<string | undefined>(undefined);
 
   useEffect(() => {
@@ -51,6 +58,8 @@ export function SettingsTabs(props: {
     window.addEventListener("hashchange", readHash);
     const observers: MutationObserver[] = [];
     for (const id of OBSERVED_SETTINGS_TABS) {
+      if (id === "update" && typeof props.canViewUpdate === "boolean") continue;
+      if (id === "remote" && typeof props.canViewRemote === "boolean") continue;
       const node = observedRefs.current.get(id);
       if (!node) continue;
       // 函数式更新：多个 observer 各自异步触发，读闭包里的旧 state 会互相覆盖。
@@ -98,9 +107,11 @@ export function SettingsTabs(props: {
 
   // WAI-ARIA tabs pattern: same-page state, not page navigation — so
   // tablist/tab/tabpanel + aria-selected (not aria-current), arrows move tabs.
-  const visibleTabs = SETTINGS_TABS.filter(
-    (tab) => !isObserved(tab.id) || observedVisible[tab.id] === true,
-  );
+  const visibleTabs = SETTINGS_TABS.filter((tab) => {
+    if (tab.id === "update" && typeof props.canViewUpdate === "boolean") return props.canViewUpdate;
+    if (tab.id === "remote" && typeof props.canViewRemote === "boolean") return props.canViewRemote;
+    return !isObserved(tab.id) || observedVisible[tab.id] === true;
+  });
   const onTablistKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
     event.preventDefault();
@@ -141,7 +152,9 @@ export function SettingsTabs(props: {
           role="tabpanel"
           aria-labelledby={`settings-tab-${panel.id}`}
           ref={
-            isObserved(panel.id)
+            isObserved(panel.id) &&
+            !(panel.id === "update" && typeof props.canViewUpdate === "boolean") &&
+            !(panel.id === "remote" && typeof props.canViewRemote === "boolean")
               ? (node) => {
                   observedRefs.current.set(panel.id as ObservedSettingsTabId, node);
                 }

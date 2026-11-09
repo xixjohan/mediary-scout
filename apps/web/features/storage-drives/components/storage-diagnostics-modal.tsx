@@ -40,7 +40,7 @@ function EngineModeBanner({
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Zap size={16} style={{ color: "#10b981" }} />
             <span style={{ fontWeight: 600, fontSize: 14 }}>
-              当前引擎模式：🟢 原生 {authKind === "token" ? "Token" : "Cookie"} 驱动 (稳态运行)
+              当前引擎模式：原生 {authKind === "token" ? "Token" : "Cookie"} 驱动 (稳态运行)
             </span>
           </div>
           <p style={{ margin: "4px 0 0 24px", fontSize: 12, color: "#a1a1aa" }}>
@@ -54,10 +54,10 @@ function EngineModeBanner({
   const isDual = mode === "dual_engine";
   const isOpen = mode === "open_only";
   const title = isDual
-    ? "⚡ 双轨融合 (Dual-Engine Hybrid) [最佳生产状态]"
+    ? "双轨融合 (Dual-Engine Hybrid) [最佳生产状态]"
     : isOpen
-    ? "🔷 仅开放平台 (Open-Only)"
-    : "🔶 传统 Cookie (Cookie-Only)";
+    ? "仅开放平台 (Open-Only)"
+    : "传统 Cookie (Cookie-Only)";
 
   const desc = isDual
     ? "转存操作自动走 Cookie 轨，扫库大清单与直链播放走官方 Open API，异常时自动毫秒级降级回退。"
@@ -187,7 +187,7 @@ function OpenOAuthTrackCard({ openOAuthStatus }: { openOAuthStatus: StorageDiagn
         ) : null}
         {isConfigured && !isHealthy ? (
           <div style={{ marginTop: 8, fontSize: 11, color: "#f59e0b", background: "rgba(245, 158, 11, 0.08)", padding: "6px 8px", borderRadius: 4, lineHeight: 1.4 }}>
-            💡 提示：Refresh Token 已被官方注销或过期，请前往「设置 → 添加网盘 → 115网盘 → 开放OAuth」重新扫码授权。
+            提示：Refresh Token 已被官方注销或过期，请前往「设置 → 添加网盘 → 115网盘 → 开放OAuth」重新扫码授权。
           </div>
         ) : null}
       </div>
@@ -212,16 +212,16 @@ function RoutingSummaryCard({
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa" }}>
           <span>影视转存 (receiveShare):</span>
           <span style={{ color: isTransferOk ? "#10b981" : "#ef4444", fontWeight: 500 }}>
-            {isTransferOk ? "✔ 原生协议转存" : "✖ 无可用通道"}
+            {isTransferOk ? "原生协议转存" : "无可用通道"}
           </span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa", marginTop: 4 }}>
           <span>媒体库扫库 (listItems):</span>
-          <span style={{ color: "#10b981", fontWeight: 500 }}>✔ 原生目录检索</span>
+          <span style={{ color: "#10b981", fontWeight: 500 }}>原生目录检索</span>
         </div>
         <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa", marginTop: 4 }}>
           <span>STRM 直链与串流 (resolveStream):</span>
-          <span style={{ color: "#10b981", fontWeight: 500 }}>✔ 原生直链解析</span>
+          <span style={{ color: "#10b981", fontWeight: 500 }}>原生直链解析</span>
         </div>
       </div>
     );
@@ -239,19 +239,19 @@ function RoutingSummaryCard({
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa" }}>
         <span>影视转存 (receiveShare):</span>
         <span style={{ color: isTransferOk ? "#10b981" : "#ef4444", fontWeight: 500 }}>
-          {isTransferOk ? "✔ 锁定 Cookie 轨" : "✖ 无可用通道"}
+          {isTransferOk ? "锁定 Cookie 轨" : "无可用通道"}
         </span>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa", marginTop: 4 }}>
         <span>媒体库扫库 (listItems):</span>
         <span style={{ color: isOpenListing ? "#10b981" : "#f59e0b", fontWeight: 500 }}>
-          {isOpenListing ? "✔ Open API 1000条/次大清单" : "⚠ Cookie 单次30~50条 (降级/限流保护)"}
+          {isOpenListing ? "Open API 1000条/次大清单" : "Cookie 单次30~50条 (降级/限流保护)"}
         </span>
       </div>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a1a1aa", marginTop: 4 }}>
         <span>STRM 直链与串流 (resolveStream):</span>
         <span style={{ color: isOpenStream ? "#10b981" : "#f59e0b", fontWeight: 500 }}>
-          {isOpenStream ? "✔ Open API 原生直链 (带UA/高并发)" : "⚠ Cookie 逆向解密直链 (1.2s漏桶防护)"}
+          {isOpenStream ? "Open API 原生直链 (带UA/高并发)" : "Cookie 逆向解密直链 (1.2s漏桶防护)"}
         </span>
       </div>
     </div>

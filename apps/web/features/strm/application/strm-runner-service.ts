@@ -1,4 +1,4 @@
-import { StrmScanner, type StrmScanResult } from "@media-track/workflow";
+import { StrmScanner, resolveEffectiveStrmBaseUrl, type StrmScanResult } from "@media-track/workflow";
 import {
   getWorkflowRepository,
   getMediaServerCoordinator,
@@ -120,11 +120,7 @@ export async function executeStrmTaskScan(
   }
 
   const triggerSource = options?.triggerSource ?? "manual";
-  const baseUrl =
-    options?.baseUrl ||
-    process.env.APP_BASE_URL ||
-    process.env.MEDIARY_URL ||
-    `http://127.0.0.1:${process.env.PORT || "3001"}`;
+  const baseUrl = await resolveEffectiveStrmBaseUrl(repo, options?.baseUrl);
   const scanner = new StrmScanner();
   const startTime = Date.now();
   let recordId: string | undefined;

@@ -5,6 +5,7 @@ import type { PackageTreeFile, VerifiedFile } from "../domain/domain.js";
 import type { StrmTask } from "./strm-types.js";
 import { resolveStrmOutputPath } from "./output-path.js";
 import { buildPlayUrl, safeDirSegments, safeStem, writeStrmFile, removeStrmFile } from "./strm-writer.js";
+import { cleanMediaTitle, episodeCodeFromFileName } from "../domain/episode-code.js";
 
 export interface StrmScanResult {
   scannedCount: number;
@@ -139,6 +140,38 @@ export class StrmScanner {
     return localMap;
   }
 
+  /**
+   * Derive a canonical STRM stem for a video file, normalizing episode tokens
+   * (e.g. "Title - S01E02") for optimal media server (Emby/Jellyfin/Plex) scraping.
+   */
+  private canonicalStrmStem(rfName: string, safeSegments: string[]): string {
+    const originalStem = path.parse(rfName).name;
+
+    // Detect if inside a Season directory (e.g. "Season 01")
+    let seasonNumber = 1;
+    let titleSegment = "";
+    for (let i = 0; i < safeSegments.length; i++) {
+      const seg = safeSegments[i] ?? "";
+      const seasonMatch = /^Season\s+(\d+)$/i.exec(seg);
+      if (seasonMatch && seasonMatch[1]) {
+        seasonNumber = Number(seasonMatch[1]);
+        titleSegment = safeSegments[i - 1] ?? "";
+        break;
+      }
+    }
+
+    const epCode = episodeCodeFromFileName(rfName, seasonNumber);
+    if (!epCode) {
+      return safeStem(originalStem);
+    }
+
+    const cleanTitle = titleSegment ? cleanMediaTitle(titleSegment) : "";
+    if (cleanTitle) {
+      return safeStem(`${cleanTitle} - ${epCode}`);
+    }
+    return safeStem(epCode);
+  }
+
   private async syncSingleFile(
     rf: VerifiedFile,
     task: StrmTask,
@@ -147,14 +180,14 @@ export class StrmScanner {
     result: StrmScanResult,
   ): Promise<string> {
     const relDir = rf.relativePath ? path.dirname(rf.relativePath) : "";
-    const stem = path.parse(rf.name).name;
-    const safeName = safeStem(stem) + ".strm";
     const safeSegments = relDir && relDir !== "." ? safeDirSegments(relDir) : [];
+    const stem = this.canonicalStrmStem(rf.name, safeSegments);
+    const safeName = stem + ".strm";
     const relStrmPath = safeSegments.length > 0
       ? `${safeSegments.join("/")}/${safeName}`
       : safeName;
     const targetFullPath = path.join(task.localOutputDir, ...safeSegments, safeName);
-    const playUrl = buildPlayUrl(baseUrl, task.id, rf.id, rf.name);
+    const playUrl = buildPlayUrl(baseUrl, task.id, rf.id, rf.name, { sign: true });
 
     if (!localStrmMap.has(relStrmPath)) {
       await writeStrmFile({ targetFilePath: targetFullPath, playUrl });

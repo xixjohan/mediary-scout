@@ -6,7 +6,7 @@ import type { MediaTitle } from "../domain/domain.js";
  *
  * Implements the Strategy Pattern across three layers:
  *  1. CustomKeywordStrategy — user-supplied custom query terms (highest priority).
- *  2. EpisodeTargetedStrategy — specific season/episode precision queries.
+ *  2. EpisodeTargetedStrategy — specific season/episode precision queries (multi-tier relaxation).
  *  3. DefaultLadderStrategy — automated escalation ladder: bare title first, then
  *     title+year, original romanized title, and aliases.
  *
@@ -33,6 +33,14 @@ export interface SearchKeywordOptions {
   episodeNumber?: number | null | undefined;
   /** Maximum number of keywords returned (defaults to 4). */
   maxKeywords?: number | undefined;
+}
+
+/** 剥离破坏 TG/PanSou 搜索分词的特殊标点符号 */
+export function sanitizeSearchPunctuation(raw: string): string {
+  return raw
+    .replace(/[·×:：，,~!！?？/\\()（）[\]【】]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Sanitize user-typed keyword: strip newlines/control chars, limit length. */
@@ -65,24 +73,39 @@ function collectEpisodeKeywords(title: MediaTitle, options: SearchKeywordOptions
   const e = options?.episodeNumber;
   const hasSeason = typeof s === "number" && s > 0;
   const hasEpisode = typeof e === "number" && e > 0;
+  const baseTitle = title.title;
+  const cleanTitle = sanitizeSearchPunctuation(baseTitle);
 
   if (hasSeason && hasEpisode) {
     const sCode = String(s).padStart(2, "0");
     const eCode = String(e).padStart(2, "0");
-    push(`${title.title} S${sCode}E${eCode}`, "episode");
-    push(`${title.title} 第${e}集`, "episode");
+    // Tier 1: 标准集数代码 (S01E05)
+    push(`${cleanTitle} S${sCode}E${eCode}`, "episode");
+    // Tier 2: 中文集数 (第5集)
+    push(`${cleanTitle} 第${e}集`, "episode");
+    // Tier 3: 动漫常用命名 (剧名 05)
+    push(`${cleanTitle} ${eCode}`, "episode");
+    if (cleanTitle !== baseTitle) {
+      push(`${baseTitle} S${sCode}E${eCode}`, "episode");
+    }
   } else if (hasSeason) {
     const sCode = String(s).padStart(2, "0");
-    push(`${title.title} S${sCode}`, "episode");
+    push(`${cleanTitle} S${sCode}`, "episode");
+    push(`${cleanTitle} 第${s}季`, "episode");
   } else if (hasEpisode) {
     const eCode = String(e).padStart(2, "0");
-    push(`${title.title} EP${eCode}`, "episode");
+    push(`${cleanTitle} EP${eCode}`, "episode");
+    push(`${cleanTitle} 第${e}集`, "episode");
   }
 }
 
 function collectDefaultLadderKeywords(title: MediaTitle, push: PushKeyword): void {
+  const clean = sanitizeSearchPunctuation(title.title);
   push(title.title, "title");
-  if (title.year > 0) push(`${title.title} ${title.year}`, "title+year");
+  if (clean !== title.title) {
+    push(clean, "title");
+  }
+  if (title.year > 0) push(`${clean} ${title.year}`, "title+year");
   push(title.originalTitle, "originalTitle");
   for (const alias of title.aliases) push(alias, "alias");
 }

@@ -364,4 +364,66 @@ describe("UC (阿里云盘族 second member) over the same client", () => {
       expect.objectContaining({ method: "POST" }),
     );
   });
+  it("QUARK_PROFILE 使用官方 PC Electron 客户端 UA，以防止大文件触发 23018 限制", async () => {
+    const { QUARK_PROFILE } = await import("../../src/index.js");
+    expect(QUARK_PROFILE.userAgent).toContain("quark-cloud-drive");
+    expect(QUARK_PROFILE.userAgent).toContain("Electron");
+    expect(QUARK_PROFILE.userAgent).toContain("Channel/pckk_other_ch");
+  });
+
+  it("getDownloadUrl posts to /file/download and returns direct stream info", async () => {
+    const requests: RecordedRequest[] = [];
+    const client = new QuarkCookieClient({
+      cookie: "__uid=quark_user_1",
+      fetchJson: record(requests, async () => ({
+        code: 0,
+        message: "ok",
+        data: [
+          {
+            download_url: "https://dl-pc-zb.drive.quark.cn/stream/mock_file_url",
+            file_name: "[ReleaseGroup] Sample Video.mkv",
+            size: 625845663,
+          },
+        ],
+      })),
+    });
+
+    const res = await client.getDownloadUrl({ fid: "fid_target_video" });
+
+    expect(res.url).toBe("https://dl-pc-zb.drive.quark.cn/stream/mock_file_url");
+    expect(res.fileName).toBe("[ReleaseGroup] Sample Video.mkv");
+    expect(res.fileSize).toBe(625845663);
+    expect(res.headers["Cookie"]).toBe("__uid=quark_user_1");
+    expect(res.headers["Referer"]).toBe("https://pan.quark.cn/");
+    expect(res.headers["User-Agent"]).toContain("quark-cloud-drive");
+
+    expect(requests[0]?.method).toBe("POST");
+    expect(requests[0]?.url).toContain("/1/clouddrive/file/download");
+    expect(JSON.parse(requests[0]!.body)).toEqual({ fids: ["fid_target_video"] });
+  });
+
+  it("automatically rotates __puus cookie when response headers carry set-cookie", async () => {
+    const persistMock = vi.fn();
+    const client = new QuarkCookieClient({
+      cookie: "__uid=u; __puus=old_puus_token",
+      onCookiePersist: persistMock,
+      fetchJson: async (_url, init, onResponseHeaders) => {
+        const callback = init.onResponseHeaders ?? onResponseHeaders;
+        if (callback) {
+          const headers = new Headers();
+          headers.set("set-cookie", "__puus=new_rotated_puus_12345; Max-Age=86400; Path=/");
+          callback(headers);
+        }
+        return {
+          code: 0,
+          data: { list: [] },
+        };
+      },
+    });
+
+    expect(client.getCookie()).toBe("__uid=u; __puus=old_puus_token");
+    await client.listItems({ directoryId: "0" });
+    expect(client.getCookie()).toBe("__uid=u; __puus=new_rotated_puus_12345");
+    expect(persistMock).toHaveBeenCalledWith("__uid=u; __puus=new_rotated_puus_12345");
+  });
 });

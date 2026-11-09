@@ -17,6 +17,7 @@ import {
   HaisouResourceProvider,
   PanSouResourceProvider,
   ProwlarrResourceProvider,
+  SearchProviderRegistry,
   createProtectedPan115CookieStorageExecutorFromEnv,
   createBootstrapPan115CookieStorageExecutor,
   createExecutorForBrand,
@@ -46,6 +47,7 @@ import {
   formatDailyDigestPushText,
   prepareTrackingTarget,
   createTmdbMetadataProvider,
+  resolveEffectiveStrmBaseUrl,
 } from "@media-track/workflow";
 import {
   getCurrentAccountId,
@@ -54,6 +56,7 @@ import {
   hydratePan115CookieFromDb,
   isPan115CookieHydrated,
   setPan115CookieHydrated,
+  getExtensionManager,
 } from "../../../composition/runtime-container";
 import {
   getAccountStorageCredentials,
@@ -179,6 +182,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       agentMemory,
       storage,
       resourceProvider,
+      effectiveBaseUrl,
     ] = await Promise.all([
       getAgentModel(scoped),
       getAssrtToken(scoped),
@@ -192,6 +196,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       }),
       getWorkerStorageExecutor(accountId, connectedStorageId, creds),
       getWorkerResourceProvider(scoped, driveProvider, accountId),
+      resolveEffectiveStrmBaseUrl(getWorkflowRepository()),
     ]);
     return {
       storage,
@@ -211,7 +216,7 @@ export function buildAccountContextResolver(): ResolveAccountWorkerContext {
       storageParentDirectoryId: parents.tv,
       animeStorageParentDirectoryId: parents.anime,
       moviesParentDirectoryId: parents.movies,
-      baseUrl: process.env.APP_BASE_URL || process.env.MEDIARY_URL || `http://127.0.0.1:${process.env.PORT || "3001"}`,
+      baseUrl: effectiveBaseUrl,
       mediaServerCoordinator: getMediaServerCoordinator(),
     };
   };
@@ -719,13 +724,13 @@ function tmdbSeasonMetadataSync(): SeasonMetadataSync | undefined {
   if (!isLiveSearch()) {
     return undefined;
   }
-  return async ({ tmdbId, seasonNumber }) => {
+  return async ({ tmdbId, seasonNumber, accountId }) => {
     const target = await prepareTrackingTarget({
       tmdbId,
       mediaType: "tv",
       seasonNumber,
       qualityPreference: defaultQuality(),
-      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(await getCurrentAccountId()))),
+      metadataProvider: createTmdbMetadataProvider(await getTmdbAccesses(getAccountScopedSettings(accountId))),
     });
     return {
       latestAiredEpisode: target.season.latestAiredEpisode,
@@ -798,34 +803,31 @@ export async function getWorkerResourceProvider(
       : ["pansou-115", "prowlarr"];
     // 夸克 → quark-only links; 光鸭 → guangya + magnet; 115 → 115 + magnet.
     const allowedTypes: ResourceType[] = allowedResourceTypesForKinds(kinds);
-    const providers: Array<{ name: string; provider: ResourceProvider }> = [
-      {
-        name: "pansou",
-        // 用户配了自建源(DB 或 compose 注入的 env)就包一层 fallback:自建源挂掉时
-        // 退到官方源续命,并把结果标 degraded —— 而不是像事故里那样静默报「没找到」。
-        provider: buildPanSouProviderChain({
-          userBaseURL: resolveUserPanSouBaseUrl(
-            await effectiveSettings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
-          ),
-          allowedTypes,
-          // 自建源开了认证就把凭据带进去。官方源那一侧由 buildPanSouProviderChain
-          // 决定不带（把用户令牌送到第三方既无用又泄露），这里只负责把库里的
-          // 凭据解析成 auth 形态。
-          auth: await getPanSouAuth(effectiveSettings),
-          // 把每次真实搜索观察到的结论回写,设置页徽章才有东西可读。缺了这条,
-          // 告警在生产中永远不触发:保存时探活只写 "ok",而本次事故恰恰是
-          // 「保存时好的、之后才挂」。写失败不能影响搜索本身,所以 catch 后
-          // 只记日志——但**不静默**,否则又是本 PR 要消灭的那个毛病。
-          onSourceHealth: (healthy) => {
-            void recordPanSouHealth(healthy, effectiveAccountId);
-          },
-        }),
-      },
-    ];
+    const registry = new SearchProviderRegistry({
+      strategy: "parallel",
+      extensionManager: getExtensionManager(),
+    });
+
+    registry.registerProvider({
+      id: "pansou",
+      name: "pansou",
+      provider: buildPanSouProviderChain({
+        userBaseURL: resolveUserPanSouBaseUrl(
+          await effectiveSettings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
+        ),
+        allowedTypes,
+        auth: await getPanSouAuth(effectiveSettings),
+        onSourceHealth: (healthy) => {
+          void recordPanSouHealth(healthy, effectiveAccountId);
+        },
+      }),
+    });
+
     if (kinds.includes("prowlarr")) {
       const prowlarr = await getProwlarrConfig(effectiveSettings);
       if (prowlarr.baseURL && prowlarr.apiKey) {
-        providers.push({
+        registry.registerProvider({
+          id: "prowlarr",
           name: "prowlarr",
           provider: new ProwlarrResourceProvider({ baseURL: prowlarr.baseURL, apiKey: prowlarr.apiKey }),
         });
@@ -833,14 +835,15 @@ export async function getWorkerResourceProvider(
     }
     const haisouApiKey = await getHaisouApiKey(effectiveSettings);
     if (haisouApiKey) {
-      providers.push({
+      registry.registerProvider({
+        id: "haisou",
         name: "haisou",
         provider: new HaisouResourceProvider({ apiKey: haisouApiKey, allowedTypes }),
       });
     }
-    return providers.length > 1
-      ? new CompositeResourceProvider({ providers })
-      : providers[0]!.provider;
+
+    await registry.syncExtensions();
+    return registry;
   }
   fakeResourceProvider ??= new FakeResourceProvider({
     keywordResults: {

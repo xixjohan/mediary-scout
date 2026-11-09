@@ -24,6 +24,7 @@ describe("parseOfflineRequestBody", () => {
       ok: true,
       storageId: undefined,
       urls: ["magnet:?xt=urn:btih:abc"],
+      shareTasks: [],
       directoryId: undefined,
       torrentName: undefined,
       torrentBase64: undefined,
@@ -37,9 +38,27 @@ describe("parseOfflineRequestBody", () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.urls).toEqual(["magnet:?xt=urn:btih:1", "https://example.com/video.mp4"]);
+    expect(res.shareTasks).toEqual([]);
   });
 
-  it("无 URL 也无种子时拒绝", () => {
+  it("解析分享转存任务 shareTasks", () => {
+    const res = parseOfflineRequestBody({
+      shareTasks: [
+        {
+          url: "https://pan.quark.cn/s/60e73719ddb8",
+          shareCode: "60e73719ddb8",
+          passcode: "nN4v",
+          brand: "quark",
+        },
+      ],
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.shareTasks.length).toBe(1);
+    expect(res.shareTasks[0]?.shareCode).toBe("60e73719ddb8");
+  });
+
+  it("无 URL、无 shareTasks 也无种子时拒绝", () => {
     const res = parseOfflineRequestBody({});
     expect(res.ok).toBe(false);
   });
@@ -60,12 +79,14 @@ describe("GET /api/storage/offline — 能力查询", () => {
     const data = await res.json();
     expect(data.supported).toBe(true);
     expect(data.provider).toBe("pan115");
+    expect(data.supportsOffline).toBe(true);
+    expect(data.supportsShareTransfer).toBe(true);
     expect(data.schemes).toContain("magnet");
     expect(data.schemes).toContain("http");
     expect(data.supportsTorrent).toBe(true);
   });
 
-  it("不支持离线下载的网盘返回 supported: false 与提示信息", async () => {
+  it("夸克网盘返回支持分享转存、不支持磁力离线的能力描述", async () => {
     getAccountStorageCredentialsMock.mockResolvedValueOnce({
       id: "drive_quark",
       provider: "quark",
@@ -76,13 +97,16 @@ describe("GET /api/storage/offline — 能力查询", () => {
     const res = await GET(req);
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.supported).toBe(false);
-    expect(data.message).toContain("推荐切换至 115网盘 或 123云盘");
+    expect(data.supported).toBe(true);
+    expect(data.supportsOffline).toBe(false);
+    expect(data.supportsShareTransfer).toBe(true);
+    expect(data.supportedShareBrands).toContain("quark");
+    expect(data.message).toContain("夸克网盘支持分享链接转存");
   });
 });
 
-describe("POST /api/storage/offline — 提交离线任务", () => {
-  it("网盘不支持时返回 400 与说明", async () => {
+describe("POST /api/storage/offline — 提交离线与转存任务", () => {
+  it("网盘不支持离线下载时提交磁力链接返回 400 与说明", async () => {
     getAccountStorageCredentialsMock.mockResolvedValueOnce({
       id: "drive_quark",
       provider: "quark",

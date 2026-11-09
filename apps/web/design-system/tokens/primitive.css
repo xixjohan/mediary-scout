@@ -27,6 +27,17 @@
   --mt-space-1: 4px;
   --mt-space-2: 8px;
 
+  /* Primitive: Typography Scale */
+  --font-size-2xs: 11px;
+  --font-size-xs: 12px;
+  --font-size-sm: 13px;
+  --font-size-base: 14px;
+  --font-size-md: 15px;
+  --font-size-lg: 16px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 20px;
+  --font-size-3xl: 24px;
+
   /* Primitive: File & Media Type Categories */
   --file-folder: #f59e0b;
   --file-folder-bg: rgba(245, 158, 11, 0.12);

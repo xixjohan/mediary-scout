@@ -33,6 +33,16 @@ function episodes(s: TrackedSeason, obtained: string[] = []): EpisodeState[] {
 }
 
 describe("syncSeasonAgainstMetadata", () => {
+  it("fills missing episode records even when metadata totals have not changed", () => {
+    const s = season({ totalEpisodes: 3, latestAiredEpisode: 2 });
+    const existing = episodes(s, [episodeCode(1, 2)]).filter((e) => e.episodeCode === episodeCode(1, 2));
+    existing[0]!.verifiedFileIds = ["file_2"];
+    const result = syncSeasonAgainstMetadata({ season: s, episodes: existing, totalEpisodes: 3, latestAiredEpisode: 2 });
+    expect(result.changed).toBe(true);
+    expect(result.episodes).toHaveLength(3);
+    expect(result.episodes.find((e) => e.episodeCode === episodeCode(1, 2))).toMatchObject({ obtained: true, verifiedFileIds: ["file_2"] });
+    expect(result.episodes.find((e) => e.episodeCode === episodeCode(1, 1))).toMatchObject({ airStatus: "aired", obtained: false });
+  });
   it("exposes newly aired episodes as missing when TMDB latest advances", () => {
     const s = season({ latestAiredEpisode: 12, totalEpisodes: 16 });
     const result = syncSeasonAgainstMetadata({

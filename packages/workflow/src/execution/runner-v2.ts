@@ -253,27 +253,31 @@ async function persistSingleSeason(input: {
   repository: WorkflowRepository;
   accountId?: string;
   connectedStorageId?: string | null;
+  protectRunningRun?: boolean;
+  trackedSeasonId?: string;
 }): Promise<void> {
   const seasonResult = input.bridged.seasons[0]!;
+  const season = input.trackedSeasonId ? { ...seasonResult.season, id: input.trackedSeasonId } : seasonResult.season;
   await input.repository.saveWorkflowRunSnapshot({
     ...(input.accountId ? { accountId: input.accountId } : {}),
     ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
     title: input.title,
-    season: seasonResult.season,
+    season,
     workflowRun: {
       id: input.workflowRun.id,
       kind: input.kind,
       status: input.bridged.status,
-      trackedSeasonId: seasonResult.season.id,
+      trackedSeasonId: season.id,
       startedAt: input.workflowRun.startedAt,
       finishedAt: input.workflowRun.finishedAt,
       auditEvents: input.bridged.auditEvents,
     },
-    episodes: seasonResult.episodes,
+    episodes: input.trackedSeasonId ? seasonResult.episodes.map((episode) => ({ ...episode, trackedSeasonId: season.id })) : seasonResult.episodes,
     resourceSnapshots: input.bridged.resourceSnapshots,
     decisions: input.bridged.decisions,
     transferAttempts: input.bridged.transferAttempts,
     notifications: input.bridged.notifications,
+    ...(input.protectRunningRun ? { requireTrackedSeason: true, requireRunningWorkflowRun: true, mergeCurrentEpisodes: true } : {}),
   });
 }
 
@@ -376,6 +380,8 @@ export async function runType3MonitoringV2AndPersist(
     bridged,
     workflowRun: { ...input.workflowRun, finishedAt: now() },
     repository: input.repository,
+    trackedSeasonId: input.season.id,
+    ...(input.notificationTrigger === "user" ? { protectRunningRun: true } : {}),
     ...(input.accountId ? { accountId: input.accountId } : {}),
     ...(input.connectedStorageId != null ? { connectedStorageId: input.connectedStorageId } : {}),
   });

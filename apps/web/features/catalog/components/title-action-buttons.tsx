@@ -116,6 +116,7 @@ export function ManualSubscriptionSearchButton({
   storageId,
   activityHref,
   isAcquiring = false,
+  disabledReason,
 }: {
   tmdbId: number;
   mediaType: "movie" | "tv" | "anime";
@@ -123,6 +124,7 @@ export function ManualSubscriptionSearchButton({
   storageId: string | undefined;
   activityHref: string;
   isAcquiring?: boolean;
+  disabledReason?: string | undefined;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -133,7 +135,8 @@ export function ManualSubscriptionSearchButton({
       <button
         className="secondary-button"
         type="button"
-        disabled={isPending || isAcquiring}
+        disabled={isPending || isAcquiring || Boolean(disabledReason)}
+        title={disabledReason}
         onClick={() => {
           startTransition(async () => {
             const response = await runAction(
@@ -160,6 +163,7 @@ export function ManualSubscriptionSearchButton({
         </Link>
       ) : null}
       {result ? <span role="status">{result.message}</span> : null}
+      {disabledReason ? <span>{disabledReason}</span> : null}
     </div>
   );
 }

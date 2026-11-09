@@ -1,4 +1,5 @@
 import type Database from "better-sqlite3";
+import { syncSeasonAgainstMetadata } from "../execution/season-sync.js";
 import { createNativeRequire } from "../domain/native-require.js";
 import { Kysely, SqliteDialect } from "kysely";
 import {
@@ -123,6 +124,10 @@ import {
   isStaleActiveWorkflowRun,
   passesQueuedRunDriveFilter,
   preserveQueuedRunMetadata,
+  mergeEpisodeStatesPreservingObtained,
+  mergeSeasonPreservingCurrent,
+  hasUnresolvedManualEpisodes,
+  manualSyncLatestAired,
   recoverOrphanRunningRun,
   reservationRequiresTrackedSeason,
   tearsDownTrackingOnCancel,
@@ -240,6 +245,27 @@ function mediaRequestFromRow(row: MediaRequestRow): MediaRequest {
 const POLICY_SNAPSHOT_RUN_KINDS = new Set<WorkflowKind>(["type1_package_init", "type2_init", "type3_monitor", "movie_init", "replace_request", "staging_recovery"]);
 
 export class SqliteWorkflowRepository implements WorkflowRepository {
+  async syncTrackedSeasonForManualSearch(input: import("./repository.js").ManualSeasonSyncInput): Promise<TrackedSeasonState | null> {
+    return this.db.transaction(() => {
+      const storage = input.connectedStorageId ?? UNSCOPED_STORAGE;
+      const row = this.db.prepare("SELECT payload, account_id, connected_storage_id, tracked_season_id FROM workflow_runs WHERE id = ?")
+        .get(input.workflowRunId) as { payload: string; account_id: string; connected_storage_id: string; tracked_season_id: string } | undefined;
+      if (!row || row.account_id !== input.accountId || row.connected_storage_id !== storage ||
+          row.tracked_season_id !== input.trackedSeasonId || (JSON.parse(row.payload) as WorkflowRun).status !== "running") return null;
+      const seasonRow = this.db.prepare("SELECT payload FROM tracked_seasons WHERE id = ? AND connected_storage_id = ? AND account_id = ?")
+        .get(input.trackedSeasonId, storage, input.accountId) as { payload: string } | undefined;
+      if (!seasonRow) return null;
+      const current = this.trackedSeasonStateFromRun({ trackedSeasonId: input.trackedSeasonId,
+        accountId: input.accountId, connectedStorageId: input.connectedStorageId });
+      const synced = syncSeasonAgainstMetadata({ season: current.season, episodes: current.episodes,
+        totalEpisodes: input.totalEpisodes, latestAiredEpisode: manualSyncLatestAired(current.season, input) });
+      this.upsertTrackedSeason(synced.season, input.accountId, storage);
+      this.db.prepare("DELETE FROM episode_states WHERE tracked_season_id = ? AND connected_storage_id = ?").run(input.trackedSeasonId, storage);
+      const insert = this.db.prepare("INSERT INTO episode_states (tracked_season_id, connected_storage_id, episode_code, payload) VALUES (?, ?, ?, ?)");
+      for (const episode of synced.episodes) insert.run(input.trackedSeasonId, storage, episode.episodeCode, JSON.stringify(episode));
+      return cloneWorkflowValue({ ...current, season: synced.season, episodes: synced.episodes });
+    }).immediate();
+  }
   /** 凭据相关持久化切片（Kysely 类型安全查询，任务单 S1.6）。 */
   private readonly credentials: CredentialStore;
   private readonly strmStore: SqliteStrmRepository;
@@ -316,10 +342,34 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.db.close();
   }
 
+  private canSaveManualSnapshot(snapshot: PersistWorkflowRunSnapshotInput, existing: PersistedWorkflowRunSnapshot | null,
+    options: { requireRunning: boolean; requireTracked: boolean; requireNoMissing: boolean }): boolean {
+    if (options.requireRunning && (!existing || existing.workflowRun.status !== "running" ||
+        existing.accountId !== (snapshot.accountId ?? DEFAULT_ACCOUNT_ID) ||
+        existing.connectedStorageId !== (snapshot.connectedStorageId ?? null))) return false;
+    const storage = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
+    if (options.requireTracked && !this.db.prepare("SELECT 1 FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
+      .get(snapshot.season.id, storage)) return false;
+    if (options.requireNoMissing) {
+      const row = this.db.prepare("SELECT payload FROM tracked_seasons WHERE id = ? AND connected_storage_id = ? AND account_id = ?")
+        .get(snapshot.season.id, storage, snapshot.accountId ?? DEFAULT_ACCOUNT_ID) as { payload: string } | undefined;
+      if (!row || hasUnresolvedManualEpisodes(JSON.parse(row.payload) as TrackedSeason, this.selectEpisodeStates(snapshot.season.id, storage))) return false;
+    }
+    return true;
+  }
+
+  private mergeCurrentManualSnapshot(snapshot: PersistWorkflowRunSnapshotInput): void {
+    const storage = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
+    snapshot.episodes = mergeEpisodeStatesPreservingObtained(snapshot.episodes, this.selectEpisodeStates(snapshot.season.id, storage));
+    const row = this.db.prepare("SELECT payload FROM tracked_seasons WHERE id = ? AND connected_storage_id = ? AND account_id = ?")
+      .get(snapshot.season.id, storage, snapshot.accountId ?? DEFAULT_ACCOUNT_ID) as { payload: string } | undefined;
+    if (row) snapshot.season = mergeSeasonPreservingCurrent(JSON.parse(row.payload) as TrackedSeason, snapshot.season, snapshot.episodes);
+  }
+
   async saveWorkflowRunSnapshot(
-    input: PersistWorkflowRunSnapshotInput & { keepCurrentEpisodes?: boolean; requireTrackedSeason?: boolean },
+    input: PersistWorkflowRunSnapshotInput & { keepCurrentEpisodes?: boolean; requireTrackedSeason?: boolean; requireRunningWorkflowRun?: boolean; mergeCurrentEpisodes?: boolean; requireNoMissingEpisodes?: boolean },
   ): Promise<void> {
-    const { keepCurrentEpisodes, requireTrackedSeason, ...rest } = input;
+    const { keepCurrentEpisodes, requireTrackedSeason, requireRunningWorkflowRun, mergeCurrentEpisodes, requireNoMissingEpisodes, ...rest } = input;
     validateWorkflowRunSnapshot(rest);
     const snapshot = cloneWorkflowValue(rest);
     const isAuxiliary = isEpisodePreservingWorkflowKind(snapshot.workflowRun.kind);
@@ -334,14 +384,11 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // better-sqlite3 transactions are synchronous — the check and the write
     // commit together, so an untrack cannot land between them.
     this.db.transaction(() => {
-      if (requireTracked) {
-        const connectedStorageId = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
-        const tracked = this.db
-          .prepare("SELECT 1 FROM tracked_seasons WHERE id = ? AND connected_storage_id = ?")
-          .get(snapshot.season.id, connectedStorageId);
-        if (tracked === undefined) return;
-      }
-      preserveQueuedRunMetadata(snapshot, this.loadSnapshot(snapshot.workflowRun.id));
+      const existing = this.loadSnapshot(snapshot.workflowRun.id);
+      if (!this.canSaveManualSnapshot(snapshot, existing, { requireRunning: requireRunningWorkflowRun === true,
+        requireTracked, requireNoMissing: requireNoMissingEpisodes === true })) return;
+      if (mergeCurrentEpisodes && !shouldKeepEpisodes) this.mergeCurrentManualSnapshot(snapshot);
+      preserveQueuedRunMetadata(snapshot, existing);
       this.replaceWorkflowRunSnapshot(snapshot, { runOnly: shouldKeepEpisodes });
     })();
   }

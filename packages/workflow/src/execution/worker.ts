@@ -45,7 +45,7 @@ import {
 } from "./runner-v2.js";
 import { triggerPostIngestSyncIfSucceeded } from "../strm/pinpoint-ingest-sync.js";
 import type { MediaServerCoordinator } from "../mediaserver/coordinator.js";
-import { syncSeasonAgainstMetadata } from "./season-sync.js";
+import { hasIncompleteEpisodeStates, syncSeasonAgainstMetadata } from "./season-sync.js";
 import { isBrandStorageAuthError, maybeFreezeOnBrandAuthError } from "../storage/storage-auth-error.js";
 import { staleStartedBefore } from "./commands.js";
 import { userMessageDrive, type UserMessageScope } from "./user-requests.js";
@@ -158,6 +158,7 @@ export async function resolveWorkerDeps(
 export type SeasonMetadataSync = (input: {
   tmdbId: number;
   seasonNumber: number;
+  accountId: string;
 }) => Promise<{ latestAiredEpisode: number; totalEpisodes: number } | null>;
 
 /**
@@ -608,9 +609,9 @@ async function runQueuedType3Movie(input: {
   const result = await runMovieAcquisitionV2AndPersist({
     title: input.claimed.title,
     categoryParentId: requireCategoryParent(input.deps.moviesParentDirectoryId),
-    resourceProvider: input.request.resourceProvider,
-    storage: input.request.storage,
-    model: input.request.model,
+    resourceProvider: input.deps.resourceProvider,
+    storage: input.deps.storage,
+    model: input.deps.model,
     repository: input.request.repository,
     accountId: input.claimed.accountId,
     connectedStorageId: input.claimed.connectedStorageId,
@@ -627,10 +628,36 @@ async function runQueuedType3Movie(input: {
   return result.status;
 }
 
-async function syncQueuedType3Season(input: {
+type QueuedType3SyncInput = {
   request: Parameters<typeof runQueuedType3Monitoring>[0];
   claimed: PersistedWorkflowRunSnapshot;
-}): Promise<{ season: TrackedSeason; episodes: EpisodeState[] }> {
+  userTriggered: boolean;
+};
+
+async function syncManualType3Season(input: QueuedType3SyncInput): Promise<{ season: TrackedSeason; episodes: EpisodeState[] }> {
+  const { season, episodes } = input.claimed;
+  const sync = input.request.syncSeasonMetadata;
+  if (!sync) {
+    if (hasIncompleteEpisodeStates(season, episodes)) throw new Error("逐集状态不完整，无法同步元数据；请检查 TMDB 配置。");
+    return { season, episodes };
+  }
+  const meta = await sync({ tmdbId: input.claimed.title.tmdbId, seasonNumber: season.seasonNumber, accountId: input.claimed.accountId });
+  if (!meta || !Number.isInteger(meta.totalEpisodes) || meta.totalEpisodes <= 0 || meta.totalEpisodes > 10000 ||
+      !Number.isInteger(meta.latestAiredEpisode) || meta.latestAiredEpisode < 0 || meta.latestAiredEpisode > meta.totalEpisodes) {
+    throw new Error("季度元数据不可用或不完整，请稍后重试。");
+  }
+  const state = await input.request.repository.syncTrackedSeasonForManualSearch({
+    workflowRunId: input.claimed.workflowRun.id, trackedSeasonId: season.id,
+    accountId: input.claimed.accountId, connectedStorageId: input.claimed.connectedStorageId,
+    totalEpisodes: meta.totalEpisodes, latestAiredEpisode: meta.latestAiredEpisode,
+    expectedTotalEpisodes: season.totalEpisodes, expectedLatestAiredEpisode: season.latestAiredEpisode,
+  });
+  if (!state) throw new Error("补搜任务已取消或订阅已移除。");
+  return { season: state.season, episodes: state.episodes };
+}
+
+async function syncQueuedType3Season(input: QueuedType3SyncInput): Promise<{ season: TrackedSeason; episodes: EpisodeState[] }> {
+  if (input.userTriggered) return syncManualType3Season(input);
   let season = input.claimed.season;
   let episodes = input.claimed.episodes;
   if (!input.request.syncSeasonMetadata) return { season, episodes };
@@ -639,6 +666,7 @@ async function syncQueuedType3Season(input: {
     const meta = await input.request.syncSeasonMetadata({
       tmdbId: input.claimed.title.tmdbId,
       seasonNumber: season.seasonNumber,
+      accountId: input.claimed.accountId,
     });
     if (meta) {
       const synced = syncSeasonAgainstMetadata({
@@ -658,14 +686,54 @@ async function syncQueuedType3Season(input: {
   return { season, episodes };
 }
 
-async function runQueuedType3Season(input: {
+type QueuedType3SeasonInput = {
   request: Parameters<typeof runQueuedType3Monitoring>[0];
   claimed: PersistedWorkflowRunSnapshot;
   deps: ResolvedWorkerDependencies;
   userTriggered: boolean;
   now: () => string;
-}): Promise<WorkflowStatus> {
-  const { season, episodes } = await syncQueuedType3Season(input);
+};
+
+async function readCurrentManualSeason(input: QueuedType3SeasonInput, season: TrackedSeason): Promise<{ season: TrackedSeason; episodes: EpisodeState[] }> {
+  const scope = { accountId: input.claimed.accountId, connectedStorageId: input.claimed.connectedStorageId };
+  const run = await input.request.repository.getWorkflowRunSnapshot(input.claimed.workflowRun.id, scope);
+  const current = await input.request.repository.getTrackedSeasonState(season.id, scope);
+  if (!run || run.workflowRun.status !== "running" || !current ||
+      current.connectedStorageId !== input.claimed.connectedStorageId || current.accountId !== input.claimed.accountId) {
+    throw new Error("补搜任务已取消或订阅已移除。");
+  }
+  if (hasIncompleteEpisodeStates(current.season, current.episodes)) throw new Error("逐集状态同步不完整，请稍后重试。");
+  if (current.episodes.some((episode) => !episode.obtained && episode.airStatus === "unknown")) {
+    throw new Error("仍有集数播出状态未知，请稍后重试。");
+  }
+  return current;
+}
+
+async function finishManualIfNoMissing(input: QueuedType3SeasonInput, season: TrackedSeason, episodes: EpisodeState[]): Promise<boolean> {
+  if (episodes.some((episode) => episode.airStatus === "aired" && !episode.obtained)) return false;
+  await input.request.repository.saveWorkflowRunSnapshot({ ...input.claimed, season, episodes,
+    workflowRun: { ...input.claimed.workflowRun, status: "succeeded", finishedAt: input.now(),
+      progress: { activity: "同步完成，没有待搜索的已播缺集", phase: "finalize", percent: 100, updatedAt: input.now() },
+      auditEvents: [...input.claimed.workflowRun.auditEvents, { type: "manual_subscription_no_missing", message: "同步后没有待搜索的已播缺集。" }] },
+    keepCurrentEpisodes: true, requireTrackedSeason: true, requireRunningWorkflowRun: true, requireNoMissingEpisodes: true });
+  const final = await input.request.repository.getWorkflowRunSnapshot(input.claimed.workflowRun.id, {
+    accountId: input.claimed.accountId, connectedStorageId: input.claimed.connectedStorageId,
+  });
+  if (!final || final.workflowRun.status !== "succeeded") throw new Error("集数状态已变化或任务已取消，请重新补搜。");
+  return true;
+}
+
+async function runQueuedType3Season(input: QueuedType3SeasonInput): Promise<WorkflowStatus> {
+  if (input.userTriggered) {
+    await input.request.repository.updateWorkflowRunProgress(input.claimed.workflowRun.id, {
+      activity: "正在同步季度集数状态", phase: "search", percent: 0, updatedAt: input.now(),
+    });
+  }
+  let { season, episodes } = await syncQueuedType3Season(input);
+  if (input.userTriggered) {
+    ({ season, episodes } = await readCurrentManualSeason(input, season));
+    if (await finishManualIfNoMissing(input, season, episodes)) return "succeeded";
+  }
   const result = await runType3MonitoringV2AndPersist({
     title: input.claimed.title,
     season,
@@ -677,9 +745,9 @@ async function runQueuedType3Season(input: {
         input.deps.animeStorageParentDirectoryId,
       ),
     ),
-    resourceProvider: input.request.resourceProvider,
-    storage: input.request.storage,
-    model: input.request.model,
+    resourceProvider: input.deps.resourceProvider,
+    storage: input.deps.storage,
+    model: input.deps.model,
     repository: input.request.repository,
     accountId: input.claimed.accountId,
     connectedStorageId: input.claimed.connectedStorageId,
@@ -739,6 +807,7 @@ async function patrolTrackedState(args: {
         const meta = await input.syncSeasonMetadata({
           tmdbId: state.title.tmdbId,
           seasonNumber: state.season.seasonNumber,
+          accountId: state.accountId,
         });
         if (meta) {
           const synced = syncSeasonAgainstMetadata({

@@ -549,11 +549,16 @@ export class Storage115Executor implements StorageExecutor {
       if (isDirectory(item) && itemName(item) === input.name) {
         const existingId = directoryIdFromItem(item);
         if (existingId) {
+          const normExisting = normalizeDirectoryId(existingId);
+          this.writeScopeDirectoryIds.add(normExisting);
           return existingId;
         }
       }
     }
-    return this.callApi("createFolder", () => this.api.createFolder({ ...input, parentId: safeParentId }));
+    const createdId = await this.callApi("createFolder", () => this.api.createFolder({ ...input, parentId: safeParentId }));
+    const normCreated = normalizeDirectoryId(createdId);
+    this.writeScopeDirectoryIds.add(normCreated);
+    return createdId;
   }
 
   async listVideoFiles(directoryId: string): Promise<VerifiedFile[]> {
@@ -1096,6 +1101,8 @@ export class Storage115Executor implements StorageExecutor {
     // assertSafeRecursiveListTarget guard). Used by find-or-create provisioning.
     const items = await this.callApi("listItems", () => this.api.listItems({ directoryId }));
     const dirs: Array<{ id: string; name: string }> = [];
+    const normParent = normalizeDirectoryId(directoryId);
+    const parentInScope = this.writeScopeDirectoryIds.has(normParent);
     for (const item of items) {
       if (!isDirectory(item)) {
         continue;
@@ -1103,6 +1110,9 @@ export class Storage115Executor implements StorageExecutor {
       const id = directoryIdFromItem(item);
       if (id) {
         dirs.push({ id, name: itemName(item) });
+        if (parentInScope) {
+          this.writeScopeDirectoryIds.add(normalizeDirectoryId(id));
+        }
       }
     }
     return dirs;

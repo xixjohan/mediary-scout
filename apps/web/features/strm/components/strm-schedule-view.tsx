@@ -91,17 +91,34 @@ function StrmReplaceBaseUrlModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    let mounted = true;
+    fetch("/api/strm/replace-base-url")
+      .then((r) => r.json())
+      .then((data) => {
+        if (mounted && data?.configuredUrl) {
+          setNewBaseUrl(data.configuredUrl);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
     setError(null);
 
     try {
-      const payload: { newBaseUrl: string; directoryPath?: string } = {
+      const payload: { newBaseUrl: string; directoryPath?: string; directoryPaths?: string[] } = {
         newBaseUrl: newBaseUrl.trim(),
       };
       if (useCustomDir && customDirectory.trim()) {
         payload.directoryPath = customDirectory.trim();
+      } else if (taskDirs.length > 0) {
+        payload.directoryPaths = taskDirs;
       }
 
       const res = await fetch("/api/strm/replace-base-url", {
@@ -112,7 +129,9 @@ function StrmReplaceBaseUrlModal({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "替换基址失败");
       const dirCount = data.directories?.length ?? (useCustomDir ? 1 : taskDirs.length);
-      onSuccess(`替换完成：已扫描 ${dirCount} 个任务目录下的 ${data.total} 个 .strm 文件，秒级更新 ${data.updated} 个，失败 ${data.errors?.length || 0} 个（0 网盘 API 调用）`);
+      onSuccess(
+        `替换成功：已扫描 ${dirCount} 个任务目录下的 ${data.total} 个 .strm 文件（秒级更新 ${data.updated} 个），并将新基址永久保存为系统配置，后续定时扫描与新入库将始终沿用此地址！`,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -125,7 +144,10 @@ function StrmReplaceBaseUrlModal({
       <div style={{ background: "var(--bg-base, #18181b)", border: "1px solid var(--border, #333)", borderRadius: "12px", padding: "1.5rem", width: "100%", maxWidth: "540px" }}>
         <h3 style={{ margin: "0 0 0.5rem", fontSize: "1.2rem", fontWeight: 600 }}>极速批量修改播放基址</h3>
         <p style={{ color: "#888", fontSize: "0.85rem", marginBottom: "1rem" }}>
-          当内网 IP 变动或启用公网域名 / FRP 穿透时，使用正则秒级重写本地所有 .strm 文件前缀。不发起任何网盘 API 请求，纯本地磁盘毫秒级完成。
+          当内网 IP 变动或启用公网域名 / FRP 穿透时，使用正则秒级重写本地所有 .strm 文件前缀。
+          <span style={{ color: "#60a5fa", display: "block", marginTop: "0.25rem" }}>
+            ⚡ 本次操作将自动持久化为系统默认基址，确保后续定时扫描与入库绝不回退至 127.0.0.1。
+          </span>
         </p>
 
         {error && (

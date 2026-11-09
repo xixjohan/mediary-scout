@@ -36,27 +36,77 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 20_000;
  *  One PanSou fans each search out to dozens of channels and starts answering 502
  *  at about four simultaneous searches (measured 2026-09-25); parallel patrol runs
  *  share it, so their searches queue here instead of failing as "source down". */
-const MAX_IN_FLIGHT_PER_SERVER = 2;
-const serverSlots = new Map<string, { inFlight: number; waiters: Array<() => void> }>();
+export const MAX_IN_FLIGHT_PER_SERVER = 2;
+export const MAX_WAITERS_PER_SERVER = 10;
+export const DEFAULT_SLOT_WAIT_TIMEOUT_MS = 30_000;
 
-async function withServerSlot<T>(baseURL: string, call: () => Promise<T>): Promise<T> {
+interface ServerWaiter {
+  resolve: () => void;
+  reject: (err: Error) => void;
+}
+
+const serverSlots = new Map<string, { inFlight: number; waiters: ServerWaiter[] }>();
+
+export function _resetPanSouServerSlotsForTests(): void {
+  serverSlots.clear();
+}
+
+async function withServerSlot<T>(
+  baseURL: string,
+  call: () => Promise<T>,
+  options?: { slotTimeoutMs?: number | undefined } | undefined,
+): Promise<T> {
+  const timeoutMs = options?.slotTimeoutMs ?? DEFAULT_SLOT_WAIT_TIMEOUT_MS;
   let slot = serverSlots.get(baseURL);
   if (!slot) {
     slot = { inFlight: 0, waiters: [] };
     serverSlots.set(baseURL, slot);
   }
   if (slot.inFlight >= MAX_IN_FLIGHT_PER_SERVER) {
-    await new Promise<void>((resolve) => slot!.waiters.push(resolve));
+    if (slot.waiters.length >= MAX_WAITERS_PER_SERVER) {
+      throw new Error(
+        `PANSOU_QUEUE_OVERFLOW: PanSou 服务器 [${baseURL}] 排队请求过多 (${slot.waiters.length})，已超过上限 ${MAX_WAITERS_PER_SERVER}，拒绝入队`,
+      );
+    }
+    await new Promise<void>((resolve, reject) => {
+      let timer: NodeJS.Timeout | null = null;
+      const waiter: ServerWaiter = {
+        resolve: () => {
+          if (timer) clearTimeout(timer);
+          resolve();
+        },
+        reject: (err: Error) => {
+          if (timer) clearTimeout(timer);
+          reject(err);
+        },
+      };
+      if (timeoutMs > 0 && Number.isFinite(timeoutMs)) {
+        timer = setTimeout(() => {
+          const idx = slot!.waiters.indexOf(waiter);
+          if (idx !== -1) {
+            slot!.waiters.splice(idx, 1);
+          }
+          reject(
+            new Error(
+              `PANSOU_SLOT_TIMEOUT: 等待 PanSou [${baseURL}] 搜索通道超时 (${timeoutMs}ms)`,
+            ),
+          );
+        }, timeoutMs);
+      }
+      slot!.waiters.push(waiter);
+    });
   } else {
     slot.inFlight += 1;
   }
   try {
     return await call();
   } finally {
-    // Hand the slot straight to the next waiter (inFlight unchanged), or free it.
     const next = slot.waiters.shift();
-    if (next) next();
-    else if ((slot.inFlight -= 1) === 0) serverSlots.delete(baseURL);
+    if (next) {
+      next.resolve();
+    } else if ((slot.inFlight -= 1) === 0) {
+      serverSlots.delete(baseURL);
+    }
   }
 }
 
@@ -138,6 +188,7 @@ export interface PanSouResourceProviderOptions {
   now?: () => string;
   /** How many times to re-query before treating the result set as complete. */
   maxSearchAttempts?: number;
+  slotTimeoutMs?: number | undefined;
   /** Delay between completeness polls (ms). */
   searchPollMs?: number;
   /** Injectable sleep (tests pass a no-op). */
@@ -167,6 +218,7 @@ export class PanSouResourceProvider implements ResourceProvider {
   private readonly tokenCache: PanSouTokenCache;
   private readonly now: () => string;
   private readonly maxSearchAttempts: number;
+  private readonly slotTimeoutMs?: number | undefined;
   private readonly searchPollMs: number;
   private readonly wait: (ms: number) => Promise<void>;
   private readonly allowedTypes: Set<ResourceType> | null;
@@ -184,6 +236,7 @@ export class PanSouResourceProvider implements ResourceProvider {
     this.wait = options.wait ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
     this.allowedTypes = options.allowedTypes ? new Set(options.allowedTypes) : null;
     this.requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.slotTimeoutMs = options.slotTimeoutMs;
   }
 
   /**
@@ -284,7 +337,7 @@ export class PanSouResourceProvider implements ResourceProvider {
   async search(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {
     // The slot covers the whole poll loop, not each request: between polls PanSou
     // is still fanning the search out to its channels, which is the load that 502s.
-    return withServerSlot(this.baseURL, () => this.pollSearch(input));
+    return withServerSlot(this.baseURL, () => this.pollSearch(input), this.slotTimeoutMs !== undefined ? { slotTimeoutMs: this.slotTimeoutMs } : undefined);
   }
 
   private async pollSearch(input: { keyword: string; workflowRunId?: string }): Promise<ResourceSnapshot> {

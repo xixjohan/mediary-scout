@@ -69,7 +69,7 @@ interface StorageFileTableProps {
   searchQuery: string;
   onToggleSelectAll: () => void;
   onToggleSelectItem: (id: string) => void;
-  onNavigateFolder: (id: string) => void;
+  onNavigateFolder: (id: string, name?: string) => void;
   onRename: (item: DriveFileItem) => void;
   onMove: (item: DriveFileItem) => void;
   onCopy: (item: DriveFileItem) => void;
@@ -133,7 +133,7 @@ interface StorageFileRowProps {
   item: DriveFileItem;
   isSelected: boolean;
   onToggleSelectItem: (id: string) => void;
-  onNavigateFolder: (id: string) => void;
+  onNavigateFolder: (id: string, name?: string) => void;
   onAdoptFolder?: ((item: DriveFileItem) => void) | undefined;
   onPlay?: ((item: DriveFileItem) => void) | undefined;
   onCopyPlayLink?: ((item: DriveFileItem) => void) | undefined;
@@ -273,7 +273,7 @@ function StorageFileRow({
             <button
               type="button"
               className="storage-folder-link"
-              onClick={() => onNavigateFolder(item.id)}
+              onClick={() => onNavigateFolder(item.id, item.name)}
             >
               {item.name}
             </button>

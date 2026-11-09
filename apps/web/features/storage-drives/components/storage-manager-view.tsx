@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, Copy, HardDrive, Move, RefreshCw, Trash2 } from "lucide-react";
-import type { DriveDirectoryListing, DriveFileItem } from "@media-track/workflow";
+import type { DriveBreadcrumb, DriveDirectoryListing, DriveFileItem } from "@media-track/workflow";
 import type { ConnectedStorageView } from "../../../lib/workflow-runtime";
 import { StorageFileTable } from "./storage/storage-file-table";
 import { type ModalState, StorageModals } from "./storage/storage-modals";
@@ -88,6 +88,9 @@ export function StorageManagerView({
     return "";
   });
   const [currentDirId, setCurrentDirId] = useState<string>("");
+  const [breadcrumbs, setBreadcrumbs] = useState<DriveBreadcrumb[]>([
+    { id: "0", name: "根目录" },
+  ]);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [listing, setListing] = useState<DriveDirectoryListing | null>(null);
   const [loading, setLoading] = useState<boolean>(!initialStorages || initialStorages.length > 0);
@@ -182,12 +185,77 @@ export function StorageManagerView({
       if (!res.ok) throw new Error(data.error || "获取文件列表失败");
       setListing(data);
       setCurrentDirId(data.currentDirectoryId || "");
+
+      if (data.breadcrumbs && data.breadcrumbs.length > 0) {
+        setBreadcrumbs((prev) => {
+          if (data.breadcrumbs.length >= prev.length || data.breadcrumbs.length > 2) {
+            return data.breadcrumbs;
+          }
+          if (prev.length > 0 && prev[prev.length - 1]?.id === data.currentDirectoryId) {
+            const updated = [...prev];
+            const last = updated[updated.length - 1];
+            if (last && data.currentDirectoryName && data.currentDirectoryName !== "目录") {
+              last.name = data.currentDirectoryName;
+            }
+            return updated;
+          }
+          return data.breadcrumbs;
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "加载失败");
     } finally {
       setLoading(false);
     }
   }, []);
+
+  const handleNavigateFolder = useCallback(
+    (folderId: string, folderName?: string) => {
+      setBreadcrumbs((prev) => {
+        const existingIdx = prev.findIndex((b) => b.id === folderId);
+        if (existingIdx >= 0) {
+          return prev.slice(0, existingIdx + 1);
+        }
+        return [...prev, { id: folderId, name: folderName || "目录" }];
+      });
+      void loadFiles(selectedStorageId, folderId);
+    },
+    [loadFiles, selectedStorageId],
+  );
+
+  const handleNavigateCrumbOrCategory = useCallback(
+    (dirId: string) => {
+      const rootId = listing?.rootCid || "0";
+      if (dirId === rootId) {
+        setBreadcrumbs([{ id: rootId, name: "根目录" }]);
+      } else if (listing?.moviesCid && dirId === listing.moviesCid) {
+        setBreadcrumbs([
+          { id: rootId, name: "根目录" },
+          { id: listing.moviesCid, name: "电影" },
+        ]);
+      } else if (listing?.tvCid && dirId === listing.tvCid) {
+        setBreadcrumbs([
+          { id: rootId, name: "根目录" },
+          { id: listing.tvCid, name: "剧集" },
+        ]);
+      } else if (listing?.animeCid && dirId === listing.animeCid) {
+        setBreadcrumbs([
+          { id: rootId, name: "根目录" },
+          { id: listing.animeCid, name: "动漫" },
+        ]);
+      } else {
+        setBreadcrumbs((prev) => {
+          const existingIdx = prev.findIndex((b) => b.id === dirId);
+          if (existingIdx >= 0) {
+            return prev.slice(0, existingIdx + 1);
+          }
+          return prev;
+        });
+      }
+      void loadFiles(selectedStorageId, dirId);
+    },
+    [listing, loadFiles, selectedStorageId],
+  );
 
   const handleScanComplete = useCallback(() => {
     void loadFiles(selectedStorageId, currentDirId);
@@ -206,6 +274,7 @@ export function StorageManagerView({
 
   useEffect(() => {
     if (selectedStorageId) {
+      setBreadcrumbs([{ id: "0", name: "根目录" }]);
       void loadFiles(selectedStorageId);
     }
   }, [selectedStorageId]);
@@ -361,7 +430,8 @@ export function StorageManagerView({
       <StorageNavBar
         listing={listing}
         currentDirId={currentDirId}
-        onNavigate={(dirId) => void loadFiles(selectedStorageId, dirId)}
+        breadcrumbs={breadcrumbs}
+        onNavigate={handleNavigateCrumbOrCategory}
       />
 
       {selectedIds.size > 0 && (
@@ -429,7 +499,7 @@ export function StorageManagerView({
         searchQuery={searchQuery}
         onToggleSelectAll={toggleSelectAll}
         onToggleSelectItem={toggleSelectItem}
-        onNavigateFolder={(id) => void loadFiles(selectedStorageId, id)}
+        onNavigateFolder={handleNavigateFolder}
         onRename={(item) => handleOpenAction("rename", item)}
         onMove={(item) => handleOpenAction("move", item)}
         onCopy={(item) => handleOpenAction("copy", item)}

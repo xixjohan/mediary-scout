@@ -7,6 +7,7 @@ import {
   resolveCurrentDirectoryName,
   type DriveFileManagerOptions,
 } from "../../src/storage/drive-file-manager.js";
+import { DriveDirectoryCache } from "../../src/storage/drive-file-manager.js";
 
 describe("drive-file-manager", () => {
   describe("file type inference", () => {
@@ -58,7 +59,62 @@ describe("drive-file-manager", () => {
     });
 
     it("formats arbitrary directory ids", () => {
-      expect(resolveCurrentDirectoryName("abc12345xyz", opts)).toBe("目录 (abc12345…)");
+      expect(resolveCurrentDirectoryName("abc12345xyz", opts)).toBe("目录");
+      expect(resolveCurrentDirectoryName("abc12345xyz", opts, "Season 01")).toBe("Season 01");
+    });
+  });
+
+  describe("DriveDirectoryCache", () => {
+    const opts: DriveFileManagerOptions = {
+      storageId: "cs_quark_test",
+      provider: "quark",
+      rootCid: "root_0",
+      moviesCid: "movies_1",
+      tvCid: "tv_2",
+      animeCid: "anime_3",
+    };
+
+    it("builds breadcrumbs recursively for nested children", () => {
+      const cache = new DriveDirectoryCache(opts);
+      cache.recordChildren("anime_3", [
+        {
+          id: "anime_folder_1",
+          name: "桃源暗鬼 (2025)",
+          isFolder: true,
+          sizeBytes: 0,
+          updatedAt: "",
+          type: "folder",
+          extension: "",
+        },
+      ]);
+      cache.recordChildren("anime_folder_1", [
+        {
+          id: "season_folder_2",
+          name: "Season 01",
+          isFolder: true,
+          sizeBytes: 0,
+          updatedAt: "",
+          type: "folder",
+          extension: "",
+        },
+      ]);
+
+      const crumbs = cache.buildBreadcrumbs("season_folder_2");
+      expect(crumbs).toEqual([
+        { id: "root_0", name: "根目录" },
+        { id: "anime_3", name: "动漫" },
+        { id: "anime_folder_1", name: "桃源暗鬼 (2025)" },
+        { id: "season_folder_2", name: "Season 01" },
+      ]);
+    });
+
+    it("falls back gracefully when parent is not yet in cache", () => {
+      const cache = new DriveDirectoryCache(opts);
+      const crumbs = cache.buildBreadcrumbs("unknown_folder_99", "未知分类");
+      expect(crumbs).toEqual([
+        { id: "root_0", name: "根目录" },
+        { id: "unknown_folder_99", name: "未知分类" },
+      ]);
     });
   });
 

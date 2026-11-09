@@ -64,7 +64,9 @@ export async function triggerManualSubscriptionSearch(input: {
 
   switch (result.status) {
     case "queued":
-      return { ...result, message: "已加入后台队列，完成后可在活动页查看结果。" };
+      return { ...result, message: input.mediaType === "movie"
+        ? "已加入后台队列，完成后可在活动页查看结果。"
+        : "已加入后台队列，将同步集数并检查缺集；可在活动页查看进度。" };
     case "already_running":
       return { ...result, message: "该目标已有任务在排队或运行中。" };
     case "not_tracked":

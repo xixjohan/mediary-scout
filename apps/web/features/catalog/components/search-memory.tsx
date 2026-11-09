@@ -6,11 +6,15 @@ import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { lastQueryKey } from "@media-track/workflow/scope";
 
-/** Persists the current search query (per drive) so navigation can restore it. */
+/** Persists the current search query and filter parameters (per drive) so navigation can restore it. */
 export function RememberQuery({ query, basePath = "/" }: { query: string; basePath?: string }) {
   useEffect(() => {
     try {
       sessionStorage.setItem(lastQueryKey(basePath), query);
+      const search = window.location.search;
+      if (search && search.length > 1) {
+        sessionStorage.setItem(`${lastQueryKey(basePath)}.searchParams`, search);
+      }
     } catch {
       // storage unavailable — nothing to remember
     }
@@ -19,8 +23,8 @@ export function RememberQuery({ query, basePath = "/" }: { query: string; basePa
 }
 
 /**
- * 搜索 nav entry that restores the last query (per drive): leaving for 订阅/通知
- * and coming back must not reset the result list.
+ * 搜索 nav entry that restores the last query and filters (per drive): leaving for 订阅/通知/设置
+ * and coming back must not reset the result list or active filters.
  */
 export function SearchNavLink({
   active,
@@ -35,21 +39,33 @@ export function SearchNavLink({
   const router = useRouter();
   return (
     <Link
+      prefetch={true}
       className={`nav-item ${active ? "is-active" : ""}`}
       href={`${basePath}?tab=search&q=${encodeURIComponent(knownQuery)}`}
       onClick={(event) => {
         if (knownQuery) {
           return; // server-known query already in href
         }
-        let remembered = "";
+        let rememberedQuery = "";
+        let rememberedSearchParams = "";
         try {
-          remembered = sessionStorage.getItem(lastQueryKey(basePath)) ?? "";
+          rememberedQuery = sessionStorage.getItem(lastQueryKey(basePath)) ?? "";
+          rememberedSearchParams = sessionStorage.getItem(`${lastQueryKey(basePath)}.searchParams`) ?? "";
         } catch {
-          remembered = "";
+          rememberedQuery = "";
+          rememberedSearchParams = "";
         }
-        if (remembered) {
+        if (rememberedSearchParams) {
           event.preventDefault();
-          router.push(`${basePath}?tab=search&q=${encodeURIComponent(remembered)}`);
+          const clean = rememberedSearchParams.startsWith("?")
+            ? rememberedSearchParams.slice(1)
+            : rememberedSearchParams;
+          const params = new URLSearchParams(clean);
+          params.set("tab", "search");
+          router.push(`${basePath}?${params.toString()}`);
+        } else if (rememberedQuery) {
+          event.preventDefault();
+          router.push(`${basePath}?tab=search&q=${encodeURIComponent(rememberedQuery)}`);
         }
       }}
     >

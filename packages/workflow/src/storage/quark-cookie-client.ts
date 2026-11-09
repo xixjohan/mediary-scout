@@ -57,8 +57,9 @@ export const QUARK_PROFILE: CloudDriveProfile = {
   // uc_param_str is intentionally empty.
   query: "pr=ucpro&fr=pc&uc_param_str=",
   userAgent:
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 " +
-    "(KHTML, like Gecko) Chrome/124 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+    "quark-cloud-drive/3.13.5 Chrome/100.0.4896.160 Electron/18.3.5.4 " +
+    "Safari/537.36 Channel/pckk_other_ch",
   referer: "https://pan.quark.cn/",
   origin: "https://pan.quark.cn",
   errorPrefix: "QUARK",
@@ -97,9 +98,14 @@ export interface QuarkHttpInit {
   method: "GET" | "POST";
   headers: Record<string, string>;
   body?: string;
+  onResponseHeaders?: (headers: Headers) => void;
 }
 
-export type QuarkFetchJson = (url: string, init: QuarkHttpInit) => Promise<unknown>;
+export type QuarkFetchJson = (
+  url: string,
+  init: QuarkHttpInit,
+  onResponseHeaders?: (headers: Headers) => void,
+) => Promise<unknown>;
 
 export interface QuarkCookieClientOptions {
   cookie: string;
@@ -112,6 +118,7 @@ export interface QuarkCookieClientOptions {
   sleep?: (ms: number) => Promise<void>;
   pollAttempts?: number;
   pollDelayMs?: number;
+  onCookiePersist?: ((cookie: string) => Promise<void> | void) | undefined;
 }
 
 /** A directory listing entry (file/sort). `dir:true` = directory. */
@@ -155,13 +162,14 @@ export const CloudDriveAuthError = QuarkAuthError;
 export const isCloudDriveAuthError = isQuarkAuthError;
 
 export class QuarkCookieClient {
-  private readonly cookie: string;
+  private cookie: string;
   private readonly profile: CloudDriveProfile;
   private readonly fetchJson: QuarkFetchJson;
   private readonly userAgent: string;
   private readonly sleepFn: (ms: number) => Promise<void>;
   private readonly pollAttempts: number;
   private readonly pollDelayMs: number;
+  private readonly onCookiePersist?: ((cookie: string) => Promise<void> | void) | undefined;
 
   constructor(options: QuarkCookieClientOptions) {
     const cookie = normalizeCookie(options.cookie);
@@ -175,6 +183,32 @@ export class QuarkCookieClient {
     this.sleepFn = options.sleep ?? sleep;
     this.pollAttempts = options.pollAttempts ?? DEFAULT_POLL_ATTEMPTS;
     this.pollDelayMs = options.pollDelayMs ?? DEFAULT_POLL_DELAY_MS;
+    this.onCookiePersist = options.onCookiePersist;
+  }
+
+  public getCookie(): string {
+    return this.cookie;
+  }
+
+  private handleResponseHeaders(headers: Headers): void {
+    const setCookie = headers.get("set-cookie");
+    if (!setCookie) return;
+    const match = /__puus=([^;]+)/.exec(setCookie);
+    if (!match || !match[1]) return;
+    const newPuus = match[1].trim();
+    if (this.cookie.includes(`__puus=${newPuus}`)) return;
+    if (this.cookie.includes("__puus=")) {
+      this.cookie = this.cookie.replace(/__puus=[^;]+/, `__puus=${newPuus}`);
+    } else {
+      this.cookie = `${this.cookie.replace(/;?\s*$/, "")}; __puus=${newPuus}`;
+    }
+    if (this.onCookiePersist) {
+      try {
+        void this.onCookiePersist(this.cookie);
+      } catch (err) {
+        console.warn("[QuarkCookieClient] onCookiePersist error:", err);
+      }
+    }
   }
 
   /** Immediate children of a directory (file/sort, one page; size covers a media leaf). */
@@ -342,6 +376,37 @@ export class QuarkCookieClient {
     await this.awaitTaskFrom(response, this.errCode("COPY_FAILED"));
   }
 
+  async getDownloadUrl(input: { fid: string; userAgent?: string }): Promise<{
+    url: string;
+    fileName?: string;
+    fileSize?: number;
+    headers: Record<string, string>;
+  }> {
+    const response = await this.postJson("/1/clouddrive/file/download", {
+      fids: [input.fid],
+    });
+    const data = unwrap(response, this.errCode("GET_DOWNLOAD_URL_FAILED"));
+    const entries = Array.isArray(data) ? (data as Array<Record<string, unknown>>) : [];
+    if (entries.length === 0 || typeof entries[0]?.["download_url"] !== "string") {
+      throw new Error(`${this.errCode("GET_DOWNLOAD_URL_FAILED")}: 未返回有效下载链接`);
+    }
+    const entry = entries[0];
+    const downloadUrl = String(entry["download_url"]);
+    const fileName = typeof entry["file_name"] === "string" ? String(entry["file_name"]) : undefined;
+    const fileSize = typeof entry["size"] === "number" ? Number(entry["size"]) : undefined;
+    const headers: Record<string, string> = {
+      Cookie: this.cookie,
+      Referer: this.profile.referer,
+      "User-Agent": this.userAgent,
+    };
+    return {
+      url: downloadUrl,
+      ...(fileName !== undefined ? { fileName } : {}),
+      ...(fileSize !== undefined ? { fileSize } : {}),
+      headers,
+    };
+  }
+
   async renameFile(input: { fid: string; name: string }): Promise<void> {
     const response = await this.postJson("/1/clouddrive/file/rename", {
       fid: input.fid,
@@ -355,18 +420,26 @@ export class QuarkCookieClient {
     for (const [key, value] of params) {
       query.set(key, value);
     }
-    return this.fetchJson(`${this.profile.baseUrl}${path}?${query.toString()}`, {
-      method: "GET",
-      headers: this.headers(),
-    });
+    return this.fetchJson(
+      `${this.profile.baseUrl}${path}?${query.toString()}`,
+      {
+        method: "GET",
+        headers: this.headers(),
+        onResponseHeaders: (headers) => this.handleResponseHeaders(headers),
+      },
+    );
   }
 
   private async postJson(path: string, body: unknown): Promise<unknown> {
-    return this.fetchJson(`${this.profile.baseUrl}${path}?${this.profile.query}`, {
-      method: "POST",
-      headers: this.headers(),
-      body: JSON.stringify(body),
-    });
+    return this.fetchJson(
+      `${this.profile.baseUrl}${path}?${this.profile.query}`,
+      {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        onResponseHeaders: (headers) => this.handleResponseHeaders(headers),
+      },
+    );
   }
 
   private errCode(suffix: string): string {
@@ -401,12 +474,21 @@ export function parseCloudDriveUid(cookie: string): string | null {
 /** Back-compat alias — 夸克 callers predate the family rename. */
 export const parseQuarkUid = parseCloudDriveUid;
 
-async function defaultFetchJson(url: string, init: QuarkHttpInit): Promise<unknown> {
+async function defaultFetchJson(
+  url: string,
+  init: QuarkHttpInit,
+  onResponseHeaders?: (headers: Headers) => void,
+): Promise<unknown> {
   const requestInit: RequestInit = { method: init.method, headers: init.headers };
   if (init.body !== undefined) {
     requestInit.body = init.body;
   }
   const response = await fetchWithTimeout(url, requestInit, DEFAULT_HTTP_TIMEOUT_MS);
+  if (init.onResponseHeaders) {
+    init.onResponseHeaders(response.headers);
+  } else if (onResponseHeaders) {
+    onResponseHeaders(response.headers);
+  }
   // Quark returns its {code:31001} auth body WITH HTTP 401, so parse the JSON
   // regardless of status — the code (not the HTTP status) is the real signal.
   const text = await response.text();

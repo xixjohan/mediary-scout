@@ -110,4 +110,28 @@ describe("Pan115UnifiedStorageApi (Dual-Engine Hybrid Adapter)", () => {
     expect(mockOpenCreateFolder).toHaveBeenCalledTimes(1);
     expect(mockCookieCreateFolder).not.toHaveBeenCalled();
   });
+  it("reconstructs directory ancestry in Open-Only mode using dynamically tracked parent hierarchy", async () => {
+    const mockOpenCreate = vi.fn(async ({ name, parentId }) => {
+      if (name === "TV_Root") return "cid_tv";
+      if (name === "Breaking Bad") return "cid_show";
+      if (name === "Season 01") return "cid_s1";
+      return "cid_generic";
+    });
+
+    const openOnlyApi = new Pan115UnifiedStorageApi({
+      openApi: { createFolder: mockOpenCreate } as unknown as Pan115OpenClient,
+      mode: "open_only",
+    });
+
+    const tvCid = await openOnlyApi.createFolder({ name: "TV_Root", parentId: "0" });
+    const showCid = await openOnlyApi.createFolder({ name: "Breaking Bad", parentId: tvCid });
+    const s1Cid = await openOnlyApi.createFolder({ name: "Season 01", parentId: showCid });
+
+    const dirInfo = await openOnlyApi.getDirectoryInfo({ directoryId: s1Cid });
+    expect(dirInfo).not.toBeNull();
+    expect(dirInfo?.state).toBe(true);
+
+    const pathCids = dirInfo?.path.map((p) => p.cid);
+    expect(pathCids).toEqual(["0", "cid_tv", "cid_show", "cid_s1"]);
+  });
 });

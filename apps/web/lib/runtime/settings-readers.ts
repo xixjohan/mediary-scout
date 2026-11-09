@@ -7,11 +7,15 @@ import {
   createJevJudge,
   createStubAcquisitionModel,
   DEFAULT_JEV_BASE_URL,
+  DEFAULT_FILTER_PREFERENCES,
+  DEFAULT_EPISODE_POLICIES,
   FREE_LLM_PRESET,
   isBlankEnvValue,
   isFreeLlmPreset,
   llmConfigError,
   TMDB_DIRECT_BASE_URL,
+  type AcquisitionFilterPreferences,
+  type AcquisitionEpisodePolicies,
   type JevJudge,
   type TmdbAccess,
   type WorkflowRepository,
@@ -543,5 +547,47 @@ export async function resolveLibraryDirNaming(
     tvName: storageOverride?.tvName?.trim() || await readKey(LIBRARY_TV_DIR_SETTING_KEY, "MEDIA_TRACK_LIBRARY_TV_DIR", DEFAULT_LIBRARY_TV_DIR),
     animeName: storageOverride?.animeName?.trim() || await readKey(LIBRARY_ANIME_DIR_SETTING_KEY, "MEDIA_TRACK_LIBRARY_ANIME_DIR", DEFAULT_LIBRARY_ANIME_DIR),
   };
+}
+
+export const ACQUISITION_FILTER_PREFERENCES_SETTING_KEY = "acquisition_filter_preferences";
+export const ACQUISITION_EPISODE_POLICIES_SETTING_KEY = "acquisition_episode_policies";
+
+export async function getAcquisitionFilterPreferences(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<AcquisitionFilterPreferences> {
+  const raw = await repository.getSetting(ACQUISITION_FILTER_PREFERENCES_SETTING_KEY);
+  if (!raw) return DEFAULT_FILTER_PREFERENCES;
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      mode: parsed.mode || DEFAULT_FILTER_PREFERENCES.mode,
+      negativeKeywords: Array.isArray(parsed.negativeKeywords) ? parsed.negativeKeywords : DEFAULT_FILTER_PREFERENCES.negativeKeywords,
+      allowedContainers: Array.isArray(parsed.allowedContainers) ? parsed.allowedContainers : DEFAULT_FILTER_PREFERENCES.allowedContainers,
+      minMovieSizeBytes: typeof parsed.minMovieSizeBytes === "number" ? parsed.minMovieSizeBytes : DEFAULT_FILTER_PREFERENCES.minMovieSizeBytes,
+      minSeriesEpisodeSizeBytes: typeof parsed.minSeriesEpisodeSizeBytes === "number" ? parsed.minSeriesEpisodeSizeBytes : DEFAULT_FILTER_PREFERENCES.minSeriesEpisodeSizeBytes,
+      minAnimeEpisodeSizeBytes: typeof parsed.minAnimeEpisodeSizeBytes === "number" ? parsed.minAnimeEpisodeSizeBytes : DEFAULT_FILTER_PREFERENCES.minAnimeEpisodeSizeBytes,
+    };
+  } catch {
+    return DEFAULT_FILTER_PREFERENCES;
+  }
+}
+
+export async function getAcquisitionEpisodePolicies(
+  repository: { getSetting(key: string): Promise<string | null> },
+): Promise<AcquisitionEpisodePolicies> {
+  const raw = await repository.getSetting(ACQUISITION_EPISODE_POLICIES_SETTING_KEY);
+  if (!raw) return DEFAULT_EPISODE_POLICIES;
+  try {
+    const parsed = JSON.parse(raw);
+    return {
+      directoryInspectionEnabled: typeof parsed.directoryInspectionEnabled === "boolean" ? parsed.directoryInspectionEnabled : DEFAULT_EPISODE_POLICIES.directoryInspectionEnabled,
+      packArbitrationMode: parsed.packArbitrationMode || DEFAULT_EPISODE_POLICIES.packArbitrationMode,
+      absoluteEpisodeMappingEnabled: typeof parsed.absoluteEpisodeMappingEnabled === "boolean" ? parsed.absoluteEpisodeMappingEnabled : DEFAULT_EPISODE_POLICIES.absoluteEpisodeMappingEnabled,
+      qualityCutoff: parsed.qualityCutoff || DEFAULT_EPISODE_POLICIES.qualityCutoff,
+      allowAutoUpgrade: typeof parsed.allowAutoUpgrade === "boolean" ? parsed.allowAutoUpgrade : DEFAULT_EPISODE_POLICIES.allowAutoUpgrade,
+    };
+  } catch {
+    return DEFAULT_EPISODE_POLICIES;
+  }
 }
 

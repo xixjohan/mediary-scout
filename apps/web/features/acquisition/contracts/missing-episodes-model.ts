@@ -11,6 +11,71 @@ export interface MissingEpisodeItem {
   displayState: EpisodeDisplayState;
 }
 
+export const SEASON_CHUNK_SIZE = 100;
+
+export interface SeasonChunkInfo {
+  chunkIndex: number;
+  startEp: number;
+  endEp: number;
+}
+
+export interface SlicedSeasonResult<T> {
+  chunks: SeasonChunkInfo[];
+  currentChunk: number;
+  totalChunks: number;
+  sliced: readonly T[];
+}
+
+/**
+ * 将超长季剧集按指定步长进行分段切片（默认每段 100 集）
+ * 超长季 (len > chunkSize) 输出切片数据，常规季无缝输出全量
+ */
+export function sliceSeasonEpisodes<T>(
+  episodes: readonly T[],
+  chunkIndex: number,
+  chunkSize: number = SEASON_CHUNK_SIZE,
+): SlicedSeasonResult<T> {
+  const total = episodes.length;
+  if (total === 0) {
+    return {
+      chunks: [],
+      currentChunk: 0,
+      totalChunks: 0,
+      sliced: episodes,
+    };
+  }
+
+  const totalChunks = Math.ceil(total / chunkSize);
+  const safeIndex = Math.min(Math.max(0, chunkIndex), Math.max(0, totalChunks - 1));
+  const start = safeIndex * chunkSize;
+  const sliced = total > chunkSize ? episodes.slice(start, start + chunkSize) : episodes;
+
+  const chunks: SeasonChunkInfo[] = Array.from({ length: totalChunks }, (_, i) => ({
+    chunkIndex: i,
+    startEp: i * chunkSize + 1,
+    endEp: Math.min((i + 1) * chunkSize, total),
+  }));
+
+  return {
+    chunks,
+    currentChunk: safeIndex,
+    totalChunks,
+    sliced,
+  };
+}
+
+export function isSeasonEpisodeStateIncomplete(season: TitleHubSeason): boolean {
+  if (!season.tracked) return false;
+  if (season.totalEpisodes <= 0) return true;
+  if (season.episodes.some((episode) => !episode.obtained && episode.airStatus === "unknown")) return true;
+  const codes = new Set(season.episodes.map((episode) => episode.episodeCode));
+  const prefix = `S${String(season.seasonNumber).padStart(2, "0")}E`;
+  for (let number = 1; number <= season.totalEpisodes; number++) {
+    if (!codes.has(`${prefix}${String(number).padStart(2, "0")}`)) return true;
+  }
+  return false;
+}
+
 /**
  * 从 episodeCode (如 "S01E05" 或 "E12") 中解析出数字集号
  */
@@ -52,24 +117,6 @@ export function extractMissingEpisodes(seasons: readonly TitleHubSeason[]): Miss
           episodeNumber,
           displayCode: `第 ${episodeNumber} 集`,
           displayState: ep.displayState,
-        });
-      }
-    } else {
-      // 容错降级：当集状态表尚未被 worker 写入（冷启动/初始化中），
-      // 根据 latestAiredEpisode 与 obtainedCount 生成已播缺失集
-      const aired = Math.min(season.latestAiredEpisode, season.totalEpisodes);
-      const startEp = Math.max(1, season.obtainedCount + 1);
-      for (let epNum = startEp; epNum <= aired; epNum++) {
-        const sPadded = String(season.seasonNumber).padStart(2, "0");
-        const ePadded = String(epNum).padStart(2, "0");
-        const code = `S${sPadded}E${ePadded}`;
-        missing.push({
-          id: `${season.seasonNumber}_${epNum}`,
-          episodeCode: code,
-          seasonNumber: season.seasonNumber,
-          episodeNumber: epNum,
-          displayCode: `第 ${epNum} 集`,
-          displayState: "missing_aired",
         });
       }
     }

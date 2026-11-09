@@ -11,8 +11,10 @@ import {
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import {
   getAccountScopedSettings,
+  getAccountStorageCredentials,
   getWorkflowRepository,
   getWorkerResourceProvider,
+  getAcquisitionFilterPreferences,
   movieTargetFromTmdbId,
   resolveGlobalWorkspace,
 } from "../../../../lib/workflow-runtime";
@@ -212,10 +214,144 @@ async function handleResourceResult(
   );
 }
 
+function createResourceNdjsonStream(options: {
+  filterPreferences?: any;
+  accountId: string;
+  tmdbId: number;
+  keywords: string[];
+  provider: { search: (input: { keyword: string }) => Promise<any> };
+  cacheKeySuffix?: string | undefined;
+  title: MediaTitle;
+  season: TrackedSeason;
+  connectedStorageId: string | null;
+}): Response {
+  const { accountId, tmdbId, keywords, provider, cacheKeySuffix, title, season, connectedStorageId, filterPreferences } = options;
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        const result = await resolveTitleResources({
+          accountId,
+          titleId: String(tmdbId),
+          keywords,
+          search: ({ keyword }) => provider.search({ keyword }),
+          cache: resourceCache,
+          limiter: resourceLimiter,
+          loadCachedCandidates: async () => [],
+          ...(cacheKeySuffix ? { cacheKeySuffix } : {}),
+          ...(filterPreferences ? { filterPreferences } : {}),
+          onChunk: (event) => {
+            controller.enqueue(
+              encoder.encode(
+                JSON.stringify({
+                  type: "chunk",
+                  newCandidates: event.newCandidates,
+                  allCandidates: event.allCandidates,
+                  progress: event.progress,
+                }) + "\n",
+              ),
+            );
+          },
+        });
+
+        if (result.kind === "ok") {
+          let snapshotId: string | undefined = result.snapshotId;
+          if (result.snapshot !== null) {
+            try {
+              await getWorkflowRepository().saveWorkflowRunSnapshot({
+                ...buildResourceSearchRun({
+                  snapshot: result.snapshot,
+                  title,
+                  season,
+                  accountId,
+                  connectedStorageId,
+                  now: result.snapshot.createdAt,
+                }),
+                keepCurrentEpisodes: true,
+              });
+              snapshotId = result.snapshot.id;
+            } catch (error) {
+              console.error("[titles/resources] snapshot persist failed", error);
+            }
+          }
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({
+                type: "done",
+                tmdbId,
+                cached: result.cached,
+                count: result.candidates.length,
+                candidates: result.candidates,
+                ...(result.sourceHealth ?? result.snapshot?.sourceHealth ? { sourceHealth: result.sourceHealth ?? result.snapshot?.sourceHealth } : {}),
+                ...(snapshotId === undefined ? {} : { snapshotId }),
+              }) + "\n",
+            ),
+          );
+        } else {
+          controller.enqueue(
+            encoder.encode(
+              JSON.stringify({
+                type: "error",
+                kind: result.kind,
+                message: result.kind === "error" ? result.message : result.kind,
+              }) + "\n",
+            ),
+          );
+        }
+      } catch (err: unknown) {
+        controller.enqueue(
+          encoder.encode(
+            JSON.stringify({
+              type: "error",
+              kind: "error",
+              message: err instanceof Error ? err.message : String(err),
+            }) + "\n",
+          ),
+        );
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+function buildSearchCacheKey(
+  customKeyword?: string,
+  seasonNumber?: number,
+  episodeNumber?: number,
+): string | undefined {
+  const parts: string[] = [];
+  if (customKeyword) parts.push(customKeyword);
+  if (seasonNumber) parts.push(`s${seasonNumber}`);
+  if (episodeNumber) parts.push(`e${episodeNumber}`);
+  return parts.length > 0 ? parts.join(":") : undefined;
+}
+
+async function resolveDriveProvider(
+  accountId: string,
+  connectedStorageId: string | null,
+  storageId?: string,
+): Promise<string> {
+  const targetId = connectedStorageId || storageId;
+  const creds = await getAccountStorageCredentials(accountId, targetId || undefined);
+  return creds?.provider || "pan115";
+}
+
+function isStreamRequested(request: NextRequest): boolean {
+  if (request.nextUrl.searchParams.get("stream") === "1") return true;
+  const accept = request.headers.get("accept");
+  return Boolean(accept && accept.includes("application/x-ndjson"));
+}
+
 export async function POST(request: NextRequest) {
   await connection();
 
-  // 1) Scope, fail-closed.
   const accountId = await requireApiAccount(request);
   if (accountId instanceof Response) return accountId;
 
@@ -223,14 +359,12 @@ export async function POST(request: NextRequest) {
   if (parsed instanceof Response) return parsed;
   const { tmdbId, customKeyword, seasonNumber, episodeNumber, typeHint } = parsed;
 
-  // 2) Resolve title and season
   const resolved = await resolveTitleContext(accountId, tmdbId, typeHint, seasonNumber, parsed.storageId);
   if (!resolved) {
     return NextResponse.json({ error: "title not found" }, { status: 404, headers: NO_STORE });
   }
   const { title, season, connectedStorageId } = resolved;
 
-  // Look up subscription policy custom keywords if configured
   const policy = await getWorkflowRepository().getSubscriptionPolicy({
     accountId,
     titleKey: title.id,
@@ -243,112 +377,22 @@ export async function POST(request: NextRequest) {
     episodeNumber,
   }).map((entry) => entry.keyword);
 
-  const cacheKeyParts = [
-    customKeyword ?? "",
-    seasonNumber ? `s${seasonNumber}` : "",
-    episodeNumber ? `e${episodeNumber}` : "",
-  ].filter(Boolean);
-  const cacheKeySuffix = cacheKeyParts.length > 0 ? cacheKeyParts.join(":") : undefined;
+  const cacheKeySuffix = buildSearchCacheKey(customKeyword, seasonNumber, episodeNumber);
+  const filterPreferences = await getAcquisitionFilterPreferences(getAccountScopedSettings(accountId));
+  const driveProvider = await resolveDriveProvider(accountId, connectedStorageId, parsed.storageId);
+  const provider = await getWorkerResourceProvider(getAccountScopedSettings(accountId), driveProvider, accountId);
 
-  const provider = await getWorkerResourceProvider(getAccountScopedSettings(accountId), undefined, accountId);
-
-  const wantsStream =
-    request.nextUrl.searchParams.get("stream") === "1" ||
-    request.headers.get("accept")?.includes("application/x-ndjson") === true;
-
-  if (wantsStream) {
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          const result = await resolveTitleResources({
-            accountId,
-            titleId: String(tmdbId),
-            keywords,
-            search: ({ keyword }) => provider.search({ keyword }),
-            cache: resourceCache,
-            limiter: resourceLimiter,
-            loadCachedCandidates: async () => [],
-            ...(cacheKeySuffix ? { cacheKeySuffix } : {}),
-            onChunk: (event) => {
-              controller.enqueue(
-                encoder.encode(
-                  JSON.stringify({
-                    type: "chunk",
-                    newCandidates: event.newCandidates,
-                    allCandidates: event.allCandidates,
-                    progress: event.progress,
-                  }) + "\n",
-                ),
-              );
-            },
-          });
-
-          if (result.kind === "ok") {
-            let snapshotId: string | undefined = result.snapshotId;
-            if (result.snapshot !== null) {
-              try {
-                await getWorkflowRepository().saveWorkflowRunSnapshot({
-                  ...buildResourceSearchRun({
-                    snapshot: result.snapshot,
-                    title,
-                    season,
-                    accountId,
-                    connectedStorageId,
-                    now: result.snapshot.createdAt,
-                  }),
-                  keepCurrentEpisodes: true,
-                });
-                snapshotId = result.snapshot.id;
-              } catch (error) {
-                console.error("[titles/resources] snapshot persist failed", error);
-              }
-            }
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  type: "done",
-                  tmdbId,
-                  cached: result.cached,
-                  count: result.candidates.length,
-                  candidates: result.candidates,
-                  ...(result.sourceHealth ?? result.snapshot?.sourceHealth ? { sourceHealth: result.sourceHealth ?? result.snapshot?.sourceHealth } : {}),
-                  ...(snapshotId ? { snapshotId } : {}),
-                }) + "\n",
-              ),
-            );
-          } else {
-            controller.enqueue(
-              encoder.encode(
-                JSON.stringify({
-                  type: "error",
-                  kind: result.kind,
-                  ...(result.kind === "throttled" ? { retryAfterMs: result.retryAfterMs } : {}),
-                  ...(result.kind === "error" ? { detail: result.message } : {}),
-                }) + "\n",
-              ),
-            );
-          }
-          controller.close();
-        } catch (error) {
-          controller.enqueue(
-            encoder.encode(
-              JSON.stringify({
-                type: "error",
-                detail: error instanceof Error ? error.message : String(error),
-              }) + "\n",
-            ),
-          );
-          controller.close();
-        }
-      },
-    });
-
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "application/x-ndjson; charset=utf-8",
-        "Cache-Control": "no-store, no-cache, must-revalidate",
-      },
+  if (isStreamRequested(request)) {
+    return createResourceNdjsonStream({
+      accountId,
+      tmdbId,
+      keywords,
+      provider,
+      ...(cacheKeySuffix ? { cacheKeySuffix } : {}),
+      title,
+      season,
+      connectedStorageId,
+      filterPreferences,
     });
   }
 

@@ -175,4 +175,59 @@ describe("StrmTaskConfigRegistry 内存字典注册中心与适配器策略", ()
     expect(cfg.deliveryMode).toBe("proxy");
     expect(cfg.provider).toBe("pan115");
   });
+
+  it("多态适配器模式：支持以 cs_ 开头的存储驱动直连点播，自动生成虚拟配置并协商为 proxy", async () => {
+    const getTaskSpy = vi.fn().mockResolvedValue(null);
+    const getStorageSpy = vi.fn().mockResolvedValue({
+      provider: "quark",
+      status: "active",
+      accountId: "acct_quark_live",
+    });
+
+    const registry = new StrmTaskConfigRegistry({
+      getTaskById: getTaskSpy,
+      getStorageById: getStorageSpy,
+    });
+
+    const cfg = await registry.resolveConfig("cs_quark_AAQ69oQ5Vj9Myt5R0uGt7omX");
+    expect(cfg.taskId).toBe("cs_quark_AAQ69oQ5Vj9Myt5R0uGt7omX");
+    expect(cfg.storageId).toBe("cs_quark_AAQ69oQ5Vj9Myt5R0uGt7omX");
+    expect(cfg.provider).toBe("quark");
+    expect(cfg.deliveryMode).toBe("proxy");
+    expect(cfg.accountId).toBe("acct_quark_live");
+    expect(cfg.isActive).toBe(true);
+
+    // 存储前缀直通：无需执行无谓的 getTaskById 查询
+    expect(getTaskSpy).not.toHaveBeenCalled();
+    expect(getStorageSpy).toHaveBeenCalledTimes(1);
+
+    // 第二次命中内存字典缓存
+    const cfgCached = await registry.resolveConfig("cs_quark_AAQ69oQ5Vj9Myt5R0uGt7omX");
+    expect(cfgCached).toBe(cfg);
+    expect(getStorageSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("多态存储驱动被冻结时，生成的虚拟配置 isActive 为 false", async () => {
+    const registry = new StrmTaskConfigRegistry({
+      getTaskById: async () => null,
+      getStorageById: async () => ({
+        provider: "pan115",
+        status: "frozen",
+      }),
+    });
+
+    const cfg = await registry.resolveConfig("cs_pan115_frozen");
+    expect(cfg.isActive).toBe(false);
+  });
+
+  it("任务与存储驱动均不存在时，明确抛出 NOT_FOUND 语义异常", async () => {
+    const registry = new StrmTaskConfigRegistry({
+      getTaskById: async () => null,
+      getStorageById: async () => null,
+    });
+
+    await expect(registry.resolveConfig("non_existent_id")).rejects.toThrow(
+      "STRM_TASK_OR_STORAGE_NOT_FOUND",
+    );
+  });
 });

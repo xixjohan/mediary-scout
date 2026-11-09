@@ -52,6 +52,10 @@ export interface SubscriptionPolicy {
   priorityGroups?: SubscriptionPriorityGroup[];
   /** Optional per-season inclusive episode ranges; an absent season has no extra bound. */
   seasonEpisodeRanges?: SeasonEpisodeRange[];
+  /** 画质截止线 (Quality Cutoff)，达到此档位后不再触发升级搜索与下载，默认不设限 */
+  qualityCutoff?: QualityCutoffTier;
+  /** 是否允许洗版升级 (默认 false，不开启则已有文件绝不再替换) */
+  allowUpgrade?: boolean;
 }
 
 export interface SeasonEpisodeRange {
@@ -65,6 +69,36 @@ export interface SubscriptionPriorityGroup {
   name: string;
   mustContain: string[];
   mustNotContain: string[];
+}
+
+
+export type QualityCutoffTier = "720p" | "1080p" | "2160p" | "none";
+
+const QUALITY_RANKS: Record<QualityCutoffTier, number> = {
+  none: 0,
+  "720p": 1,
+  "1080p": 2,
+  "2160p": 3,
+};
+
+/**
+ * 从名称或标签中解析画质分级档位
+ */
+export function parseQualityTier(titleOrName: string): QualityCutoffTier {
+  if (/(?:4k|2160p|uhd)/i.test(titleOrName)) return "2160p";
+  if (/(?:1080p|fhd)/i.test(titleOrName)) return "1080p";
+  if (/(?:720p|hd)/i.test(titleOrName)) return "720p";
+  return "none";
+}
+
+/**
+ * 判断当前已有版本是否已经满足设定的画质截止线 (Quality Cutoff)
+ * 满足后巡检应停止任何更高画质版本的搜寻与下载，彻底杜绝洗版造成的配额浪费。
+ */
+export function isQualityCutoffMet(currentQualityName: string, cutoffTier?: QualityCutoffTier): boolean {
+  if (!cutoffTier || cutoffTier === "none") return false;
+  const currentTier = parseQualityTier(currentQualityName);
+  return QUALITY_RANKS[currentTier] >= QUALITY_RANKS[cutoffTier];
 }
 
 export const EMPTY_POLICY: SubscriptionPolicy = {

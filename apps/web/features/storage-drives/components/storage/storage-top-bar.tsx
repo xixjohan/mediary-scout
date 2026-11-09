@@ -70,6 +70,7 @@ export function StorageTopBar({
         <input
           type="text"
           placeholder="搜索当前目录文件..."
+          aria-label="搜索当前目录文件"
           value={searchQuery}
           onChange={(e) => onSearchChange(e.target.value)}
         />
@@ -99,9 +100,9 @@ export function StorageTopBar({
             className="storage-btn secondary"
             onClick={onOpenOffline}
             disabled={loading || actionBusy}
-            title="添加磁力、HTTP链接或种子文件到网盘进行离线下载"
+            title="添加磁力/直链离线下载或网盘分享链接秒级转存"
           >
-            <DownloadCloud size={16} /> 离线下载
+            <DownloadCloud size={16} /> 下载 / 转存
           </button>
         )}
         {onOpenScan && (

@@ -64,7 +64,16 @@ export * from "./extensions/index.js";
 
 // Shared & Contracts Foundation Re-exports
 export { formatNetworkError } from "@media-track/shared";
-export type { TokenCredential } from "@media-track/contracts";
+export type {
+  TokenCredential,
+  AcquisitionFilterPreferences,
+  AcquisitionEpisodePolicies,
+  QualityCutoffPreference,
+} from "@media-track/contracts";
+export {
+  DEFAULT_FILTER_PREFERENCES,
+  DEFAULT_EPISODE_POLICIES,
+} from "@media-track/contracts";
 
 // Share Inspectors & Tree Engine (Adapter & FSM)
 export * from "./inspectors/index.js";

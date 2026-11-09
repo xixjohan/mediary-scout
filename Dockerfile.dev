@@ -23,9 +23,7 @@ COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/workflow/package.json packages/workflow/
 
-RUN npm config set registry "$NPM_REGISTRY" && \
-    npm ci && \
-    better_sqlite3_binary_host_mirror="https://registry.npmmirror.com/-/binary/better-sqlite3" npm install better-sqlite3@12.11.1
+RUN npm config set registry "$NPM_REGISTRY" && npm ci && npm install better-sqlite3@12.11.1
 
 # 2. 源码拷贝（先于 GIT_SHA RUN，保证内容变动时后续层正确失效）
 COPY . .

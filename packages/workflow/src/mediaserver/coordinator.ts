@@ -15,6 +15,51 @@ import type {
   StrmTaskFileChangeContext,
 } from "./mediaserver-types.js";
 
+const BLOCKED_METADATA_HOSTS = new Set([
+  "169.254.169.254",
+  "metadata.google.internal",
+  "100.100.100.200",
+  "fd00:ec2::254",
+  "0.0.0.0",
+]);
+
+export function assertValidMediaServerUrl(rawUrl: string): void {
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error(`MEDIA_SERVER_URL_INVALID: 无效的服务器 URL [${rawUrl}]`);
+  }
+
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(
+      `MEDIA_SERVER_SSRF_BLOCKED: 仅允许 HTTP 或 HTTPS 协议 (当前协议: ${parsed.protocol})`,
+    );
+  }
+
+  const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (!hostname) {
+    throw new Error("MEDIA_SERVER_URL_INVALID: URL 主机名不能为空");
+  }
+
+  if (
+    BLOCKED_METADATA_HOSTS.has(hostname) ||
+    hostname.startsWith("169.254.") ||
+    hostname.endsWith(".metadata.google.internal")
+  ) {
+    throw new Error(
+      `MEDIA_SERVER_SSRF_BLOCKED: 禁止访问保留的云元数据或链路本地地址 [${hostname}]`,
+    );
+  }
+
+  if (parsed.port) {
+    const portNum = Number(parsed.port);
+    if (!Number.isInteger(portNum) || portNum < 1 || portNum > 65535) {
+      throw new Error(`MEDIA_SERVER_URL_INVALID: 端口号超出合法范围 1-65535 [${parsed.port}]`);
+    }
+  }
+}
+
 export function normalizePathSeparators(p: string): string {
   return p.replace(/\\/g, "/").replace(/\/+/g, "/");
 }
@@ -247,6 +292,7 @@ export class MediaServerCoordinator {
       | CreateMediaServerConfigInput
       | { serverType: MediaServerType; hostUrl: string; apiToken: string },
   ): Promise<MediaServerConnectionStatus> {
+    assertValidMediaServerUrl(config.hostUrl);
     const adapter = this.createAdapter(config.serverType, config.hostUrl, config.apiToken);
     return adapter.testConnection();
   }
@@ -259,6 +305,7 @@ export class MediaServerCoordinator {
     hostUrl: string;
     apiToken: string;
   }): Promise<import("./mediaserver-types.js").MediaLibrary[]> {
+    assertValidMediaServerUrl(options.hostUrl);
     const adapter = this.createAdapter(options.serverType, options.hostUrl, options.apiToken);
     return adapter.listLibraries();
   }

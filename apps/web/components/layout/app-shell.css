@@ -77,12 +77,31 @@
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  background: var(--accent, #3b82f6);
-  color: #fff;
+  background: var(--accent);
+  color: #121212;
   font-size: 11px;
   font-weight: 700;
   line-height: 18px;
   text-align: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.nav-badge.nav-badge-alert {
+  background: var(--negative);
+  color: #121212;
+}
+
+.nav-badge.nav-badge-warning {
+  background: var(--warning);
+  color: #121212;
+}
+
+.nav-badge.nav-badge-info {
+  background: var(--info);
+  color: #121212;
 }
 
 .nav-item {

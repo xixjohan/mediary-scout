@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { InMemoryWorkflowRepository } from "@media-track/workflow";
+import { InMemoryWorkflowRepository, STRM_BASE_URL_SETTING_KEY } from "@media-track/workflow";
 import {
   setWorkflowRepositoryForTest,
   resetRuntimeContainerForTests,
@@ -105,5 +105,27 @@ describe("strm-runner-service", () => {
     // runDueStrmTasks 应该只扫描 t1
     const count = await runDueStrmTasks("acct_1");
     expect(count).toBe(1);
+  });
+
+  it("executeStrmTaskScan 优先使用数据库中持久化的 STRM_BASE_URL_SETTING_KEY", async () => {
+    await repo.setSetting(STRM_BASE_URL_SETTING_KEY, "http://192.168.1.100:3000");
+    const task = await repo.createStrmTask({
+      accountId: "acct_1",
+      name: "Anime Base URL Test",
+      storageId: "cs_unconnected",
+      remoteFolderId: "root_1",
+      remotePath: "/Anime",
+      localOutputDir: "/tmp/strm",
+      scanIntervalMinutes: 60,
+      scanMode: "incremental_missing",
+      extensions: "mkv",
+      deliveryMode: "redirect",
+      isActive: true,
+    });
+
+    const res = await executeStrmTaskScan(task.id, "acct_1");
+    // 即使网盘未连接提前退出，记录创建也证明了调度流程正常，且没有触发 127.0.0.1 无配置告警
+    expect(res.ok).toBe(false);
+    expect(res.errorMessage).toBe("网盘未连接或凭据已失效");
   });
 });

@@ -257,7 +257,8 @@
   place-items: center;
   width: 96px;
   min-width: 96px;
-  height: 132px;
+  aspect-ratio: 2 / 3;
+  height: auto;
   border-radius: 6px;
   background: linear-gradient(160deg, #2a2a2a 0%, #1c1c1c 100%);
   color: var(--text-soft);

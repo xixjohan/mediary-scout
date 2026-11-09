@@ -26,11 +26,15 @@ export async function POST(request: NextRequest) {
   }
 
   const coordinator = getMediaServerCoordinator();
-  const status = await coordinator.testConnection({
-    serverType: body.serverType,
-    hostUrl: body.hostUrl.trim(),
-    apiToken: body.apiToken.trim(),
-  });
-
-  return NextResponse.json(status);
+  try {
+    const status = await coordinator.testConnection({
+      serverType: body.serverType,
+      hostUrl: body.hostUrl.trim(),
+      apiToken: body.apiToken.trim(),
+    });
+    return NextResponse.json(status);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: message }, { status: 400 });
+  }
 }

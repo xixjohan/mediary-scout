@@ -73,6 +73,7 @@ export class QuarkStorageExecutor implements StorageExecutor {
   private readonly videoExtensions: Set<string>;
   private readonly maxWriteScopeDepth: number;
   private readonly sleepFn: (ms: number) => Promise<void>;
+  private readonly parentFidCache = new Map<string, string>();
   private nextTransferNumber = 1;
 
   constructor(options: QuarkStorageExecutorOptions) {
@@ -102,12 +103,17 @@ export class QuarkStorageExecutor implements StorageExecutor {
       if (isDirectory(item) && nameOf(item) === input.name) {
         const existingId = idOf(item);
         if (existingId) {
+          this.writeScopeDirectoryIds.add(existingId);
+          this.parentFidCache.set(existingId, safeParentId);
           return existingId;
         }
       }
     }
     try {
-      return await this.client.createFolder({ name: input.name, parentId: safeParentId });
+      const newId = await this.client.createFolder({ name: input.name, parentId: safeParentId });
+      this.writeScopeDirectoryIds.add(newId);
+      this.parentFidCache.set(newId, safeParentId);
+      return newId;
     } catch (error) {
       // ⚠️ UC-only (VERIFIED LIVE 2026-10-23): the folder listing is eventually
       // consistent — a dir created moments ago may not appear in the very next
@@ -452,24 +458,35 @@ export class QuarkStorageExecutor implements StorageExecutor {
       return normalized;
     }
     let cursor = normalized;
+    const visited: string[] = [normalized];
     for (let depth = 0; depth < this.maxWriteScopeDepth; depth++) {
-      let info;
-      try {
-        info = await this.client.getFileInfo(cursor);
-      } catch (error) {
-        if (isQuarkAuthError(error)) {
-          throw error;
+      let parent = this.parentFidCache.get(cursor);
+      if (parent === undefined) {
+        let info;
+        try {
+          info = await this.client.getFileInfo(cursor);
+        } catch (error) {
+          if (isQuarkAuthError(error)) {
+            throw error;
+          }
+          throw new Error(`WRITE_SCOPE_VIOLATION: unable to verify ${action} target fid=${normalized}`);
         }
-        throw new Error(`WRITE_SCOPE_VIOLATION: unable to verify ${action} target fid=${normalized}`);
+        parent = info.pdir_fid;
+        if (parent) {
+          this.parentFidCache.set(cursor, parent);
+        }
       }
-      const parent = info.pdir_fid;
       if (!parent || parent === "0") {
         break;
       }
       if (this.writeScopeDirectoryIds.has(parent)) {
+        for (const v of visited) {
+          this.writeScopeDirectoryIds.add(v);
+        }
         return normalized;
       }
       cursor = parent;
+      visited.push(cursor);
     }
     throw new Error(
       `WRITE_SCOPE_VIOLATION: refusing to ${action} outside configured write scope; fid=${normalized}`,

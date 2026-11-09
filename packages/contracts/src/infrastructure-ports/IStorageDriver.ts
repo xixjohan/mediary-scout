@@ -15,10 +15,19 @@ export interface FileMetadata {
 
 export type StorageBrand = "pan115" | "quark" | "uc" | "pan123" | "guangya" | "tianyi";
 
+export interface StorageOfflineTasksQuota {
+  readonly monthlyTotal?: number;
+  readonly monthlyRemaining?: number;
+  readonly dailyLimit?: number;
+  readonly dailyRemaining?: number;
+}
+
 export interface StorageQuotaInfo {
   readonly totalBytes: number;
   readonly usedBytes: number;
   readonly remainingBytes: number;
+  /** 可选：网盘离线下载任务次数配额（如 115 专用，用于低水位熔断与防刷） */
+  readonly offlineTasks?: StorageOfflineTasksQuota;
 }
 
 export interface StorageCategoryTreeCids {

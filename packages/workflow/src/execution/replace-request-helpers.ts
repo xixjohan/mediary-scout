@@ -4,7 +4,7 @@ import { syncSeasonAgainstMetadata } from "./season-sync.js";
 import type { UserMessage, UserMessageScope } from "./user-requests.js";
 export type ReplaceRequestOrigin = "patrol" | "user";
 
-export type SeasonMetadataSync = (input: { tmdbId: number; seasonNumber: number }) => Promise<{
+export type SeasonMetadataSync = (input: { tmdbId: number; seasonNumber: number; accountId: string }) => Promise<{
   latestAiredEpisode: number;
   totalEpisodes: number;
 } | null>;
@@ -96,7 +96,7 @@ export async function syncedSeasons(
     let entry = { season: state.season, episodes: state.episodes };
     if (sync) {
       try {
-        const meta = await sync({ tmdbId, seasonNumber: state.season.seasonNumber });
+        const meta = await sync({ tmdbId, seasonNumber: state.season.seasonNumber, accountId: state.accountId });
         if (meta) {
           const synced = syncSeasonAgainstMetadata({
             ...entry,

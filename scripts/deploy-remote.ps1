@@ -1,4 +1,4 @@
-﻿[CmdletBinding()]
+[CmdletBinding()]
 param(
     [ValidateSet("Dev", "Official")]
     [string]$Mode = "Dev",
@@ -124,6 +124,7 @@ if ($Mode -eq "Dev") {
 }
 
 # 提取代理与依赖配置
+$cleanWebBaseUrl = $webBaseUrl.TrimEnd('/')
 $dockerMirror = if ($envMap["DOCKER_MIRROR"]) { $envMap["DOCKER_MIRROR"] } else { "" }
 $pansouBaseUrl = if ($envMap["PANSOU_BASE_URL"]) { $envMap["PANSOU_BASE_URL"] } else { "http://${deployHost}:5280" }
 $httpProxy = $envMap["HTTP_PROXY"]
@@ -384,7 +385,7 @@ try {
         if ($httpsProxy) { $proxyFlags += " -e HTTPS_PROXY=$httpsProxy" }
         if ($noProxy) { $proxyFlags += " -e NO_PROXY=$noProxy" }
 
-        $devRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -v ${remoteWorkdir}/apps/web/public:/app/apps/web/public -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl $proxyFlags $dockerImage"
+        $devRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -v ${remoteWorkdir}/apps/web/public:/app/apps/web/public -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl -e APP_BASE_URL=$cleanWebBaseUrl $proxyFlags $dockerImage"
         Invoke-RemoteSsh $devRunCmd
         Write-Success "Development container launched (Port $targetPort, Isolated volume $dataVolume)!"
 
@@ -459,7 +460,7 @@ try {
         if ($httpsProxy) { $proxyFlags += " -e HTTPS_PROXY=$httpsProxy" }
         if ($noProxy) { $proxyFlags += " -e NO_PROXY=$noProxy" }
 
-        $prodRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl $proxyFlags $dockerImage"
+        $prodRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl -e APP_BASE_URL=$cleanWebBaseUrl $proxyFlags $dockerImage"
         Invoke-RemoteSsh $prodRunCmd
         Write-Success "Production container recreated!"
 

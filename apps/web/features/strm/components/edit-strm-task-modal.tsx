@@ -170,7 +170,7 @@ export function EditStrmTaskModal({
 
           <div>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.25rem" }}>
-              <label style={{ fontSize: "0.85rem", color: "#ccc" }}>本地 STRM 输出目录（绝对物理路径）</label>
+              <label style={{ fontSize: "0.85rem", color: "#ccc" }}>本地 STRM 输出目录（程序相对路径，如 data/strm/movies）</label>
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
@@ -186,7 +186,7 @@ export function EditStrmTaskModal({
               className="input"
               value={form.localOutputDir}
               onChange={(e) => setForm({ ...form, localOutputDir: e.target.value })}
-              placeholder="如 /data/strm/movies"
+              placeholder="如 data/strm/movies"
               style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff" }}
             />
           </div>
@@ -218,7 +218,7 @@ export function EditStrmTaskModal({
               </select>
               {storages.find((s) => s.id === form.storageId)?.provider === "pan115" && (
                 <div style={{ fontSize: "0.75rem", color: "#f59e0b", marginTop: "0.35rem", lineHeight: 1.4 }}>
-                  💡 115网盘严格绑定 UA 与防盗链，推荐使用「服务端代理」，302重定向可能导致 PotPlayer/浏览器 403 或弹下载
+                  115网盘严格绑定 UA 与防盗链，推荐使用「服务端代理」，302重定向可能导致 PotPlayer/浏览器 403 或弹下载
                 </div>
               )}
             </div>
@@ -249,7 +249,7 @@ export function EditStrmTaskModal({
 
           <div style={{ padding: "0.75rem", background: "#222", border: "1px dashed #444", borderRadius: "8px" }}>
             <label style={{ display: "block", fontSize: "0.85rem", fontWeight: 600, marginBottom: "0.4rem", color: "#60a5fa" }}>
-              📺 关联远程影视库 (可选，生成后精准触发刷新)
+              关联远程影视库 (可选，生成后精准触发刷新)
             </label>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem" }}>
               <div>
@@ -309,7 +309,7 @@ export function EditStrmTaskModal({
               </div>
             </div>
             <div style={{ fontSize: "0.72rem", color: "#888", marginTop: "0.35rem" }}>
-              💡 一个影视库（如 Plex 电影库）支持关联多个 STRM 任务；任务生成 .strm 后将精准通知该库进行局部路径扫描。
+              一个影视库（如 Plex 电影库）支持关联多个 STRM 任务；任务生成 .strm 后将精准通知该库进行局部路径扫描。
             </div>
           </div>
 

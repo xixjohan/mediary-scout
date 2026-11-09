@@ -3,47 +3,143 @@
  * a file is "visible" as an episode exactly when its FILE NAME alone exposes
  * an episode code. Path context (season folders) does not survive moves, so
  * anything the workflow lands in a canonical season directory must carry its
- * code in the name — see the rename step in staging normalization.
+ * code in the name.
  */
-export function episodeCodeFromFileName(name: string): string | null {
-  // Episode allows up to 4 digits for 1000+ episode anime (One Piece/柯南/蜡笔小新);
-  // \d{1,3} truncated "E1050" → "E105".
-  const seasonEpisodeMatch = /[Ss](\d{1,2})[Ee](\d{1,4})/.exec(name);
-  if (seasonEpisodeMatch?.[1] && seasonEpisodeMatch[2]) {
-    return `S${seasonEpisodeMatch[1].padStart(2, "0")}E${seasonEpisodeMatch[2].padStart(2, "0")}`;
-  }
 
-  // Name-only heuristic: a bare "第N集" cannot reveal its season, so this
-  // reading is only trustworthy for season 1. Files like these landing in
-  // other seasons are exactly what the canonical rename step eliminates.
-  const chineseEpisodeMatch = /第\s*(\d{1,4})\s*集/.exec(name);
-  if (chineseEpisodeMatch?.[1]) {
-    return `S01E${chineseEpisodeMatch[1].padStart(2, "0")}`;
-  }
+const NON_EPISODE_NUMBERS = new Set([480, 576, 720, 1080, 2160, 4320]);
 
+function isLikelyYear(num: number): boolean {
+  return num >= 1900 && num <= 2099;
+}
+
+function isValidEpisodeNumber(num: number): boolean {
+  return num > 0 && !NON_EPISODE_NUMBERS.has(num) && !isLikelyYear(num);
+}
+
+function matchStandardSeasonEpisode(name: string): string | null {
+  const match = /[Ss](\d{1,2})[Ee](\d{1,4})/i.exec(name);
+  if (match?.[1] && match[2]) {
+    return `S${match[1].padStart(2, "0")}E${match[2].padStart(2, "0")}`;
+  }
+  return null;
+}
+
+function matchChineseEpisode(name: string, seasonPrefix: string): string | null {
+  const match = /第\s*(\d{1,4})\s*[集话話]/.exec(name);
+  return match?.[1] ? `${seasonPrefix}E${match[1].padStart(2, "0")}` : null;
+}
+
+function matchAnimeDashEpisode(name: string, seasonPrefix: string): string | null {
+  const match = /(?:^|\s+)-\s+(\d{1,4})(?:v\d+)?(?:\s+|\[|\.|$)/i.exec(name);
+  if (match?.[1]) {
+    const epNum = Number(match[1]);
+    if (isValidEpisodeNumber(epNum)) {
+      return `${seasonPrefix}E${String(epNum).padStart(2, "0")}`;
+    }
+  }
+  return null;
+}
+
+function matchBracketEpisode(name: string, seasonPrefix: string): string | null {
+  const bracketMatches = name.matchAll(/\[(\d{1,4})(?:v\d+)?\]/gi);
+  for (const match of bracketMatches) {
+    if (match?.[1]) {
+      const epNum = Number(match[1]);
+      if (isValidEpisodeNumber(epNum)) {
+        return `${seasonPrefix}E${String(epNum).padStart(2, "0")}`;
+      }
+    }
+  }
+  return null;
+}
+
+function matchEpToken(name: string, seasonPrefix: string): string | null {
+  const match = /(?:^|\b|\s|\[)EP?(\d{1,4})(?:v\d+)?(?:\b|\s|\]|\.|$)/i.exec(name);
+  if (match?.[1]) {
+    const epNum = Number(match[1]);
+    if (isValidEpisodeNumber(epNum)) {
+      return `${seasonPrefix}E${String(epNum).padStart(2, "0")}`;
+    }
+  }
   return null;
 }
 
 /**
- * Whether the file name itself names a season (an `SxxEyy` token).
+ * Parse an episode code (e.g. S01E02) from a file name.
+ * Supports standard SxxExx, Chinese 第N集, Anime dash ` - 02 `, bracketed `[02]`, and EP tokens.
  *
- * Exported because the distinction is invisible in the returned code: a bare
- * 第N集 is normalized to `S01Enn`, so downstream code that reads the season off the
- * code cannot tell "the file said season 1" from "season 1 was assumed". The
- * assumption is only trustworthy for season 1 (see the heuristic above), and a
- * caller that acts on it as fact would silently file a package into the wrong
- * season — which is exactly what 自动整理 must never do.
+ * @param name File name to parse
+ * @param fallbackSeason Fallback season number if not stated in the name (defaults to 1)
+ */
+export function episodeCodeFromFileName(name: string, fallbackSeason = 1): string | null {
+  const standard = matchStandardSeasonEpisode(name);
+  if (standard) return standard;
+
+  const seasonPrefix = `S${String(fallbackSeason).padStart(2, "0")}`;
+  return (
+    matchChineseEpisode(name, seasonPrefix) ??
+    matchAnimeDashEpisode(name, seasonPrefix) ??
+    matchBracketEpisode(name, seasonPrefix) ??
+    matchEpToken(name, seasonPrefix)
+  );
+}
+
+/**
+ * Whether the file name itself names a season (an `SxxEyy` token).
  */
 export function episodeCodeNamesSeason(name: string): boolean {
   return /[Ss]\d{1,2}[Ee]\d{1,4}/.test(name);
 }
 
+/**
+ * Extract technical / release metadata tags from source name in brackets.
+ * Excludes pure numeric episode brackets like [02] or [02v2].
+ */
+export function extractReleaseTags(sourceName: string): string[] {
+  const tags: string[] = [];
+  const bracketMatches = sourceName.matchAll(/\[([^\]]+)\]/g);
+  for (const match of bracketMatches) {
+    const content = match[1]?.trim();
+    if (content && !/^\d{1,4}(?:v\d+)?$/i.test(content)) {
+      tags.push(`[${content}]`);
+    }
+  }
+  return tags;
+}
+
+/**
+ * Clean a series title by removing year and tmdb-id suffixes if present.
+ * e.g. "桃源暗鬼 (2025) {tmdb-253811}" -> "桃源暗鬼"
+ */
+export function cleanMediaTitle(rawTitle: string): string {
+  return rawTitle
+    .replace(/\{tmdb-\d+\}/gi, "")
+    .replace(/\(\d{4}\)/g, "")
+    .trim();
+}
+
+/**
+ * Canonical episode file name generator.
+ *
+ * Supports:
+ * - Clean standard naming: `Title - S01E02.ext`
+ * - Metadata-preserved standard naming: `Title - S01E02 [ReleaseGroup] [1080p].ext`
+ */
 export function canonicalEpisodeFileName(input: {
   title: string;
   episodeCode: string;
   sourceName: string;
+  preserveMetadata?: boolean;
 }): string {
   const extensionMatch = /\.[A-Za-z0-9]+$/.exec(input.sourceName);
   const extension = extensionMatch?.[0] ?? "";
-  return `${input.title}.${input.episodeCode}${extension}`;
+  const cleanTitle = cleanMediaTitle(input.title);
+
+  if (!input.preserveMetadata) {
+    return `${cleanTitle} - ${input.episodeCode}${extension}`;
+  }
+
+  const tags = extractReleaseTags(input.sourceName);
+  const tagsSuffix = tags.length > 0 ? ` ${tags.join(" ")}` : "";
+  return `${cleanTitle} - ${input.episodeCode}${tagsSuffix}${extension}`;
 }

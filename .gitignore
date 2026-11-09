@@ -99,3 +99,5 @@ run/server.pid
 # 不落库文档与敏感排查记录
 docs_secret/
 /docs_secret/
+.codex-remote-attachments/
+

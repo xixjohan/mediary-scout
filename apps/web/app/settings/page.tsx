@@ -11,8 +11,8 @@ import { TestConnectionButton } from "../../features/settings-system/components/
 import { UnbindStorageButton } from "../../features/storage-drives/components/unbind-storage-button";
 import { DriveCardExtraActions } from "../../features/storage-drives/components/drive-card-extra-actions";
 import { PushNotificationForm } from "../../features/settings-system/components/push-notification-form";
-import { PreferredLanguageForm } from "../../features/settings-system/components/preferred-language-form";
-import { QualityPreferenceForm } from "../../features/settings-system/components/quality-preference-form";
+import { PreferredLanguageSection } from "../../features/settings-system/components/settings/preferred-language-section";
+import { QualityPreferenceSection } from "../../features/settings-system/components/settings/quality-preference-section";
 import { LibraryDirNamingSection } from "../../features/settings-system/components/settings/library-dir-naming-section";
 import { ProxyConfigSection } from "../../features/settings-system/components/settings/proxy-config-section";
 import { LlmConfigForm } from "../../features/settings-system/components/llm-config-form";
@@ -45,6 +45,8 @@ import { ApiKeySection } from "../../features/settings-system/components/setting
 import { UpdateSection } from "../../features/settings-system/components/settings/update-section";
 import { MediaServerSection } from "../../features/settings-system/components/settings/mediaserver-section";
 import { ExtensionsSection } from "../../features/settings-system/components/settings/extensions-section";
+import { AcquisitionFilterSection } from "../../features/settings-system/components/settings/acquisition-filter-section";
+import { AcquisitionEpisodeSection } from "../../features/settings-system/components/settings/acquisition-episode-section";
 import { McpSection } from "../../features/settings-system/components/settings/mcp-section";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import { SettingsActionInbox } from "../../features/settings-system/components/settings-action-inbox";
@@ -103,8 +105,12 @@ import { isDemoMode } from "../../lib/demo-mode";
 
 function SettingsPageInner({
   searchParams,
+  canViewUpdate,
+  canViewRemote,
 }: {
   searchParams: Promise<{ w?: string }>;
+  canViewUpdate?: boolean;
+  canViewRemote?: boolean;
 }) {
   return (
     <div className="app-shell">
@@ -139,6 +145,8 @@ function SettingsPageInner({
             </Suspense>
             <Suspense fallback={<div className="skeleton skeleton-heading" />}>
             <SettingsTabs
+              canViewUpdate={canViewUpdate}
+              canViewRemote={canViewRemote}
               drives={
                 <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                   <Pan115Section />
@@ -183,6 +191,12 @@ function SettingsPageInner({
                   <Suspense fallback={<div className="skeleton skeleton-heading" />}>
                     <QualityPreferenceSection />
                   </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <AcquisitionFilterSection />
+                  </Suspense>
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <AcquisitionEpisodeSection />
+                  </Suspense>
                 </>
               }
               patrol={
@@ -196,9 +210,11 @@ function SettingsPageInner({
                 </>
               }
               update={
-                <Suspense fallback={null}>
-                  <UpdateSection />
-                </Suspense>
+                canViewUpdate ? (
+                  <Suspense fallback={<div className="skeleton skeleton-heading" />}>
+                    <UpdateSection />
+                  </Suspense>
+                ) : null
               }
               account={
                 <>
@@ -220,13 +236,11 @@ function SettingsPageInner({
               // into the slot and the empty-slot observer would read the tab as
               // visible before we know whether the viewer is the 站主.
               remote={
-                // 桌面版没有远程访问功能(自托管才有):slot 置空 →
-                // SettingsTabs 观察不到内容 → 「远程访问」tab 不出现。
-                resolveIsDesktop() ? null : (
+                canViewRemote ? (
                   <Suspense fallback={null}>
                     <RemoteAccessSection searchParams={searchParams} />
                   </Suspense>
-                )
+                ) : null
               }
             />
             </Suspense>
@@ -275,39 +289,7 @@ async function PasswordChangeSection() {
   );
 }
 
-async function PreferredLanguageSection() {
-  await connection();
-  const repository = getAccountScopedSettings(await getCurrentAccountId());
-  const initial = (await repository.getSetting(PREFERRED_LANGUAGE_SETTING_KEY)) ?? "中文";
-  return (
-    <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
-      <div className="panel-header">
-        <div>
-          <h2 className="panel-title"><Languages size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />偏好语言</h2>
-          <p className="panel-note">搜索资源时优先你偏好的字幕语言，避免拿到看不了的版本</p>
-        </div>
-      </div>
-      <PreferredLanguageForm initial={initial} />
-    </section>
-  );
-}
 
-async function QualityPreferenceSection() {
-  await connection();
-  const repository = getAccountScopedSettings(await getCurrentAccountId());
-  const initial = (await repository.getSetting(QUALITY_PREFERENCE_SETTING_KEY)) ?? "any";
-  return (
-    <section className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
-      <div className="panel-header">
-        <div>
-          <h2 className="panel-title"><Gauge size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />偏好画质</h2>
-          <p className="panel-note">优先获取的画质档位（覆盖优先，找不到不留缺）</p>
-        </div>
-      </div>
-      <QualityPreferenceForm initial={initial} />
-    </section>
-  );
-}
 
 async function LlmConfigSection() {
   await connection();
@@ -1041,7 +1023,7 @@ function SettingsShell() {
   );
 }
 
-async function SettingsSurface(props: Parameters<typeof SettingsPageInner>[0]) {
+async function SettingsSurface(props: { searchParams: Promise<{ w?: string }> }) {
   await connection();
   const accountId = await getCurrentAccountId();
   if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
@@ -1052,5 +1034,15 @@ async function SettingsSurface(props: Parameters<typeof SettingsPageInner>[0]) {
       </>
     );
   }
-  return <SettingsPageInner {...props} />;
+  const isOwner = await resolveCurrentIsOwner();
+  const isDesktop = resolveIsDesktop();
+  const canViewUpdate = !isDemoMode() && isOwner;
+  const canViewRemote = !isDesktop && isOwner;
+  return (
+    <SettingsPageInner
+      searchParams={props.searchParams}
+      canViewUpdate={canViewUpdate}
+      canViewRemote={canViewRemote}
+    />
+  );
 }

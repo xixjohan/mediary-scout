@@ -1,134 +1,128 @@
 {
   "packages/workflow/src/acquisition-v2/orchestrator.ts": {
-    "lineCount": 826,
-    "rawLineCount": 848,
-    "sizeKb": 45.6,
-    "updatedAt": "2026-11-03T20:33:41.748Z"
+    "lineCount": 834,
+    "rawLineCount": 856,
+    "sizeKb": 46.2,
+    "updatedAt": "2026-11-07T23:04:16.866Z"
   },
   "packages/workflow/src/acquisition-v2/sandbox.ts": {
-    "lineCount": 2429,
-    "rawLineCount": 2550,
-    "sizeKb": 138.2,
-    "updatedAt": "2026-11-03T20:33:41.752Z"
+    "lineCount": 2509,
+    "rawLineCount": 2634,
+    "sizeKb": 142.6,
+    "updatedAt": "2026-11-07T23:04:16.869Z"
   },
   "packages/workflow/src/domain/search-view.ts": {
     "lineCount": 665,
     "rawLineCount": 720,
     "sizeKb": 24.3,
-    "updatedAt": "2026-11-03T20:33:41.761Z"
+    "updatedAt": "2026-11-07T23:04:16.876Z"
   },
   "packages/workflow/src/execution/runner-v2.ts": {
-    "lineCount": 806,
-    "rawLineCount": 836,
-    "sizeKb": 34.4,
-    "updatedAt": "2026-11-03T20:33:41.765Z"
+    "lineCount": 834,
+    "rawLineCount": 865,
+    "sizeKb": 36,
+    "updatedAt": "2026-11-07T23:04:16.879Z"
   },
   "packages/workflow/src/execution/worker.ts": {
-    "lineCount": 1216,
-    "rawLineCount": 1255,
-    "sizeKb": 50.3,
-    "updatedAt": "2026-11-03T20:33:41.766Z"
+    "lineCount": 1449,
+    "rawLineCount": 1503,
+    "sizeKb": 61.8,
+    "updatedAt": "2026-11-07T23:04:16.881Z"
   },
   "packages/workflow/src/persistence/repository.ts": {
-    "lineCount": 2638,
-    "rawLineCount": 2835,
-    "sizeKb": 117.8,
-    "updatedAt": "2026-11-03T20:33:41.771Z"
+    "lineCount": 2944,
+    "rawLineCount": 3168,
+    "sizeKb": 137.2,
+    "updatedAt": "2026-11-07T23:04:16.886Z"
   },
   "packages/workflow/src/persistence/sqlite.ts": {
-    "lineCount": 2472,
-    "rawLineCount": 2655,
-    "sizeKb": 117.6,
-    "updatedAt": "2026-11-03T20:33:41.773Z"
+    "lineCount": 2664,
+    "rawLineCount": 2865,
+    "sizeKb": 129.4,
+    "updatedAt": "2026-11-07T23:04:16.888Z"
   },
   "packages/workflow/src/providers/tmdb-provider.ts": {
     "lineCount": 1032,
     "rawLineCount": 1119,
-    "sizeKb": 40.4,
-    "updatedAt": "2026-11-03T20:33:41.777Z"
+    "sizeKb": 40.5,
+    "updatedAt": "2026-11-07T23:04:16.892Z"
   },
   "packages/workflow/src/storage/guangya-storage-executor.ts": {
     "lineCount": 817,
     "rawLineCount": 866,
     "sizeKb": 38.4,
-    "updatedAt": "2026-11-03T20:33:41.779Z"
+    "updatedAt": "2026-11-07T23:04:16.893Z"
   },
   "packages/workflow/src/storage/pan123-client.ts": {
     "lineCount": 711,
     "rawLineCount": 758,
     "sizeKb": 30.6,
-    "updatedAt": "2026-11-03T20:33:41.781Z"
+    "updatedAt": "2026-11-07T23:04:16.895Z"
   },
   "packages/workflow/src/storage/pan123-storage-executor.ts": {
     "lineCount": 1057,
     "rawLineCount": 1115,
     "sizeKb": 49,
-    "updatedAt": "2026-11-03T20:33:41.782Z"
+    "updatedAt": "2026-11-07T23:04:16.895Z"
   },
   "packages/workflow/src/storage/storage-115-executor.ts": {
-    "lineCount": 1590,
-    "rawLineCount": 1713,
-    "sizeKb": 71.7,
-    "updatedAt": "2026-11-03T20:33:41.783Z"
+    "lineCount": 1600,
+    "rawLineCount": 1723,
+    "sizeKb": 70.5,
+    "updatedAt": "2026-11-07T23:04:16.897Z"
   },
   "packages/workflow/src/storage/tianyi-client.ts": {
     "lineCount": 639,
     "rawLineCount": 690,
     "sizeKb": 27.7,
-    "updatedAt": "2026-11-03T20:33:41.784Z"
+    "updatedAt": "2026-11-07T23:04:16.898Z"
   },
   "packages/workflow/tests/fixtures/repository-contract.ts": {
-    "lineCount": 3028,
-    "rawLineCount": 3267,
-    "sizeKb": 178.7,
-    "updatedAt": "2026-11-03T20:33:41.788Z"
-  },
-  "apps/web/app/actions/settings-system-actions.ts": {
-    "lineCount": 667,
-    "rawLineCount": 706,
-    "sizeKb": 32.7,
-    "updatedAt": "2026-11-03T20:33:41.791Z"
+    "lineCount": 3144,
+    "rawLineCount": 3387,
+    "sizeKb": 184.7,
+    "updatedAt": "2026-11-07T23:04:16.901Z"
   },
   "apps/web/app/settings/page.tsx": {
-    "lineCount": 1011,
-    "rawLineCount": 1051,
-    "sizeKb": 46.2,
-    "updatedAt": "2026-11-03T20:33:41.809Z"
+    "lineCount": 1033,
+    "rawLineCount": 1073,
+    "sizeKb": 46.8,
+    "updatedAt": "2026-11-07T23:04:16.918Z"
   },
   "apps/web/app/show/[tmdbId]/page.tsx": {
-    "lineCount": 628,
-    "rawLineCount": 654,
-    "sizeKb": 26,
-    "updatedAt": "2026-11-03T20:33:41.810Z"
+    "lineCount": 640,
+    "rawLineCount": 666,
+    "sizeKb": 27,
+    "updatedAt": "2026-11-07T23:04:16.918Z"
   },
   "apps/web/features/acquisition/application/worker-runner-service.ts": {
-    "lineCount": 1022,
-    "rawLineCount": 1067,
-    "sizeKb": 43,
-    "updatedAt": "2026-11-03T20:33:41.813Z"
+    "lineCount": 1064,
+    "rawLineCount": 1112,
+    "sizeKb": 44.1,
+    "updatedAt": "2026-11-07T23:04:16.921Z"
   },
   "apps/web/features/acquisition/components/user-message-thread.tsx": {
     "lineCount": 840,
     "rawLineCount": 885,
     "sizeKb": 36.7,
-    "updatedAt": "2026-11-03T20:33:41.819Z"
+    "updatedAt": "2026-11-07T23:04:16.927Z"
   },
   "apps/web/features/settings-system/components/api-key-v2-manager.tsx": {
     "lineCount": 627,
     "rawLineCount": 666,
     "sizeKb": 24.5,
-    "updatedAt": "2026-11-03T20:33:41.835Z"
+    "updatedAt": "2026-11-07T23:04:16.939Z"
   },
   "apps/web/features/settings-system/components/settings/connect-wizard.tsx": {
     "lineCount": 779,
     "rawLineCount": 821,
     "sizeKb": 37.9,
-    "updatedAt": "2026-11-03T20:33:41.840Z"
+    "updatedAt": "2026-11-07T23:04:16.943Z"
   },
   "apps/web/features/storage-drives/application/drive-service.ts": {
-    "lineCount": 1117,
-    "rawLineCount": 1178,
-    "sizeKb": 40.4,
-    "updatedAt": "2026-11-03T20:33:41.845Z"
+    "lineCount": 1142,
+    "rawLineCount": 1206,
+    "sizeKb": 42,
+    "updatedAt": "2026-11-07T23:04:16.947Z"
   }
 }

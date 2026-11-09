@@ -510,4 +510,48 @@ describe("PanSouResourceProvider request timeout", () => {
     // error path; well under a second proves the wait is bounded.
     expect(elapsedMs).toBeLessThan(2000);
   }, 10_000);
+
+  it("rejects immediately with PANSOU_QUEUE_OVERFLOW when slot waiters exceed limit", async () => {
+    const fetchJson = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      return { code: 0, data: { total: 0 } };
+    };
+    const provider = new PanSouResourceProvider({
+      baseURL: "https://overflow.example",
+      maxSearchAttempts: 1,
+      fetchJson,
+    });
+
+    const promises = Array.from({ length: 12 }, (_, i) =>
+      provider.search({ keyword: `kw_${i}` }),
+    );
+
+    await expect(provider.search({ keyword: "overflow" })).rejects.toThrow(
+      /PANSOU_QUEUE_OVERFLOW/,
+    );
+
+    await Promise.all(promises);
+  });
+
+  it("times out with PANSOU_SLOT_TIMEOUT when waiting for a slot too long", async () => {
+    const fetchJson = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return { code: 0, data: { total: 0 } };
+    };
+    const provider = new PanSouResourceProvider({
+      baseURL: "https://timeout-slot.example",
+      maxSearchAttempts: 1,
+      slotTimeoutMs: 20,
+      fetchJson,
+    });
+
+    const p1 = provider.search({ keyword: "hang1" });
+    const p2 = provider.search({ keyword: "hang2" });
+
+    await expect(provider.search({ keyword: "timed_out_waiter" })).rejects.toThrow(
+      /PANSOU_SLOT_TIMEOUT/,
+    );
+
+    await Promise.all([p1, p2]);
+  });
 });

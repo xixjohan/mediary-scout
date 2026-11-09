@@ -1,6 +1,17 @@
 import { createEpisodeStates, episodeNumberFromCode } from "../domain/domain.js";
 import type { EpisodeState, TrackedSeason } from "../domain/domain.js";
 
+export function hasIncompleteEpisodeStates(season: TrackedSeason, episodes: EpisodeState[]): boolean {
+  if (season.totalEpisodes <= 0) return true;
+  const codes = new Set(episodes.map((episode) => episode.episodeCode));
+  return createEpisodeStates({
+    trackedSeasonId: season.id,
+    seasonNumber: season.seasonNumber,
+    totalEpisodes: season.totalEpisodes,
+    latestAiredEpisode: season.latestAiredEpisode,
+  }).some((episode) => !codes.has(episode.episodeCode));
+}
+
 /**
  * Re-sync a tracked season against fresh TMDB metadata — the GUI equivalent of
  * the original skill's Type 3 `db.sync_all(tmdb)`. Without this, a season's
@@ -37,7 +48,9 @@ export function syncSeasonAgainstMetadata(input: {
     newTotal,
     Math.max(input.latestAiredEpisode, Math.min(input.season.latestAiredEpisode, highestObtained)),
   );
-  const changed = newTotal !== input.season.totalEpisodes || newLatest !== input.season.latestAiredEpisode;
+  const metadataChanged = newTotal !== input.season.totalEpisodes || newLatest !== input.season.latestAiredEpisode;
+  const recordsMissing = newTotal > 0 && hasIncompleteEpisodeStates({ ...input.season, totalEpisodes: newTotal }, input.episodes);
+  const changed = metadataChanged || recordsMissing;
   if (!changed) {
     return { season: input.season, episodes: input.episodes, changed: false };
   }
@@ -55,23 +68,14 @@ export function syncSeasonAgainstMetadata(input: {
     if (old === undefined) {
       return base;
     }
-    if (old.obtained) {
-      return {
-        ...base,
-        obtained: true,
-        verifiedFileIds: old.verifiedFileIds,
-        metadataStatus: old.metadataStatus,
-        airDate: old.airDate,
-        title: old.title,
-      };
-    }
-    return { ...base, airDate: old.airDate, title: old.title };
+    if (!metadataChanged) return old;
+    return { ...old, airStatus: base.airStatus };
   });
 
-  // Preserve obtained provider-ahead episodes that sit beyond the (new) total.
+  // Preserve all recorded episodes beyond the metadata total.
   const mergedCodes = new Set(merged.map((episode) => episode.episodeCode));
   for (const old of input.episodes) {
-    if (!mergedCodes.has(old.episodeCode) && old.obtained) {
+    if (!mergedCodes.has(old.episodeCode)) {
       merged.push(old);
     }
   }
