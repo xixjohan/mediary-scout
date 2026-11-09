@@ -182,11 +182,14 @@ jobs:
           done
 
       - name: Import signing certificate
-        if: ${{ secrets.MAC_CERT_P12_BASE64 != '' }}
         env:
           MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
         run: |
+          if [ -z "$MAC_CERT_P12_BASE64" ]; then
+            echo "No MAC_CERT_P12_BASE64 secret found; skipping signing certificate import."
+            exit 0
+          fi
           KC="$RUNNER_TEMP/build.keychain-db"
           KC_PASS=$(uuidgen)
           echo "$MAC_CERT_P12_BASE64" | base64 -D -o /tmp/cert.p12
@@ -200,12 +203,20 @@ jobs:
 
       - name: Package DMG
         env:
-          CSC_NAME: ${{ secrets.MAC_CERT_P12_BASE64 != '' && 'Qinghai Wu (P8GK36YA6D)' || '' }}
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.MAC_CERT_P12_BASE64 != '' && 'true' || 'false' }}
+          MAC_CERT_P12_BASE64: ${{ secrets.MAC_CERT_P12_BASE64 }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npm run dist --workspace @media-track/desktop
+        run: |
+          if [ -n "$MAC_CERT_P12_BASE64" ]; then
+            export CSC_NAME="Qinghai Wu (P8GK36YA6D)"
+            export CSC_IDENTITY_AUTO_DISCOVERY="true"
+            npm run dist --workspace @media-track/desktop
+          else
+            export CSC_IDENTITY_AUTO_DISCOVERY="false"
+            unset CSC_NAME
+            npm run dist --workspace @media-track/desktop -- -c.mac.notarize=false
+          fi
 
       - name: Check the version and commit inside the app
         env:
