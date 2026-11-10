@@ -1,4 +1,4 @@
-import { parseReleaseTag } from "@media-track/shared";
+import { parseReleaseTag } from "@media-track/shared/release-tag";
 
 /** The app version a release tag ships as: v2026.09.28 → 2026.928.0, v2026.09.28.2 → 2026.928.2.
  *  Valid semver (no leading zeros), ordered like the tags, and above every 1.x release. Null for

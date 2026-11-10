@@ -1,3 +1,30 @@
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+function logDebug(msg: string): void {
+  try {
+    const logPath = path.join(os.tmpdir(), "mediary-desktop.log");
+    appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`, "utf8");
+  } catch {}
+  console.log(msg);
+}
+
+logDebug("[main] module start, execPath=" + process.execPath + ", pid=" + process.pid);
+
+process.on("uncaughtException", (error) => {
+  logDebug("[main] uncaughtException: " + (error?.stack || error));
+  if (process.env.CI) {
+    process.exit(1);
+  }
+});
+process.on("unhandledRejection", (reason) => {
+  logDebug("[main] unhandledRejection: " + String(reason));
+  if (process.env.CI) {
+    process.exit(1);
+  }
+});
+
 import {
   app,
   BrowserWindow,
@@ -12,9 +39,6 @@ import {
 } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import {
   pickFreePort,
   buildServerEnv,
@@ -46,17 +70,10 @@ if (process.env.CI || process.argv.includes("--disable-gpu")) {
   app.commandLine.appendSwitch("disable-gpu");
   app.commandLine.appendSwitch("disable-software-rasterizer");
   app.commandLine.appendSwitch("no-sandbox");
+  dialog.showErrorBox = (title: string, content: string) => {
+    logDebug(`[errorBox] ${title}: ${content}`);
+  };
 }
-
-function logDebug(msg: string): void {
-  try {
-    const logPath = path.join(os.tmpdir(), "mediary-desktop.log");
-    appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`, "utf8");
-  } catch {}
-  console.log(msg);
-}
-
-logDebug("[main] module loaded, execPath=" + process.execPath);
 
 let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;

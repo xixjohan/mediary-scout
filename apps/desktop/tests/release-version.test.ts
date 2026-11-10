@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appVersionFromTag, isNewerAppVersion } from "../src/release-version.js";
-import { parseReleaseTag } from "@media-track/shared";
+import { parseReleaseTag } from "@media-track/shared/release-tag";
 
 describe("appVersionFromTag", () => {
   it("maps a release tag to the app version it ships as", () => {

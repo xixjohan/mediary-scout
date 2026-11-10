@@ -7,7 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "electron .",
-    "dist": "electron-builder --config electron-builder.yml"
+    "dist": "node scripts/prepare-package.cjs && electron-builder --config electron-builder.yml"
   },
   "dependencies": {
     "better-sqlite3": "^12.11.1",

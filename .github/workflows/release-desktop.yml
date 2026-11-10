@@ -107,6 +107,9 @@ jobs:
       - name: Build desktop TypeScript
         run: npm run build --workspace @media-track/desktop
 
+      - name: Prepare desktop package dependencies
+        run: node apps/desktop/scripts/prepare-package.cjs
+
       # App version from the tag (v2026.09.28 → 2026.928.0), and the commit into the
       # standalone server as BUILD_COMMIT, which the settings 「更新」 tab reads.
       - name: Stamp release version and build commit
@@ -266,6 +269,9 @@ jobs:
       - name: Build desktop TypeScript
         run: npm run build --workspace @media-track/desktop
 
+      - name: Prepare desktop package dependencies
+        run: node apps/desktop/scripts/prepare-package.cjs
+
       # App version from the tag (v2026.09.28 → 2026.928.0), and the commit into the
       # standalone server as BUILD_COMMIT, which the settings 「更新」 tab reads.
       - name: Stamp release version and build commit
@@ -399,7 +405,6 @@ jobs:
           if (-not (Test-Path $serverJs)) { throw "installed server.js not found at $serverJs" }
           Write-Host "Found server.js: $serverJs ($((Get-Item $serverJs).Length) bytes)"
           $env:ELECTRON_ENABLE_LOGGING = "1"
-          $env:ELECTRON_NO_ATTACH_CONSOLE = "true"
           $stdoutLog = "$env:TEMP\electron-stdout.txt"
           $stderrLog = "$env:TEMP\electron-stderr.txt"
           Remove-Item $stdoutLog, $stderrLog -ErrorAction SilentlyContinue
