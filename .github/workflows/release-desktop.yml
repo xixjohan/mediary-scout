@@ -373,9 +373,17 @@ jobs:
           $installer = Get-ChildItem -Path "apps/desktop/dist-app" -Filter "*.exe" | Select-Object -First 1
           if (-not $installer) { throw "no installer exe found in dist-app" }
           Write-Host "Installing $($installer.FullName)"
-          Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
-          Start-Sleep -Seconds 3
-          Get-Process | Where-Object { $_.ProcessName -like "*Mediary*" -or $_.Path -like "*mediary*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          $installerProc = Start-Process -FilePath $installer.FullName -ArgumentList "/S" -PassThru
+          $installerProc.WaitForExit()
+          # Wait until any NSIS extraction sub-processes finish
+          $waitMax = (Get-Date).AddSeconds(90)
+          while ((Get-Date) -lt $waitMax) {
+            $runningSetups = Get-Process | Where-Object { $_.ProcessName -like "*Setup*" }
+            if (-not $runningSetups) { break }
+            Write-Host "Waiting for installer background extraction to complete..."
+            Start-Sleep -Seconds 2
+          }
+          Write-Host "Installer finished."
 
           # electron-builder's per-user NSIS always installs under
           # LOCALAPPDATA\Programs — bounded-depth search there only; if the
@@ -383,9 +391,13 @@ jobs:
           $exe = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs" -Recurse -Depth 2 -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           if (-not $exe) { throw "installed Mediary Scout.exe not found under $env:LOCALAPPDATA\Programs" }
           Write-Host "EXE: $exe"
-          $serverJs = Join-Path (Split-Path $exe) "resources\app\apps\web\server.js"
+          $appDir = Split-Path $exe
+          $appAsar = Join-Path $appDir "resources\app.asar"
+          if (-not (Test-Path $appAsar)) { throw "installed app.asar not found at $appAsar" }
+          Write-Host "Found app.asar: $appAsar ($((Get-Item $appAsar).Length) bytes)"
+          $serverJs = Join-Path $appDir "resources\app\apps\web\server.js"
           if (-not (Test-Path $serverJs)) { throw "installed server.js not found at $serverJs" }
-          Write-Host "Found server.js: $serverJs"
+          Write-Host "Found server.js: $serverJs ($((Get-Item $serverJs).Length) bytes)"
           $env:ELECTRON_ENABLE_LOGGING = "1"
           $env:ELECTRON_NO_ATTACH_CONSOLE = "true"
           $stdoutLog = "$env:TEMP\electron-stdout.txt"
@@ -421,7 +433,7 @@ jobs:
             Start-Sleep -Seconds 3
           }
           if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-          Get-Process | Where-Object { $_.ProcessName -like "*Mediary*" -or $_.Path -like "*mediary*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process -Name "Mediary Scout" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
           Write-Host "=== MEDIARY DESKTOP LOG ==="
           Get-Content "$env:TEMP\mediary-desktop.log" -ErrorAction SilentlyContinue | Select-Object -First 100
           Write-Host "=== ELECTRON STDOUT (first 50 lines) ==="
