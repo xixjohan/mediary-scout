@@ -8,10 +8,16 @@ import {
   MediaOrganizer,
   StorageArchiveAdapter,
   ensureMediaLibraryDirectory,
+  adoptExistingTvSeason,
+  adoptExistingMovie,
+  episodeCodeFromFileName,
   type OrganizePlan,
   type TrackedSeasonState,
+  type ExistingEpisodeItem,
+  type TrackedSeason,
 } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
+import { seriesTargetFor } from "../../../../lib/series-target";
 
 export const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -162,6 +168,96 @@ export async function findTvStagingDirectories(
   return stagingDirs;
 }
 
+function collectSeasonExistingEpisodes(
+  videoFiles: Array<{ id: string; name: string; sizeBytes?: number }>,
+  seasonNum: number,
+): ExistingEpisodeItem[] {
+  const existingEpisodes: ExistingEpisodeItem[] = [];
+  for (const v of videoFiles) {
+    const code = episodeCodeFromFileName(v.name, seasonNum);
+    if (!code) continue;
+    const epMatch = /[Ss](\d{1,2})[Ee](\d{1,4})/i.exec(code);
+    if (epMatch && Number(epMatch[1]) === seasonNum) {
+      existingEpisodes.push({
+        episodeCode: code,
+        seasonNumber: seasonNum,
+        episodeNumber: Number(epMatch[2]),
+        fileId: v.id,
+        fileName: v.name,
+        sizeBytes: v.sizeBytes ?? 0,
+      });
+    }
+  }
+  return existingEpisodes;
+}
+
+function resolveSeasonEpisodeCounts(
+  targetSeason?: { totalEpisodes: number; latestAiredEpisode: number },
+  matchedState?: TrackedSeasonState,
+  existingCount = 0,
+): { totalEpisodes: number; latestAired: number } {
+  const fallback = Math.max(existingCount, 1);
+  const total = targetSeason?.totalEpisodes ?? matchedState?.season.totalEpisodes ?? fallback;
+  const aired = targetSeason?.latestAiredEpisode ?? matchedState?.season.latestAiredEpisode ?? total;
+  return { totalEpisodes: total, latestAired: aired };
+}
+
+async function reconcileSingleTvSeason(input: {
+  storage: any;
+  repo: any;
+  accountId: string;
+  connectedStorageId?: string | null | undefined;
+  title: TrackedSeasonState["title"];
+  seasonDir: { id: string; name: string };
+  matchedState?: TrackedSeasonState | undefined;
+  targetSeason?: { seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number } | undefined;
+}): Promise<void> {
+  const match = /^Season\s+(\d+)$/i.exec(input.seasonDir.name);
+  if (!match?.[1]) return;
+  const seasonNum = Number(match[1]);
+
+  let videoFiles: Array<{ id: string; name: string; sizeBytes?: number }> = [];
+  try {
+    videoFiles = await input.storage.listVideoFiles(input.seasonDir.id);
+  } catch (err) {
+    console.warn(`[organize] listVideoFiles failed for season dir ${input.seasonDir.id}:`, err);
+  }
+
+  const existingEpisodes = collectSeasonExistingEpisodes(videoFiles, seasonNum);
+  const { totalEpisodes, latestAired } = resolveSeasonEpisodeCounts(
+    input.targetSeason,
+    input.matchedState,
+    existingEpisodes.length,
+  );
+
+  const seasonId = input.matchedState?.season.id ?? `${input.title.id}_s${seasonNum}`;
+  const targetCoverage = latestAired > 0 ? latestAired : totalEpisodes;
+  const isFull = existingEpisodes.length >= targetCoverage && targetCoverage > 0;
+
+  const seasonObj: TrackedSeason = {
+    id: seasonId,
+    mediaTitleId: input.title.id,
+    seasonNumber: seasonNum,
+    status: isFull ? "completed" : "active",
+    qualityPreference: input.matchedState?.season.qualityPreference ?? "1080p",
+    storageDirectoryId: input.seasonDir.id,
+    totalEpisodes,
+    latestAiredEpisode: latestAired,
+    latestAiredSource: "metadata",
+  };
+
+  await adoptExistingTvSeason({
+    title: input.title as any,
+    season: seasonObj,
+    repository: input.repo,
+    accountId: input.accountId,
+    connectedStorageId: input.connectedStorageId ?? null,
+    directoryId: input.seasonDir.id,
+    existingEpisodes,
+    isFull,
+  });
+}
+
 export async function reconcileTvSeasonDirectories(input: {
   storage: any;
   accountId: string;
@@ -175,6 +271,14 @@ export async function reconcileTvSeasonDirectories(input: {
     const showChildren = await input.storage.listChildDirectories(input.showDirectoryId);
     const seasonDirs = showChildren.filter((d: { name: string }) => /^Season\s+\d+$/i.test(d.name));
 
+    let targetSeasons: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> = [];
+    try {
+      const target = await seriesTargetFor(input.title.tmdbId);
+      if (target?.seasons) {
+        targetSeasons = target.seasons;
+      }
+    } catch {}
+
     for (const seasonDir of seasonDirs) {
       const match = /^Season\s+(\d+)$/i.exec(seasonDir.name);
       if (!match?.[1]) continue;
@@ -182,36 +286,17 @@ export async function reconcileTvSeasonDirectories(input: {
       const matchedState = states.find(
         (s) => s.title.tmdbId === input.title.tmdbId && s.season?.seasonNumber === seasonNum,
       );
-      if (!matchedState?.season) continue;
+      const targetSeason = targetSeasons.find((s) => s.seasonNumber === seasonNum);
 
-      await repo.saveWorkflowRunSnapshot({
+      await reconcileSingleTvSeason({
+        storage: input.storage,
+        repo,
         accountId: input.accountId,
-        connectedStorageId: input.connectedStorageId ?? null,
-        title: input.title as any,
-        season: {
-          ...matchedState.season,
-          storageDirectoryId: seasonDir.id,
-        },
-        workflowRun: {
-          id: crypto.randomUUID(),
-          kind: "title_organize",
-          status: "succeeded",
-          trackedSeasonId: matchedState.season.id,
-          startedAt: new Date().toISOString(),
-          finishedAt: new Date().toISOString(),
-          auditEvents: [
-            {
-              type: "tv_directory_reconciled",
-              message: `自愈校准剧集第 ${seasonNum} 季目录: ${seasonDir.id}`,
-            },
-          ],
-        },
-        episodes: [],
-        resourceSnapshots: [],
-        decisions: [],
-        transferAttempts: [],
-        notifications: [],
-        keepCurrentEpisodes: true,
+        connectedStorageId: input.connectedStorageId,
+        title: input.title,
+        seasonDir,
+        matchedState,
+        targetSeason,
       });
     }
   } catch (err) {
@@ -342,6 +427,28 @@ export async function handleMovieOrganize(input: {
       season: input.season,
       targetMovieDirectoryId,
     });
+  }
+
+  if (result.primaryMovie) {
+    try {
+      const repo = getWorkflowRepository();
+      await adoptExistingMovie({
+        title: input.title as any,
+        repository: repo,
+        accountId: input.accountId,
+        connectedStorageId: input.connectedStorageId ?? null,
+        directoryId: targetMovieDirectoryId,
+        videoFiles: [
+          {
+            id: result.primaryMovie.id,
+            name: result.primaryMovie.name,
+            ...(result.primaryMovie.sizeBytes !== undefined ? { sizeBytes: result.primaryMovie.sizeBytes } : {}),
+          },
+        ],
+      });
+    } catch (e) {
+      console.warn("[organize] Failed to adopt organized movie:", e);
+    }
   }
 
   return NextResponse.json(

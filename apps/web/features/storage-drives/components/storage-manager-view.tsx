@@ -430,7 +430,9 @@ export function StorageManagerView({
           storageId: selectedStorageId,
           folderId: item.id,
           folderName: item.name,
-          tmdbId: item.mediaInfo?.tmdbId,
+          tmdbId: item.mediaInfo?.tmdbId ?? currentFolderTmdbId,
+          seasonNumber: item.mediaInfo?.parsedSeason,
+          parentFolderName: listing?.currentDirectoryName,
         }),
       });
       const data = await res.json();

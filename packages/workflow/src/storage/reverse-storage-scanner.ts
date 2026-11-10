@@ -153,22 +153,36 @@ async function resolveMetadata(
   resolvedYear: number;
   mediaKind: "movie" | "tv";
   matchedPosterPath?: string | null;
+  seasons?: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> | undefined;
 }> {
   let resolvedTmdbId = item.tmdbId;
   let resolvedTitle = item.parsedTitle ?? item.folderName;
   let resolvedYear = item.parsedYear ?? 2024;
   let mediaKind: "movie" | "tv" = initialKind;
   let matchedPosterPath: string | null = null;
+  let seasons: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> | undefined;
 
-  if (!resolvedTmdbId && searchProvider && item.parsedTitle) {
+  const searchQuery = item.parsedTitle ?? item.folderName;
+  if (searchProvider && searchQuery) {
     try {
-      const candidates = await searchProvider.searchMedia({ query: item.parsedTitle, page: 1 });
-      const topMatch = candidates[0];
+      const candidates = await searchProvider.searchMedia({ query: searchQuery, page: 1 });
+      const topMatch = resolvedTmdbId
+        ? candidates.find((c) => c.tmdbId === resolvedTmdbId) ?? candidates[0]
+        : candidates[0];
       if (topMatch) {
-        resolvedTmdbId = topMatch.tmdbId;
-        resolvedTitle = topMatch.title;
-        resolvedYear = topMatch.year;
+        if (!resolvedTmdbId) {
+          resolvedTmdbId = topMatch.tmdbId;
+          resolvedTitle = topMatch.title;
+          resolvedYear = topMatch.year;
+        }
         matchedPosterPath = topMatch.posterPath ?? null;
+        if (topMatch.seasons && topMatch.seasons.length > 0) {
+          seasons = topMatch.seasons.map((s) => ({
+            seasonNumber: s.seasonNumber,
+            totalEpisodes: s.episodeCount,
+            latestAiredEpisode: s.latestAiredEpisode,
+          }));
+        }
         mediaKind = sniffMediaKind({
           folderName: item.folderName,
           relativePath: item.relativePath,
@@ -178,19 +192,98 @@ async function resolveMetadata(
         });
       }
     } catch (tmdbErr) {
-      console.warn(`[reverse-scanner] tmdb search failed for ${item.parsedTitle}: ${String(tmdbErr)}`);
+      console.warn(`[reverse-scanner] tmdb search failed for ${item.folderName}: ${String(tmdbErr)}`);
     }
   }
 
-  return { resolvedTmdbId, resolvedTitle, resolvedYear, mediaKind, matchedPosterPath };
+  return { resolvedTmdbId, resolvedTitle, resolvedYear, mediaKind, matchedPosterPath, seasons };
+}
+
+function buildExistingEpisodes(
+  videoFiles: Array<{ id: string; name: string; sizeBytes?: number }>,
+  seasonNum: number,
+): Array<{ episodeCode: string; seasonNumber: number; episodeNumber: number; fileId: string; fileName: string; sizeBytes: number }> {
+  const existingEpisodes: Array<{ episodeCode: string; seasonNumber: number; episodeNumber: number; fileId: string; fileName: string; sizeBytes: number }> = [];
+  for (const v of videoFiles) {
+    const parsedCode = episodeCodeFromFileName(v.name, seasonNum);
+    const match = parsedCode ? /^S(\d+)E(\d+)$/i.exec(parsedCode) : null;
+    const finalSeasonNumber = match ? Number(match[1]) : seasonNum;
+    const finalEpisodeNumber = match ? Number(match[2]) : existingEpisodes.length + 1;
+    const finalEpisodeCode =
+      parsedCode ?? `S${String(seasonNum).padStart(2, "0")}E${String(finalEpisodeNumber).padStart(2, "0")}`;
+
+    if (finalSeasonNumber === seasonNum) {
+      existingEpisodes.push({
+        episodeCode: finalEpisodeCode,
+        seasonNumber: finalSeasonNumber,
+        episodeNumber: finalEpisodeNumber,
+        fileId: v.id,
+        fileName: v.name,
+        sizeBytes: v.sizeBytes ?? 0,
+      });
+    }
+  }
+  return existingEpisodes;
+}
+
+async function adoptTvSeasonMedia(input: {
+  ctx: ItemResolutionContext;
+  titleObj: MediaTitle;
+  seasonNum: number;
+  directoryId: string;
+  videoFiles: Array<{ id: string; name: string; sizeBytes?: number }>;
+  metaSeasons?: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> | undefined;
+}): Promise<boolean> {
+  const { ctx, titleObj, seasonNum, directoryId, videoFiles, metaSeasons } = input;
+  if (videoFiles.length === 0) return false;
+
+  const existingEpisodes = buildExistingEpisodes(videoFiles, seasonNum);
+  const targetSeason = metaSeasons?.find((s) => s.seasonNumber === seasonNum);
+  const totalEpisodes = targetSeason?.totalEpisodes ?? Math.max(existingEpisodes.length, 1);
+  const latestAired = targetSeason?.latestAiredEpisode ?? totalEpisodes;
+
+  const targetCoverage = latestAired > 0 ? latestAired : totalEpisodes;
+  const isFull = existingEpisodes.length >= targetCoverage && targetCoverage > 0;
+
+  const trackedSeason: TrackedSeason = {
+    id: `${titleObj.id}_s${seasonNum}`,
+    mediaTitleId: titleObj.id,
+    seasonNumber: seasonNum,
+    status: isFull ? "completed" : "active",
+    qualityPreference: "1080p",
+    storageDirectoryId: directoryId,
+    totalEpisodes,
+    latestAiredEpisode: latestAired,
+    latestAiredSource: "metadata",
+  };
+
+  await adoptExistingTvSeason({
+    title: titleObj,
+    season: trackedSeason,
+    repository: ctx.repo,
+    accountId: ctx.accountId,
+    connectedStorageId: ctx.storageId,
+    directoryId,
+    existingEpisodes,
+    isFull,
+  });
+
+  return true;
 }
 
 async function adoptDiscoveredMedia(
   ctx: ItemResolutionContext,
   item: DiscoveredMediaFolder,
-  meta: { resolvedTmdbId: number; resolvedTitle: string; resolvedYear: number; mediaKind: "movie" | "tv"; matchedPosterPath?: string | null },
-  videoFiles: Array<{ id: string; name: string; sizeBytes: number }>,
-): Promise<void> {
+  meta: {
+    resolvedTmdbId: number;
+    resolvedTitle: string;
+    resolvedYear: number;
+    mediaKind: "movie" | "tv";
+    matchedPosterPath?: string | null;
+    seasons?: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> | undefined;
+  },
+  listingItems: Array<{ id: string; name: string; isFolder: boolean; sizeBytes?: number; type?: string }>,
+): Promise<boolean> {
   const titleObj: MediaTitle = {
     id: buildTitleId({ source: "tmdb", mediaKind: meta.mediaKind, id: meta.resolvedTmdbId }),
     tmdbId: meta.resolvedTmdbId,
@@ -203,6 +296,11 @@ async function adoptDiscoveredMedia(
   };
 
   if (meta.mediaKind === "movie") {
+    const videoFiles = listingItems
+      .filter((f) => !f.isFolder && (f.type === "video" || /\.(mp4|mkv|avi|mov|iso|ts)$/i.test(f.name)))
+      .map((f) => ({ id: f.id, name: f.name, sizeBytes: f.sizeBytes ?? 0 }));
+    if (videoFiles.length === 0) return false;
+
     await adoptExistingMovie({
       title: titleObj,
       repository: ctx.repo,
@@ -211,47 +309,58 @@ async function adoptDiscoveredMedia(
       directoryId: item.folderId,
       videoFiles,
     });
-    return;
+    return true;
   }
 
-  const seasonNum = item.parsedSeason ?? 1;
-  const trackedSeason: TrackedSeason = {
-    id: `${titleObj.id}_s${seasonNum}`,
-    mediaTitleId: titleObj.id,
-    seasonNumber: seasonNum,
-    status: "completed",
-    qualityPreference: "1080p",
-    storageDirectoryId: item.folderId,
-    totalEpisodes: Math.max(videoFiles.length, 1),
-    latestAiredEpisode: Math.max(videoFiles.length, 1),
-    latestAiredSource: "metadata",
-  };
+  const seasonDirs = listingItems.filter(
+    (i) => i.isFolder && (/^Season\s+\d+$/i.test(i.name) || /^第\s*\d+\s*季$/i.test(i.name)),
+  );
 
-  await adoptExistingTvSeason({
-    title: titleObj,
-    season: trackedSeason,
-    repository: ctx.repo,
-    accountId: ctx.accountId,
-    connectedStorageId: ctx.storageId,
-    directoryId: item.folderId,
-    existingEpisodes: videoFiles.map((v, idx) => {
-      const parsedCode = episodeCodeFromFileName(v.name, seasonNum);
-      const match = parsedCode ? /^S(\d+)E(\d+)$/i.exec(parsedCode) : null;
-      const finalSeasonNumber = match ? Number(match[1]) : seasonNum;
-      const finalEpisodeNumber = match ? Number(match[2]) : idx + 1;
-      const finalEpisodeCode = parsedCode ?? `S${String(seasonNum).padStart(2, "0")}E${String(idx + 1).padStart(2, "0")}`;
+  let adoptedAny = false;
+  if (seasonDirs.length > 0) {
+    for (const sDir of seasonDirs) {
+      const match = /^Season\s+(\d+)$/i.exec(sDir.name) ?? /^第\s*(\d+)\s*季$/i.exec(sDir.name);
+      const sNum = match ? Number(match[1]) : 1;
+      let sListing;
+      try {
+        sListing = await ctx.fileManager.listDirectory(sDir.id);
+      } catch (err) {
+        console.warn(`[reverse-scanner] failed to list season dir ${sDir.id}:`, err);
+        continue;
+      }
+      const sVideos = sListing.items
+        .filter((f) => !f.isFolder && (f.type === "video" || /\.(mp4|mkv|avi|mov|iso|ts)$/i.test(f.name)))
+        .map((f) => ({ id: f.id, name: f.name, sizeBytes: f.sizeBytes ?? 0 }));
 
-      return {
-        episodeCode: finalEpisodeCode,
-        seasonNumber: finalSeasonNumber,
-        episodeNumber: finalEpisodeNumber,
-        fileId: v.id,
-        fileName: v.name,
-        sizeBytes: v.sizeBytes,
-      };
-    }),
-    isFull: true,
-  });
+      const res = await adoptTvSeasonMedia({
+        ctx,
+        titleObj,
+        seasonNum: sNum,
+        directoryId: sDir.id,
+        videoFiles: sVideos,
+        metaSeasons: meta.seasons,
+      });
+      if (res) adoptedAny = true;
+    }
+  } else {
+    const rootVideos = listingItems
+      .filter((f) => !f.isFolder && (f.type === "video" || /\.(mp4|mkv|avi|mov|iso|ts)$/i.test(f.name)))
+      .map((f) => ({ id: f.id, name: f.name, sizeBytes: f.sizeBytes ?? 0 }));
+
+    if (rootVideos.length > 0) {
+      const sNum = item.parsedSeason ?? 1;
+      adoptedAny = await adoptTvSeasonMedia({
+        ctx,
+        titleObj,
+        seasonNum: sNum,
+        directoryId: item.folderId,
+        videoFiles: rootVideos,
+        metaSeasons: meta.seasons,
+      });
+    }
+  }
+
+  return adoptedAny;
 }
 
 async function processDiscoveredItem(
@@ -266,13 +375,6 @@ async function processDiscoveredItem(
     console.warn(`[reverse-scanner] failed to list dir ${item.folderId}: ${String(err)}`);
     return { isAdopted: false, isPendingReview: false };
   }
-
-  const videoFiles = listing.items.filter(
-    (f) => !f.isFolder && (f.type === "video" || /\.(mp4|mkv|avi|mov|iso|ts)$/i.test(f.name)),
-  );
-  const discoveredFilesJson = JSON.stringify(
-    videoFiles.map((v) => ({ id: v.id, name: v.name, sizeBytes: v.sizeBytes })),
-  );
 
   const initialKind = sniffMediaKind({
     folderName: item.folderName,
@@ -290,12 +392,23 @@ async function processDiscoveredItem(
   let isAdopted = false;
   if (reviewStatus === "auto_accepted" && meta.resolvedTmdbId) {
     try {
-      await adoptDiscoveredMedia(ctx, item, { ...meta, resolvedTmdbId: meta.resolvedTmdbId }, videoFiles);
-      isAdopted = true;
+      isAdopted = await adoptDiscoveredMedia(
+        ctx,
+        item,
+        { ...meta, resolvedTmdbId: meta.resolvedTmdbId },
+        listing.items,
+      );
     } catch (ingestErr) {
       console.warn(`[reverse-scanner] auto-adoption failed for ${item.folderName}: ${String(ingestErr)}`);
     }
   }
+
+  const videoFiles = listing.items.filter(
+    (f) => !f.isFolder && (f.type === "video" || /\.(mp4|mkv|avi|mov|iso|ts)$/i.test(f.name)),
+  );
+  const discoveredFilesJson = JSON.stringify(
+    videoFiles.map((v) => ({ id: v.id, name: v.name, sizeBytes: v.sizeBytes })),
+  );
 
   await ctx.repo.createReverseScanItem({
     jobId,
@@ -310,7 +423,7 @@ async function processDiscoveredItem(
     matchedTitle: meta.resolvedTitle,
     ...(meta.matchedPosterPath ? { matchedPosterPath: meta.matchedPosterPath } : {}),
     confidence,
-    reviewStatus,
+    reviewStatus: isAdopted ? "auto_accepted" : reviewStatus,
     discoveredFilesJson,
   });
 

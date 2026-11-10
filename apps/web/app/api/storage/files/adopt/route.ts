@@ -7,9 +7,11 @@ import {
   adoptExistingTvSeason,
   buildTitleId,
   createTmdbSearchProvider,
+  episodeCodeFromFileName,
   type MediaTitle,
   type TrackedSeason,
 } from "@media-track/workflow";
+import { seriesTargetFor } from "../../../../../lib/series-target";
 import { requireApiAccount } from "../../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../../lib/workflow-runtime";
 import { getWorkflowRepository } from "../../../../../composition/runtime-container";
@@ -96,7 +98,29 @@ interface ResolveAdoptionParams {
   items?: Array<{ name: string; isFolder: boolean; type?: string }> | undefined;
   explicitTmdbId?: number | undefined;
   explicitMediaKind?: "movie" | "tv" | undefined;
+  seasonNumber?: number | undefined;
+  parentFolderName?: string | undefined;
   accountId: string;
+}
+
+async function resolveSeriesSeasonAdoption(params: {
+  tmdbId: number;
+  seasonNumber?: number | undefined;
+  folderName: string;
+}): Promise<{ titleObj: MediaTitle; mediaKind: "tv"; seasonNum: number } | null> {
+  try {
+    const target = await seriesTargetFor(params.tmdbId);
+    if (!target?.title) return null;
+    const match = /^(?:Season\s*(\d+)|第\s*(\d+)\s*季)$/i.exec(params.folderName.trim());
+    const seasonNum = params.seasonNumber ?? (match ? Number(match[1] || match[2]) : 1);
+    return {
+      titleObj: target.title,
+      mediaKind: "tv",
+      seasonNum,
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function resolveMetadataForAdoption(params: ResolveAdoptionParams): Promise<{
@@ -105,6 +129,21 @@ async function resolveMetadataForAdoption(params: ResolveAdoptionParams): Promis
   seasonNum: number;
 } | null> {
   const { folderName, items, explicitTmdbId, explicitMediaKind, accountId } = params;
+  const parentParsed = params.parentFolderName
+    ? parseTitleWithChain({ folderName: params.parentFolderName })
+    : null;
+  const targetTmdbId = explicitTmdbId ?? parentParsed?.tmdbId;
+  const isSeasonName = /^(?:Season\s*(\d+)|第\s*(\d+)\s*季)$/i.test(folderName.trim());
+
+  if (targetTmdbId && (isSeasonName || params.seasonNumber !== undefined)) {
+    const seriesResult = await resolveSeriesSeasonAdoption({
+      tmdbId: targetTmdbId,
+      seasonNumber: params.seasonNumber,
+      folderName,
+    });
+    if (seriesResult) return seriesResult;
+  }
+
   const parsed = parseTitleWithChain({ folderName });
   const resolved = await findResolvedIdentity(folderName, parsed, accountId, explicitTmdbId);
 
@@ -169,6 +208,46 @@ async function adoptMovieFolder(params: {
   });
 }
 
+function collectTvFolderEpisodes(
+  items: Array<{ name: string; isFolder: boolean; type?: string; id: string; sizeBytes?: number }>,
+  seasonNum: number,
+) {
+  const directVideos = items.filter(
+    (i) => !i.isFolder && (i.type === "video" || /\.(mp4|mkv|avi|mov|iso|ts)$/i.test(i.name)),
+  );
+  return directVideos.map((v, idx) => {
+    const code = episodeCodeFromFileName(v.name, seasonNum);
+    const match = code ? /E(\d+)/i.exec(code) : null;
+    const epNum = match ? Number(match[1]) : idx + 1;
+    return {
+      episodeNumber: epNum,
+      seasonNumber: seasonNum,
+      episodeCode: code ?? `S${String(seasonNum).padStart(2, "0")}E${String(idx + 1).padStart(2, "0")}`,
+      fileId: v.id,
+      fileName: v.name,
+      sizeBytes: v.sizeBytes ?? 0,
+    };
+  });
+}
+
+async function resolveTvSeasonMetadata(
+  titleObj: MediaTitle,
+  seasonNum: number,
+  directCount: number,
+): Promise<{ totalEpisodes: number; latestAired: number }> {
+  try {
+    const target = await seriesTargetFor(titleObj.tmdbId);
+    const targetSeason = target?.seasons.find((s) => s.seasonNumber === seasonNum);
+    if (targetSeason) {
+      const total = targetSeason.totalEpisodes || directCount || 12;
+      const latest = targetSeason.latestAiredEpisode || total;
+      return { totalEpisodes: total, latestAired: latest };
+    }
+  } catch {}
+  const fallback = Math.max(directCount, 12);
+  return { totalEpisodes: fallback, latestAired: fallback };
+}
+
 async function adoptTvFolder(params: {
   fileManager: Awaited<ReturnType<typeof getAccountDriveFileManager>>;
   repo: ReturnType<typeof getWorkflowRepository>;
@@ -181,30 +260,28 @@ async function adoptTvFolder(params: {
   const { fileManager, repo, accountId, storageId, folderId, titleObj, seasonNum } = params;
   if (!fileManager) throw new Error("网盘管理器未就绪");
 
+  const listing = await fileManager.listDirectory(folderId).catch(() => null);
+  const directEpisodes = collectTvFolderEpisodes(listing?.items ?? [], seasonNum);
+  const { totalEpisodes, latestAired } = await resolveTvSeasonMetadata(
+    titleObj,
+    seasonNum,
+    directEpisodes.length,
+  );
+
+  const targetCoverage = latestAired > 0 ? latestAired : totalEpisodes;
+  const isFull = directEpisodes.length >= targetCoverage && targetCoverage > 0;
+
   const trackedSeason: TrackedSeason = {
     id: `${titleObj.id}_s${seasonNum}`,
     mediaTitleId: titleObj.id,
     seasonNumber: seasonNum,
-    status: "completed",
+    status: isFull ? "completed" : "active",
     qualityPreference: "1080p",
     storageDirectoryId: folderId,
-    totalEpisodes: 12,
-    latestAiredEpisode: 12,
+    totalEpisodes,
+    latestAiredEpisode: latestAired,
     latestAiredSource: "metadata",
   };
-
-  const inspectRes = await inspectStorageBeforeAcquisition({
-    storage: fileManager,
-    mediaKind: "tv",
-    title: titleObj.title,
-    year: titleObj.year,
-    tmdbId: titleObj.tmdbId,
-    categoryParentId: folderId,
-    seasons: [{ seasonNumber: seasonNum, totalEpisodes: 12, latestAiredEpisode: 12 }],
-  });
-
-  const sRes =
-    inspectRes.mediaKind === "tv" && inspectRes.seasons.length > 0 ? inspectRes.seasons[0] : null;
 
   return adoptExistingTvSeason({
     title: titleObj,
@@ -213,8 +290,8 @@ async function adoptTvFolder(params: {
     accountId,
     connectedStorageId: storageId,
     directoryId: folderId,
-    existingEpisodes: sRes?.existingEpisodes ?? [],
-    isFull: true,
+    existingEpisodes: directEpisodes,
+    isFull,
   });
 }
 
@@ -229,6 +306,8 @@ export async function POST(request: NextRequest) {
     folderName: string;
     tmdbId?: number | undefined;
     mediaKind?: "movie" | "tv" | undefined;
+    seasonNumber?: number | undefined;
+    parentFolderName?: string | undefined;
   };
 
   try {
@@ -256,6 +335,8 @@ export async function POST(request: NextRequest) {
       items,
       explicitTmdbId: body.tmdbId,
       explicitMediaKind: body.mediaKind,
+      seasonNumber: body.seasonNumber,
+      parentFolderName: body.parentFolderName,
       accountId,
     });
     if (!resolved) {

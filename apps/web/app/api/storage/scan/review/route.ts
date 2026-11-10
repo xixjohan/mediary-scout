@@ -3,12 +3,15 @@ import {
   buildTitleId,
   adoptExistingMovie,
   adoptExistingTvSeason,
+  episodeCodeFromFileName,
   type MediaTitle,
   type TrackedSeason,
+  type ExistingEpisodeItem,
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../../lib/workflow-runtime";
 import { getWorkflowRepository } from "../../../../../composition/runtime-container";
+import { seriesTargetFor } from "../../../../../lib/series-target";
 
 interface ReviewItemParams {
   jobId: string;
@@ -39,6 +42,64 @@ async function resolveVideoFiles(
   return listing.items
     .filter((f) => !f.isFolder && (f.type === "video" || /\.(mp4|mkv|avi|mov|iso|ts)$/i.test(f.name)))
     .map((f) => ({ id: f.id, name: f.name, sizeBytes: f.sizeBytes }));
+}
+
+async function adoptTvItemFromReview(params: {
+  titleObj: MediaTitle;
+  videoFiles: Array<{ id: string; name: string; sizeBytes: number }>;
+  folderId: string;
+  repo: ReturnType<typeof getWorkflowRepository>;
+  accountId: string;
+  storageId?: string | undefined;
+}): Promise<void> {
+  const { titleObj, videoFiles, folderId, repo, accountId, storageId } = params;
+  let targetSeason: { totalEpisodes: number; latestAiredEpisode: number } | undefined;
+  try {
+    const target = await seriesTargetFor(titleObj.tmdbId);
+    targetSeason = target?.seasons.find((s) => s.seasonNumber === 1);
+  } catch {}
+
+  const existingEpisodes: ExistingEpisodeItem[] = [];
+  for (const v of videoFiles) {
+    const code = episodeCodeFromFileName(v.name, 1);
+    const epMatch = code ? /[Ss](\d{1,2})[Ee](\d{1,4})/i.exec(code) : null;
+    const finalEpisode = epMatch ? Number(epMatch[2]) : existingEpisodes.length + 1;
+    existingEpisodes.push({
+      episodeCode: code ?? `S01E${String(finalEpisode).padStart(2, "0")}`,
+      seasonNumber: 1,
+      episodeNumber: finalEpisode,
+      fileId: v.id,
+      fileName: v.name,
+      sizeBytes: v.sizeBytes,
+    });
+  }
+
+  const totalEpisodes = targetSeason?.totalEpisodes ?? Math.max(existingEpisodes.length, 1);
+  const latestAired = targetSeason?.latestAiredEpisode ?? totalEpisodes;
+  const isFull = existingEpisodes.length >= latestAired && latestAired > 0;
+
+  const trackedSeason: TrackedSeason = {
+    id: `${titleObj.id}_s1`,
+    mediaTitleId: titleObj.id,
+    seasonNumber: 1,
+    status: isFull ? "completed" : "active",
+    qualityPreference: "1080p",
+    storageDirectoryId: folderId,
+    totalEpisodes,
+    latestAiredEpisode: latestAired,
+    latestAiredSource: "metadata",
+  };
+
+  await adoptExistingTvSeason({
+    title: titleObj,
+    season: trackedSeason,
+    repository: repo,
+    accountId,
+    connectedStorageId: storageId,
+    directoryId: folderId,
+    existingEpisodes,
+    isFull,
+  });
 }
 
 async function handleReviewAccept(params: ReviewItemParams): Promise<NextResponse> {
@@ -78,33 +139,13 @@ async function handleReviewAccept(params: ReviewItemParams): Promise<NextRespons
       videoFiles,
     });
   } else {
-    const trackedSeason: TrackedSeason = {
-      id: `${titleObj.id}_s1`,
-      mediaTitleId: titleObj.id,
-      seasonNumber: 1,
-      status: "completed",
-      qualityPreference: "1080p",
-      storageDirectoryId: item.folderId,
-      totalEpisodes: Math.max(videoFiles.length, 1),
-      latestAiredEpisode: Math.max(videoFiles.length, 1),
-      latestAiredSource: "metadata",
-    };
-    await adoptExistingTvSeason({
-      title: titleObj,
-      season: trackedSeason,
-      repository: repo,
+    await adoptTvItemFromReview({
+      titleObj,
+      videoFiles,
+      folderId: item.folderId,
+      repo,
       accountId,
-      connectedStorageId: job.storageId,
-      directoryId: item.folderId,
-      existingEpisodes: videoFiles.map((v, idx) => ({
-        episodeCode: `S01E${String(idx + 1).padStart(2, "0")}`,
-        seasonNumber: 1,
-        episodeNumber: idx + 1,
-        fileId: v.id,
-        fileName: v.name,
-        sizeBytes: v.sizeBytes,
-      })),
-      isFull: true,
+      storageId: job.storageId,
     });
   }
 

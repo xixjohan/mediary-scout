@@ -13,6 +13,8 @@ import {
   type PreparedSeriesTarget,
   type WorkflowKind,
   type WorkflowRunProgress,
+  type TrackedSeasonState,
+  type TrackedSeasonStatusView,
 } from "@media-track/workflow";
 import { findDemoCandidateByTmdbId } from "./demo-candidates";
 import {
@@ -101,6 +103,67 @@ export type DetailView = TitleHubView | MovieHubView;
 import { loadSeriesTargetWithCache, seriesTargetFor } from "./series-target";
 export { loadSeriesTargetWithCache, seriesTargetFor };
 
+function healEpisodeCells(
+  existingCells: EpisodeStatusCell[],
+  seasonNumber: number,
+  authoritativeTotal: number,
+  authoritativeAired: number,
+): EpisodeStatusCell[] {
+  if (existingCells.length >= authoritativeTotal) return existingCells;
+  const byCode = new Map(existingCells.map((c) => [c.episodeCode, c]));
+  const healed: EpisodeStatusCell[] = [];
+  const sPrefix = `S${String(seasonNumber).padStart(2, "0")}`;
+
+  for (let epNum = 1; epNum <= authoritativeTotal; epNum++) {
+    const code = `${sPrefix}E${String(epNum).padStart(2, "0")}`;
+    const existing = byCode.get(code);
+    if (existing) {
+      healed.push(existing);
+    } else {
+      const isAired = epNum <= authoritativeAired;
+      healed.push({
+        episodeCode: code,
+        airStatus: isAired ? "aired" : "unaired",
+        obtained: false,
+        metadataStatus: "confirmed",
+        verifiedFileCount: 0,
+        displayState: isAired ? "missing_aired" : "unaired",
+      });
+    }
+  }
+  return healed;
+}
+
+function buildTitleHubTrackedSeason(input: {
+  seasonNumber: number;
+  tracked: TrackedSeasonState;
+  targetSeason?: { seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number } | undefined;
+  view: TrackedSeasonStatusView | null;
+  isAcquiring: boolean;
+}): TitleHubSeason {
+  const { seasonNumber, tracked, targetSeason, view, isAcquiring } = input;
+  const authoritativeTotal = Math.max(targetSeason?.totalEpisodes ?? 0, tracked.season.totalEpisodes);
+  const authoritativeAired = Math.max(targetSeason?.latestAiredEpisode ?? 0, tracked.season.latestAiredEpisode);
+
+  const rawEpisodes = view?.episodes ?? [];
+  const episodes = healEpisodeCells(rawEpisodes, seasonNumber, authoritativeTotal, authoritativeAired);
+  const obtainedCount = episodes.filter((e) => e.obtained).length;
+  const missingAiredCount = episodes.filter((e) => e.displayState === "missing_aired").length;
+
+  return {
+    seasonNumber,
+    totalEpisodes: authoritativeTotal,
+    latestAiredEpisode: authoritativeAired,
+    tracked: true,
+    status: tracked.season.status === "completed" ? "completed" : "active",
+    obtainedCount,
+    missingAiredCount,
+    trackedSeasonId: tracked.season.id,
+    acquiring: isAcquiring,
+    episodes,
+  };
+}
+
 export async function getTitleHubView(tmdbId: number, storageId?: string): Promise<TitleHubView | null> {
   const repository = getWorkflowRepository();
   const scope = await getActiveWorkspaceScope(storageId);
@@ -147,18 +210,15 @@ export async function getTitleHubView(tmdbId: number, storageId?: string): Promi
         trackedSeasonId: tracked.season.id,
         scope,
       });
-      seasons.push({
-        seasonNumber,
-        totalEpisodes: tracked.season.totalEpisodes,
-        latestAiredEpisode: tracked.season.latestAiredEpisode,
-        tracked: true,
-        status: tracked.season.status === "completed" ? "completed" : "active",
-        obtainedCount: view?.obtainedCount ?? 0,
-        missingAiredCount: view?.missingAiredCount ?? 0,
-        trackedSeasonId: tracked.season.id,
-        acquiring: activeSeasonIds.has(tracked.season.id),
-        episodes: view?.episodes ?? [],
-      });
+      seasons.push(
+        buildTitleHubTrackedSeason({
+          seasonNumber,
+          tracked,
+          targetSeason,
+          view,
+          isAcquiring: activeSeasonIds.has(tracked.season.id),
+        }),
+      );
     } else if (targetSeason) {
       seasons.push({
         seasonNumber,

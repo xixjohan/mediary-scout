@@ -126,4 +126,90 @@ describe("runReverseStorageScan", () => {
     const tracked = await repo.listTrackedSeasonStates({ accountId: "acct_test", connectedStorageId: "cs_1" });
     expect(tracked).toHaveLength(2);
   });
+
+  it("accurately discovers TV show with Season XX subfolders and marks episodes obtained without collapsing to 1 episode", async () => {
+    const mock = new MockDriveFileManager();
+    mock.setDirectory("target_root", {
+      items: [
+        { id: "dir_tv_show", name: "桃源暗鬼 (2025) {tmdb-253811}", isFolder: true, sizeBytes: 0 },
+      ],
+    });
+
+    mock.setDirectory("dir_tv_show", {
+      items: [
+        { id: "dir_season_1", name: "Season 01", isFolder: true, sizeBytes: 0 },
+      ],
+    });
+
+    // 12 episodes in Season 01
+    const season1Files = Array.from({ length: 12 }, (_, i) => {
+      const epNum = i + 1;
+      const pad = String(epNum).padStart(2, "0");
+      return {
+        id: `f_s01e${pad}`,
+        name: `桃源暗鬼 - S01E${pad} [Ani] [1080P].mp4`,
+        isFolder: false,
+        sizeBytes: 800 * 1024 * 1024,
+      };
+    });
+    mock.setDirectory("dir_season_1", { items: season1Files });
+
+    const repo = new InMemoryWorkflowRepository();
+    const job = await repo.createReverseScanJob({
+      accountId: "acct_test",
+      storageId: "cs_1",
+      targetCid: "target_root",
+      category: "tv",
+    });
+
+    // Mock searchProvider that returns 12 episodes for Season 1
+    const searchProvider = {
+      searchMedia: vi.fn().mockResolvedValue([
+        {
+          tmdbId: 253811,
+          mediaType: "tv",
+          title: "桃源暗鬼",
+          originalTitle: "桃源暗鬼",
+          year: 2025,
+          overview: "新世代暗黑英雄传奇",
+          posterPath: "/poster.jpg",
+          backdropPath: null,
+          seasons: [
+            { seasonNumber: 1, episodeCount: 12, latestAiredEpisode: 12 },
+          ],
+        },
+      ]),
+    };
+
+    await runReverseStorageScan({
+      fileManager: mock,
+      storageProvider: "pan115",
+      jobId: job.id,
+      accountId: "acct_test",
+      storageId: "cs_1",
+      targetCid: "target_root",
+      repo,
+      searchProvider: searchProvider as any,
+      pacerDelayMs: 0,
+    });
+
+    const finishedJob = await repo.getReverseScanJob(job.id);
+    expect(finishedJob?.status).toBe("completed");
+    expect(finishedJob?.discoveredTitles).toBe(1);
+    expect(finishedJob?.autoIngestedTitles).toBe(1);
+
+    const tracked = await repo.listTrackedSeasonStates({ accountId: "acct_test", connectedStorageId: "cs_1" });
+    expect(tracked).toHaveLength(1);
+
+    const s1 = tracked[0]!;
+    expect(s1.title.tmdbId).toBe(253811);
+    expect(s1.season.seasonNumber).toBe(1);
+    // 关键断言：总集数必须是权威 12 集，绝不能缩水为 1 集！
+    expect(s1.season.totalEpisodes).toBe(12);
+    // 目录必须正确绑定到 Season 01 目录 ID，而非父目录
+    expect(s1.season.storageDirectoryId).toBe("dir_season_1");
+    // 全部 12 集正片都必须被标记为已获取 (obtained: true)
+    expect(s1.episodes.filter((e) => e.obtained)).toHaveLength(12);
+    expect(s1.season.status).toBe("completed");
+  });
 });

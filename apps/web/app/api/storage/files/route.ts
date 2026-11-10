@@ -11,6 +11,29 @@ const NO_CACHE_HEADERS = {
 
 import type { DriveDirectoryListing, DriveFileItem } from "@media-track/workflow";
 
+function enrichSeasonFolderItem(
+  item: DriveFileItem,
+  parentInfo: { tmdbId?: number | undefined; title?: string | undefined; year?: number | undefined },
+  trackedStates: TrackedSeasonState[],
+): boolean {
+  const match = /^(?:Season\s*(\d+)|第\s*(\d+)\s*季)$/i.exec(item.name.trim());
+  if (!match || !parentInfo.tmdbId) return false;
+  const seasonNum = Number(match[1] || match[2]);
+  const matched = trackedStates.find(
+    (s) => s.title.tmdbId === parentInfo.tmdbId && s.season?.seasonNumber === seasonNum,
+  );
+  item.mediaInfo = {
+    parsedTitle: `${parentInfo.title ?? "剧集"} 第 ${seasonNum} 季`,
+    ...(parentInfo.year ? { parsedYear: parentInfo.year } : {}),
+    parsedSeason: seasonNum,
+    tmdbId: parentInfo.tmdbId,
+    confidence: 100,
+    isSubscribed: Boolean(matched),
+    ...(matched?.season ? { subscriptionStatus: matched.season.status } : {}),
+  };
+  return true;
+}
+
 function enrichFolderItem(
   item: DriveFileItem,
   stateByDirId: Map<string, TrackedSeasonState>,
@@ -50,6 +73,59 @@ function enrichFolderItem(
   };
 }
 
+function buildTrackedStateIndex(trackedStates: TrackedSeasonState[]) {
+  const stateByTmdbId = new Map<number, TrackedSeasonState>();
+  const stateByName = new Map<string, TrackedSeasonState>();
+  const stateByDirId = new Map<string, TrackedSeasonState>();
+
+  for (const s of trackedStates) {
+    if (s.title.tmdbId) stateByTmdbId.set(s.title.tmdbId, s);
+    if (s.title.title) stateByName.set(s.title.title.toLowerCase().trim(), s);
+    if (s.season.storageDirectoryId) stateByDirId.set(s.season.storageDirectoryId, s);
+  }
+  return { stateByTmdbId, stateByName, stateByDirId };
+}
+
+function resolveParentMediaInfo(
+  dirName: string | undefined,
+  trackedStates: TrackedSeasonState[],
+): { tmdbId?: number | undefined; title?: string | undefined; year?: number | undefined } | undefined {
+  if (!dirName) return undefined;
+  const parentParsed = parseTitleWithChain({ folderName: dirName });
+  if (!parentParsed?.tmdbId && !parentParsed?.title) return undefined;
+
+  const matchedParent = trackedStates.find(
+    (s) =>
+      (parentParsed.tmdbId !== undefined && s.title.tmdbId === parentParsed.tmdbId) ||
+      (parentParsed.title !== undefined && s.title.title.toLowerCase() === parentParsed.title.toLowerCase()),
+  );
+  const tmdbId = parentParsed.tmdbId ?? matchedParent?.title.tmdbId;
+  const title = parentParsed.title ?? matchedParent?.title.title;
+  const year = parentParsed.year ?? matchedParent?.title.year;
+  return {
+    ...(tmdbId !== undefined ? { tmdbId } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(year !== undefined ? { year } : {}),
+  };
+}
+
+function enrichListingItems(
+  listing: DriveDirectoryListing,
+  trackedStates: TrackedSeasonState[],
+  index: ReturnType<typeof buildTrackedStateIndex>,
+  parentInfo?: { tmdbId?: number | undefined; title?: string | undefined; year?: number | undefined },
+) {
+  const isInsideStaging =
+    listing.breadcrumbs?.some((b) => b.name.toLowerCase().startsWith("staging-")) || false;
+
+  for (const item of listing.items) {
+    if (!item.isFolder) continue;
+    if (item.name.toLowerCase().startsWith("staging-") || isInsideStaging) continue;
+    if (parentInfo && enrichSeasonFolderItem(item, parentInfo, trackedStates)) continue;
+    enrichFolderItem(item, index.stateByDirId, index.stateByTmdbId, index.stateByName);
+  }
+}
+
 async function enrichListingWithMediaInfo(
   listing: DriveDirectoryListing,
   accountId: string,
@@ -61,28 +137,9 @@ async function enrichListingWithMediaInfo(
       accountId,
       connectedStorageId: storageId ?? null,
     });
-    const stateByTmdbId = new Map<number, TrackedSeasonState>();
-    const stateByName = new Map<string, TrackedSeasonState>();
-    const stateByDirId = new Map<string, TrackedSeasonState>();
-
-    for (const s of trackedStates) {
-      if (s.title.tmdbId) stateByTmdbId.set(s.title.tmdbId, s);
-      if (s.title.title) stateByName.set(s.title.title.toLowerCase().trim(), s);
-      if (s.season.storageDirectoryId) stateByDirId.set(s.season.storageDirectoryId, s);
-    }
-
-    const isInsideStaging =
-      listing.breadcrumbs?.some((b) => b.name.toLowerCase().startsWith("staging-")) || false;
-
-    for (const item of listing.items) {
-      if (item.isFolder) {
-        if (item.name.toLowerCase().startsWith("staging-") || isInsideStaging) {
-          // staging 暂存目录或 staging 内部的资源包，属于任务中间资产，不应标记为可反推
-          continue;
-        }
-        enrichFolderItem(item, stateByDirId, stateByTmdbId, stateByName);
-      }
-    }
+    const index = buildTrackedStateIndex(trackedStates);
+    const parentInfo = resolveParentMediaInfo(listing.currentDirectoryName, trackedStates);
+    enrichListingItems(listing, trackedStates, index, parentInfo);
   } catch (enrichErr) {
     console.warn("[storage/files] enrichment warning (ignoring):", enrichErr);
   }
