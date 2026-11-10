@@ -222,5 +222,41 @@ describe("drive-file-manager", () => {
         process.env.MEDIA_TRACK_STORAGE_ADAPTER = prev;
       }
     });
+
+    it("Pan115FileManagerAdapter correctly identifies files with fid even if fc is 0 or '0'", async () => {
+      const { Pan115FileManagerAdapter } = await import("../../src/storage/drive-file-manager.js");
+      const adapter = new Pan115FileManagerAdapter({
+        storageId: "cs_115",
+        provider: "pan115",
+        cookie: "test_cookie",
+      });
+      // Mock listItemsWithBreadcrumbs on internal client
+      (adapter as any).client.listItemsWithBreadcrumbs = async () => ({
+        items: [
+          { fid: "file_mp4_1", cid: "parent_dir", n: "episode01.mp4", s: 1048576, fc: "0" },
+          { fid: "file_mkv_2", cid: "parent_dir", n: "episode02.mkv", s: 2048576, fc: 0 },
+          { cid: "sub_dir_1", n: "Season 1", s: 0, fc: "0" },
+        ],
+        breadcrumbs: [{ cid: "parent_dir", name: "Staging" }],
+      });
+
+      const listing = await adapter.listDirectory("parent_dir");
+      expect(listing.items).toHaveLength(3);
+
+      const mp4Item = listing.items.find((i) => i.id === "file_mp4_1")!;
+      expect(mp4Item).toBeDefined();
+      expect(mp4Item.isFolder).toBe(false);
+      expect(mp4Item.type).toBe("video");
+
+      const mkvItem = listing.items.find((i) => i.id === "file_mkv_2")!;
+      expect(mkvItem).toBeDefined();
+      expect(mkvItem.isFolder).toBe(false);
+      expect(mkvItem.type).toBe("video");
+
+      const dirItem = listing.items.find((i) => i.id === "sub_dir_1")!;
+      expect(dirItem).toBeDefined();
+      expect(dirItem.isFolder).toBe(true);
+      expect(dirItem.type).toBe("folder");
+    });
   });
 });

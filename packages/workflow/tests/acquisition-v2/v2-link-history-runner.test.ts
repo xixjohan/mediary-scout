@@ -91,6 +91,11 @@ class HistorySpy extends InMemoryWorkflowRepository {
     this.policyLookups.push(input);
     return super.getSubscriptionPolicy(input);
   }
+  override async getWorkflowRunPolicySnapshot(workflowRunId: string) {
+    const titleKey = workflowRunId.includes("movie") ? "tmdb_movie_27205" : "tmdb_tv_100";
+    const policy = await this.getSubscriptionPolicy({ accountId: "acct_a", titleKey });
+    return { schemaVersion: 1, evaluatorVersion: 1, capturedAt: NOW, policy };
+  }
   override async listLinkHistory(input: {
     accountId: string;
     drive: string;

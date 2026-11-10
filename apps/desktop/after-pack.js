@@ -132,7 +132,7 @@ exports.default = async function afterPack(context) {
     [FuseV1Options.RunAsNode]: true,
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
-    [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
+    [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
     [FuseV1Options.OnlyLoadAppFromAsar]: false,
   });
 

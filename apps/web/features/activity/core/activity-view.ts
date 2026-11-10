@@ -66,6 +66,8 @@ export interface ActivityCompletedItem {
   /** "每集 约 410 MB" / "体积 1.4 GB"; null when unknown. */
   sizeText: string | null;
   createdAt: string;
+  /** Redacted agent tool-call timeline for the completed run (if available). */
+  steps?: AgentStepView[];
 }
 
 export interface ActivityView {
@@ -251,26 +253,36 @@ export async function getActivityView(input: {
     input.accountId,
     input.connectedStorageId,
   );
-  const recentCompleted: ActivityCompletedItem[] = notifications
-    .filter((notification) => notification.kind !== "already_current" && notification.report !== undefined)
-    .map((notification) => {
-      const report = notification.report!;
-      const size = landedSize(report);
-      const posterPath =
-        report.posterPath ??
-        (report.tmdbId != null ? posterByTmdb.get(report.tmdbId) : undefined) ??
-        posterByName.get(report.titleName) ??
-        null;
-      return {
-        workflowRunId: notification.workflowRunId,
-        title: report.titleName,
-        seasonLabel: report.seasonLabel,
-        status: report.status,
-        posterPath,
-        sizeText: size ? `${size.label} ${size.value}` : null,
-        createdAt: notification.createdAt,
-      };
-    });
+  const eligibleNotifications = notifications.filter(
+    (notification) => notification.kind !== "already_current" && notification.report !== undefined,
+  );
+  const completedTimelines = await Promise.all(
+    eligibleNotifications.map((n) =>
+      input.repository
+        .listAgentSteps(n.workflowRunId, scope)
+        .then((steps) => tailAgentStepViews(steps))
+        .catch(() => [] as AgentStepView[]),
+    ),
+  );
+  const recentCompleted: ActivityCompletedItem[] = eligibleNotifications.map((notification, index) => {
+    const report = notification.report!;
+    const size = landedSize(report);
+    const posterPath =
+      report.posterPath ??
+      (report.tmdbId != null ? posterByTmdb.get(report.tmdbId) : undefined) ??
+      posterByName.get(report.titleName) ??
+      null;
+    return {
+      workflowRunId: notification.workflowRunId,
+      title: report.titleName,
+      seasonLabel: report.seasonLabel,
+      status: report.status,
+      posterPath,
+      sizeText: size ? `${size.label} ${size.value}` : null,
+      createdAt: notification.createdAt,
+      steps: completedTimelines[index] ?? [],
+    };
+  });
 
   return { active, recentCompleted };
 }

@@ -238,10 +238,8 @@ export function titleBlockFilter(
 
 /** Whether a reservation or a save refuses a (season, drive) that is no longer
  *  tracked: asked for directly, or implied by keepCurrentEpisodes (nothing to keep). */
-export function reservationRequiresTrackedSeason(
-  input: Pick<ReserveWorkflowRunInput, "requireTrackedSeason" | "keepCurrentEpisodes">,
-): boolean {
-  return input.requireTrackedSeason === true || input.keepCurrentEpisodes === true;
+export function reservationRequiresTrackedSeason(input: Pick<ReserveWorkflowRunInput, "requireTrackedSeason" | "keepCurrentEpisodes"> & { workflowRun?: Pick<WorkflowRun, "kind"> }): boolean {
+  return input.workflowRun?.kind === "manual_import" || input.workflowRun?.kind === "resource_search" ? false : input.requireTrackedSeason === true || input.keepCurrentEpisodes === true;
 }
 
 export interface PersistWorkflowRunSnapshotInput {
@@ -1528,15 +1526,13 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     cloned.connectedStorageId =
       cloned.connectedStorageId ?? existing?.connectedStorageId ?? null;
     preserveQueuedRunMetadata(cloned, existing);
+    if (!existing) capturePolicySnapshot(cloned, this.subscriptionPolicies.get(subscriptionPolicyRowKey(cloned.accountId, cloned.title.id)));
     const isAuxiliary = isEpisodePreservingWorkflowKind(cloned.workflowRun.kind);
     const shouldKeepEpisodes = keepCurrentEpisodes === true || isAuxiliary;
 
     // Synchronous with the write below: no await, so an untrack cannot land between them.
     const isSearchRecord = cloned.workflowRun.kind === "resource_search";
-    const requireTracked = !isSearchRecord && cloned.workflowRun.kind !== "manual_import" && reservationRequiresTrackedSeason({
-        ...(input.requireTrackedSeason === true ? { requireTrackedSeason: true } : {}),
-        ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}),
-      });
+    const requireTracked = !isSearchRecord && reservationRequiresTrackedSeason({ ...(input.requireTrackedSeason ? { requireTrackedSeason: true } : {}), ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}), workflowRun: cloned.workflowRun });
     if (!this.canSaveManualSnapshot(cloned, existing, { requireRunning: requireRunningWorkflowRun === true,
       requireTracked, requireNoMissing: requireNoMissingEpisodes === true })) return;
     const bucketKey = seasonScopeKey(cloned.season.id, cloned.connectedStorageId);

@@ -1,4 +1,3 @@
-import path from "node:path";
 import { arbitrateReleasePack } from "../execution/pack-episode-arbitrator.js";
 import { canonicalEpisodeFileName, episodeCodeFromFileName } from "../domain/episode-code.js";
 import type { ResourceSnapshotV2 } from "./fake-provider.js";
@@ -137,6 +136,10 @@ async function handleMovieMedia(sandbox: TaskSandbox): Promise<void> {
   await sandbox.finish();
 }
 
+function basenameOf(filePath: string): string {
+  return filePath.split(/[\\/]/).pop() ?? filePath;
+}
+
 async function performEpisodeRenames(
   sandbox: TaskSandbox,
   videoFiles: Array<{ id: string; path: string }>,
@@ -148,7 +151,7 @@ async function performEpisodeRenames(
     for (let idx = 0; idx < videoFiles.length; idx++) {
       const vf = videoFiles[idx];
       if (!vf) continue;
-      const fileName = path.basename(vf.path);
+      const fileName = basenameOf(vf.path);
       const code =
         episodeCodeFromFileName(fileName, 1) ??
         `S01E${String(idx + 1).padStart(2, "0")}`;
@@ -193,7 +196,7 @@ async function organizeMediaAfterTransfer(
 
     await sandbox.markObtained({
       codes: videoFiles.map((vf, idx) => {
-        const fileName = path.basename(vf.path);
+        const fileName = basenameOf(vf.path);
         return (
           episodeCodeFromFileName(fileName, 1) ??
           `S01E${String(idx + 1).padStart(2, "0")}`

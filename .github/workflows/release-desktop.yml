@@ -383,12 +383,15 @@ jobs:
           $exe = Get-ChildItem -Path "$env:LOCALAPPDATA\Programs" -Recurse -Depth 2 -Filter "Mediary Scout.exe" -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty FullName
           if (-not $exe) { throw "installed Mediary Scout.exe not found under $env:LOCALAPPDATA\Programs" }
           Write-Host "EXE: $exe"
+          $serverJs = Join-Path (Split-Path $exe) "resources\app\apps\web\server.js"
+          if (-not (Test-Path $serverJs)) { throw "installed server.js not found at $serverJs" }
+          Write-Host "Found server.js: $serverJs"
           $env:ELECTRON_ENABLE_LOGGING = "1"
           $stdoutLog = "$env:TEMP\electron-stdout.txt"
           $stderrLog = "$env:TEMP\electron-stderr.txt"
           Remove-Item $stdoutLog, $stderrLog -ErrorAction SilentlyContinue
 
-          $proc = Start-Process -FilePath $exe -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+          $proc = Start-Process -FilePath $exe -ArgumentList "--enable-logging" -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
           $manifest = Join-Path $env:USERPROFILE ".mediary\agent.json"
           Remove-Item $manifest -ErrorAction SilentlyContinue
 

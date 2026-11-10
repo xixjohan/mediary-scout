@@ -1514,6 +1514,19 @@ export class TaskSandbox {
    *  to persist. Also the loop's own end-of-run summary, so never gated. */
   async finish(): Promise<{ coverageMet: boolean; obtained: string[]; missing: string[]; subtitleFallback: boolean }> {
     await this.assertPolicyFilesInTargets();
+    if (this.isMovieRun() && this.storage && this.movieDir) {
+      try {
+        const tree = await this.listTreeOf(this.movieDir);
+        const nestedVideos = tree.filter(
+          (file) => (file.isVideo || file.isSubtitle) && file.path.includes("/") && !this.protectedFiles.has(file.id),
+        );
+        if (nestedVideos.length > 0) {
+          await this.flattenMovie();
+        }
+      } catch (err) {
+        console.warn("[sandbox] movie auto-flatten in finish warning:", err);
+      }
+    }
     // Report the agent's marks beyond just need∩marked — a coherent full pack
     // often delivers episodes BEYOND the aired cursor (the need), and those
     // provider-ahead marks must survive finish() so syncSeasonNeed records them as

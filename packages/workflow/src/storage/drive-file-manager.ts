@@ -148,7 +148,13 @@ export class Pan115FileManagerAdapter implements DriveFileManager {
     const targetDir = directoryId || this.opts.rootCid || "0";
     const res = await this.client.listItemsWithBreadcrumbs({ directoryId: targetDir });
     const items: DriveFileItem[] = res.items.map((r) => {
-      const isFolder = r.fc === 0 || r.fc === "0" || (r.cid !== undefined && r.fid === undefined && r.file_id === undefined);
+      const hasFileId = Boolean(r.fid ?? r.file_id);
+      const isFolder =
+        !hasFileId &&
+        (r.fc === 0 ||
+          r.fc === "0" ||
+          (r as { ico?: string }).ico === "folder" ||
+          (r.cid !== undefined && !hasFileId));
       const id = String(isFolder ? (r.cid ?? r.id) : (r.fid ?? r.file_id ?? r.id));
       const name = String(r.name ?? r.n ?? "");
       const sizeBytes = Number(r.size ?? r.s ?? 0);

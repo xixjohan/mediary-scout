@@ -60,7 +60,7 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
     .filter((run) => run.status === "queued")
     .sort((a, b) => (a.queuePosition ?? 0) - (b.queuePosition ?? 0));
   // Only show completions for runs THIS session watched go active → done.
-  const completed = view.recentCompleted.filter((item) => seenActive.current.has(item.workflowRunId));
+  const completed = view.recentCompleted;
   // Demo: acquisitions are client-only (no DB run) → surface this session's
   // acquired titles as completed items, and in-progress playbacks as live 获取中
   // rows, so the activity page reflects them like production.
@@ -96,9 +96,9 @@ export function ActivityFeed({ storageId }: { storageId?: string | undefined }) 
         )}
       </CollapsibleSection>
 
-      <CollapsibleSection title="已完成" count={allCompleted.length} note="仅本次浏览" defaultOpen>
+      <CollapsibleSection title="已完成" count={allCompleted.length} note="已持久化" defaultOpen>
         {allCompleted.length === 0 ? (
-          <p className="act-empty">本次浏览还没有完成的任务，历史可在通知查看。</p>
+          <p className="act-empty">暂无已完成的任务记录。</p>
         ) : (
           allCompleted.map((item) => <CompletedRow item={item} key={item.workflowRunId} />)
         )}
@@ -255,18 +255,21 @@ function CompletedRow({ item }: { item: ActivityCompletedItem }) {
     item.status === "complete" || item.status === "acquired" || item.status === "airing" || item.status === "replaced";
   const failed = item.status === "failed";
   return (
-    <div className="act-row act-row-done">
-      {poster(item.posterPath, item.title, ok ? "success" : "warn")}
-      <div className="act-row-body act-row-inline">
-        <strong>{item.title}</strong>
-        {item.seasonLabel ? <span className="act-sub">{item.seasonLabel}</span> : null}
-        <span className={`act-pill ${ok ? "tone-success" : "tone-warn"}`}>
-          {ok ? <CheckCircle2 size={12} aria-hidden /> : <TriangleAlert size={12} aria-hidden />}
-          {completedPillLabel(item.status)}
-        </span>
-        {item.sizeText ? <span className="act-sub">{item.sizeText}</span> : null}
-        {failed ? <RetryButton runId={item.workflowRunId} title={item.title} /> : null}
+    <div className="act-row-wrap">
+      <div className="act-row act-row-done">
+        {poster(item.posterPath, item.title, ok ? "success" : "warn")}
+        <div className="act-row-body act-row-inline">
+          <strong>{item.title}</strong>
+          {item.seasonLabel ? <span className="act-sub">{item.seasonLabel}</span> : null}
+          <span className={`act-pill ${ok ? "tone-success" : "tone-warn"}`}>
+            {ok ? <CheckCircle2 size={12} aria-hidden /> : <TriangleAlert size={12} aria-hidden />}
+            {completedPillLabel(item.status)}
+          </span>
+          {item.sizeText ? <span className="act-sub">{item.sizeText}</span> : null}
+          {failed ? <RetryButton runId={item.workflowRunId} title={item.title} /> : null}
+        </div>
       </div>
+      {item.steps && item.steps.length > 0 && <AgentTimeline steps={item.steps} />}
     </div>
   );
 }

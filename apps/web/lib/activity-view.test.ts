@@ -237,6 +237,32 @@ describe("getActivityView", () => {
     const viewB = await getActivityView({ repository: repo, accountId: "acct_default", connectedStorageId: "cs_b" });
     expect(viewB.active.map((r) => r.title)).toEqual(["Beta"]);
   });
+
+  it("recent completed runs include agent timeline steps for historical viewing", async () => {
+    const repo = new InMemoryWorkflowRepository();
+    const finishedRun = run({
+      id: "run_completed_1",
+      tmdbId: 201,
+      name: "Completed Film",
+      status: "succeeded",
+      startedAt: "2026-06-18T00:00:00Z",
+      finishedAt: "2026-06-18T00:05:00Z",
+    });
+    await repo.saveWorkflowRunSnapshot(finishedRun);
+    await repo.appendAgentStep("run_completed_1", step({
+      toolName: "searchResources",
+      args: { keyword: "Completed Film" },
+      activity: "Searching for film",
+    }));
+
+    const view = await getActivityView({ repository: repo });
+    expect(view.recentCompleted).toHaveLength(1);
+    const completed = view.recentCompleted[0]!;
+    expect(completed.workflowRunId).toBe("run_completed_1");
+    expect(completed.steps).toBeDefined();
+    expect(completed.steps).toHaveLength(1);
+    expect(completed.steps![0]!.toolName).toBe("searchResources");
+  });
 });
 
 /**

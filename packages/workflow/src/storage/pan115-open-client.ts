@@ -200,12 +200,17 @@ async function performSingleTokenRefresh(
 }
 
 function isItemDirectory(item: Record<string, unknown>): boolean {
-  if (item["is_dir"] === 1 || Boolean(item["isDirectory"])) return true;
-  return item["file_category"] === 0 || item["fc"] === 0;
+  if (item["is_dir"] === 1 || item["is_dir"] === "1" || Boolean(item["isDirectory"])) return true;
+  const hasFileId = Boolean(item["file_id"] ?? item["fid"]);
+  if (hasFileId) return false;
+  const fc = String(item["fc"] ?? item["file_category"] ?? "");
+  if (fc === "0") return true;
+  if (fc === "1") return false;
+  return item["cid"] !== undefined || item["category_id"] !== undefined;
 }
 
 function getItemName(item: Record<string, unknown>): string {
-  const val = item["file_name"] ?? item["name"] ?? item["n"];
+  const val = item["file_name"] ?? item["fn"] ?? item["name"] ?? item["n"];
   return typeof val === "string" ? val : "";
 }
 
@@ -219,26 +224,16 @@ function formatPan115Item(item: Record<string, unknown>): Pan115Item {
   const name = getItemName(item);
   const size = getItemSize(item);
   const isDirectory = isItemDirectory(item);
-
-  const baseItem: Pan115Item = {
-    name,
-    n: name,
-    size,
-    s: size,
-    isDirectory,
-  };
-
+  const baseItem: Pan115Item = { name, n: name, size, s: size, isDirectory };
   const fid = item["file_id"] ?? item["fid"] ?? item["id"];
   const cidVal = item["category_id"] ?? item["cid"];
-
-  if (fid !== undefined && fid !== null) {
-    baseItem.fid = String(fid);
-    baseItem.id = String(fid);
-  } else if (cidVal !== undefined && cidVal !== null) {
-    baseItem.cid = String(cidVal);
-    baseItem.id = String(cidVal);
+  const idVal = isDirectory ? (cidVal ?? fid) : (fid ?? cidVal);
+  if (idVal !== undefined && idVal !== null) {
+    if (isDirectory) baseItem.cid = String(idVal);
+    else if (fid !== undefined && fid !== null) baseItem.fid = String(idVal);
+    else baseItem.cid = String(idVal);
+    baseItem.id = String(idVal);
   }
-
   return baseItem;
 }
 

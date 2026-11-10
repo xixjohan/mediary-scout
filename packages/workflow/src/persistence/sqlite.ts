@@ -375,12 +375,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     const isAuxiliary = isEpisodePreservingWorkflowKind(snapshot.workflowRun.kind);
     const shouldKeepEpisodes = keepCurrentEpisodes === true || isAuxiliary;
     const isSearchRecord = snapshot.workflowRun.kind === "resource_search";
-    const requireTracked =
-      !isSearchRecord && snapshot.workflowRun.kind !== "manual_import" &&
-      reservationRequiresTrackedSeason({
-        ...(requireTrackedSeason === true ? { requireTrackedSeason: true } : {}),
-        ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}),
-      });
+    const requireTracked = !isSearchRecord && reservationRequiresTrackedSeason({ ...(requireTrackedSeason ? { requireTrackedSeason: true } : {}), ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}), workflowRun: snapshot.workflowRun });
     // better-sqlite3 transactions are synchronous — the check and the write
     // commit together, so an untrack cannot land between them.
     this.db.transaction(() => {
@@ -389,6 +384,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         requireTracked, requireNoMissing: requireNoMissingEpisodes === true })) return;
       if (mergeCurrentEpisodes && !shouldKeepEpisodes) this.mergeCurrentManualSnapshot(snapshot);
       preserveQueuedRunMetadata(snapshot, existing);
+      if (!existing) this.captureSubscriptionPolicySnapshot(snapshot, snapshot.accountId ?? DEFAULT_ACCOUNT_ID);
       this.replaceWorkflowRunSnapshot(snapshot, { runOnly: shouldKeepEpisodes });
     })();
   }

@@ -1666,13 +1666,10 @@ function verifiedFileFromItem(
 }
 
 function isDirectory(item: Pan115Item): boolean {
-  if (item.isDirectory !== undefined) {
-    return item.isDirectory;
-  }
-  if (item.fc === "0" || item.fc === 0) {
-    return true;
-  }
-  return item.cid !== undefined && item.fid === undefined && item.file_id === undefined;
+  if (item.isDirectory !== undefined) return item.isDirectory;
+  if (Boolean(item.fid ?? item.file_id)) return false;
+  if (item.fc === "0" || item.fc === 0) return true;
+  return item.cid !== undefined;
 }
 
 function directoryIdFromItem(item: Pan115Item): string {

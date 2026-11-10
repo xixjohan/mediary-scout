@@ -143,6 +143,7 @@ describe("buildManualImportReservation — 载荷形状", () => {
       "blockIfTitleHasActiveRun",
       "decisions",
       "episodes",
+      "keepCurrentEpisodes",
       "notifications",
       "resourceSnapshots",
       "season",
