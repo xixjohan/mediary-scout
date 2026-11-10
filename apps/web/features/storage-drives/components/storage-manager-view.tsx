@@ -464,12 +464,20 @@ export function StorageManagerView({
     setError(null);
     setSuccessMessage(null);
     try {
+      const currentSeasonMatch = listing?.currentDirectoryName
+        ? /^(?:Season\s*(\d+)|第\s*(\d+)\s*季)$/i.exec(listing.currentDirectoryName.trim())
+        : null;
+      const currentSeasonNumber = currentSeasonMatch
+        ? Number(currentSeasonMatch[1] || currentSeasonMatch[2])
+        : undefined;
+
       const res = await fetch("/api/titles/organize", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           tmdbId: currentFolderTmdbId,
           directoryId: currentDirId,
+          ...(currentSeasonNumber !== undefined ? { seasonNumber: currentSeasonNumber } : {}),
         }),
       });
       const data = await res.json();

@@ -66,16 +66,17 @@ async function resolveOrganizeTarget(input: {
   | { ok: false; status: number; error: string }
 > {
   const states = await getWorkflowRepository().listTrackedSeasonStates(input.accountId);
-  const tracked = states.find((state) => state.title.tmdbId === input.tmdbId);
-  if (!tracked) return { ok: false, status: 404, error: "title not tracked" };
+  const matchedStates = states.filter((state) => state.title.tmdbId === input.tmdbId);
+  if (matchedStates.length === 0) return { ok: false, status: 404, error: "title not tracked" };
 
-  const season =
-    input.seasonNumber === undefined || tracked.season?.seasonNumber === input.seasonNumber
-      ? tracked.season
-      : undefined;
-  if (season === undefined) {
-    return { ok: false, status: 404, error: "season not tracked" };
+  let tracked = matchedStates.find((state) =>
+    input.seasonNumber !== undefined ? state.season?.seasonNumber === input.seasonNumber : true,
+  );
+  if (!tracked) {
+    tracked = matchedStates[0]!;
   }
+
+  const season = tracked.season;
 
   const effectiveDirectoryId = input.directoryId ?? season.storageDirectoryId;
   if (effectiveDirectoryId === undefined || effectiveDirectoryId.length === 0) {
@@ -160,6 +161,7 @@ export async function POST(request: NextRequest) {
       tvParentDirectoryId: tvParentDir,
       season,
       accountId,
+      currentSeasonNumber: season?.seasonNumber,
     });
   }
 

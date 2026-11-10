@@ -120,4 +120,31 @@ describe("POST /api/storage/files/adopt", () => {
     expect(data.message).toContain("桃源暗鬼");
     expect(data.message).toContain("第 1 季");
   });
+
+  it("successfully adopts folder with noisy BT ad prefix when explicit tmdbId is passed", async () => {
+    fakeManager.listDirectory.mockResolvedValue({
+      items: [
+        { id: "v1", name: "桃源暗鬼 - S01E01.mp4", isFolder: false, sizeBytes: 800 * 1024 * 1024, type: "video" },
+      ],
+    });
+
+    const req = new NextRequest("http://localhost/api/storage/files/adopt", {
+      method: "POST",
+      body: JSON.stringify({
+        storageId: "cs_1",
+        folderId: "dir_ad_folder",
+        folderName:
+          "【高清剧集网发布 www.BTHDTV.com】桃源暗鬼[全24集][简繁英字幕].Tougen.Anki.S01.2025.1080p.NF.WEB-DL.AAC2.0.H264-ColorTV",
+        parentFolderName: "staging-0b62585d-fa41-412b-acd6-c515e383a78e",
+        tmdbId: 253811,
+      }),
+    });
+
+    const res = await adoptFolder(req);
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.message).toContain("桃源暗鬼");
+    expect(data.message).toContain("第 1 季");
+  });
 });

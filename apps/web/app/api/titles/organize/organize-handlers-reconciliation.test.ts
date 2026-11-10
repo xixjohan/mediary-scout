@@ -76,4 +76,50 @@ describe("reconcileTvSeasonDirectories auto-adoption and reconciliation", () => 
     expect(s1.season.status).toBe("completed");
     expect(s1.episodes.filter((e) => e.obtained)).toHaveLength(12);
   });
+
+  it("handles organization when invoked directly inside Season 01 directory", async () => {
+    const mockStorage = {
+      listChildDirectories: vi.fn().mockResolvedValue([]),
+      listVideoFiles: vi.fn().mockResolvedValue(
+        Array.from({ length: 12 }, (_, i) => {
+          const epNum = i + 1;
+          const pad = String(epNum).padStart(2, "0");
+          return {
+            id: `file_${pad}`,
+            name: `桃源暗鬼 - S01E${pad} [Ani] [1080P].mp4`,
+            sizeBytes: 800 * 1024 * 1024,
+          };
+        }),
+      ),
+    };
+
+    const mediaTitle: MediaTitle = {
+      id: "tmdb_tv_253811",
+      tmdbId: 253811,
+      type: "anime",
+      title: "桃源暗鬼",
+      originalTitle: "桃源暗鬼",
+      year: 2025,
+      aliases: [],
+      posterPath: null,
+    };
+
+    const res = await handlers.handleTvOrganize({
+      storage: mockStorage,
+      title: mediaTitle,
+      sourceDirectoryId: "dir_season_1",
+      accountId: "acct_test",
+      connectedStorageId: "cs_1",
+      currentSeasonNumber: 1,
+    });
+
+    const data = await res.json();
+    expect(res.status).toBe(200);
+    expect(data.status).toBe("organized");
+    expect(data.copy).toContain("已成功对齐并点亮");
+
+    const states = await repo.listTrackedSeasonStates({ accountId: "acct_test", connectedStorageId: "cs_1" });
+    expect(states).toHaveLength(1);
+    expect(states[0]!.episodes.filter((e) => e.obtained)).toHaveLength(12);
+  });
 });

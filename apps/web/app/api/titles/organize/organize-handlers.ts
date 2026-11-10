@@ -211,9 +211,9 @@ async function reconcileSingleTvSeason(input: {
   seasonDir: { id: string; name: string };
   matchedState?: TrackedSeasonState | undefined;
   targetSeason?: { seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number } | undefined;
-}): Promise<void> {
+}): Promise<number> {
   const match = /^Season\s+(\d+)$/i.exec(input.seasonDir.name);
-  if (!match?.[1]) return;
+  if (!match?.[1]) return 0;
   const seasonNum = Number(match[1]);
 
   let videoFiles: Array<{ id: string; name: string; sizeBytes?: number }> = [];
@@ -256,6 +256,8 @@ async function reconcileSingleTvSeason(input: {
     existingEpisodes,
     isFull,
   });
+
+  return existingEpisodes.length;
 }
 
 export async function reconcileTvSeasonDirectories(input: {
@@ -264,12 +266,22 @@ export async function reconcileTvSeasonDirectories(input: {
   connectedStorageId?: string | null;
   title: TrackedSeasonState["title"];
   showDirectoryId: string;
-}): Promise<void> {
+  currentSeasonNumber?: number | undefined;
+}): Promise<{ totalReconciledSeasons: number; totalReconciledEpisodes: number }> {
+  let totalReconciledSeasons = 0;
+  let totalReconciledEpisodes = 0;
   try {
     const repo = getWorkflowRepository();
     const states = await repo.listTrackedSeasonStates(input.accountId);
-    const showChildren = await input.storage.listChildDirectories(input.showDirectoryId);
-    const seasonDirs = showChildren.filter((d: { name: string }) => /^Season\s+\d+$/i.test(d.name));
+    let showChildren: Array<{ id: string; name: string }> = [];
+    try {
+      showChildren = await input.storage.listChildDirectories(input.showDirectoryId);
+    } catch {}
+    let seasonDirs = showChildren.filter((d: { name: string }) => /^Season\s+\d+$/i.test(d.name));
+
+    if (seasonDirs.length === 0 && input.currentSeasonNumber !== undefined) {
+      seasonDirs = [{ id: input.showDirectoryId, name: `Season ${input.currentSeasonNumber}` }];
+    }
 
     let targetSeasons: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> = [];
     try {
@@ -288,7 +300,7 @@ export async function reconcileTvSeasonDirectories(input: {
       );
       const targetSeason = targetSeasons.find((s) => s.seasonNumber === seasonNum);
 
-      await reconcileSingleTvSeason({
+      const count = await reconcileSingleTvSeason({
         storage: input.storage,
         repo,
         accountId: input.accountId,
@@ -298,10 +310,13 @@ export async function reconcileTvSeasonDirectories(input: {
         matchedState,
         targetSeason,
       });
+      totalReconciledEpisodes += count;
+      totalReconciledSeasons++;
     }
   } catch (err) {
     console.warn("[organize] Reconcile tv seasons failed:", err);
   }
+  return { totalReconciledSeasons, totalReconciledEpisodes };
 }
 
 export async function handleTvDeterministicExecution(input: {
@@ -478,6 +493,7 @@ export async function handleTvOrganize(input: {
   tvParentDirectoryId?: string | undefined;
   season?: TrackedSeasonState["season"] | undefined;
   accountId: string;
+  currentSeasonNumber?: number | undefined;
 }): Promise<NextResponse> {
   let showDirectoryId = input.sourceDirectoryId;
 
@@ -532,15 +548,29 @@ export async function handleTvOrganize(input: {
     }
   }
 
-  await reconcileTvSeasonDirectories({
+  const reconciled = await reconcileTvSeasonDirectories({
     storage: input.storage,
     accountId: input.accountId,
     connectedStorageId: input.connectedStorageId ?? null,
     title: input.title,
     showDirectoryId,
+    currentSeasonNumber: input.currentSeasonNumber,
   });
 
+  const mediaLabel = input.title.type === "anime" ? "动漫" : "剧集";
+
   if (allPlaced.length === 0 && totalArchived === 0) {
+    if (reconciled.totalReconciledEpisodes > 0) {
+      return NextResponse.json(
+        {
+          status: "organized",
+          copy: `${mediaLabel}《${input.title.title}》文件已就绪，已成功对齐并点亮 ${reconciled.totalReconciledSeasons} 个季目录共 ${reconciled.totalReconciledEpisodes} 集物理正片，媒体库与订阅状态已更新！`,
+          moves: [],
+        },
+        { status: 200, headers: NO_STORE },
+      );
+    }
+
     return NextResponse.json(
       {
         status: "manual_review",
@@ -551,7 +581,6 @@ export async function handleTvOrganize(input: {
     );
   }
 
-  const mediaLabel = input.title.type === "anime" ? "动漫" : "剧集";
   return NextResponse.json(
     {
       status: "organized",

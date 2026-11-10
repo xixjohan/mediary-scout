@@ -111,8 +111,8 @@ async function resolveSeriesSeasonAdoption(params: {
   try {
     const target = await seriesTargetFor(params.tmdbId);
     if (!target?.title) return null;
-    const match = /^(?:Season\s*(\d+)|第\s*(\d+)\s*季)$/i.exec(params.folderName.trim());
-    const seasonNum = params.seasonNumber ?? (match ? Number(match[1] || match[2]) : 1);
+    const match = /(?:Season\s*(\d+)|[Ss](\d{1,2})|第\s*(\d+)\s*季)/i.exec(params.folderName.trim());
+    const seasonNum = params.seasonNumber ?? (match ? Number(match[1] || match[2] || match[3]) : 1);
     return {
       titleObj: target.title,
       mediaKind: "tv",
@@ -133,9 +133,8 @@ async function resolveMetadataForAdoption(params: ResolveAdoptionParams): Promis
     ? parseTitleWithChain({ folderName: params.parentFolderName })
     : null;
   const targetTmdbId = explicitTmdbId ?? parentParsed?.tmdbId;
-  const isSeasonName = /^(?:Season\s*(\d+)|第\s*(\d+)\s*季)$/i.test(folderName.trim());
 
-  if (targetTmdbId && (isSeasonName || params.seasonNumber !== undefined)) {
+  if (targetTmdbId) {
     const seriesResult = await resolveSeriesSeasonAdoption({
       tmdbId: targetTmdbId,
       seasonNumber: params.seasonNumber,
