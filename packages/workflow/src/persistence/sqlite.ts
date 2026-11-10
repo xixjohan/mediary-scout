@@ -376,7 +376,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     const shouldKeepEpisodes = keepCurrentEpisodes === true || isAuxiliary;
     const isSearchRecord = snapshot.workflowRun.kind === "resource_search";
     const requireTracked =
-      !isSearchRecord &&
+      !isSearchRecord && snapshot.workflowRun.kind !== "manual_import" &&
       reservationRequiresTrackedSeason({
         ...(requireTrackedSeason === true ? { requireTrackedSeason: true } : {}),
         ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}),

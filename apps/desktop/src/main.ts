@@ -90,6 +90,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(bootstrap).catch((error: unknown) => {
+    console.error("[main] bootstrap failed:", error);
     dialog.showErrorBox(
       "Mediary Scout",
       `启动失败：${error instanceof Error ? error.message : String(error)}`,

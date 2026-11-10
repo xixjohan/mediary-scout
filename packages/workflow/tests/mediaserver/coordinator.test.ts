@@ -99,7 +99,8 @@ describe("MediaServerCoordinator & Execution Tracking", () => {
 
   it("should link pinpoint ingest with strm execution records and mediaserver notify", async () => {
     const repo = new InMemoryWorkflowRepository();
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pinpoint-test-"));
+    const tmpDir = path.join(process.cwd(), "data", `pinpoint-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    fs.mkdirSync(tmpDir, { recursive: true });
 
     try {
       await repo.createStrmTask({
@@ -108,7 +109,7 @@ describe("MediaServerCoordinator & Execution Tracking", () => {
         storageId: "storage-115",
         remoteFolderId: "root",
         remotePath: "/",
-        localOutputDir: tmpDir,
+        localOutputDir: path.relative(process.cwd(), tmpDir).replace(/\\/g, "/"),
         scanMode: "incremental_missing",
         extensions: "mkv;mp4",
         minFileSizeMb: 1,

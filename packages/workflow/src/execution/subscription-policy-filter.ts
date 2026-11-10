@@ -18,12 +18,12 @@ export async function loadSubscriptionPolicyFilter(input: {
   subscriptionSearchKeywords?: string[];
 }> {
   let snapshot: WorkflowPolicySnapshotLookup | null = null;
-  if (input.workflowRunId && input.repository.getWorkflowRunPolicySnapshot) {
-    try {
-      snapshot = await input.repository.getWorkflowRunPolicySnapshot(input.workflowRunId, input.accountId);
-    } catch {
-      snapshot = null;
+  if (input.workflowRunId) {
+    if (!input.repository.getWorkflowRunPolicySnapshot) {
+      throw new Error("无法读取此任务的订阅策略快照；请重新创建获取任务");
     }
+    snapshot = await input.repository.getWorkflowRunPolicySnapshot(input.workflowRunId, input.accountId);
+    if (!snapshot) throw new Error("无法读取此任务的订阅策略快照；请重新创建获取任务");
   }
   if (snapshot && "legacyUnknown" in snapshot) {
     throw new Error("此任务没有入队时的订阅策略快照，请重新创建获取任务");

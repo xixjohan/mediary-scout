@@ -133,7 +133,7 @@ exports.default = async function afterPack(context) {
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
     [FuseV1Options.EnableNodeCliInspectArguments]: false,
     [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: true,
-    [FuseV1Options.OnlyLoadAppFromAsar]: true,
+    [FuseV1Options.OnlyLoadAppFromAsar]: false,
   });
 
   // 原生 ABI 正规化（任务单 S2.4）：替换 + 强制验证，失败即构建失败。

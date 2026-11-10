@@ -89,6 +89,7 @@ async function flushMicrotasks() {
 describe("agent trace — runner-v2 wires the durable step trace", () => {
   it("records an ordered, args-bearing step trace for a real runner run (可复盘)", async () => {
     const repository = new InMemoryWorkflowRepository();
+    repository.getWorkflowRunPolicySnapshot = async () => ({ schemaVersion: 1, evaluatorVersion: 1, capturedAt: "2026-06-15T00:00:00.000Z", policy: null });
     await runType2InitializationV2AndPersist({
       title: tvTitle,
       season: trackedSeason(),
@@ -112,6 +113,7 @@ describe("agent trace — runner-v2 wires the durable step trace", () => {
 
   it("crash-safe: steps before a mid-run crash survive even though the snapshot never persists", async () => {
     const repository = new InMemoryWorkflowRepository();
+    repository.getWorkflowRunPolicySnapshot = async () => ({ schemaVersion: 1, evaluatorVersion: 1, capturedAt: "2026-06-15T00:00:00.000Z", policy: null });
     await expect(
       runType2InitializationV2AndPersist({
         title: tvTitle,

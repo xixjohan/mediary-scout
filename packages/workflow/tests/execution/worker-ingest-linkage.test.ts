@@ -62,7 +62,8 @@ describe("Worker Post-Ingest Linkage with STRM & MediaServer", () => {
   let tmpOutputDir: string;
 
   beforeEach(() => {
-    tmpOutputDir = fs.mkdtempSync(path.join(os.tmpdir(), "post-ingest-test-"));
+    tmpOutputDir = path.join(process.cwd(), "data", `post-ingest-test-${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    fs.mkdirSync(tmpOutputDir, { recursive: true });
   });
 
   afterEach(() => {
@@ -84,7 +85,7 @@ describe("Worker Post-Ingest Linkage with STRM & MediaServer", () => {
       storageId,
       remoteFolderId: "movies_root",
       remotePath: "/movies",
-      localOutputDir: tmpOutputDir,
+      localOutputDir: path.relative(process.cwd(), tmpOutputDir).replace(/\\/g, "/"),
       scanMode: "incremental_missing",
       extensions: "mkv;mp4",
       minFileSizeMb: 1,
@@ -146,7 +147,7 @@ describe("Worker Post-Ingest Linkage with STRM & MediaServer", () => {
     expect(result.workflowStatus).toBe("succeeded");
 
     // 4. Verify STRM file is generated in the output directory
-    const outputFiles = fs.readdirSync(tmpOutputDir);
+    const outputFiles = fs.readdirSync(tmpOutputDir, { recursive: true }).map(String);
     expect(outputFiles.length).toBeGreaterThan(0);
     expect(outputFiles.some((f) => f.endsWith(".strm"))).toBe(true);
 

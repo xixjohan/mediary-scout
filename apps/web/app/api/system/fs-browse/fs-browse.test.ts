@@ -57,7 +57,8 @@ describe("System FS Browse API", () => {
   });
 
   it("GET /api/system/fs-browse 安全拦截：试图越权访问非法路径返回 403", async () => {
-    const req = new NextRequest("http://localhost:3000/api/system/fs-browse?path=Z:\\Totally\\Fake\\Path\\Escape");
+    const escapePath = process.platform === "win32" ? "Z:\\Totally\\Fake\\Path\\Escape" : "/var/log/outside-root-escape";
+    const req = new NextRequest(`http://localhost:3000/api/system/fs-browse?path=${encodeURIComponent(escapePath)}`);
     const res = await GET(req);
     expect(res.status).toBe(403);
     const data = await res.json();

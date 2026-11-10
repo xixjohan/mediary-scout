@@ -1533,7 +1533,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
 
     // Synchronous with the write below: no await, so an untrack cannot land between them.
     const isSearchRecord = cloned.workflowRun.kind === "resource_search";
-    const requireTracked = !isSearchRecord && reservationRequiresTrackedSeason({
+    const requireTracked = !isSearchRecord && cloned.workflowRun.kind !== "manual_import" && reservationRequiresTrackedSeason({
         ...(input.requireTrackedSeason === true ? { requireTrackedSeason: true } : {}),
         ...(shouldKeepEpisodes ? { keepCurrentEpisodes: true } : {}),
       });
