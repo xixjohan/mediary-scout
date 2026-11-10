@@ -11,7 +11,7 @@ import {
   StorageArchiveAdapter,
   type ArchiveCategory,
 } from "../storage/storage-archive-adapter.js";
-import { parseEpisodeCode } from "../domain/episode-code.js";
+import { parseEpisodeCode, canonicalEpisodeFileName } from "../domain/episode-code.js";
 
 export interface OrganizeMovieInput {
   movieDirectoryId: string;
@@ -64,8 +64,9 @@ export class MediaOrganizer {
   private collectCandidatesFromTree(
     tree: PackageTreeFile[],
     childDirByName: Map<string, string>,
-  ): MediaCandidateItem[] {
+  ): { candidates: MediaCandidateItem[]; totalVideosByWrapper: Map<string, number> } {
     const candidates: MediaCandidateItem[] = [];
+    const totalVideosByWrapper = new Map<string, number>();
     for (const file of tree) {
       const parts = file.path.split("/").filter(Boolean);
       const fileName = parts[parts.length - 1] ?? "";
@@ -78,6 +79,10 @@ export class MediaOrganizer {
         wrapperFolderId = wrapperFolderName ? childDirByName.get(wrapperFolderName) : undefined;
       }
 
+      if (wrapperFolderId) {
+        totalVideosByWrapper.set(wrapperFolderId, (totalVideosByWrapper.get(wrapperFolderId) ?? 0) + 1);
+      }
+
       candidates.push({
         id: file.providerFileId,
         name: fileName,
@@ -86,7 +91,7 @@ export class MediaOrganizer {
         wrapperFolderName,
       });
     }
-    return candidates;
+    return { candidates, totalVideosByWrapper };
   }
 
   private async archiveRedundantMovieItems(
@@ -166,7 +171,7 @@ export class MediaOrganizer {
       return { status: "no_media", archivedCount: 0, archivedItems: [] };
     }
 
-    const candidates = this.collectCandidatesFromTree(tree, childDirByName);
+    const { candidates } = this.collectCandidatesFromTree(tree, childDirByName);
     if (candidates.length === 0) {
       return { status: "no_media", archivedCount: 0, archivedItems: [] };
     }
@@ -213,7 +218,8 @@ export class MediaOrganizer {
   private async placePrimaryTvEpisodes(
     showDirectoryId: string,
     primary: Map<string, MediaCandidateItem>,
-  ): Promise<{ placedEpisodes: string[]; wrappersWithExtractedFiles: Set<string> }> {
+    titleName: string,
+  ): Promise<{ placedEpisodes: string[]; extractedByWrapper: Map<string, number> }> {
     const showChildDirs = await this.storage.listChildDirectories(showDirectoryId);
     const seasonDirMap = new Map<number, string>();
     for (const dir of showChildDirs) {
@@ -224,7 +230,7 @@ export class MediaOrganizer {
     }
 
     const placedEpisodes: string[] = [];
-    const wrappersWithExtractedFiles = new Set<string>();
+    const extractedByWrapper = new Map<string, number>();
 
     for (const [code, item] of primary.entries()) {
       const parts = parseEpisodeCode(code);
@@ -245,13 +251,35 @@ export class MediaOrganizer {
         targetDirectoryId: seasonDirId,
       });
 
+      // 规范化重命名，同时保留高质量/发布组画质标签
+      try {
+        const canonicalName = canonicalEpisodeFileName({
+          title: titleName,
+          episodeCode: code,
+          sourceName: item.name,
+          preserveMetadata: true,
+        });
+        if (canonicalName && canonicalName !== item.name) {
+          await this.storage.renameFile({
+            directoryId: seasonDirId,
+            fileId: item.id,
+            newName: canonicalName,
+          });
+        }
+      } catch {
+        // rename failure won't block move
+      }
+
       placedEpisodes.push(code);
       if (item.wrapperFolderId) {
-        wrappersWithExtractedFiles.add(item.wrapperFolderId);
+        extractedByWrapper.set(
+          item.wrapperFolderId,
+          (extractedByWrapper.get(item.wrapperFolderId) ?? 0) + 1,
+        );
       }
     }
 
-    return { placedEpisodes, wrappersWithExtractedFiles };
+    return { placedEpisodes, extractedByWrapper };
   }
 
   private async archiveRedundantTvPackages(
@@ -261,12 +289,9 @@ export class MediaOrganizer {
     fallbackCategoryParentId: string | undefined,
     redundant: MediaCandidateItem[],
     stagingChildDirs: Array<{ id: string; name: string }>,
-    wrappersWithExtractedFiles: Set<string>,
+    extractedByWrapper: Map<string, number>,
+    totalVideosByWrapper: Map<string, number>,
   ): Promise<{ archivedCount: number; archivedItems: string[] }> {
-    if (redundant.length === 0 && stagingChildDirs.length === 0) {
-      return { archivedCount: 0, archivedItems: [] };
-    }
-
     const targetArchiveFolderId = await this.archiveAdapter.getOrCreateTitleArchiveFolder(
       category,
       canonicalFolderName,
@@ -275,21 +300,37 @@ export class MediaOrganizer {
 
     let archivedCount = 0;
     const archivedItems: string[] = [];
+    const handledWrapperIds = new Set<string>();
 
-    const untouchedWrappers = stagingChildDirs.filter((d) => !wrappersWithExtractedFiles.has(d.id));
-    const archivedWrapperIds = new Set(untouchedWrappers.map((d) => d.id));
+    for (const dir of stagingChildDirs) {
+      const total = totalVideosByWrapper.get(dir.id) ?? 0;
+      const extracted = extractedByWrapper.get(dir.id) ?? 0;
 
-    if (untouchedWrappers.length > 0) {
-      const res = await this.archiveAdapter.archiveItems({
-        targetArchiveDirectoryId: targetArchiveFolderId,
-        items: untouchedWrappers.map((d) => ({ id: d.id, name: d.name, isFolder: true })),
-        sourceDirectoryId: stagingDirectoryId,
-      });
-      archivedCount += res.archivedCount;
-      archivedItems.push(...untouchedWrappers.map((d) => d.name));
+      if (total > 0 && extracted >= total) {
+        // 视频全部被抽空的包装壳文件夹，直接删除清理
+        try {
+          await this.storage.removeDirectory(dir.id);
+        } catch {
+          // ignore
+        }
+        handledWrapperIds.add(dir.id);
+      } else {
+        // 含有落败多余版本或未被提取的包，整包归档到 Archive 目录
+        const res = await this.archiveAdapter.archiveItems({
+          targetArchiveDirectoryId: targetArchiveFolderId,
+          items: [{ id: dir.id, name: dir.name, isFolder: true }],
+          sourceDirectoryId: stagingDirectoryId,
+        });
+        archivedCount += res.archivedCount;
+        archivedItems.push(dir.name);
+        handledWrapperIds.add(dir.id);
+      }
     }
 
-    const looseRedundantFiles = redundant.filter((r) => !r.wrapperFolderId || !archivedWrapperIds.has(r.wrapperFolderId));
+    // 处理散落（不在任何包装文件夹内）的落败视频文件
+    const looseRedundantFiles = redundant.filter(
+      (r) => !r.wrapperFolderId || !handledWrapperIds.has(r.wrapperFolderId),
+    );
     if (looseRedundantFiles.length > 0) {
       const res = await this.archiveAdapter.archiveItems({
         targetArchiveDirectoryId: targetArchiveFolderId,
@@ -332,15 +373,19 @@ export class MediaOrganizer {
       return { status: "no_media", placedEpisodes: [], archivedCount: 0, archivedItems: [], stagingRemoved: true };
     }
 
-    const candidates = this.collectCandidatesFromTree(stagingTree, stagingChildByName);
+    const { candidates, totalVideosByWrapper } = this.collectCandidatesFromTree(
+      stagingTree,
+      stagingChildByName,
+    );
     if (candidates.length === 0) {
       return { status: "no_media", placedEpisodes: [], archivedCount: 0, archivedItems: [], stagingRemoved: false };
     }
 
     const { primary, redundant } = rankTvCandidates(candidates);
-    const { placedEpisodes, wrappersWithExtractedFiles } = await this.placePrimaryTvEpisodes(
+    const { placedEpisodes, extractedByWrapper } = await this.placePrimaryTvEpisodes(
       input.showDirectoryId,
       primary,
+      input.title,
     );
 
     const { archivedCount, archivedItems } = await this.archiveRedundantTvPackages(
@@ -350,7 +395,8 @@ export class MediaOrganizer {
       input.fallbackCategoryParentId,
       redundant,
       stagingChildDirs,
-      wrappersWithExtractedFiles,
+      extractedByWrapper,
+      totalVideosByWrapper,
     );
 
     let stagingRemoved = false;

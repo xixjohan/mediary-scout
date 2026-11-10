@@ -71,8 +71,15 @@ async function enrichListingWithMediaInfo(
       if (s.season.storageDirectoryId) stateByDirId.set(s.season.storageDirectoryId, s);
     }
 
+    const isInsideStaging =
+      listing.breadcrumbs?.some((b) => b.name.toLowerCase().startsWith("staging-")) || false;
+
     for (const item of listing.items) {
       if (item.isFolder) {
+        if (item.name.toLowerCase().startsWith("staging-") || isInsideStaging) {
+          // staging 暂存目录或 staging 内部的资源包，属于任务中间资产，不应标记为可反推
+          continue;
+        }
         enrichFolderItem(item, stateByDirId, stateByTmdbId, stateByName);
       }
     }

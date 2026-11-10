@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertCircle, Copy, HardDrive, Move, RefreshCw, Trash2 } from "lucide-react";
 import type { DriveBreadcrumb, DriveDirectoryListing, DriveFileItem } from "@media-track/workflow";
+import { tmdbIdFromMediaLibraryFolderName } from "@media-track/workflow";
 import type { ConnectedStorageView } from "../../../lib/workflow-runtime";
 import { StorageFileTable } from "./storage/storage-file-table";
 import { type ModalState, StorageModals } from "./storage/storage-modals";
@@ -69,6 +70,75 @@ function buildActionPayload(
   return null;
 }
 
+function resolveTmdbIdFromListing(
+  currentDirectoryName: string | undefined,
+  breadcrumbs: DriveBreadcrumb[],
+): number | null {
+  const directTmdbId = tmdbIdFromMediaLibraryFolderName(currentDirectoryName ?? "");
+  if (directTmdbId) return directTmdbId;
+
+  for (let i = breadcrumbs.length - 1; i >= 0; i--) {
+    const crumb = breadcrumbs[i];
+    if (crumb?.name) {
+      const fromCrumb = tmdbIdFromMediaLibraryFolderName(crumb.name);
+      if (fromCrumb) return fromCrumb;
+    }
+  }
+  return null;
+}
+
+function findParentCrumbForStaging(
+  currentDirectoryName: string | undefined,
+  breadcrumbs: DriveBreadcrumb[],
+): DriveBreadcrumb | null {
+  if (currentDirectoryName?.toLowerCase().startsWith("staging-") && breadcrumbs.length >= 2) {
+    return breadcrumbs[breadcrumbs.length - 2] ?? null;
+  }
+  return null;
+}
+
+function StorageEmptyState({
+  error,
+  onRefresh,
+}: {
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="storage-empty-state">
+      <HardDrive size={48} className="storage-empty-icon" />
+      <h2>未配置已连接网盘</h2>
+      <p>
+        {error ??
+          "请前往网盘设置页面扫码或添加网盘凭证后再使用网盘管理功能。若此前已添加网盘，请确认已登录对应账号或点击下方的刷新重新检测。"}
+      </p>
+      <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
+        <button
+          type="button"
+          className="storage-btn secondary"
+          onClick={onRefresh}
+          style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+        >
+          <RefreshCw size={16} /> 刷新检测
+        </button>
+        <Link href="/settings" className="storage-btn primary">
+          前往网盘设置
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+function getInitialSelectedStorageId(
+  initialStorageId?: string,
+  initialStorages?: ConnectedStorageView[],
+): string {
+  if (initialStorageId) return initialStorageId;
+  if (!initialStorages || initialStorages.length === 0) return "";
+  const active = initialStorages.find((s) => s.status === "active") ?? initialStorages[0];
+  return active ? active.id : "";
+}
+
 export interface StorageManagerViewProps {
   storages?: ConnectedStorageView[] | undefined;
   initialStorageId?: string | undefined;
@@ -79,14 +149,9 @@ export function StorageManagerView({
   initialStorageId,
 }: StorageManagerViewProps = {}) {
   const [storages, setStorages] = useState<ConnectedStorageView[]>(initialStorages ?? []);
-  const [selectedStorageId, setSelectedStorageId] = useState<string>(() => {
-    if (initialStorageId) return initialStorageId;
-    if (initialStorages && initialStorages.length > 0) {
-      const active = initialStorages.find((s) => s.status === "active") ?? initialStorages[0];
-      return active ? active.id : "";
-    }
-    return "";
-  });
+  const [selectedStorageId, setSelectedStorageId] = useState<string>(() =>
+    getInitialSelectedStorageId(initialStorageId, initialStorages),
+  );
   const [currentDirId, setCurrentDirId] = useState<string>("");
   const [breadcrumbs, setBreadcrumbs] = useState<DriveBreadcrumb[]>([
     { id: "0", name: "根目录" },
@@ -380,33 +445,50 @@ export function StorageManagerView({
   };
 
   if (!loading && storages.length === 0) {
-    return (
-      <div className="storage-empty-state">
-        <HardDrive size={48} className="storage-empty-icon" />
-        <h2>未配置已连接网盘</h2>
-        <p>
-          {error
-            ? error
-            : "请前往网盘设置页面扫码或添加网盘凭证后再使用网盘管理功能。若此前已添加网盘，请确认已登录对应账号或点击下方的刷新重新检测。"}
-        </p>
-        <div style={{ display: "flex", gap: "0.75rem", marginTop: "1rem" }}>
-          <button
-            type="button"
-            className="storage-btn secondary"
-            onClick={() => void loadStorages()}
-            style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
-          >
-            <RefreshCw size={16} /> 刷新检测
-          </button>
-          <Link href="/settings" className="storage-btn primary">
-            前往网盘设置
-          </Link>
-        </div>
-      </div>
-    );
+    return <StorageEmptyState error={error} onRefresh={() => void loadStorages()} />;
   }
 
   const currentStorage = storages.find((s) => s.id === selectedStorageId);
+
+  const currentFolderTmdbId = useMemo(
+    () => resolveTmdbIdFromListing(listing?.currentDirectoryName, breadcrumbs),
+    [listing?.currentDirectoryName, breadcrumbs],
+  );
+
+  const [organizing, setOrganizing] = useState<boolean>(false);
+  const handleOrganizeCurrentFolder = useCallback(async () => {
+    if (!currentFolderTmdbId) return;
+    setOrganizing(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const res = await fetch("/api/titles/organize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tmdbId: currentFolderTmdbId,
+          directoryId: currentDirId,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "整理失败");
+      }
+      setSuccessMessage(data.copy || "整理完成");
+
+      // 若当前正处于 staging 暂存目录，整理后该目录已被彻底清理，平滑导航回上一级影视主目录
+      const parentCrumb = findParentCrumbForStaging(listing?.currentDirectoryName, breadcrumbs);
+      if (parentCrumb) {
+        handleNavigateFolder(parentCrumb.id, parentCrumb.name);
+        return;
+      }
+      await loadFiles(selectedStorageId, currentDirId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "整理出错");
+    } finally {
+      setOrganizing(false);
+    }
+  }, [currentFolderTmdbId, currentDirId, loadFiles, selectedStorageId, listing?.currentDirectoryName, breadcrumbs, handleNavigateFolder]);
 
   return (
     <div className="storage-view-container">
@@ -425,6 +507,9 @@ export function StorageManagerView({
         onOpenOffline={() => setOfflineModalOpen(true)}
         onOpenScan={() => setScanModalOpen(true)}
         onRefresh={() => void handleRefresh()}
+        currentFolderTmdbId={currentFolderTmdbId}
+        onOrganizeCurrentFolder={handleOrganizeCurrentFolder}
+        organizing={organizing}
       />
 
       <StorageNavBar

@@ -335,6 +335,19 @@ describe("Pan115OpenClient", () => {
                 file_size: 0,
                 file_category: 0, // folder
               },
+              {
+                fid: "3558902705290217111",
+                fn: "新汉普夏饭店 (1984) {tmdb-11308}",
+                fc: "0", // 115 OpenAPI real folder shape
+                pid: "3530718306359051489",
+              },
+              {
+                fid: "3558905340990850438",
+                fn: "The.Hotel.New.Hampshire.1984.1080p.BluRay.x264.AAC-[YTS.MX].mp4",
+                fs: 1946716929,
+                fc: "1", // 115 OpenAPI real file shape
+                pid: "3558905341208954248",
+              },
             ],
           }),
         } as unknown as Response;
@@ -352,7 +365,7 @@ describe("Pan115OpenClient", () => {
     });
 
     const items = await client.listItems({ directoryId: "cid_root", limit: 1000 });
-    expect(items).toHaveLength(2);
+    expect(items).toHaveLength(4);
     expect(items[0]).toMatchObject({
       fid: "fid_101",
       name: "Movie.2026.2160p.mkv",
@@ -363,6 +376,19 @@ describe("Pan115OpenClient", () => {
       cid: "cid_202",
       name: "Season 1",
       isDirectory: true,
+    });
+    expect(items[2]).toMatchObject({
+      cid: "3558902705290217111",
+      name: "新汉普夏饭店 (1984) {tmdb-11308}",
+      isDirectory: true,
+      fc: 0,
+    });
+    expect(items[3]).toMatchObject({
+      fid: "3558905340990850438",
+      name: "The.Hotel.New.Hampshire.1984.1080p.BluRay.x264.AAC-[YTS.MX].mp4",
+      size: 1946716929,
+      isDirectory: false,
+      fc: 1,
     });
   });
 

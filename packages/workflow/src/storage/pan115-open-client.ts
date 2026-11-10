@@ -201,11 +201,11 @@ async function performSingleTokenRefresh(
 
 function isItemDirectory(item: Record<string, unknown>): boolean {
   if (item["is_dir"] === 1 || item["is_dir"] === "1" || Boolean(item["isDirectory"])) return true;
-  const hasFileId = Boolean(item["file_id"] ?? item["fid"]);
-  if (hasFileId) return false;
   const fc = String(item["fc"] ?? item["file_category"] ?? "");
   if (fc === "0") return true;
-  if (fc === "1") return false;
+  if (fc.length > 0 && fc !== "0") return false;
+  const hasFileId = Boolean(item["file_id"] ?? item["fid"]);
+  if (hasFileId && !item["cid"] && !item["category_id"]) return false;
   return item["cid"] !== undefined || item["category_id"] !== undefined;
 }
 
@@ -215,7 +215,7 @@ function getItemName(item: Record<string, unknown>): string {
 }
 
 function getItemSize(item: Record<string, unknown>): number {
-  const val = item["file_size"] ?? item["size"] ?? item["s"];
+  const val = item["file_size"] ?? item["size"] ?? item["fs"] ?? item["s"];
   return typeof val === "number" ? val : Number(val) || 0;
 }
 
@@ -224,15 +224,26 @@ function formatPan115Item(item: Record<string, unknown>): Pan115Item {
   const name = getItemName(item);
   const size = getItemSize(item);
   const isDirectory = isItemDirectory(item);
-  const baseItem: Pan115Item = { name, n: name, size, s: size, isDirectory };
+  const baseItem: Pan115Item = {
+    name,
+    n: name,
+    size,
+    s: size,
+    isDirectory,
+    fc: isDirectory ? 0 : 1,
+  };
   const fid = item["file_id"] ?? item["fid"] ?? item["id"];
   const cidVal = item["category_id"] ?? item["cid"];
   const idVal = isDirectory ? (cidVal ?? fid) : (fid ?? cidVal);
   if (idVal !== undefined && idVal !== null) {
-    if (isDirectory) baseItem.cid = String(idVal);
-    else if (fid !== undefined && fid !== null) baseItem.fid = String(idVal);
-    else baseItem.cid = String(idVal);
-    baseItem.id = String(idVal);
+    const idStr = String(idVal);
+    baseItem.id = idStr;
+    if (isDirectory) {
+      baseItem.cid = idStr;
+    } else {
+      baseItem.fid = idStr;
+      baseItem.file_id = idStr;
+    }
   }
   return baseItem;
 }

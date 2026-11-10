@@ -1,6 +1,6 @@
 "use client";
 
-import { Compass, DownloadCloud, FolderPlus, RefreshCw, Search } from "lucide-react";
+import { Compass, DownloadCloud, FolderPlus, RefreshCw, Search, Sparkles } from "lucide-react";
 import type { ConnectedStorageView } from "../../../../lib/workflow-runtime";
 
 export function formatProviderLabel(provider: string): string {
@@ -32,6 +32,9 @@ interface StorageTopBarProps {
   onOpenOffline?: () => void;
   onOpenScan?: () => void;
   onRefresh: () => void;
+  currentFolderTmdbId?: number | null | undefined;
+  onOrganizeCurrentFolder?: (() => void) | undefined;
+  organizing?: boolean | undefined;
 }
 
 export function StorageTopBar({
@@ -46,6 +49,9 @@ export function StorageTopBar({
   onOpenOffline,
   onOpenScan,
   onRefresh,
+  currentFolderTmdbId,
+  onOrganizeCurrentFolder,
+  organizing,
 }: StorageTopBarProps) {
   return (
     <div className="storage-top-bar">
@@ -86,6 +92,25 @@ export function StorageTopBar({
       </div>
 
       <div className="storage-top-actions">
+        {currentFolderTmdbId && onOrganizeCurrentFolder && (
+          <button
+            type="button"
+            className="storage-btn primary"
+            onClick={onOrganizeCurrentFolder}
+            disabled={loading || actionBusy || organizing}
+            title="自动对比目录下各版本画质/音轨/编码，将最高画质版本保留在主目录，多余版本自动归档"
+            style={{
+              background: "linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)",
+              color: "#fff",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "0.35rem",
+            }}
+          >
+            <Sparkles size={16} className={organizing ? "spin" : ""} />
+            {organizing ? "整理中…" : "整理与多版本归档"}
+          </button>
+        )}
         <button
           type="button"
           className="storage-btn primary"

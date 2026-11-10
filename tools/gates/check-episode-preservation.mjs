@@ -127,9 +127,13 @@ function checkRouteCallers() {
   }
 
   const organizeRoutePath = path.join(repoRoot, "apps/web/app/api/titles/organize/route.ts");
+  const organizeHandlersPath = path.join(repoRoot, "apps/web/app/api/titles/organize/organize-handlers.ts");
   if (fs.existsSync(organizeRoutePath)) {
     const content = fs.readFileSync(organizeRoutePath, "utf8");
-    if (!content.includes("keepCurrentEpisodes: true")) {
+    const handlersContent = fs.existsSync(organizeHandlersPath)
+      ? fs.readFileSync(organizeHandlersPath, "utf8")
+      : "";
+    if (!content.includes("keepCurrentEpisodes: true") && !handlersContent.includes("keepCurrentEpisodes: true")) {
       reportViolation(
         organizeRoutePath,
         1,
