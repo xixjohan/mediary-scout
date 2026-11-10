@@ -39,6 +39,15 @@ import {
   type LatestRelease,
 } from "./update-check.js";
 
+// In headless CI or server environments without a GPU, disable hardware acceleration
+// to prevent Chromium from hanging indefinitely waiting for display/GPU initialization.
+if (process.env.CI || process.argv.includes("--disable-gpu")) {
+  app.disableHardwareAcceleration();
+  app.commandLine.appendSwitch("disable-gpu");
+  app.commandLine.appendSwitch("disable-software-rasterizer");
+  app.commandLine.appendSwitch("no-sandbox");
+}
+
 let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -57,7 +66,9 @@ const UPDATE_TICK_MS = 60 * 60_000;
 // spawning a second server (which would fight over the SQLite DB + patrol).
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
+  console.log("[main] single instance lock denied, exiting immediately");
   app.quit();
+  app.exit(0);
 } else {
   // Windows shows a notification only when this matches the AppUserModelID on the Start
   // Menu shortcut, which electron-builder's NSIS sets to the appId.
@@ -102,13 +113,16 @@ if (!gotLock) {
 }
 
 async function bootstrap(): Promise<void> {
+  console.log("[main] bootstrap starting");
   const url = await startServer();
+  console.log("[main] server started:", url);
   createWindow(url);
   createTray();
   startUpdateChecks();
 }
 
 async function startServer(): Promise<string> {
+  console.log("[main] startServer starting...");
   const port = await pickFreePort();
   const sqlitePath = path.join(app.getPath("userData"), "mediary.db");
   const agentToken = loadOrCreateAgentToken({
@@ -129,6 +143,7 @@ async function startServer(): Promise<string> {
     // dev: apps/desktop/dist/main.js → repo root is three levels up.
     repoRoot: path.resolve(__dirname, "..", "..", ".."),
   });
+  console.log(`[main] spawning server at ${entry} on port ${port}...`);
   serverProc = spawn(process.execPath, [entry], {
     // The standalone server reads BUILD_COMMIT relative to its own folder; Next's server.js also chdirs there, this just does not depend on it.
     cwd: path.dirname(entry),
@@ -191,7 +206,7 @@ function createWindow(url: string): void {
     // 显示用中文主名;技术标识(appId / productName)保持英文不变 —— 改那些会让
     // 系统认成另一个应用,老用户升级时装出两份、数据还不通。
     title: "巡影 · Mediary Scout",
-    show: true,
+    show: !process.env.CI,
   });
   const serverOrigin = new URL(url).origin;
   // Links out of the app (GitHub, 请作者喝杯咖啡, installer downloads) open in the system
@@ -225,11 +240,15 @@ const TRAY_ICON_DATA_URL =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABYAAAAWCAYAAADEtGw7AAAAN0lEQVR42mNgGAUDCf7T0uD/tDSY6hb8x4FpZvB/WhpMkQX/aWX4gBo8NCJv8GeQoVMIjQLqAABeq02ztviApQAAAABJRU5ErkJggg==";
 
 function createTray(): void {
-  const icon = nativeImage.createFromDataURL(TRAY_ICON_DATA_URL);
-  icon.setTemplateImage(true); // macOS: auto-recolor for the menu bar
-  tray = new Tray(icon);
-  tray.setToolTip("巡影 · Mediary Scout");
-  refreshTray();
+  try {
+    const icon = nativeImage.createFromDataURL(TRAY_ICON_DATA_URL);
+    icon.setTemplateImage(true); // macOS: auto-recolor for the menu bar
+    tray = new Tray(icon);
+    tray.setToolTip("巡影 · Mediary Scout");
+    refreshTray();
+  } catch (error) {
+    console.error("[main] createTray failed:", error);
+  }
 }
 
 function refreshTray(): void {

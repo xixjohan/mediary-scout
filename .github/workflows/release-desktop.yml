@@ -375,7 +375,7 @@ jobs:
           Write-Host "Installing $($installer.FullName)"
           Start-Process -FilePath $installer.FullName -ArgumentList "/S" -Wait
           Start-Sleep -Seconds 3
-          Get-Process -Name "Mediary Scout" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+          Get-Process | Where-Object { $_.ProcessName -like "*Mediary*" -or $_.Path -like "*mediary*" } | Stop-Process -Force -ErrorAction SilentlyContinue
 
           # electron-builder's per-user NSIS always installs under
           # LOCALAPPDATA\Programs — bounded-depth search there only; if the
@@ -387,14 +387,17 @@ jobs:
           if (-not (Test-Path $serverJs)) { throw "installed server.js not found at $serverJs" }
           Write-Host "Found server.js: $serverJs"
           $env:ELECTRON_ENABLE_LOGGING = "1"
+          $env:ELECTRON_NO_ATTACH_CONSOLE = "true"
           $stdoutLog = "$env:TEMP\electron-stdout.txt"
           $stderrLog = "$env:TEMP\electron-stderr.txt"
           Remove-Item $stdoutLog, $stderrLog -ErrorAction SilentlyContinue
 
-          $proc = Start-Process -FilePath $exe -ArgumentList "--enable-logging" -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
-          $manifest = Join-Path $env:USERPROFILE ".mediary\agent.json"
+          $manifestDir = Join-Path $env:USERPROFILE ".mediary"
+          if (-not (Test-Path $manifestDir)) { New-Item -ItemType Directory -Path $manifestDir -Force | Out-Null }
+          $manifest = Join-Path $manifestDir "agent.json"
           Remove-Item $manifest -ErrorAction SilentlyContinue
 
+          $proc = Start-Process -FilePath $exe -ArgumentList "--disable-gpu", "--disable-software-rasterizer", "--no-sandbox", "--enable-logging" -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
           $deadline = (Get-Date).AddSeconds(120)
           $healthy = $false
           $crashed = $false
@@ -417,7 +420,8 @@ jobs:
             }
             Start-Sleep -Seconds 3
           }
-          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          Get-Process | Where-Object { $_.ProcessName -like "*Mediary*" -or $_.Path -like "*mediary*" } | Stop-Process -Force -ErrorAction SilentlyContinue
           Write-Host "=== ELECTRON STDOUT (first 50 lines) ==="
           Get-Content $stdoutLog -ErrorAction SilentlyContinue | Select-Object -First 50
           Write-Host "=== ELECTRON STDERR (first 50 lines) ==="
