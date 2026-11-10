@@ -422,6 +422,8 @@ jobs:
           }
           if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
           Get-Process | Where-Object { $_.ProcessName -like "*Mediary*" -or $_.Path -like "*mediary*" } | Stop-Process -Force -ErrorAction SilentlyContinue
+          Write-Host "=== MEDIARY DESKTOP LOG ==="
+          Get-Content "$env:TEMP\mediary-desktop.log" -ErrorAction SilentlyContinue | Select-Object -First 100
           Write-Host "=== ELECTRON STDOUT (first 50 lines) ==="
           Get-Content $stdoutLog -ErrorAction SilentlyContinue | Select-Object -First 50
           Write-Host "=== ELECTRON STDERR (first 50 lines) ==="

@@ -12,7 +12,7 @@ import {
 } from "electron";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
@@ -48,6 +48,16 @@ if (process.env.CI || process.argv.includes("--disable-gpu")) {
   app.commandLine.appendSwitch("no-sandbox");
 }
 
+function logDebug(msg: string): void {
+  try {
+    const logPath = path.join(os.tmpdir(), "mediary-desktop.log");
+    appendFileSync(logPath, `[${new Date().toISOString()}] ${msg}\n`, "utf8");
+  } catch {}
+  console.log(msg);
+}
+
+logDebug("[main] module loaded, execPath=" + process.execPath);
+
 let serverProc: ChildProcess | null = null;
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -65,6 +75,7 @@ const UPDATE_TICK_MS = 60 * 60_000;
 // Single-instance lock: a 2nd launch focuses the existing window instead of
 // spawning a second server (which would fight over the SQLite DB + patrol).
 const gotLock = app.requestSingleInstanceLock();
+logDebug("[main] requestSingleInstanceLock=" + gotLock);
 if (!gotLock) {
   console.log("[main] single instance lock denied, exiting immediately");
   app.quit();
@@ -100,7 +111,9 @@ if (!gotLock) {
     serverProc = null;
   });
 
-  app.whenReady().then(bootstrap).catch((error: unknown) => {
+  logDebug("[main] registering app.whenReady");
+app.whenReady().then(() => { logDebug("[main] app.whenReady resolved"); return bootstrap(); }).catch((error: unknown) => {
+    logDebug("[main] bootstrap failed: " + String(error));
     console.error("[main] bootstrap failed:", error);
     if (!process.env.CI) {
       dialog.showErrorBox(
@@ -144,14 +157,20 @@ async function startServer(): Promise<string> {
     repoRoot: path.resolve(__dirname, "..", "..", ".."),
   });
   console.log(`[main] spawning server at ${entry} on port ${port}...`);
+  logDebug(`[main] spawning server entry=${entry} on port=${port}`);
   serverProc = spawn(process.execPath, [entry], {
-    // The standalone server reads BUILD_COMMIT relative to its own folder; Next's server.js also chdirs there, this just does not depend on it.
     cwd: path.dirname(entry),
     env: {
       ...buildServerEnv({ port, sqlitePath, baseEnv: process.env }),
       MEDIA_TRACK_AGENT_TOKEN: agentToken,
     },
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  serverProc.stdout?.on("data", (chunk: Buffer) => {
+    logDebug(`[server stdout] ${chunk.toString().trim()}`);
+  });
+  serverProc.stderr?.on("data", (chunk: Buffer) => {
+    logDebug(`[server stderr] ${chunk.toString().trim()}`);
   });
   serverProc.on("exit", (code) => {
     const wasBooted = serverBooted;
@@ -178,18 +197,21 @@ async function startServer(): Promise<string> {
         fn();
       }
     };
-    serverProc!.once("error", (err) =>
-      finish(() => reject(new Error(`无法启动服务进程：${err.message}`))),
-    );
-    serverProc!.once("exit", (code) =>
-      finish(() => reject(new Error(`服务进程启动时退出（code ${code ?? "null"}）。`))),
-    );
+    serverProc!.once("error", (err) => {
+      logDebug("[main] server child error: " + err.message);
+      finish(() => reject(new Error(`无法启动服务进程：${err.message}`)));
+    });
+    serverProc!.once("exit", (code) => {
+      logDebug("[main] server child exit: " + code);
+      finish(() => reject(new Error(`服务进程启动时退出（code ${code ?? "null"}）。`)));
+    });
     waitForHealthy({ probe: httpProbe(url), timeoutMs: 60_000, intervalMs: 250 }).then(
       () => finish(resolve),
       (err: unknown) => finish(() => reject(err instanceof Error ? err : new Error(String(err)))),
     );
   });
   serverBooted = true;
+  logDebug("[main] server is healthy, serverBooted=true");
   writeAgentManifest({
     manifestPath: agentManifestPath(os.homedir()),
     content: buildAgentManifest({ port, token: agentToken, version: app.getVersion() }),

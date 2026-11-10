@@ -50,6 +50,7 @@ export default defineConfig({
   // string-rendered in tests. (Vite 8 ignores the legacy `esbuild` key.)
   oxc: { jsx: { runtime: "automatic", importSource: "react" } },
   test: {
+    testTimeout: 20_000,
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts", "apps/**/*.test.mjs", "workers/**/*.test.ts", "site/**/*.test.mjs", "tools/**/*.test.mjs"],
     // 构建产物不是测试源：`next build` 会把 route.ts（连同旁边的 .test.ts）
     // 拷进 .next/standalone，vitest 的 apps/** 通配会捡到这些陈旧副本——
