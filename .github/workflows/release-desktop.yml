@@ -409,7 +409,7 @@ jobs:
           $manifest = Join-Path $manifestDir "agent.json"
           Remove-Item $manifest -ErrorAction SilentlyContinue
 
-          $proc = Start-Process -FilePath $exe -ArgumentList "--disable-gpu", "--disable-software-rasterizer", "--no-sandbox", "--enable-logging" -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
+          $proc = Start-Process -FilePath $exe -WorkingDirectory $appDir -ArgumentList "--disable-gpu", "--disable-software-rasterizer", "--no-sandbox", "--enable-logging" -PassThru -RedirectStandardOutput $stdoutLog -RedirectStandardError $stderrLog
           $deadline = (Get-Date).AddSeconds(120)
           $healthy = $false
           $crashed = $false
