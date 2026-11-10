@@ -143,3 +143,13 @@ export function canonicalEpisodeFileName(input: {
   const tagsSuffix = tags.length > 0 ? ` ${tags.join(" ")}` : "";
   return `${cleanTitle} - ${input.episodeCode}${tagsSuffix}${extension}`;
 }
+
+export function parseEpisodeCode(code: string): { seasonNumber: number; episodeNumber: number } | null {
+  const match = /^S(\d{1,2})E(\d{1,4})$/i.exec(code.trim());
+  if (!match?.[1] || !match?.[2]) return null;
+  return {
+    seasonNumber: Number(match[1]),
+    episodeNumber: Number(match[2]),
+  };
+}
+

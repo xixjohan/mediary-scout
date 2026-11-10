@@ -7,6 +7,7 @@ import { inspectStorageBeforeAcquisition } from "./storage-preflight-inspector.j
 import type { WorkflowRepository } from "../persistence/repository.js";
 import type { TmdbSearchProvider } from "../providers/tmdb-provider.js";
 import { sniffMediaKind, type StoragePartitionCids } from "../domain/media-kind-sniffer.js";
+import { episodeCodeFromFileName } from "../domain/episode-code.js";
 
 export interface ReverseStorageScannerOptions {
   fileManager: DriveFileManager;
@@ -233,14 +234,22 @@ async function adoptDiscoveredMedia(
     accountId: ctx.accountId,
     connectedStorageId: ctx.storageId,
     directoryId: item.folderId,
-    existingEpisodes: videoFiles.map((v, idx) => ({
-      episodeCode: `S${String(seasonNum).padStart(2, "0")}E${String(idx + 1).padStart(2, "0")}`,
-      seasonNumber: seasonNum,
-      episodeNumber: idx + 1,
-      fileId: v.id,
-      fileName: v.name,
-      sizeBytes: v.sizeBytes,
-    })),
+    existingEpisodes: videoFiles.map((v, idx) => {
+      const parsedCode = episodeCodeFromFileName(v.name, seasonNum);
+      const match = parsedCode ? /^S(\d+)E(\d+)$/i.exec(parsedCode) : null;
+      const finalSeasonNumber = match ? Number(match[1]) : seasonNum;
+      const finalEpisodeNumber = match ? Number(match[2]) : idx + 1;
+      const finalEpisodeCode = parsedCode ?? `S${String(seasonNum).padStart(2, "0")}E${String(idx + 1).padStart(2, "0")}`;
+
+      return {
+        episodeCode: finalEpisodeCode,
+        seasonNumber: finalSeasonNumber,
+        episodeNumber: finalEpisodeNumber,
+        fileId: v.id,
+        fileName: v.name,
+        sizeBytes: v.sizeBytes,
+      };
+    }),
     isFull: true,
   });
 }

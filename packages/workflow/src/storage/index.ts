@@ -31,3 +31,4 @@ export * from "./pan115-unified-api.js";
 export * from "./credential-strategy.js";
 export * from "./storage-preflight-inspector.js";
 export * from "./reverse-storage-scanner.js";
+export * from "./storage-archive-adapter.js";

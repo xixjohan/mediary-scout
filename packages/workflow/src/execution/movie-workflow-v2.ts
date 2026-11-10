@@ -25,6 +25,8 @@ import { runAcquisitionV2, type RunAcquisitionV2Request, type RunAcquisitionV2Re
 import type { JevJudge } from "../providers/jev-judge.js";
 import { getQualityGuidance, getSearchRecipe } from "../acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "../domain/media-library-folder.js";
+import { StorageArchiveAdapter } from "../storage/storage-archive-adapter.js";
+import { MediaOrganizer } from "./media-organizer.js";
 
 function defaultNowIso(): string {
   return new Date().toISOString();
@@ -99,6 +101,56 @@ export async function runMovieAcquisitionV2(
     tmdbId: request.title.tmdbId,
   });
 
+  const archiveAdapter = new StorageArchiveAdapter({
+    storage: request.storage,
+    rootCid: request.moviesParentDirectoryId,
+  });
+  const organizer = new MediaOrganizer({
+    storage: request.storage,
+    archiveAdapter,
+  });
+
+  if (!request.userRequest) {
+    try {
+      const preflight = await organizer.organizeMovieDirectory({
+        movieDirectoryId,
+        title: request.title.title,
+        year: request.title.year,
+        tmdbId: request.title.tmdbId,
+        fallbackCategoryParentId: request.moviesParentDirectoryId,
+      });
+
+      if (preflight.status === "organized" && preflight.primaryMovie) {
+        const landed = await readLandedSize(request.storage, [movieDirectoryId]);
+        return buildResult({
+          request,
+          movieDirectoryId,
+          obtained: true,
+          status: "succeeded",
+          kind: "movie_init",
+          snapshots: [],
+          attempts: [],
+          decisions: [],
+          auditEvents: [
+            {
+              type: "preflight_existing_hit",
+              message: `Movie already exists in library (${preflight.primaryMovie.name}), skipped redundant search/transfer.`,
+              data: {
+                file: preflight.primaryMovie.name,
+                archivedCount: preflight.archivedCount,
+              },
+            },
+          ],
+          subtitleFallback: false,
+          ...(landed ? { landed } : {}),
+          now,
+        });
+      }
+    } catch {
+      // Preflight probe failed; proceed with agent acquisition
+    }
+  }
+
   const v2 = await runAcquisitionV2({
     provider: request.resourceProvider,
     executor: request.storage,
@@ -149,6 +201,20 @@ export async function runMovieAcquisitionV2(
   // whether or not a replacement landed (spec §4.5). One that was never obtained
   // is obtained only by what landed now.
   const obtained = v2.coverage.coverageMet || (request.userRequest !== undefined && request.priorObtained === true);
+
+  if (obtained) {
+    try {
+      await organizer.organizeMovieDirectory({
+        movieDirectoryId,
+        title: request.title.title,
+        year: request.title.year,
+        tmdbId: request.title.tmdbId,
+        fallbackCategoryParentId: request.moviesParentDirectoryId,
+      });
+    } catch {
+      // Best-effort post-organization
+    }
+  }
 
   // Real landed volume for the push (best-effort; never fails the run). The
   // movie dir IS the staging+final location, so its video file(s) are the film.

@@ -1,5 +1,5 @@
 import type { PersistWorkflowRunSnapshotInput } from "../persistence/repository.js";
-import type { AgentDecision, WorkflowKind, WorkflowRun } from "../domain/domain.js";
+import type { AgentDecision, ResourceCandidate, ResourceSnapshot, WorkflowKind, WorkflowRun } from "../domain/domain.js";
 import { decisionFromSelection } from "./candidate-selector.js";
 import type { OrganizePlan } from "./organize-plan.js";
 
@@ -45,6 +45,27 @@ export function buildOrganizeRun(input: {
 }): PersistWorkflowRunSnapshotInput {
   const runId = organizeRunId(input.title.id, input.season?.seasonNumber);
   const status: WorkflowRun["status"] = input.plan.kind === "deterministic" ? "succeeded" : "failed";
+  const snapshotCandidates: ResourceCandidate[] =
+    input.plan.kind === "deterministic"
+      ? input.plan.moves.map((move, index) => ({
+          id: move.fileId,
+          snapshotId: runId,
+          index,
+          title: move.fileName,
+          type: "manual" as const,
+          source: "organize",
+          providerPayload: {},
+        }))
+      : [];
+
+  const resourceSnapshot: ResourceSnapshot = {
+    id: runId,
+    provider: "organize",
+    keyword: "",
+    createdAt: input.now,
+    candidates: snapshotCandidates,
+  };
+
   const decisions: AgentDecision[] =
     input.plan.kind === "deterministic"
       ? [
@@ -54,16 +75,7 @@ export function buildOrganizeRun(input: {
               confidence: "high",
               reason: "命名规范，确定性放置",
             },
-            // 整理不消费候选，但 decisionFromSelection 要求一个快照——它只用 id 作
-            // snapshotId 字段。这里给一个同形的占位快照，而不是改端口签名去迎合一个
-            // 没有候选的场景。
-            snapshot: {
-              id: runId,
-              provider: "organize",
-              keyword: "",
-              createdAt: input.now,
-              candidates: [],
-            },
+            snapshot: resourceSnapshot,
             source: "agent",
             node: "organize",
           }),
@@ -125,7 +137,7 @@ export function buildOrganizeRun(input: {
       ],
     },
     episodes: [],
-    resourceSnapshots: [],
+    resourceSnapshots: input.plan.kind === "deterministic" ? [resourceSnapshot] : [],
     decisions,
     transferAttempts: [],
     notifications: [],

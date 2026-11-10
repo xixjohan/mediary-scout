@@ -5,6 +5,8 @@ import {
   organizeDriftCopy,
   organizePlanCopy,
   planOrganizeMoves,
+  MediaOrganizer,
+  StorageArchiveAdapter,
   type OrganizePlan,
 } from "@media-track/workflow";
 import { requireApiAccount } from "../../../../lib/auth-chain";
@@ -137,6 +139,59 @@ function reviewPayload(plan: Extract<OrganizePlan, { kind: "manual_review" }>) {
   };
 }
 
+async function handleMovieOrganize(input: {
+  storage: any;
+  title: TrackedSeasonState["title"];
+  sourceDirectoryId: string;
+  connectedStorageId?: string | null;
+}): Promise<NextResponse> {
+  const archiveAdapter = new StorageArchiveAdapter({
+    storage: input.storage,
+    rootCid: input.connectedStorageId ?? null,
+  });
+  const organizer = new MediaOrganizer({
+    storage: input.storage,
+    archiveAdapter,
+  });
+
+  const result = await organizer.organizeMovieDirectory({
+    movieDirectoryId: input.sourceDirectoryId,
+    title: input.title.title,
+    year: input.title.year,
+    tmdbId: input.title.tmdbId,
+    fallbackCategoryParentId: input.sourceDirectoryId,
+  });
+
+  if (result.status === "no_media") {
+    return NextResponse.json(
+      {
+        status: "manual_review",
+        copy: "目录中未找到可整理的电影视频文件。",
+        review: { placeable: [], unresolved: [] },
+      },
+      { status: 200, headers: NO_STORE },
+    );
+  }
+
+  return NextResponse.json(
+    {
+      status: "organized",
+      copy: `电影已整理就绪（最优正片：${result.primaryMovie?.name ?? "已放置"}），已自动归档 ${result.archivedCount} 个多余版本。`,
+      moves: result.primaryMovie
+        ? [
+            {
+              fileId: result.primaryMovie.id,
+              fileName: result.primaryMovie.name,
+              episodeCode: "MOVIE",
+              seasonNumber: 1,
+            },
+          ]
+        : [],
+    },
+    { status: 200, headers: NO_STORE },
+  );
+}
+
 export async function POST(request: NextRequest) {
   await connection();
 
@@ -169,6 +224,11 @@ export async function POST(request: NextRequest) {
   const storage = (await buildAccountContextResolver()(accountId, connectedStorageId))?.storage;
   if (storage === null || storage === undefined) {
     return NextResponse.json({ error: "storage unavailable" }, { status: 409, headers: NO_STORE });
+  }
+
+  // Movies: organize wrapper directories, promote primary, archive redundant versions
+  if (title.type === "movie") {
+    return handleMovieOrganize({ storage, title, sourceDirectoryId, connectedStorageId });
   }
 
   const files = await storage.listVideoFiles(sourceDirectoryId);

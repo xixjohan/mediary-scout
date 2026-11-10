@@ -372,4 +372,41 @@ describe("runMovieAcquisitionV2 — user request (replace_request run)", () => {
     expect(result.replacement).toBeUndefined();
     expect(result.episodes[0]!.obtained).toBe(false);
   });
+
+  it("pre-flight probe: when valid movie already exists in library folder, organizes and succeeds without calling agent", async () => {
+    const movieDir = "盗梦空间 (2010) {tmdb-27205}";
+    const executor = new FakeStorageExecutor();
+    const createdMovieDirId = await executor.createDirectory({
+      name: movieDir,
+      parentId: "movies_root",
+    });
+
+    // Populate the existing movie file in the directory
+    (executor as any).packageTrees.set(createdMovieDirId, [
+      {
+        id: "file_existing_movie",
+        name: "Inception.2010.1080p.BluRay.x264.mkv",
+        path: "Inception.2010.1080p.BluRay.x264.mkv",
+        sizeBytes: 8_000_000_000,
+        providerFileId: "file_existing_movie",
+      },
+    ]);
+
+    // Empty model: if agent is invoked it will fail because script has 0 steps
+    const emptyModel = scriptModel([]);
+
+    const result = await runMovieAcquisitionV2({
+      title,
+      resourceProvider: emptyProvider(),
+      storage: executor,
+      model: emptyModel,
+      workflowRunId: "run-preflight-hit",
+      moviesParentDirectoryId: "movies_root",
+      now: () => "2026-09-26T08:00:00.000Z",
+    });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.episodes[0]!.obtained).toBe(true);
+    expect(result.auditEvents.some((e) => e.type === "preflight_existing_hit")).toBe(true);
+  });
 });

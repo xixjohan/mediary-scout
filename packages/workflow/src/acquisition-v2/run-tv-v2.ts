@@ -13,6 +13,10 @@ import type { JevJudge } from "../providers/jev-judge.js";
 import { runAcquisitionV2Workflow, type RunAcquisitionV2WorkflowRequest } from "./workflow-v2.js";
 import { getQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";
+import { ensureMediaLibraryDirectory } from "../domain/media-library-folder.js";
+import { StorageArchiveAdapter } from "../storage/storage-archive-adapter.js";
+import { MediaOrganizer } from "../execution/media-organizer.js";
+import { episodeCodeFromFileName } from "../domain/episode-code.js";
 
 function defaultNowIso(): string {
   return new Date().toISOString();
@@ -84,6 +88,71 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     originCountries: request.title.originCountries ?? [],
   });
   const qualityGuidance = getQualityGuidance(profile, request.qualityPreference);
+
+  const discoveredObtainedSet = new Set<string>();
+  if (!request.userRequest && !request.stagingRecovery) {
+    try {
+      const showDirectoryId = await ensureMediaLibraryDirectory({
+        executor: request.storage,
+        parentId: request.categoryParentId,
+        title: request.title.title,
+        year: request.title.year ?? "—",
+        tmdbId: request.title.tmdbId,
+      });
+
+      const archiveAdapter = new StorageArchiveAdapter({
+        storage: request.storage,
+        rootCid: request.categoryParentId,
+      });
+      const organizer = new MediaOrganizer({
+        storage: request.storage,
+        archiveAdapter,
+      });
+
+      const childDirs = await request.storage.listChildDirectories(showDirectoryId);
+
+      // 1. Recover any uncleaned staging directories directly into Season folders
+      for (const dir of childDirs) {
+        if (/^staging-/i.test(dir.name)) {
+          try {
+            await organizer.organizeStagingDirectory({
+              stagingDirectoryId: dir.id,
+              showDirectoryId,
+              title: request.title.title,
+              type: request.title.type === "anime" ? "anime" : "tv",
+              year: request.title.year,
+              tmdbId: request.title.tmdbId,
+              fallbackCategoryParentId: request.categoryParentId,
+            });
+          } catch {
+            // best-effort
+          }
+        }
+      }
+
+      // 2. Scan Season folders to discover already obtained episodes on disk
+      const freshChildDirs = await request.storage.listChildDirectories(showDirectoryId);
+      for (const dir of freshChildDirs) {
+        const seasonMatch = /^Season\s+(\d+)$/i.exec(dir.name);
+        if (!seasonMatch?.[1]) continue;
+        const seasonNum = Number(seasonMatch[1]);
+        const videos = await request.storage.listVideoFiles(dir.id);
+        for (const v of videos) {
+          const code = episodeCodeFromFileName(v.name, seasonNum);
+          if (code) {
+            discoveredObtainedSet.add(code);
+          }
+        }
+      }
+    } catch {
+      // Pre-flight probe failed; proceed without pre-flight hints
+    }
+  }
+
+  const mergedPriorObtained = Array.from(
+    new Set([...(request.priorObtained ?? []), ...discoveredObtainedSet]),
+  );
+
   const v2 = await runAcquisitionV2Workflow({
     provider: request.resourceProvider,
     executor: request.storage,
@@ -104,7 +173,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     searchHints: getSearchRecipe(profile),
     searchProfile: profile,
     ...(qualityGuidance === "" ? {} : { qualityGuidance }),
-    ...(request.priorObtained === undefined ? {} : { priorObtained: request.priorObtained }),
+    priorObtained: mergedPriorObtained,
     ...(request.searchBudget === undefined ? {} : { searchBudget: request.searchBudget }),
     ...(request.maxSteps === undefined ? {} : { maxSteps: request.maxSteps }),
     ...(request.preferredLanguage === undefined ? {} : { preferredLanguage: request.preferredLanguage }),
