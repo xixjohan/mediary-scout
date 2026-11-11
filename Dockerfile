@@ -93,6 +93,7 @@ ENV MEDIA_TRACK_SEARCH_PROVIDER=tmdb
 ENV MEDIA_TRACK_WORKFLOW_ADAPTER=pansou
 ENV MEDIA_TRACK_STORAGE_ADAPTER=115
 ENV MEDIA_TRACK_AGENT_ADAPTER=vercel-ai
+ENV MEDIA_TRACK_DATA_DIR=/app/data
 ENV MEDIA_TRACK_DEMO_SEED=0
 # Standalone traces from the monorepo root → server entry at apps/web/server.js.
 COPY --from=builder /app/apps/web/.next/standalone ./

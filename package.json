@@ -56,7 +56,7 @@
     "e2e:server": "next start apps/web -p 3100",
     "e2e": "playwright test --config tests/e2e/playwright.config.ts",
     "e2e:ci": "npm run build:web && npm run e2e",
-    "gate:strm": "node tools/gates/check-strm-generation.mjs && node tools/gates/check-strm-playback.mjs && node tools/gates/check-strm-base-url-safety.mjs",
+    "gate:strm": "node tools/gates/check-strm-generation.mjs && node tools/gates/check-strm-playback.mjs && node tools/gates/check-strm-base-url-safety.mjs && node tools/gates/check-strm-data-path.mjs",
     "gate:strm-base-url": "node tools/gates/check-strm-base-url-safety.mjs",
     "gate:strm-playback": "node tools/gates/check-strm-playback.mjs",
     "gate:inspection": "node tools/gates/check-untracked-title-inspection.mjs"

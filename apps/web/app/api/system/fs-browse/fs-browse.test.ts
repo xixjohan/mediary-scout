@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { NextRequest } from "next/server";
+import { resolveDataRoot, resolveStrmOutputPath } from "@media-track/workflow";
 import { GET, POST } from "./route";
 
 describe("System FS Browse API", () => {
@@ -14,7 +15,7 @@ describe("System FS Browse API", () => {
     return dir;
   };
 
-  const programData = path.join(process.cwd(), "data");
+  const programData = resolveDataRoot();
   const ensureOutput = (outputPath: string) => POST(new NextRequest("http://localhost:3000/api/system/fs-browse", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -100,7 +101,7 @@ describe("System FS Browse API", () => {
 
   it("ensure-output 首次创建目标并允许幂等重复调用", async () => {
     const configPath = `data/strm/ensure-${Date.now()}`;
-    const absolutePath = path.join(process.cwd(), ...configPath.split("/"));
+    const absolutePath = resolveStrmOutputPath(configPath);
     tempDirs.push(absolutePath);
     const first = await ensureOutput(configPath);
     expect(first.status).toBe(200);
@@ -110,8 +111,15 @@ describe("System FS Browse API", () => {
     expect(fs.statSync(absolutePath).isDirectory()).toBe(true);
   });
 
-  it("ensure-output 拒绝根目录外和绝对路径", async () => {
+  it("ensure-output 拒绝根目录外路径，允许数据根目录下绝对路径", async () => {
     expect((await ensureOutput("data/../../outside")).status).toBe(400);
-    expect((await ensureOutput(path.join(programData, "absolute"))).status).toBe(400);
+    const outsidePath = process.platform === "win32" ? "C:\\Temp\\Outside\\Escape" : "/var/log/outside-escape";
+    expect((await ensureOutput(outsidePath)).status).toBe(400);
+
+    const validAbs = path.join(programData, "strm", `abs-ensure-${Date.now()}`);
+    tempDirs.push(validAbs);
+    const validRes = await ensureOutput(validAbs);
+    expect(validRes.status).toBe(200);
+    expect((await validRes.json()).ok).toBe(true);
   });
 });

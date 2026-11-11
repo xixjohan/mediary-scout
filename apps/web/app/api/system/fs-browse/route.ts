@@ -5,7 +5,7 @@ import path from "node:path";
 import os from "node:os";
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { requireApiAccount } from "../../../../lib/auth-chain";
-import { resolveStrmOutputPath, toStrmOutputConfigPath } from "@media-track/workflow";
+import { resolveDataRoot, resolveStrmOutputPath, toStrmOutputConfigPath } from "@media-track/workflow";
 
 /**
  * 获取跨平台允许浏览的根路径列表
@@ -13,6 +13,7 @@ import { resolveStrmOutputPath, toStrmOutputConfigPath } from "@media-track/work
 async function getAvailableRoots(): Promise<{ name: string; fullPath: string }[]> {
   const isWin = os.platform() === "win32";
   const roots: { name: string; fullPath: string }[] = [];
+  const dataRoot = resolveDataRoot();
 
   if (isWin) {
     const letters = ["C", "D", "E", "F", "G", "H", "Z"];
@@ -27,7 +28,8 @@ async function getAvailableRoots(): Promise<{ name: string; fullPath: string }[]
     }
   } else {
     const candidates = [
-      { name: "数据根目录 (/data)", fullPath: "/data" },
+      { name: `数据根目录 (${dataRoot})`, fullPath: dataRoot },
+      { name: "数据根目录 (/app/data)", fullPath: "/app/data" },
       { name: "媒体根目录 (/media)", fullPath: "/media" },
       { name: "挂载根目录 (/mnt)", fullPath: "/mnt" },
       { name: "STRM 输出根目录 (/strm)", fullPath: "/strm" },
@@ -36,17 +38,18 @@ async function getAvailableRoots(): Promise<{ name: string; fullPath: string }[]
     for (const cand of candidates) {
       try {
         await fs.access(cand.fullPath);
-        roots.push(cand);
+        if (!roots.some((r) => path.resolve(r.fullPath) === path.resolve(cand.fullPath))) {
+          roots.push(cand);
+        }
       } catch {
         // 不存在的挂载点
       }
     }
   }
 
-  // 始终将当前工作目录与 ./data 作为可选根目录
-  const cwd = process.cwd();
-  if (!roots.some((r) => path.resolve(r.fullPath) === path.resolve(cwd))) {
-    roots.push({ name: `项目工作区 (${path.basename(cwd)})`, fullPath: cwd });
+  // 确保数据根目录始终在可选根目录列表中
+  if (!roots.some((r) => path.resolve(r.fullPath) === path.resolve(dataRoot))) {
+    roots.unshift({ name: `数据根目录 (${dataRoot})`, fullPath: dataRoot });
   }
 
   return roots;
@@ -94,16 +97,16 @@ function getVisibleDirectories(
   resolved: string,
   entries: Dirent<string>[],
 ): { name: string; fullPath: string; configPath?: string }[] {
-  const programData = path.join(process.cwd(), "data");
-  const isUnderProgramData =
-    resolved === programData || resolved.startsWith(`${programData}${path.sep}`);
+  const dataRoot = resolveDataRoot();
+  const isUnderDataRoot =
+    resolved === dataRoot || resolved.startsWith(`${dataRoot}${path.sep}`);
   return entries
     .filter((entry) => entry.isDirectory() &&
       !FORBIDDEN_DIRS.has(entry.name.toLowerCase()) &&
       !entry.name.startsWith("."))
     .map((entry) => {
       const fullPath = path.join(resolved, entry.name);
-      const configPath = isUnderProgramData ? toStrmOutputConfigPath(fullPath) : undefined;
+      const configPath = isUnderDataRoot ? toStrmOutputConfigPath(fullPath) : undefined;
       return { name: entry.name, fullPath, ...(configPath ? { configPath } : {}) };
     })
     .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
@@ -115,10 +118,18 @@ async function resolveRequestedPath(
 ): Promise<string | NextResponse> {
   let resolved: string;
   try {
-    const normalized = requestedPath.replace(/\\/g, "/").startsWith("data/")
-      ? resolveStrmOutputPath(requestedPath)
-      : path.normalize(requestedPath);
-    resolved = path.resolve(normalized);
+    const trimmed = requestedPath.trim();
+    const normalized = trimmed.replace(/\\/g, "/");
+    if (
+      normalized.startsWith("data/") ||
+      normalized === "data" ||
+      normalized.startsWith("/app/data/") ||
+      normalized === "/app/data"
+    ) {
+      resolved = resolveStrmOutputPath(trimmed);
+    } else {
+      resolved = path.resolve(path.normalize(trimmed));
+    }
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "STRM 路径无效" },
@@ -126,7 +137,12 @@ async function resolveRequestedPath(
     );
   }
 
-  if (requestedPath.replace(/\\/g, "/").startsWith("data/")) {
+  const dataRoot = resolveDataRoot();
+  const normalizedResolved = path.resolve(resolved);
+  const isUnderData =
+    normalizedResolved === dataRoot || normalizedResolved.startsWith(`${dataRoot}${path.sep}`);
+
+  if (isUnderData) {
     const isDirectory = await fs.stat(resolved).then((stat) => stat.isDirectory()).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return false;
@@ -178,6 +194,15 @@ async function readDirectoryResponse(
       directories,
     });
   } catch (error) {
+    const nodeErr = error as NodeJS.ErrnoException;
+    if (nodeErr?.code === "ENOENT") {
+      return NextResponse.json({
+        code: "DIRECTORY_NOT_FOUND",
+        error: "目录尚不存在，可通过选择目标操作创建后使用",
+        currentPath: resolved,
+        canCreate: true,
+      }, { status: 404 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "读取目录失败" },
       { status: 500 },
@@ -220,7 +245,7 @@ async function ensureOutputResponse(outputConfigPath?: string): Promise<NextResp
   }
   try {
     const outputPath = resolveStrmOutputPath(outputConfigPath);
-    const dataRoot = path.join(process.cwd(), "data");
+    const dataRoot = resolveDataRoot();
     await fs.mkdir(outputPath, { recursive: true });
     const [realRoot, realOutput, stat] = await Promise.all([
       fs.realpath(dataRoot), fs.realpath(outputPath), fs.stat(outputPath),
@@ -234,7 +259,7 @@ async function ensureOutputResponse(outputConfigPath?: string): Promise<NextResp
     await fs.access(outputPath, fs.constants.W_OK);
     return NextResponse.json({
       ok: true,
-      configPath: outputConfigPath,
+      configPath: toStrmOutputConfigPath(outputPath),
       resolvedPath: outputPath,
       exists: true,
       canWrite: true,
@@ -248,7 +273,13 @@ async function createChildDirectoryResponse(parentPath: string, folderName: stri
   const cleanName = folderName.trim().replace(/[\\/:*?"<>|]/g, "_");
   let resolvedParent: string;
   try {
-    resolvedParent = parentPath.replace(/\\/g, "/").startsWith("data/")
+    const normalized = parentPath.replace(/\\/g, "/");
+    resolvedParent = (
+      normalized.startsWith("data/") ||
+      normalized === "data" ||
+      normalized.startsWith("/app/data/") ||
+      normalized === "/app/data"
+    )
       ? resolveStrmOutputPath(parentPath)
       : parentPath;
   } catch (error) {

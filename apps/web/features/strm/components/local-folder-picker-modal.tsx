@@ -95,16 +95,15 @@ export function LocalFolderPickerModal({
         const res = await fetch("/api/system/fs-browse", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ mode: "ensure-output", outputPath: preset.replace(/^\/app\//, "") }),
+          body: JSON.stringify({ mode: "ensure-output", outputPath: preset }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "STRM 输出目录不可用");
-        setSelectedPath(preset);
-        onSelect(data.configPath || preset.replace(/^\/app\//, ""));
-        onClose();
+        const finalPath = data.resolvedPath || data.configPath || preset;
+        setSelectedPath(finalPath);
+        await fetchDirectory(finalPath);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
-      } finally {
         setLoading(false);
       }
     })();
@@ -112,13 +111,7 @@ export function LocalFolderPickerModal({
 
   const handleConfirm = () => {
     if (selectedPath) {
-      const relativePath = selectedPath.replace(/\\/g, "/");
-      const dataRoot = currentPath.replace(/\\/g, "/").replace(/\/$/, "");
-      const selected = directories.find((dir) => dir.fullPath === selectedPath);
-      const configPath = selected?.configPath ?? (dataRoot.includes("/data")
-        ? `${dataRoot.slice(dataRoot.lastIndexOf("/data"))}/${relativePath.split("/").pop()}`
-        : relativePath);
-      onSelect(configPath);
+      onSelect(selectedPath);
     }
     onClose();
   };
