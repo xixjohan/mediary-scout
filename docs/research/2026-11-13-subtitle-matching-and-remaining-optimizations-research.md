@@ -282,3 +282,50 @@ interface SubtitleTrackInfo {
 - 代码测绘：`library-scanner.ts`、`subtitle-provider.ts`、`mediary-player-core.tsx`、`api/library/play/[episodeId]/route.ts`、`artplayer` 5.4 类型与产物。
 - 参考实现：油猴脚本 `src/features/subtitles/*`（选轨、预取、文本/ASS/PGS 渲染）与 `src/features/media/*`（demux）。
 - 外部资料：OpenSubtitles REST API 官方文档（鉴权头、限额、编码与格式、moviehash）；Bazarr 官方 Wiki；ffsubsync/alass 公开说明。
+
+---
+
+## 5. 实施记录（L0 + S2 + M5）
+
+### 5.1 已实施
+
+| 项 | 落点 | 说明 |
+| :--- | :--- | :--- |
+| 字幕格式映射修复 | `apps/web/features/player/subtitle-tracks.ts` | `toArtSubtitleType()` 按 format 原样映射（srt→srt / ass→ass / vtt→vtt），PGS/SUB 直接判为不可渲染。**这是「字幕不显示」的根因** |
+| 默认选轨 | 同上 `pickDefaultTrack()` | 语言优先级 简→繁→英→日→韩→首条 |
+| 多轨切换 | `mediary-player-core.tsx` 设置面板 | 新增「字幕」选择器（关闭 / 各轨），走 `art.subtitle.switch()` |
+| 字幕编码 | 同上 | 新增「字幕编码」选择器（UTF-8 / GB18030），应对 GBK 字幕乱码 |
+| 字幕偏移 | 同上 | 开启 `subtitleOffset: true`（ArtPlayer 内置，控制条出现「字幕偏移」） |
+| 语言识别 | `packages/workflow/src/library/subtitle-language.ts` | 扫描期由文件名推断 `zh-Hans/zh-Hant/en/ja/ko/und`，替代写死的 `und`；繁体优先于简体 |
+| S2 预热直链 | `library-item-modal.tsx` | 详情面板打开即对当前可见季首集发一次 `HEAD /api/strm/play/...`；按 `storageId:fileId` 去重，失败静默 |
+| M5 上游首字节超时 | `api/strm/play/[taskId]/[fileId]/route.ts` | 15 s 内拿不到上游响应头即返回 504，替代「一直挂到客户端断开」；超时计时器在拿到响应头后立即清除，不影响流式播放 |
+
+单测新增：`subtitle-tracks.test.ts`（9 例）、`subtitle-language.test.ts`（5 例），播放器相关合计 63 例通过。
+
+### 5.2 实机验收（开发实例 3020，stamp `4cc81a78-dirty-150821`）
+
+字幕验收需要真实字幕数据，而测试库该单集原本没有字幕，因此向**开发库**写入两条 SRT 测试轨（`data:` URL，简体中文 + 英文），仅用于验收，不进入仓库。
+
+| 检查项 | 实测 | 结论 |
+| :--- | :--- | :--- |
+| SRT 解析 | `video.textTracks` 有 1 轨、**2 条 cue**，文本为「测试字幕：简体中文第一行 / 第二行」 | 通过（修复前声明成 vtt 时 cue 为 0） |
+| 语言识别 | 面板显示「简体中文 · 测试简体」「English · test-en」 | 通过 |
+| 默认选轨 | 默认即简体中文（而非排序第一条的英文） | 通过 |
+| 切到英文 | cue 文本变为「Test subtitle: English line one / two」 | 通过 |
+| 切回中文 | cue 文本恢复中文 | 通过 |
+| 编码选项 | 设置面板存在「字幕编码 UTF-8」 | 通过 |
+| 偏移控制 | 设置面板出现内置「字幕偏移 0s」 | 通过 |
+| 预热 | 仅打开详情面板、不点播放，观察到 1 次 `HEAD /api/strm/play/...` | 通过 |
+| 控制台 | pageerror 0；console 仅视频流的 502（115 凭据失效，既有环境问题） | 通过 |
+
+回归（同一实例）：五页巡检 + R3–R6 全 true；控制条 wrapper/controls/video 底部均 864、`object-fit: contain`；HUD 三档与分段文案全部通过。
+
+### 5.3 仍未执行
+
+| 项 | 原因 |
+| :--- | :--- |
+| L2 在线匹配（assrt 取内容 + 代理 + 缓存） | 需新增 `/api/subtitles/*` 与服务端取链缓存，本轮未做 |
+| L3 内嵌字幕轨 | 镜像无 ffmpeg；需先决定 ffmpeg sidecar 或浏览器 demux |
+| L4 自动调轴 | 仅完成手动偏移；自动对齐需 ffsubsync/alass |
+| M1 Range 共享池 / M2 首部预取 | 需设计评审（内存上限、淘汰策略、容器判定） |
+| `pick_code` 存量回填 | 需 115 凭据有效后重扫 |

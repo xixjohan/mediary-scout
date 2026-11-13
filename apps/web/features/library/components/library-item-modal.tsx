@@ -1,10 +1,11 @@
 ﻿"use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Play, Edit3, X, Star, Calendar, Film, Check, AlertCircle, HardDrive, Layers, CheckCircle2, Tv } from "lucide-react";
 import type { LibraryMediaItem, LibrarySeason, LibraryEpisode, SubtitleTrackInfo } from "@media-track/contracts";
 import { MediaryPlayerModal } from "../../player/components/mediary-player-modal";
+import { buildPlayStreamUrls } from "../../player/play-stream-url";
 import { EditMetadataModal } from "./edit-metadata-modal";
 
 export interface SeasonWithEpisodes extends LibrarySeason {
@@ -39,6 +40,23 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
   // 分段加载反馈：解析直链发生在打开播放器之前，用户最容易把这段空白读成「卡死」。
   const [resolvingEpisodeId, setResolvingEpisodeId] = useState<string | null>(null);
 
+  // 详情页预热：用户还在看简介/选集时就把直链解析掉，点击播放时直接命中缓存。
+  // 每个单集只预热一次；失败静默（预热是优化，不是功能）。
+  const warmedRef = useRef<Set<string>>(new Set());
+  const warmStream = useCallback((episode: LibraryEpisode | null | undefined) => {
+    if (!episode) return;
+    const key = `${episode.storageId}:${episode.fileId}`;
+    if (warmedRef.current.has(key)) return;
+    warmedRef.current.add(key);
+    const { streamUrl } = buildPlayStreamUrls({
+      storageId: episode.storageId,
+      fileId: episode.fileId,
+      fileName: episode.fileName,
+      pickCode: episode.pickCode,
+    });
+    void fetch(streamUrl, { method: "HEAD", cache: "no-store" }).catch(() => {});
+  }, []);
+
   const fetchDetails = async () => {
     try {
       setLoading(true);
@@ -59,6 +77,19 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
   useEffect(() => {
     void fetchDetails();
   }, [itemId]);
+
+  // 预热当前可见季的首集（电影则是默认版本），把直链解析成本移出「点击播放」这一刻。
+  useEffect(() => {
+    if (!data) return;
+    const seasons = data.seasons ?? [];
+    const season = seasons[selectedSeasonIndex] ?? seasons[0];
+    const episodes = season?.episodes ?? [];
+    const target =
+      data.item?.mediaType === "movie"
+        ? (episodes.find((ep) => ep.id === selectedMovieEpisodeId) ?? episodes[0])
+        : episodes[0];
+    warmStream(target);
+  }, [data, selectedSeasonIndex, selectedMovieEpisodeId, warmStream]);
 
   const handlePlayEpisode = async (episode: LibraryEpisode) => {
     try {

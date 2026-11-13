@@ -17,6 +17,12 @@ import {
   type PlaybackPhase,
 } from "../playback-state-machine";
 import { buildTelemetrySample, readVideoTelemetry, type TelemetrySample } from "../player-telemetry";
+import {
+  buildPlayerSubtitleTracks,
+  pickDefaultTrack,
+  type PlayerSubtitleTrack,
+} from "../subtitle-tracks";
+import { subtitleLanguageLabel } from "@media-track/workflow";
 import { PlayerTelemetryHud, type TelemetryLevel } from "./player-telemetry-hud";
 import type { SubtitleTrackInfo } from "@media-track/contracts";
 
@@ -182,7 +188,28 @@ export function MediaryPlayerCore({
       if (isDisposed || !containerRef.current) return;
 
       const currentSubtitles = subtitlesRef.current;
-      const defaultSub = currentSubtitles && currentSubtitles.length > 0 ? currentSubtitles[0] : null;
+      // 轨道装配：按格式映射 ArtPlayer 类型（srt 必须声明成 srt 才会触发 srtToVtt），
+      // 并按语言优先选中文轨。PGS/SUB 位图字幕不进入列表。
+      const subtitleTracks = buildPlayerSubtitleTracks(currentSubtitles);
+      const defaultSubtitle = pickDefaultTrack(subtitleTracks);
+      let activeSubtitle: PlayerSubtitleTrack | null = defaultSubtitle;
+      let subtitleEncoding = "utf-8";
+      const applySubtitle = (track: PlayerSubtitleTrack | null, encoding: string) => {
+        activeSubtitle = track;
+        subtitleEncoding = encoding;
+        if (!art) return;
+        try {
+          if (!track) {
+            void art.subtitle.switch("").catch(() => {});
+            return;
+          }
+          void art.subtitle
+            .switch(track.url, { type: track.type, name: track.label, encoding })
+            .catch(() => {});
+        } catch {
+          // 切轨失败不影响播放，静默降级
+        }
+      };
 
       art = new Artplayer({
         container: containerRef.current,
@@ -221,17 +248,20 @@ export function MediaryPlayerCore({
         hotkey: false,
         // 起播缓冲策略：网盘直链首包延迟高，让浏览器多预取一点。
         moreVideoAttr: { preload: "auto" },
-        ...(defaultSub?.url
+        // 字幕整体偏移微调（字幕组时间轴与片源不匹配时的兜底）
+        subtitleOffset: true,
+        ...(defaultSubtitle
           ? {
               subtitle: {
-                url: defaultSub.url,
-                type: (defaultSub.format === "ass" ? "ass" : "vtt") as "ass" | "vtt",
+                url: defaultSubtitle.url,
+                type: defaultSubtitle.type,
+                name: defaultSubtitle.label,
+                encoding: "utf-8",
                 style: {
                   color: "#ffffff",
                   fontSize: "22px",
                   textShadow: "0 0 4px #000, 0 0 8px #000",
                 },
-                encoding: "utf-8",
               },
             }
           : {}),
@@ -314,6 +344,48 @@ export function MediaryPlayerCore({
               return String(item.html ?? "");
             },
           },
+          ...(subtitleTracks.length > 0
+            ? [
+                {
+                  width: 260,
+                  html: "字幕",
+                  tooltip: activeSubtitle
+                    ? subtitleLanguageLabel(activeSubtitle.language)
+                    : "关闭",
+                  selector: [
+                    { html: "关闭", value: "off", default: activeSubtitle === null },
+                    ...subtitleTracks.map((track) => ({
+                      html: track.label,
+                      value: track.id,
+                      default: track.id === defaultSubtitle?.id,
+                    })),
+                  ],
+                  onSelect: (item: any) => {
+                    const value = String(item.value);
+                    if (value === "off") {
+                      applySubtitle(null, subtitleEncoding);
+                      return "关闭";
+                    }
+                    const track = subtitleTracks.find((t) => t.id === value) ?? null;
+                    applySubtitle(track, subtitleEncoding);
+                    return String(item.html ?? "");
+                  },
+                },
+                {
+                  width: 200,
+                  html: "字幕编码",
+                  tooltip: "UTF-8",
+                  selector: [
+                    { html: "UTF-8 (默认)", value: "utf-8", default: true },
+                    { html: "GBK / GB18030", value: "gb18030" },
+                  ],
+                  onSelect: (item: any) => {
+                    applySubtitle(activeSubtitle, String(item.value));
+                    return String(item.html ?? "");
+                  },
+                },
+              ]
+            : []),
         ],
       });
 

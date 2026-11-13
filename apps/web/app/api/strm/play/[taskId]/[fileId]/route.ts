@@ -139,6 +139,9 @@ function buildProxyResponseHeaders(
   return responseHeaders;
 }
 
+/** 上游「首字节」超时：只约束响应头到达时间，不约束流式 body 的持续时间。 */
+const UPSTREAM_HEADERS_TIMEOUT_MS = 15000;
+
 async function handleStreamProxy(
   request: NextRequest,
   targetUrl: string,
@@ -151,12 +154,36 @@ async function handleStreamProxy(
     const isHead = request.method === "HEAD";
     const upstreamHeaders = buildUpstreamHeaders(request, options);
 
-    const upstreamResp = await fetch(targetUrl, {
-      method: isHead ? "HEAD" : "GET",
-      headers: upstreamHeaders,
-      redirect: "follow",
-      signal: request.signal,
-    });
+    // 旧实现只挂 request.signal：上游 CDN 卡住时请求会一直挂着直到客户端断开。
+    // 这里额外加「首字节超时」——拿到响应头即清除，不影响后续流式播放。
+    const controller = new AbortController();
+    let timedOut = false;
+    const abortUpstream = () => controller.abort();
+    request.signal.addEventListener("abort", abortUpstream, { once: true });
+    const headersTimer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, UPSTREAM_HEADERS_TIMEOUT_MS);
+
+    let upstreamResp: Response;
+    try {
+      upstreamResp = await fetch(targetUrl, {
+        method: isHead ? "HEAD" : "GET",
+        headers: upstreamHeaders,
+        redirect: "follow",
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(headersTimer);
+      if (timedOut) {
+        return NextResponse.json(
+          { error: `上游网盘首字节超时（>${UPSTREAM_HEADERS_TIMEOUT_MS}ms），请重试或切换投送模式` },
+          { status: 504 },
+        );
+      }
+      throw err;
+    }
+    clearTimeout(headersTimer);
 
     const responseHeaders = buildProxyResponseHeaders(upstreamResp, options?.fileName);
 

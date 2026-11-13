@@ -11,6 +11,7 @@ import { episodeCodeFromFileName } from "../domain/episode-code.js";
 import { FilenameQualityAdapter } from "../domain/filename-quality-adapter.js";
 import type { DriveFileManager, DriveFileItem } from "../storage/drive-file-manager-types.js";
 import { inferExtension } from "../storage/drive-file-manager.js";
+import { detectSubtitleLanguage } from "./subtitle-language.js";
 
 export function normalizeMediaTitle(title: string): string {
   return title
@@ -168,7 +169,8 @@ export class MediaLibraryScanner {
               id: item.id,
               fileId: item.id,
               title: item.name,
-              language: "und",
+              // 由文件名推断语言：播放器据此自动选中文轨，不再恒为 und。
+              language: detectSubtitleLanguage(item.name),
               format: ext || "srt",
               type: "external",
             });
