@@ -45,9 +45,18 @@ describe("diagnoseStorageConnectionAction & revealStorageCredentialAction", () =
   beforeEach(() => {
     repo = new InMemoryWorkflowRepository();
     setWorkflowRepositoryForTest(repo);
+    // diagnoseStorageConnection 会对 115 Cookie / Open OAuth 做真实网络探测，
+    // 单次 fetch 超时上限 20s，恰好等于 vitest 的用例超时——CI 无外网时必然
+    // 挂满 20s 后判失败。本文件断言的都是纯本地计算出的配置与路由结论，
+    // 与探测结果无关，故把网络短路成即时失败，让探测走 catch 分支返回。
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("offline: network disabled in unit tests")),
+    );
   });
 
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
