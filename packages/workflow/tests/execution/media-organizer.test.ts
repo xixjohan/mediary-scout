@@ -85,6 +85,47 @@ describe("MediaOrganizer", () => {
 
     // Primary's wrapper dir was cleaned up
     expect(removedDirs).toContain("dir_amiable");
+
+    // 电影文件本身也要落到规范名（此前只搬不改名）
+    expect(result.renamedTo).toBe("新汉普夏饭店 (1984).mkv");
+    expect(mockStorage.renameFile).toHaveBeenCalledWith({
+      directoryId: "movie_root",
+      fileId: "f_amiable",
+      newName: "新汉普夏饭店 (1984).mkv",
+    });
+  });
+
+  it("目标文件名已被占用时跳过重命名，绝不覆盖", async () => {
+    const mockStorage: Partial<StorageExecutor> = {
+      listChildDirectories: vi.fn(async () => []),
+      listTree: vi.fn(async () => [
+        { providerFileId: "f_primary", path: "Movie.2020.1080p.mkv", sizeBytes: 3_000_000_000 },
+        { providerFileId: "f_other", path: "电影 (2020).mkv", sizeBytes: 1_000_000 },
+      ]),
+      createDirectory: vi.fn(async ({ name }) => `created_${name}`),
+      moveFiles: vi.fn(async (input) => ({ moved: input.fileIds })),
+      removeDirectory: vi.fn(async () => ({ removed: true })),
+      renameFile: vi.fn(async () => {}),
+    };
+    const archiveAdapter = new StorageArchiveAdapter({
+      storage: mockStorage as any,
+      rootCid: "archive_root",
+    });
+    const organizer = new MediaOrganizer({
+      storage: mockStorage as StorageExecutor,
+      archiveAdapter,
+    });
+
+    const result = await organizer.organizeMovieDirectory({
+      movieDirectoryId: "movie_root",
+      title: "电影",
+      year: 2020,
+      tmdbId: 1,
+    });
+
+    expect(result.renameConflict).toBe("电影 (2020).mkv");
+    expect(result.renamedTo).toBeUndefined();
+    expect(mockStorage.renameFile).not.toHaveBeenCalled();
   });
 
   it("organizes a TV staging directory into Season folders and archives redundant packages", async () => {

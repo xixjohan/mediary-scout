@@ -3,6 +3,8 @@ import {
   verifyStrmPlayToken,
   determineEffectiveDeliveryMode,
   buildStrmLinkCacheKey,
+  shouldRetryWithFreshLink,
+  type StrmDeliveryMode,
 } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../../../lib/workflow-runtime";
 import {
@@ -335,6 +337,55 @@ async function resolveAndCacheStream(options: {
   };
 }
 
+/**
+ * 命中缓存时的服务与自愈：
+ * 上游签名直链过期（401/403/410）→ 失效缓存 → 重新解析 → 重试一次。
+ *
+ * 长片播放中途 seek / 网络重连最容易踩到；旧实现把 403 原样透传给播放器，
+ * 会一直失败到缓存 TTL 到期（115 侧写死 2h）。
+ */
+async function serveCachedWithHealing(options: {
+  request: NextRequest;
+  repo: ReturnType<typeof getWorkflowRepository>;
+  cachedKey: string;
+  cached: { downloadUrl: string; headersJson?: string | null; deliveryMode: StrmDeliveryMode };
+  deliveryMode: string;
+  fileName?: string | undefined;
+  resolveFresh: () => Promise<{ url: string; headers?: Record<string, string> | undefined }>;
+}): Promise<Response> {
+  const { request, repo, cachedKey, cached, deliveryMode, fileName, resolveFresh } = options;
+  let headers: Record<string, string> | undefined;
+  try {
+    headers = cached.headersJson ? (JSON.parse(cached.headersJson) as Record<string, string>) : undefined;
+  } catch {
+    headers = undefined;
+  }
+
+  const cachedResponse = await serveStream(request, cached.downloadUrl, deliveryMode, headers, fileName);
+  if (!shouldRetryWithFreshLink({ status: cachedResponse.status, fromCache: true })) {
+    return cachedResponse;
+  }
+
+  // 用「已过期条目」覆盖坏缓存：getStrmLinkCache 会因 expires_at 过期而返回 null，
+  // 下一次解析自然回填新链接；无需为此给仓库新增 delete 方法（避免改动大文件）。
+  await repo
+    .setStrmLinkCache({
+      cacheKey: cachedKey,
+      downloadUrl: "",
+      deliveryMode: cached.deliveryMode,
+      headersJson: null,
+      expiresAt: 0,
+    })
+    .catch(() => {});
+  try {
+    const fresh = await resolveFresh();
+    return await serveStream(request, fresh.url, deliveryMode, fresh.headers, fileName);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    return NextResponse.json({ error: `直链已过期且重新解析失败: ${message}` }, { status: 502 });
+  }
+}
+
 export async function GET(request: NextRequest, context: RouteParams) {
   const { taskId, fileId } = await context.params;
   const fileName = request.nextUrl.searchParams.get("name") ?? undefined;
@@ -376,21 +427,19 @@ export async function GET(request: NextRequest, context: RouteParams) {
 
   const repo = getWorkflowRepository();
 
+  // 记录命中的是哪个键：自愈失效时必须删对键，否则旧键会一直被命中。
+  let cachedKey = cacheKey;
   let cached = await repo.getStrmLinkCache(cacheKey);
   if (!cached) {
     // 降级回退兼容纯净传统键 (${storageId}:${fileId})
-    cached = await repo.getStrmLinkCache(`${storageId}:${fileId}`);
-  }
-
-  if (cached && !cached.downloadUrl.includes("mock-cdn.cloudpan.com")) {
-    const headers = cached.headersJson ? (JSON.parse(cached.headersJson) as Record<string, string>) : undefined;
-    return serveStream(request, cached.downloadUrl, effectiveDelivery, headers, fileName);
+    cachedKey = `${storageId}:${fileId}`;
+    cached = await repo.getStrmLinkCache(cachedKey);
   }
 
   const singleFlight = getStrmSingleFlight();
   const resolver = ensureStorageStreamResolver();
-  try {
-    const stream = await singleFlight.do(cacheKey, () =>
+  const resolveFresh = () =>
+    singleFlight.do(cacheKey, () =>
       resolveAndCacheStream({
         repo,
         resolver,
@@ -403,6 +452,21 @@ export async function GET(request: NextRequest, context: RouteParams) {
         userAgent: clientUa,
       }),
     );
+
+  if (cached && !cached.downloadUrl.includes("mock-cdn.cloudpan.com")) {
+    return serveCachedWithHealing({
+      request,
+      repo,
+      cachedKey,
+      cached,
+      deliveryMode: effectiveDelivery,
+      fileName,
+      resolveFresh,
+    });
+  }
+
+  try {
+    const stream = await resolveFresh();
     return serveStream(request, stream.url, effectiveDelivery, stream.headers, fileName);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

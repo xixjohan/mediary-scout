@@ -12,6 +12,7 @@ import {
   type ArchiveCategory,
 } from "../storage/storage-archive-adapter.js";
 import { parseEpisodeCode, canonicalEpisodeFileName } from "../domain/episode-code.js";
+import { canonicalMovieFileName } from "../domain/movie-file-name.js";
 
 export interface OrganizeMovieInput {
   movieDirectoryId: string;
@@ -26,6 +27,10 @@ export interface OrganizeMovieResult {
   primaryMovie?: MediaCandidateItem | undefined;
   archivedCount: number;
   archivedItems: string[];
+  /** 主版本被重命名后的文件名；未改名或冲突跳过时为 undefined。 */
+  renamedTo?: string | undefined;
+  /** 目标文件名已被占用时的冲突名（跳过重命名，绝不覆盖）。 */
+  renameConflict?: string | undefined;
 }
 
 export interface OrganizeStagingTvInput {
@@ -156,6 +161,50 @@ export class MediaOrganizer {
    * 4. Archives all redundant version packages / files to /Mediary Scout/Archive/Movies/<TitleFolder>/
    * 5. Cleans up empty wrapper folders and junk files.
    */
+  /**
+   * 把主版本重命名为规范名（`Title (Year).ext`）。
+   * 冲突一律跳过：重命名是破坏性操作，绝不覆盖同目录已有文件。
+   */
+  private async renamePrimaryMovie(input: {
+    movieDirectoryId: string;
+    title: string;
+    year?: number | string | null | undefined;
+    primary: MediaCandidateItem;
+    tree: PackageTreeFile[];
+  }): Promise<{ renamedTo?: string | undefined; renameConflict?: string | undefined }> {
+    const targetName = canonicalMovieFileName({
+      title: input.title,
+      year: input.year,
+      sourceName: input.primary.name,
+      preserveMetadata: true,
+    });
+    if (!targetName || targetName === input.primary.name) return {};
+
+    const siblingNames = new Set(
+      input.tree
+        .map((file) => file.path)
+        .filter((path) => !path.includes("/"))
+        .map((path) => path.trim()),
+    );
+    if (siblingNames.has(targetName)) {
+      this.log?.(`[MediaOrganizer] 目标文件名已存在，跳过重命名: ${targetName}`);
+      return { renameConflict: targetName };
+    }
+
+    try {
+      await this.storage.renameFile({
+        directoryId: input.movieDirectoryId,
+        fileId: input.primary.id,
+        newName: targetName,
+      });
+      this.log?.(`[MediaOrganizer] Renamed movie: ${input.primary.name} -> ${targetName}`);
+      return { renamedTo: targetName };
+    } catch (err) {
+      this.log?.(`[MediaOrganizer] 重命名失败（不阻断整理）: ${String(err)}`);
+      return {};
+    }
+  }
+
   async organizeMovieDirectory(input: OrganizeMovieInput): Promise<OrganizeMovieResult> {
     const canonicalFolderName = mediaLibraryFolderName({
       title: input.title,
@@ -190,6 +239,15 @@ export class MediaOrganizer {
       });
     }
 
+    // 电影文件同样要落到规范名（剧集侧早已如此，电影侧此前只搬不改名）。
+    const { renamedTo, renameConflict } = await this.renamePrimaryMovie({
+      movieDirectoryId: input.movieDirectoryId,
+      title: input.title,
+      year: input.year,
+      primary,
+      tree,
+    });
+
     const { archivedCount, archivedItems } = await this.archiveRedundantMovieItems(
       input.movieDirectoryId,
       canonicalFolderName,
@@ -212,6 +270,8 @@ export class MediaOrganizer {
       primaryMovie: primary,
       archivedCount,
       archivedItems,
+      ...(renamedTo ? { renamedTo } : {}),
+      ...(renameConflict ? { renameConflict } : {}),
     };
   }
 

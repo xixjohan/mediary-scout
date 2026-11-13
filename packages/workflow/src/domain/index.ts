@@ -5,6 +5,7 @@ export * from "./workflow-scope.js";
 export * from "./media-classification.js";
 export * from "./media-identity.js";
 export * from "./media-library-folder.js";
+export * from "./movie-file-name.js";
 export * from "./pagination-window.js";
 export * from "./search-view.js";
 export * from "./runtime-policy.js";

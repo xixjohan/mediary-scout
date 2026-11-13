@@ -291,3 +291,45 @@ MultiVersionPolicy = "archive" | "side-by-side" | "ask"
 | TMDB 误配 | 同名不同片 | 标题 + 年份双匹配，只接受唯一结果 |
 | 播放中断 | 自愈重试期间短暂失败 | 客户端保留 currentTime，恢复后 seek 回去 |
 | 权限 | 媒体服务器可能缓存旧 .strm | 提供"刷新 .strm"入口 |
+
+---
+
+## 10. 实施记录与验收（P0 + P1）
+
+### 10.1 已实施
+
+| 项 | 落点 | 说明 |
+| :--- | :--- | :--- |
+| P0 直链自愈 | `api/strm/play/[taskId]/[fileId]/route.ts` + `strm/link-expiry.ts` | 命中缓存后若上游返回 401/403/410：把该缓存条目覆盖为「已过期墓碑」（`expiresAt=0`）→ 重新解析 → 重试一次。重试仍失败返回 502 并带原因 |
+| P0 判定纯函数 | `packages/workflow/src/strm/link-expiry.ts` | `isExpiredLinkStatus` / `shouldRetryWithFreshLink`，只对「来自缓存」且「过期语义」的状态重试，避免重试风暴 |
+| P1 电影文件重命名 | `packages/workflow/src/domain/movie-file-name.ts` + `MediaOrganizer.renamePrimaryMovie` | 整理时把主版本改为 `Title (Year).ext`（保留方括号发布标签）；目标名已存在则跳过并记 `renameConflict`，绝不覆盖 |
+| P1 返回值可观测 | `OrganizeMovieResult` | 新增 `renamedTo` / `renameConflict`，调用方可据此展示"改了/因冲突跳过" |
+
+单测新增：`movie-file-name.test.ts`（6 例）、`link-expiry.test.ts`（3 例）、`media-organizer.test.ts` 增补重命名与冲突各 1 例。
+
+### 10.2 设计取舍
+
+- **不用 `deleteStrmLinkCache`**：给 `StrmStore` 接口与两个仓库实现加方法会让 `sqlite.ts` 超出棘轮行数上限（2667→2670）。改用既有 `setStrmLinkCache` 写入 `expiresAt: 0` 的墓碑条目——`getStrmLinkCache` 会因过期而返回 null，效果等价且零接口改动。
+- **只重试一次**：并发 Range 请求全部 403 时，`SingleFlight` 保证只有一次真正解析；重试仍失败不写回缓存，避免"坏链接复活"。
+
+### 10.3 实机验收（开发实例 3020）
+
+P0 用「注入坏缓存」的方式做端到端验证（开发库，验证后自动被真实链接替换）：
+
+| 步骤 | 操作 | 结果 |
+| :--- | :--- | :--- |
+| 1 | 向 `strm_link_cache` 写入 `download_url = http://127.0.0.1:3000/api/strm/play/aaa/bbb?token=bad&exp=1`（必返 401）、`expires_at = now+7200` | 写入成功 |
+| 2 | `GET /api/strm/play/...&delivery=proxy`（Range 0-1023） | **206**，1024 字节，2.7s |
+| 3 | 复查缓存条目 | URL 已替换为真实 `115cdn.net` 直链，TTL 7183s |
+
+即：坏链接 → 检测 401 → 墓碑 → 重新解析 → 重试成功。旧实现会直接把这个 401 透传给播放器。
+
+回归（同一实例）：五页巡检 + R3–R6 全 true；播放器 UX（全屏 gap 0、复制「已复制」、字幕按钮与 V 循环、偏好记忆）全通过；字幕专项全通过；HUD 三档与分段文案全通过。
+
+### 10.4 未做与原因
+
+| 项 | 原因 |
+| :--- | :--- |
+| P1 的端到端改名验证 | 需要在真实网盘上对某个影视目录执行整理（会产生 rename 副作用）。本轮以 mock 存储单测覆盖「改名」与「冲突跳过」两条路径，未对用户盘做实际改名 |
+| P2 legacy 目录升级 / P3 多版本并排 / P4 dryRun 与回滚 | 本轮范围外，按 §8 计划推进 |
+| 上游真实过期时间解析 | 115 downurl 响应未发现稳定过期字段；需按驱动逐个适配（ProviderExpiryAdapter） |
