@@ -18,6 +18,7 @@ import {
 } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import { seriesTargetFor } from "../../../../lib/series-target";
+import { buildCleanupSuffix, dedupeAndCleanupShow } from "./organize-cleanup";
 
 export const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -548,6 +549,18 @@ export async function handleTvOrganize(input: {
     }
   }
 
+  // 季目录内的重复版本统一归档 + 清理残留 staging 空壳
+  const cleanupResult = await dedupeAndCleanupShow({
+    organizer,
+    title: input.title,
+    showDirectoryId,
+    fallbackCategoryParentId: input.tvParentDirectoryId ?? showDirectoryId,
+  });
+  totalArchived += cleanupResult.archived;
+
+  // 整理过程中可能新建/残留 staging 目录（如上一轮删目录失败），收尾再扫一次
+  const finalCleanup = await organizer.cleanupStagingDirectories({ showDirectoryId });
+
   const reconciled = await reconcileTvSeasonDirectories({
     storage: input.storage,
     accountId: input.accountId,
@@ -559,12 +572,14 @@ export async function handleTvOrganize(input: {
 
   const mediaLabel = input.title.type === "anime" ? "动漫" : "剧集";
 
+  const cleanupSuffix = buildCleanupSuffix(cleanupResult.archived, cleanupResult.removed + finalCleanup.removed.length);
+
   if (allPlaced.length === 0 && totalArchived === 0) {
     if (reconciled.totalReconciledEpisodes > 0) {
       return NextResponse.json(
         {
           status: "organized",
-          copy: `${mediaLabel}《${input.title.title}》文件已就绪，已成功对齐并点亮 ${reconciled.totalReconciledSeasons} 个季目录共 ${reconciled.totalReconciledEpisodes} 集物理正片，媒体库与订阅状态已更新！`,
+          copy: `${mediaLabel}《${input.title.title}》文件已就绪，已成功对齐并点亮 ${reconciled.totalReconciledSeasons} 个季目录共 ${reconciled.totalReconciledEpisodes} 集物理正片${cleanupSuffix}，媒体库与订阅状态已更新！`,
           moves: [],
         },
         { status: 200, headers: NO_STORE },
@@ -584,7 +599,7 @@ export async function handleTvOrganize(input: {
   return NextResponse.json(
     {
       status: "organized",
-      copy: `${mediaLabel}《${input.title.title}》已整理就绪，共提取并规范命名 ${allPlaced.length} 集正片，自动归档 ${totalArchived} 个多余版本。`,
+      copy: `${mediaLabel}《${input.title.title}》已整理就绪，共提取并规范命名 ${allPlaced.length} 集正片，自动归档 ${totalArchived} 个多余版本${cleanupSuffix}。`,
       moves: allPlaced.map((code) => ({
         fileId: code,
         fileName: code,

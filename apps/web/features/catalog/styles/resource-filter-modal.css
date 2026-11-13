@@ -539,6 +539,15 @@
   border: 1px solid var(--warning-border);
 }
 
+.missing-deck-range-hint {
+  font-size: 11px;
+  color: var(--text-muted, #94a3b8);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px dashed rgba(148, 163, 184, 0.4);
+  white-space: nowrap;
+}
+
 .missing-deck-season-tabs {
   display: flex;
   align-items: center;

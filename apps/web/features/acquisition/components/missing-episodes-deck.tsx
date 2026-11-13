@@ -1,13 +1,16 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import type { TitleHubSeason } from "../../../lib/title-hub";
 import {
   extractMissingEpisodes,
   isSeasonEpisodeStateIncomplete,
   filterMissingBySeason,
+  filterMissingByEpisodeRanges,
+  describeEpisodeRanges,
   paginateMissingEpisodes,
+  type EpisodeRange,
   type MissingEpisodeItem,
 } from "../contracts/missing-episodes-model";
 import { useEpisodeTarget } from "./episode-target-context";
@@ -17,15 +20,38 @@ const PAGE_SIZE = 12;
 export interface MissingEpisodesDeckProps {
   seasons: readonly TitleHubSeason[];
   title?: string | undefined;
+  /** 用于读取订阅的季集范围；缺省时不做范围过滤。 */
+  tmdbId?: number | undefined;
 }
 
-export function MissingEpisodesDeck({ seasons }: MissingEpisodesDeckProps) {
+export function MissingEpisodesDeck({ seasons, tmdbId }: MissingEpisodesDeckProps) {
   const { target, targetAndScroll } = useEpisodeTarget();
   const [seasonFilter, setSeasonFilter] = useState<number | "all">("all");
   const [page, setPage] = useState<number>(1);
+  const [episodeRanges, setEpisodeRanges] = useState<EpisodeRange[]>([]);
 
-  // 提取所有已开播但缺失的集数
-  const allMissing = useMemo(() => extractMissingEpisodes(seasons), [seasons]);
+  // 读取订阅的季集范围：只展示落在追更目标内的缺集，避免「199 集缺失」这类噪声
+  useEffect(() => {
+    if (!tmdbId) return;
+    let cancelled = false;
+    void fetch(`/api/titles/subscription-policy?tmdbId=${tmdbId}&mediaType=tv`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data: { policy?: { seasonEpisodeRanges?: EpisodeRange[] } | null } | null) => {
+        if (cancelled) return;
+        setEpisodeRanges(data?.policy?.seasonEpisodeRanges ?? []);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [tmdbId]);
+
+  // 提取所有已开播但缺失的集数，再按订阅范围收窄
+  const allMissing = useMemo(
+    () => filterMissingByEpisodeRanges(extractMissingEpisodes(seasons), episodeRanges),
+    [seasons, episodeRanges],
+  );
+  const rangeHint = useMemo(() => describeEpisodeRanges(episodeRanges), [episodeRanges]);
 
   // 统计各季缺失集数，用于季别切换药丸
   const seasonCounts = useMemo(() => {
@@ -95,6 +121,11 @@ export function MissingEpisodesDeck({ seasons }: MissingEpisodesDeckProps) {
           <AlertCircle size={16} className="missing-deck-alert-icon" aria-hidden />
           <span className="missing-deck-title">全部缺集总览</span>
           <span className="missing-deck-badge">缺 {allMissing.length} 集</span>
+          {rangeHint ? (
+            <span className="missing-deck-range-hint" title="仅统计订阅策略中已配置的集范围">
+              已按订阅范围过滤：{rangeHint}
+            </span>
+          ) : null}
         </div>
 
         {seasonCounts.size > 1 ? (

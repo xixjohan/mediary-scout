@@ -290,7 +290,7 @@ function TvHub({
       </div>
 
       <section className="hub-seasons" aria-label="季列表">
-        <MissingEpisodesDeck seasons={view.seasons} title={view.title} />
+        <MissingEpisodesDeck seasons={view.seasons} title={view.title} tmdbId={view.tmdbId} />
         <ul className="hub-season-list">
           <SeasonRowsWithSwap view={view} storageId={storageId} basePath={basePath} canManageMedia={canManageMedia} />
         </ul>

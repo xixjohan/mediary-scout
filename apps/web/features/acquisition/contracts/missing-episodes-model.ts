@@ -173,3 +173,47 @@ export function paginateMissingEpisodes(
     endIndex,
   };
 }
+
+/** 订阅策略里的「季集范围」：结束集为 null 表示不限。 */
+export interface EpisodeRange {
+  seasonNumber: number;
+  startEpisode: number;
+  endEpisode: number | null;
+}
+
+/**
+ * 按订阅的集范围过滤缺集。
+ *
+ * 背景：用户把「第 1 季起始集」设成 190 后，缺集看板仍把 E001–E199 全量列出，
+ * 于是出现「199 集缺失」这种与实际追更目标无关的数字。这里只保留落在
+ * 已配置范围内的缺集；**未配置范围的季保持原样**（不误伤）。
+ */
+export function filterMissingByEpisodeRanges(
+  items: readonly MissingEpisodeItem[],
+  ranges: readonly EpisodeRange[] | null | undefined,
+): MissingEpisodeItem[] {
+  if (!ranges || ranges.length === 0) return [...items];
+  const bySeason = new Map<number, EpisodeRange>();
+  for (const range of ranges) bySeason.set(range.seasonNumber, range);
+
+  return items.filter((item) => {
+    const range = bySeason.get(item.seasonNumber);
+    if (!range) return true;
+    if (item.episodeNumber < range.startEpisode) return false;
+    if (range.endEpisode !== null && item.episodeNumber > range.endEpisode) return false;
+    return true;
+  });
+}
+
+/** 把范围渲染成简短文案，如 `第 1 季 E190–不限`。 */
+export function describeEpisodeRanges(ranges: readonly EpisodeRange[]): string {
+  if (ranges.length === 0) return "";
+  return ranges
+    .slice()
+    .sort((a, b) => a.seasonNumber - b.seasonNumber)
+    .map((range) => {
+      const end = range.endEpisode === null ? "不限" : `E${range.endEpisode}`;
+      return `第 ${range.seasonNumber} 季 E${range.startEpisode}–${end}`;
+    })
+    .join(" · ");
+}

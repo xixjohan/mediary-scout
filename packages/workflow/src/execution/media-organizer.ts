@@ -5,6 +5,7 @@ import {
   rankMovieCandidates,
   rankTvCandidates,
   isVideoFile,
+  isJunkFile,
   type MediaCandidateItem,
 } from "./version-ranker.js";
 import {
@@ -49,6 +50,44 @@ export interface OrganizeTvResult {
   archivedCount: number;
   archivedItems: string[];
   stagingRemoved: boolean;
+}
+
+export interface DedupeSeasonsInput {
+  showDirectoryId: string;
+  title: string;
+  type: "tv" | "anime";
+  year?: number | string | null | undefined;
+  tmdbId: number;
+  fallbackCategoryParentId?: string | undefined;
+}
+
+export interface DedupeSeasonsResult {
+  seasonsScanned: number;
+  archivedCount: number;
+  archivedItems: string[];
+}
+
+export interface CleanupStagingResult {
+  removed: string[];
+  remaining: string[];
+}
+
+/**
+ * staging 目录是否"可以安全删除"。
+ *
+ * 只按扩展名判断是危险的：转存常把后缀弄丢（如 `...[第175集]...ColorTV`），
+ * 这类文件 `isVideoFile()` 认不出，却可能是 1GB+ 的正片。
+ * 因此这里采用白名单式判定——**空目录**，或**全部是已知垃圾且总体积很小**才删。
+ */
+function isSafeToRemoveStaging(tree: PackageTreeFile[]): boolean {
+  if (tree.length === 0) return true;
+  const allJunk = tree.every((file) => {
+    const name = file.path.split("/").filter(Boolean).pop() ?? "";
+    return isJunkFile(name);
+  });
+  if (!allJunk) return false;
+  const totalBytes = tree.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0);
+  return totalBytes < 50 * 1024 * 1024;
 }
 
 export class MediaOrganizer {
@@ -412,6 +451,98 @@ export class MediaOrganizer {
    * 4. Archives redundant version packages / files to /Mediary Scout/Archive/TV(or Anime)/<TitleFolder>/
    * 5. Deletes the staging directory once clean.
    */
+  /**
+   * 清理「季目录内」的重复版本：每个 SxxExx 只保留一个正片，其余归档。
+   *
+   * 背景：多次转存/多次整理会让同一集在 Season 目录里留下
+   * `S01E01.mp4` / `S01E01(1).mp4` / `S01E01(2).mp4` 这类并存文件。
+   * 之前的去重只发生在 staging 目录，已落地的季目录从不复查，于是重复永久堆积。
+   */
+  async dedupeSeasonDirectories(input: DedupeSeasonsInput): Promise<DedupeSeasonsResult> {
+    const category: ArchiveCategory = input.type === "anime" ? "Anime" : "TV";
+    const canonicalFolderName = mediaLibraryFolderName({
+      title: input.title,
+      year: input.year,
+      tmdbId: input.tmdbId,
+    });
+
+    const seasonDirs = (await this.storage.listChildDirectories(input.showDirectoryId)).filter((dir) =>
+      /^Season\s+\d+$/i.test(dir.name.trim()),
+    );
+
+    let archivedCount = 0;
+    const archivedItems: string[] = [];
+
+    for (const dir of seasonDirs) {
+      const tree = await this.storage.listTree({ directoryId: dir.id });
+      const videos: MediaCandidateItem[] = tree
+        .map((file) => {
+          const parts = file.path.split("/").filter(Boolean);
+          return {
+            id: file.providerFileId,
+            name: parts[parts.length - 1] ?? "",
+            sizeBytes: file.sizeBytes,
+          };
+        })
+        .filter((item) => isVideoFile(item.name));
+      if (videos.length === 0) continue;
+
+      const { primary, redundant, extras } = rankTvCandidates(videos);
+      const keep = new Set(Array.from(primary.values()).map((item) => item.id));
+      const toArchive = [...redundant, ...extras].filter((item) => !keep.has(item.id));
+      if (toArchive.length === 0) continue;
+
+      const targetArchiveFolderId = await this.archiveAdapter.getOrCreateTitleArchiveFolder(
+        category,
+        canonicalFolderName,
+        input.fallbackCategoryParentId,
+      );
+      const res = await this.archiveAdapter.archiveItems({
+        targetArchiveDirectoryId: targetArchiveFolderId,
+        items: toArchive.map((item) => ({ id: item.id, name: item.name, isFolder: false })),
+        sourceDirectoryId: dir.id,
+      });
+      archivedCount += res.archivedCount;
+      archivedItems.push(...toArchive.map((item) => `${dir.name}/${item.name}`));
+    }
+
+    return { seasonsScanned: seasonDirs.length, archivedCount, archivedItems };
+  }
+
+  /**
+   * 清理残留的 staging 临时目录。
+   * 含视频的目录交给 organizeStagingDirectory 处理（不在这里删），
+   * 只删除「已经空掉」的残留壳，避免误删待整理内容。
+   */
+  async cleanupStagingDirectories(input: { showDirectoryId: string }): Promise<CleanupStagingResult> {
+    const stagingDirs = (await this.storage.listChildDirectories(input.showDirectoryId)).filter((dir) =>
+      dir.name.trim().toLowerCase().startsWith("staging-"),
+    );
+
+    const removed: string[] = [];
+    const remaining: string[] = [];
+    for (const dir of stagingDirs) {
+      let tree: PackageTreeFile[];
+      try {
+        tree = await this.storage.listTree({ directoryId: dir.id });
+      } catch {
+        remaining.push(dir.name);
+        continue;
+      }
+      if (!isSafeToRemoveStaging(tree)) {
+        remaining.push(dir.name);
+        continue;
+      }
+      try {
+        await this.storage.removeDirectory(dir.id);
+        removed.push(dir.name);
+      } catch {
+        remaining.push(dir.name);
+      }
+    }
+    return { removed, remaining };
+  }
+
   async organizeStagingDirectory(input: OrganizeStagingTvInput): Promise<OrganizeTvResult> {
     const category: ArchiveCategory = input.type === "anime" ? "Anime" : "TV";
     const canonicalFolderName = mediaLibraryFolderName({
