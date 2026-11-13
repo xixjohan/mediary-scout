@@ -404,3 +404,19 @@ BASE="http://<DEV_HOST>:3020" node test-results/measure-playback-startup.mjs
 
 - 单元：状态机迁移、遥测采样边界（区间上限、非法值、增速回退）全部覆盖。
 - 实机：`/api/strm/play` 首字节应显著下降（本机无 115 有效凭据时，收益体现在少一次 API 调用）；HUD 三档切换不产生控制台错误；关闭 HUD 后无定时器残留。
+
+### 12.5 实机验收结果（开发实例 3020）
+
+| 检查项 | 实测 | 结论 |
+| :--- | :--- | :--- |
+| 分段文案 | 点击后依次出现「正在连接网盘 CDN…」→「正在读取视频元数据…」 | 通过 |
+| 生命周期属性 | `data-playback-phase="buffering"` | 通过 |
+| HUD 详细档 | 进度 / 缓冲+增速 / 就绪+网络 / 缓冲区间 / 画面+丢帧 / 阶段 / 投送，7 行齐全 | 通过 |
+| HUD 精简档 | 仅 2 行（进度、缓冲+增速） | 通过 |
+| HUD 关闭档 | 浮层从 DOM 移除，无定时器残留 | 通过 |
+| 控制台 | pageerror 0 / console error 0 | 通过 |
+| 五页巡检 + R3–R6 回归 | `pagesOk / playerOk / memoryOk` 全 true | 通过 |
+| 控制条几何 | wrapper / controls / video 底部均 864，`object-fit: contain` | 通过 |
+| 快捷键与提示条偏好 | ESC 两段式、Space/F/?、三档偏好均正常 | 通过 |
+
+**未能在本机量化的一项**：`/api/strm/play` 首字节仍在 2.0–4.5 s 区间，与改动前同量级。原因是该测试库单集 `pick_code` 为 `null`（已通过 `/api/library/play` 响应核实），且 115 Open OAuth 处于 `refresh_token` 失效状态——两条最优路径都不可用。`pickCode` 的收益需在**重新授权并重扫**后以 `T_first_frame` 复测；契约正确性已由 `play-stream-url.test.ts`（4 例）与 `readPickCode`（3 例）覆盖。
