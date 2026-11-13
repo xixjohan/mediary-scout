@@ -4,6 +4,12 @@ import { useEffect, useRef, useState } from "react";
 import type ArtplayerType from "artplayer";
 import { AudioGainPipeline } from "../audio-gain-pipeline";
 import { reportPlaybackMetric, startPlaybackTimer } from "../playback-metrics";
+import {
+  resolveLayoutPhase,
+  resolveVideoFit,
+  type LayoutPhase,
+  type VideoFitMode,
+} from "../player-viewport";
 import type { SubtitleTrackInfo } from "@media-track/contracts";
 
 export interface MediaryPlayerCoreProps {
@@ -32,6 +38,10 @@ export function MediaryPlayerCore({
   const playerRef = useRef<ArtplayerType | null>(null);
   const gainPipelineRef = useRef<AudioGainPipeline | null>(null);
   const [currentUrl, setCurrentUrl] = useState(url);
+  // 布局阶段显式化：pending（等待元数据）→ fitted（已适配）/ fallback（确定性兜底）。
+  const [layoutPhase, setLayoutPhase] = useState<LayoutPhase>("pending");
+  const layoutPhaseRef = useRef<LayoutPhase>("pending");
+  const fitModeRef = useRef<VideoFitMode>("contain");
 
   // 用 ref 持有最新值，避免 settings / error 回调捕获首次渲染的过期闭包
   // （旧实现 effect 依赖数组缺 gainLevel / isUsingFallback / fallbackUrl）。
@@ -48,12 +58,59 @@ export function MediaryPlayerCore({
   useEffect(() => {
     setCurrentUrl(url);
     latestRef.current.isUsingFallback = url === fallbackUrl;
+    // 换流即回到 pending，避免把上一部片源的 fitted/fallback 状态带过去。
+    layoutPhaseRef.current = "pending";
+    setLayoutPhase("pending");
   }, [url, fallbackUrl]);
 
   useEffect(() => {
     let art: ArtplayerType | null = null;
     let isDisposed = false;
     const firstFrameTimer = startPlaybackTimer();
+    layoutPhaseRef.current = "pending";
+    setLayoutPhase("pending");
+    // 换流 / 重建播放器时同步清掉上一次的适配标记，避免新实例尚未 init
+    // 期间 DOM 上残留旧的 fitted / fallback 诊断值。
+    if (containerRef.current) containerRef.current.dataset.viewportFit = "pending";
+
+    /**
+     * 唯一的 video 层样式写入口。只改 video，不改 $player 尺寸——控制条贴底
+     * 是不变量。竖屏时按容器高度等比限宽并居中；其余情况清除几何覆写。
+     */
+    const applyVideoFit = () => {
+      const player = art;
+      if (!player) return undefined;
+      const container = containerRef.current;
+      const video = player.video;
+      const decision = resolveVideoFit({
+        layoutPhase: layoutPhaseRef.current,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        containerWidth: container?.clientWidth ?? 0,
+        containerHeight: container?.clientHeight ?? 0,
+        userFitMode: fitModeRef.current,
+      });
+      video.style.objectFit = decision.objectFit;
+      video.style.objectPosition = "center";
+      video.style.maxHeight = "100%";
+      if (decision.kind === "portrait" && decision.maxWidthPx !== null) {
+        video.style.width = "100%";
+        video.style.maxWidth = `${decision.maxWidthPx}px`;
+        video.style.marginInline = "auto";
+      } else {
+        video.style.removeProperty("width");
+        video.style.removeProperty("max-width");
+        video.style.removeProperty("margin-inline");
+      }
+      if (container) container.dataset.viewportFit = decision.kind;
+      return decision;
+    };
+
+    const transitionPhase = (next: LayoutPhase) => {
+      layoutPhaseRef.current = next;
+      setLayoutPhase(next);
+      applyVideoFit();
+    };
 
     async function initPlayer() {
       if (!containerRef.current) return;
@@ -167,9 +224,17 @@ export function MediaryPlayerCore({
             ],
             onSelect: (item: any) => {
               if (!art) return String(item.html ?? "");
+              const requested = String(item.value);
               // 只作用于 video 层：容器恒为 100%，控制条才能始终贴底。
-              art.video.style.objectFit = String(item.value);
-              return String(item.html ?? "");
+              if (requested === "contain" || requested === "cover" || requested === "fill") {
+                fitModeRef.current = requested;
+              }
+              const decision = applyVideoFit();
+              const label = String(item.html ?? "");
+              // 竖屏 / 超宽 / 兜底阶段会否决 cover，明确告知用户而非静默忽略。
+              return decision && decision.objectFit !== requested
+                ? `${label} (受片源保护)`
+                : label;
             },
           },
         ],
@@ -177,6 +242,8 @@ export function MediaryPlayerCore({
 
       playerRef.current = art;
       onPlayerChangeRef.current?.(art);
+      // pending 阶段即写入确定性 contain，消除元数据到达前后的隐式布局差异。
+      applyVideoFit();
 
       // 适配器式修补：ArtPlayer 内部在 autoplay / switchUrl 时直接调用
       // video.play() 且不 catch AbortError，快速切换流会产生未捕获拒绝。
@@ -192,6 +259,19 @@ export function MediaryPlayerCore({
       art.on("play", () => {
         gainPipelineRef.current?.resume();
       });
+
+      // 布局状态机：元数据到达即 fitted；videoWidth=0（凭据失效 / 格式不支持）
+      // 直接落 fallback；窗口尺寸变化只重算 video 层样式，不动容器。
+      art.on("video:loadedmetadata", () => {
+        const video = art?.video;
+        transitionPhase(
+          resolveLayoutPhase({
+            videoWidth: video?.videoWidth ?? 0,
+            videoHeight: video?.videoHeight ?? 0,
+          }),
+        );
+      });
+      art.on("resize", () => applyVideoFit());
 
       // 播放链路耗时埋点（默认静默，localStorage 开启后输出到控制台）
       art.on("video:loadeddata", () => {
@@ -210,6 +290,7 @@ export function MediaryPlayerCore({
       // 错误自愈：403 / CORS 时降级为代理流，同样只走 switchUrl 单一路径。
       art.on("error", (error) => {
         console.warn("[MediaryPlayer] 播放遇到异常:", error);
+        transitionPhase("fallback");
         const { fallbackUrl: fallback, currentUrl: active } = latestRef.current;
         if (fallback && !latestRef.current.isUsingFallback && active !== fallback) {
           console.info("[MediaryPlayer] 尝试切换为代理播放流自愈降级...");
@@ -233,10 +314,23 @@ export function MediaryPlayerCore({
     };
     window.addEventListener("unhandledrejection", onUnhandledRejection);
 
+    // 元数据迟迟不到（网盘直链首包慢 / 鉴权失效）时也要有确定布局，
+    // 不能让 phase 永远停在 pending。8s 与起播超时量级一致。
+    const metadataTimeout = window.setTimeout(() => {
+      if (layoutPhaseRef.current === "pending") transitionPhase("fallback");
+    }, 8000);
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined" && containerRef.current) {
+      resizeObserver = new ResizeObserver(() => applyVideoFit());
+      resizeObserver.observe(containerRef.current);
+    }
+
     void initPlayer();
 
     return () => {
       isDisposed = true;
+      window.clearTimeout(metadataTimeout);
+      resizeObserver?.disconnect();
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
       onPlayerChangeRef.current?.(null);
       gainPipelineRef.current?.detach();
@@ -253,6 +347,7 @@ export function MediaryPlayerCore({
   return (
     <div
       ref={containerRef}
+      data-layout-phase={layoutPhase}
       style={{
         width: "100%",
         height: "100%",

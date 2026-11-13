@@ -9,3 +9,4 @@ export * from "./pinpoint-ingest-sync.js";
 export * from "./strm-task-config-registry.js";
 export * from "./strm-delivery.js";
 export * from "./delivery-mode-resolver.js";
+export * from "./player-delivery-preference.js";

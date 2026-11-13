@@ -12,6 +12,10 @@ import {
   writeHintVisibility,
   type HintVisibility,
 } from "../player-preferences";
+import {
+  readPlayerDeliveryPreferenceAction,
+  savePlayerDeliveryPreferenceAction,
+} from "../../../app/actions/player-delivery-actions";
 import type { SubtitleTrackInfo } from "@media-track/contracts";
 
 export interface MediaryPlayerModalProps {
@@ -42,6 +46,12 @@ export function MediaryPlayerModal({
   const [mounted, setMounted] = useState(false);
   const [copied, setCopied] = useState(false);
   const [currentMode, setCurrentMode] = useState<"redirect" | "proxy">(deliveryMode);
+  // P2-B：账号级投送偏好。三处播放入口（含不走 play 接口的文件夹视图）
+  // 统一在弹窗内读取同一个 account_settings 键，避免偏好只在一处生效。
+  const rememberedModeRef = useRef<"redirect" | "proxy" | null>(null);
+  const [overrideActive, setOverrideActive] = useState(deliverySource === "session");
+  const [preferenceReset, setPreferenceReset] = useState(false);
+  const [decisionNote, setDecisionNote] = useState<string | null>(null);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [hintVisibility, setHintVisibility] = useState<HintVisibility>("auto");
   const [showHelp, setShowHelp] = useState(false);
@@ -62,15 +72,33 @@ export function MediaryPlayerModal({
     setMounted(true);
     setHintVisibility(readHintVisibility());
     resetHideTimer();
+    // 读取失败 / 演示站只读：静默降级为服务端解析结果，不阻断播放。
+    void readPlayerDeliveryPreferenceAction()
+      .then((preference) => {
+        if (preference !== "proxy" && preference !== "redirect") return;
+        rememberedModeRef.current = preference;
+        setCurrentMode(preference);
+        setOverrideActive(true);
+        setDecisionNote(
+          `已记忆的投送偏好：${preference === "proxy" ? "服务器分片代理" : "302 CDN 直连"}（刷新后保持）`,
+        );
+      })
+      .catch(() => {});
     return () => {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
   }, [resetHideTimer]);
 
-  // 父级交付模式变化后同步显示，避免标签停留在旧值。
+  // 父级交付模式异步到达后同步显示；若已有账号级偏好，以偏好为准。
   useEffect(() => {
-    setCurrentMode(deliveryMode);
+    setCurrentMode(rememberedModeRef.current ?? deliveryMode);
   }, [deliveryMode]);
+
+  useEffect(() => {
+    if (rememberedModeRef.current === null) {
+      setOverrideActive(deliverySource === "session");
+    }
+  }, [deliverySource]);
 
   // 统一快捷键分派（全局焦点策略 + Escape 单一归属），取代旧的 window Escape 监听。
   usePlayerShortcuts({
@@ -100,10 +128,34 @@ export function MediaryPlayerModal({
     });
   };
 
+  const modeLabel = (mode: "redirect" | "proxy") =>
+    mode === "redirect" ? "302 CDN 直连" : "服务器分片代理";
+
   const toggleDeliveryMode = () => {
     if (!proxyUrl) return;
-    setCurrentMode((prev) => (prev === "redirect" ? "proxy" : "redirect"));
+    const next = currentMode === "redirect" ? "proxy" : "redirect";
+    setCurrentMode(next);
+    rememberedModeRef.current = next;
+    setOverrideActive(true);
+    setPreferenceReset(false);
+    setDecisionNote(`用户手动选择：${modeLabel(next)}（已记忆，下次打开保持）`);
+    // 持久化失败（演示站 / 未认证）时本次会话内仍然生效。
+    void savePlayerDeliveryPreferenceAction(next).catch(() => {});
   };
+
+  const resetDeliveryPreference = () => {
+    rememberedModeRef.current = null;
+    setOverrideActive(false);
+    setPreferenceReset(true);
+    setDecisionNote("已恢复默认：下次打开重新按路径绑定 / 影视库配置解析投送模式");
+    void savePlayerDeliveryPreferenceAction("auto").catch(() => {});
+  };
+
+  // P2-C：把 hover 里的决策原因提升为常驻说明；没有 reason 的入口给出可读兜底。
+  const decisionText =
+    decisionNote ??
+    deliveryReason ??
+    `${modeLabel(currentMode)} · 来源 ${deliverySource ?? "默认策略"}`;
 
   if (!mounted) return null;
 
@@ -292,6 +344,27 @@ export function MediaryPlayerModal({
               </button>
             )}
 
+            {overrideActive && !preferenceReset && (
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={resetDeliveryPreference}
+                aria-label="恢复默认投送模式"
+                title="清除已记忆的投送偏好，恢复按影视库 / 路径绑定配置解析"
+                style={{
+                  fontSize: "0.78rem",
+                  background: "rgba(255, 255, 255, 0.08)",
+                  border: "1px solid rgba(255, 255, 255, 0.15)",
+                  color: "#d4d4d8",
+                  padding: "0.35rem 0.6rem",
+                  borderRadius: "8px",
+                  backdropFilter: "blur(8px)",
+                }}
+              >
+                恢复默认
+              </button>
+            )}
+
             <button
               type="button"
               className="btn btn-secondary btn-sm"
@@ -338,6 +411,31 @@ export function MediaryPlayerModal({
               <X size={18} />
             </button>
           </div>
+        </div>
+
+        {/* P2-C：投送决策原因常驻展示（不随顶部控制层渐隐，避免只能 hover 才看到） */}
+        <div
+          data-testid="player-delivery-reason"
+          title={deliveryReason ?? undefined}
+          style={{
+            position: "absolute",
+            top: "82px",
+            left: "1.4rem",
+            zIndex: 9998,
+            maxWidth: "min(62%, 720px)",
+            padding: "0.3rem 0.7rem",
+            borderRadius: "8px",
+            background: "rgba(0, 0, 0, 0.55)",
+            backdropFilter: "blur(6px)",
+            border: "1px solid rgba(255, 255, 255, 0.10)",
+            color: "rgba(255, 255, 255, 0.72)",
+            fontSize: "0.74rem",
+            lineHeight: 1.45,
+            pointerEvents: "none",
+          }}
+        >
+          <span style={{ color: "#a1a1aa" }}>投送决策：</span>
+          {decisionText}
         </div>
 
         {/* 底部悬浮快捷提示胶囊：三档偏好（常显 / 自动渐隐 / 隐藏），文案由命令注册表生成 */}

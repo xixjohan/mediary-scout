@@ -2,8 +2,11 @@ import { NextResponse, type NextRequest } from "next/server";
 import { requireApiAccount } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 import {
+  PLAYER_DELIVERY_MODE_SETTING_KEY,
   findLibraryContextBySeasonId,
+  parsePlayerDeliveryPreference,
   resolveDeliveryMode,
+  toSessionOverride,
 } from "@media-track/workflow";
 import type { SubtitleTrackInfo } from "@media-track/contracts";
 
@@ -40,8 +43,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     : null;
   const storage = await repo.getConnectedStorageById(episode.storageId);
 
+  // P2-B：账号级投送偏好作为责任链最高优先级的 session override。
+  // 读取失败一律降级为「无覆盖」，绝不因为偏好存储故障阻断播放。
+  const storedPreference = await repo
+    .getAccountSetting(gate, PLAYER_DELIVERY_MODE_SETTING_KEY)
+    .catch(() => null);
+  const sessionOverride = toSessionOverride(
+    parsePlayerDeliveryPreference(storedPreference),
+  );
+
   // 责任链：session > binding(非 inherit) > library > global，最终由驱动约束裁决。
   const decision = resolveDeliveryMode({
+    sessionOverride,
     bindingMode: binding?.deliveryMode ?? null,
     libraryMode: library?.defaultDeliveryMode ?? null,
     provider: storage?.provider ?? null,
