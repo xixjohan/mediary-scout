@@ -261,3 +261,48 @@ POST /api/titles/organize
 | TMDB 误配 | tmdbId 来自目录名，可能错 | adopt 前用 TMDB 返回的标题与目录名做一次相似度校验，不符则拒绝并提示 |
 | 大目录耗时 | `listTree` + 逐集 adopt 可能很慢 | 限流 + 进度反馈；失败可续跑 |
 | 并发 | 整理与追更任务同时操作同一目录 | 复用现有 run 互斥（`blockIfTitleHasActiveKinds`） |
+
+---
+
+## 13. 实施记录与实机验收
+
+### 13.1 已实施
+
+| 项 | 落点 | 说明 |
+| :--- | :--- | :--- |
+| 错误语义 | `api/titles/organize/route.ts` | 未追踪由 `404 "title not tracked"` 改为 `409 {code:"NOT_TRACKED"}` + 可操作文案；目录缺失改为 `NO_STORAGE_DIRECTORY` |
+| 契约补 storageId | 同上 `parseOrganizeRequestBody` | 新增可选 `storageId`（裁剪空白、非字符串忽略）；缺省时保持旧行为 |
+| 归属校验 | 同上 `resolveOrganizeContext` | 传入的盘必须在 `listConnectedStorages(accountId)` 内，否则 `403 STORAGE_FORBIDDEN` |
+| 按盘过滤追踪态 | 同上 `resolveOrganizeTarget` | `listTrackedSeasonStates({ accountId, connectedStorageId })`，修掉跨盘错配 |
+| 引导式纳入 | `storage/use-folder-organize.ts` + `organize-adopt-prompt.tsx` | 收到 NOT_TRACKED → 黄色确认条（明确"不会触发下载或追更"）→ 调既有 `/api/storage/files/adopt` → 重试整理 |
+| 视图瘦身 | `storage-manager-view.tsx` | 编排整体移入 Hook，视图 649 → 约 600 行，复杂度回到预算内 |
+
+单测新增：`route-contract.test.ts`（4 例结构门禁）、`route.test.ts` 增补 storageId（3 例）、`use-folder-organize.test.ts`（7 例）。
+
+### 13.2 结构门禁（防回归）
+
+`apps/web/app/api/titles/organize/route-contract.test.ts` 用 **AST** 而非文本匹配断言：
+
+1. 路由源码不得再出现 `title not tracked` 字面量；
+2. 必须出现 `NOT_TRACKED` 错误码；
+3. 必须真实调用 `listConnectedStorages`（AST CallExpression，注释/字符串不算）；
+4. `listTrackedSeasonStates` 的实参里必须含 `connectedStorageId`（支持嵌套/条件对象）。
+
+### 13.3 实机验收（开发实例 3020）
+
+为让"未追踪"分支可复现，验收前删除了该标题在开发库中的 2 条 `workflow_runs`（仅 dev 数据）。
+
+| 检查项 | 实测 | 结论 |
+| :--- | :--- | :--- |
+| 点击整理 | 出现黄色「尚未纳入媒体库…纳入并整理」确认条，**无** `title not tracked` | 通过 |
+| 确认纳入 | 确认条消失、进入「整理中…」，无裸报错 | 通过 |
+| 旧客户端（无 storageId，tmdb 999999） | `409 {code:"NOT_TRACKED"}` | 通过 |
+| 越权 storageId | `403 {code:"STORAGE_FORBIDDEN"}` | 通过 |
+| 控制台 | pageerror 0 | 通过 |
+
+回归（同实例）：五页巡检 + R3–R6 全 true；播放器 UX（全屏 gap 0 / 复制 / 字幕 / V / 偏好记忆）全通过；字幕专项全通过；HUD 三档通过；详情页预热仍为 1 次 HEAD。
+
+### 13.4 与方案的偏差
+
+- **P2 由服务端自动 adopt 改为前端引导式编排**：adopt 会新增标题/季/集记录，属于可见副作用，必须由用户显式确认；且 `/api/storage/files/adopt` 已实现完整识别与快照写入，服务端重写会引入 200+ 行重复逻辑。代价是多一次往返，收益是零重复实现 + 用户可取消。
+- **P3 的浏览器回归已并入** `test-results/browser-acceptance/verify-organize-adopt.mjs`，但**未**挂进 `npm run gate`（gate 只跑静态门禁与单测，浏览器验收仍是手动/脚本触发）。如需 CI 化，可另加 Playwright job。

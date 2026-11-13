@@ -59,3 +59,31 @@ describe("parseOrganizeRequestBody", () => {
     expect(parseOrganizeRequestBody({ tmdbId: "1396", seasonNumber: 2 }).ok).toBe(false);
   });
 });
+
+describe("parseOrganizeRequestBody · storageId（P1 新增）", () => {
+  it("合法 storageId 透传，并裁剪首尾空白", () => {
+    expect(parseOrganizeRequestBody({ tmdbId: 1396, storageId: " cs_1 " })).toEqual({
+      ok: true,
+      tmdbId: 1396,
+      storageId: "cs_1",
+    });
+  });
+
+  it("空白/空串视为未提供（保持旧客户端兼容）", () => {
+    for (const value of ["", "   "]) {
+      expect(parseOrganizeRequestBody({ tmdbId: 1396, storageId: value })).toEqual({
+        ok: true,
+        tmdbId: 1396,
+      });
+    }
+  });
+
+  it("非字符串一律忽略，不影响其余字段", () => {
+    for (const value of [123, null, true, {}, []]) {
+      expect(parseOrganizeRequestBody({ tmdbId: 1396, storageId: value })).toEqual({
+        ok: true,
+        tmdbId: 1396,
+      });
+    }
+  });
+});

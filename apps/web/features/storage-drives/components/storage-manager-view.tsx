@@ -11,6 +11,8 @@ import { type ModalState, StorageModals } from "./storage/storage-modals";
 import { StorageNavBar } from "./storage/storage-nav-bar";
 import { StorageOfflineModal } from "./storage/storage-offline-modal";
 import { ReverseScanModal } from "./storage/reverse-scan-modal";
+import { OrganizeAdoptPrompt } from "./storage/organize-adopt-prompt";
+import { useFolderOrganize } from "./storage/use-folder-organize";
 import { VideoPreviewModal } from "./storage/video-preview-modal";
 import { formatProviderLabel, StorageTopBar } from "./storage/storage-top-bar";
 
@@ -83,16 +85,6 @@ function resolveTmdbIdFromListing(
       const fromCrumb = tmdbIdFromMediaLibraryFolderName(crumb.name);
       if (fromCrumb) return fromCrumb;
     }
-  }
-  return null;
-}
-
-function findParentCrumbForStaging(
-  currentDirectoryName: string | undefined,
-  breadcrumbs: DriveBreadcrumb[],
-): DriveBreadcrumb | null {
-  if (currentDirectoryName?.toLowerCase().startsWith("staging-") && breadcrumbs.length >= 2) {
-    return breadcrumbs[breadcrumbs.length - 2] ?? null;
   }
   return null;
 }
@@ -457,48 +449,17 @@ export function StorageManagerView({
     [listing?.currentDirectoryName, breadcrumbs],
   );
 
-  const [organizing, setOrganizing] = useState<boolean>(false);
-  const handleOrganizeCurrentFolder = useCallback(async () => {
-    if (!currentFolderTmdbId) return;
-    setOrganizing(true);
-    setError(null);
-    setSuccessMessage(null);
-    try {
-      const currentSeasonMatch = listing?.currentDirectoryName
-        ? /^(?:Season\s*(\d+)|第\s*(\d+)\s*季)$/i.exec(listing.currentDirectoryName.trim())
-        : null;
-      const currentSeasonNumber = currentSeasonMatch
-        ? Number(currentSeasonMatch[1] || currentSeasonMatch[2])
-        : undefined;
-
-      const res = await fetch("/api/titles/organize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tmdbId: currentFolderTmdbId,
-          directoryId: currentDirId,
-          ...(currentSeasonNumber !== undefined ? { seasonNumber: currentSeasonNumber } : {}),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "整理失败");
-      }
-      setSuccessMessage(data.copy || "整理完成");
-
-      // 若当前正处于 staging 暂存目录，整理后该目录已被彻底清理，平滑导航回上一级影视主目录
-      const parentCrumb = findParentCrumbForStaging(listing?.currentDirectoryName, breadcrumbs);
-      if (parentCrumb) {
-        handleNavigateFolder(parentCrumb.id, parentCrumb.name);
-        return;
-      }
-      await loadFiles(selectedStorageId, currentDirId);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "整理出错");
-    } finally {
-      setOrganizing(false);
-    }
-  }, [currentFolderTmdbId, currentDirId, loadFiles, selectedStorageId, listing?.currentDirectoryName, breadcrumbs, handleNavigateFolder]);
+  const organizeFlow = useFolderOrganize({
+    storageId: selectedStorageId,
+    directoryId: currentDirId,
+    directoryName: listing?.currentDirectoryName,
+    breadcrumbs,
+    tmdbId: currentFolderTmdbId,
+    onNavigateFolder: handleNavigateFolder,
+    onReload: () => loadFiles(selectedStorageId, currentDirId),
+    onSuccess: setSuccessMessage,
+    onError: setError,
+  });
 
   return (
     <div className="storage-view-container">
@@ -518,8 +479,8 @@ export function StorageManagerView({
         onOpenScan={() => setScanModalOpen(true)}
         onRefresh={() => void handleRefresh()}
         currentFolderTmdbId={currentFolderTmdbId}
-        onOrganizeCurrentFolder={handleOrganizeCurrentFolder}
-        organizing={organizing}
+        onOrganizeCurrentFolder={organizeFlow.organizeCurrentFolder}
+        organizing={organizeFlow.busy}
       />
 
       <StorageNavBar
@@ -559,6 +520,13 @@ export function StorageManagerView({
           </div>
         </div>
       )}
+
+      <OrganizeAdoptPrompt
+        prompt={organizeFlow.pendingAdopt}
+        busy={organizeFlow.busy}
+        onConfirm={() => void organizeFlow.confirmAdopt()}
+        onCancel={organizeFlow.cancelAdopt}
+      />
 
       {error && (
         <div className="storage-error-banner">
