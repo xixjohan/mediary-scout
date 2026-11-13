@@ -1862,6 +1862,67 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
   });
 });
 
+describe("transfer · 落盘文件名被截断（转存丢扩展名）", () => {
+  const TRUNCATED = "凡人修仙传[第175集].1080p.WEB-DL.H264.AAC-ColorTV";
+  const BIG = String(1200 * 1024 * 1024);
+
+  function makeExecutor(api: FakePan115Api) {
+    return createProtectedStorage115Executor({
+      api,
+      env: { MEDIA_TRACK_115_TEST_ROOT_CID: "test_root" },
+      apiGuardOptions: { minDelayMs: 0 },
+    });
+  }
+
+  it("仍判定为落地成功，并按资源名补上扩展名", async () => {
+    const api = new FakePan115Api({
+      shareFiles: { abc123: [{ fid: "file_1", n: TRUNCATED, s: BIG }] },
+      directoryInfo: { season_1: seasonPathInfo("test_root", "season_1") },
+    });
+    const executor = makeExecutor(api);
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run_1",
+      directoryId: "season_1",
+      candidate: {
+        ...candidateFixture({
+          type: "115",
+          providerPayload: { url: "https://115.com/s/abc123?password=pw", rawType: "115" },
+        }),
+        title: "凡人修仙传[第175集].1080p.WEB-DL.H264.mkv",
+      },
+    });
+
+    // 旧实现按扩展名过滤 → 看不到文件 → no_target_change → 换候选 + staging 泄漏
+    expect(attempt.status).toBe("succeeded");
+    expect(attempt.materializedFileIds).toEqual(["file_1"]);
+    expect(api.renames).toEqual([{ fileId: "file_1", newName: `${TRUNCATED}.mkv` }]);
+  });
+
+  it("资源名拿不到扩展名时不动文件（绝不默认 mp4）", async () => {
+    const api = new FakePan115Api({
+      shareFiles: { abc123: [{ fid: "file_1", n: TRUNCATED, s: BIG }] },
+      directoryInfo: { season_1: seasonPathInfo("test_root", "season_1") },
+    });
+    const executor = makeExecutor(api);
+
+    const attempt = await executor.transfer({
+      workflowRunId: "run_1",
+      directoryId: "season_1",
+      candidate: {
+        ...candidateFixture({
+          type: "115",
+          providerPayload: { url: "https://115.com/s/abc123?password=pw", rawType: "115" },
+        }),
+        title: "凡人修仙传 合集",
+      },
+    });
+
+    expect(attempt.status).toBe("succeeded");
+    expect(api.renames).toEqual([]);
+  });
+});
+
 class FakePan115Api implements Pan115StorageApi {
   readonly directories: Record<string, Pan115Item[]>;
   readonly shareFiles: Record<string, Pan115Item[]>;

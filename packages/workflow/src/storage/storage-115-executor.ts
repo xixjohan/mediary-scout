@@ -7,6 +7,9 @@ import type {
   VerifiedFile,
 } from "../domain/domain.js";
 import { episodeCodeFromFileName } from "../domain/episode-code.js";
+import { isExtensionlessVideoName } from "../execution/extensionless-video.js";
+import { collectLandedVideos, normalizeLandedExtensions } from "./landed-media.js";
+import { infoHashFromMagnet, isOfflineTaskCandidate, isOfflineTaskUrl } from "./pan115-offline-task.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import type { StorageExecutor, UnparsedVideoFile } from "../domain/ports.js";
 
@@ -87,6 +90,9 @@ export const PAN115_TRANSFER_RESERVE_CALLS = 40;
  *  drive had no staging_leaked event — every run had spent 300/300, so discard,
  *  removeDirectory and the read-back were all refused and the failure was swallowed. */
 export const PAN115_HARNESS_RESERVE_CALLS = 5;
+
+// 兼容既有导入点（测试从本模块取 infoHashFromMagnet）。
+export { infoHashFromMagnet };
 
 export interface Pan115Item {
   id?: string | number;
@@ -596,7 +602,7 @@ export class Storage115Executor implements StorageExecutor {
     // trade-off: at the budget edge the caller must stop transferring either way.
     this.apiGuard.assertTransferBudget(isOfflineTaskCandidate(input.candidate) ? "addOfflineTask" : "receiveShare");
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer");
-    const before = new Set((await this.listVideoFiles(safeDirectoryId)).map((file) => file.id));
+    const before = new Set((await this.listLanded(safeDirectoryId)).map((file) => file.id));
     const action = await this.executeCandidateTransfer(input.candidate, safeDirectoryId);
 
     // Offline tasks (magnets/ed2k): a 秒传 hit means 115 ALREADY has the
@@ -644,11 +650,22 @@ export class Storage115Executor implements StorageExecutor {
       }
     }
 
-    const after = await this.listVideoFiles(safeDirectoryId);
+    const after = await this.listLanded(safeDirectoryId);
     const materializedFileIds = after
       .filter((file) => !before.has(file.id))
       .map((file) => file.id);
     const status = transferStatus(action, materializedFileIds);
+
+    // 落盘即补扩展名：转存常把名字截断在发布组后缀上，补上后整理器才认得出。
+    // 只改名字不改 id，因此上面的 materializedFileIds 与 status 仍然成立。
+    if (status === "succeeded") {
+      await normalizeLandedExtensions({
+        landed: after,
+        sourceTitle: input.candidate.title,
+        rename: (fileId, newName) => this.api.renameFile({ fileId, newName }),
+        warn: (message, error) => console.warn(`[Storage115Executor] ${message}`, error ?? ""),
+      });
+    }
 
     // Non-秒传 offline task: 115 had no cached copy, so it queued a real
     // download we never wait for. Cancel it (`task_del`) to free the offline
@@ -1144,7 +1161,13 @@ export class Storage115Executor implements StorageExecutor {
    *  works for movies too). */
   private async stagingTreeHasVideo(directoryId: string): Promise<boolean> {
     const tree = await this.listTree({ directoryId });
-    return tree.some((file) => isVideoName(file.path, this.videoExtensions));
+    // 转存可能把扩展名截断（`...H264.AAC-ColorTV`），只按扩展名判定会把已落地的
+    // 文件当成"没落地"，工作流于是换候选、文件留在 staging 变成泄漏。
+    return tree.some(
+      (file) =>
+        isVideoName(file.path, this.videoExtensions) ||
+        isExtensionlessVideoName(file.path.split("/").filter(Boolean).pop() ?? file.path, file.sizeBytes),
+    );
   }
 
   /**
@@ -1308,6 +1331,15 @@ export class Storage115Executor implements StorageExecutor {
   private async directoryContainsLargeVideo(directoryId: string): Promise<boolean> {
     const videos = await this.collectVideos(directoryId, directoryId);
     return videos.some((video) => video.sizeBytes >= this.minVideoSizeBytes);
+  }
+
+  /** 落盘文件列举（视频扩展名 + 无扩展名大文件），口径与 before/after 一致。 */
+  private async listLanded(directoryId: string): Promise<VerifiedFile[]> {
+    return collectLandedVideos({
+      listItems: (dirId) => this.callApi("listItems", () => this.api.listItems({ directoryId: dirId })),
+      videoExtensions: this.videoExtensions,
+      rootDirectoryId: directoryId,
+    });
   }
 
   private async collectVideos(
@@ -1546,53 +1578,6 @@ function transferStatus(action: Pan115ActionResult, materializedFileIds: string[
 
 /** Offline-task (cloud-download) urls — magnets land asynchronously, unlike a
  *  synchronous 115 share receive, so they get a materialization grace window. */
-function isOfflineTaskUrl(url: string): boolean {
-  return url.startsWith("magnet:?xt=urn:btih:");
-}
-
-function isOfflineTaskCandidate(candidate: ResourceCandidate): boolean {
-  return isOfflineTaskUrl(stringValue(candidate.providerPayload["url"]));
-}
-
-const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-
-/** Decode a 32-char RFC4648 base32 btih into its 40-char lowercase hex form
- *  (160 bits → 20 bytes). Null if any char is outside the alphabet. */
-function base32InfoHashToHex(base32: string): string | null {
-  let bits = "";
-  for (const char of base32.toUpperCase()) {
-    const index = BASE32_ALPHABET.indexOf(char);
-    if (index < 0) {
-      return null;
-    }
-    bits += index.toString(2).padStart(5, "0");
-  }
-  let hex = "";
-  for (let offset = 0; offset + 8 <= bits.length; offset += 8) {
-    hex += parseInt(bits.slice(offset, offset + 8), 2).toString(16).padStart(2, "0");
-  }
-  return hex;
-}
-
-/** The btih info_hash (lowercase hex) from a magnet uri — 115 keys offline tasks
- *  by it, so it is what `task_del` needs to cancel one and `task_lists` to look
- *  one up. Accepts both the 40-char hex and the 32-char base32 btih encodings.
- *  Null only for non-magnet / malformed links. */
-export function infoHashFromMagnet(url: string): string | null {
-  const match = /xt=urn:btih:([A-Za-z0-9]+)/.exec(url);
-  const raw = match?.[1];
-  if (!raw) {
-    return null;
-  }
-  if (/^[A-Fa-f0-9]{40}$/.test(raw)) {
-    return raw.toLowerCase();
-  }
-  if (/^[A-Za-z2-7]{32}$/.test(raw)) {
-    return base32InfoHashToHex(raw)?.toLowerCase() ?? null;
-  }
-  return null;
-}
-
 function transferMessage(
   candidate: ResourceCandidate,
   action: Pan115ActionResult,

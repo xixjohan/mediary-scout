@@ -28,3 +28,4 @@ export * from "./acquisition-filter-pipeline.js";
 export * from "./version-ranker.js";
 export * from "./media-organizer.js";
 export * from "./unrecognized-media.js";
+export * from "./extensionless-video.js";

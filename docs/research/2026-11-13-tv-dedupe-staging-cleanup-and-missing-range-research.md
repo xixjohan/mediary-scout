@@ -223,3 +223,42 @@ Open API 不可用时才降级到 cookie 通道。因此 OAuth 正常时补后�
 | 转存时保留扩展名（根治） | 需在 `transfer` 落盘阶段对目标名做「补全扩展名」策略，涉及秒传与分享目录结构，属独立改造 |
 | 无扩展名文件的播放兜底 | STRM 播放路由已支持 `?name=` 参数，理论上可传 `name=xxx.mkv` 让 Plex 识别；未做端到端验证 |
 | 缺扩展名文件的整理 | 平台不允许改扩展名时无解；只能在转存阶段预防 |
+
+---
+
+## 9. 根治：转存落盘即补扩展名
+
+§8 的「一键补后缀」是事后修复，仍有两个缺口：文件在落盘到被发现之间不可见（transfer 判定"没落地"→ 换候选 → staging 泄漏），以及整理器永远认不出它。本轮把修复前移到**转存落盘阶段**。
+
+### 9.1 已实施
+
+| 项 | 落点 | 说明 |
+| :--- | :--- | :--- |
+| 扩展名归一堆函数 | `packages/workflow/src/execution/extensionless-video.ts` | `videoExtensionFromName()`（只认 2–5 位字母数字且属已知视频后缀，因此 `...AAC-ColorTV` 不会被误当扩展名）、`planExtensionFixes()`（拿不到后缀就不规划，**绝不默认 mp4**） |
+| 落盘识别与改名 | `packages/workflow/src/storage/landed-media.ts` | `collectLandedVideos()` 递归列举「视频扩展名 + 无扩展名但 ≥100MB」；`normalizeLandedExtensions()` 用资源名自带后缀补名，失败只告警 |
+| transfer 快照口径 | `storage-115-executor.ts` | `before`/`after` 统一改用 `listLanded()`——**同一口径**是关键：若 before 按扩展名过滤、after 不按，历史遗留的截断文件会被误判成"新落地" |
+| 秒传落盘判定 | 同上 `stagingTreeHasVideo()` | 除扩展名外，也认「无扩展名但体积像正片」，避免把已落地的截断文件当成没落地而空转等待 |
+| 离线任务工具抽离 | `packages/workflow/src/storage/pan115-offline-task.ts` | `isOfflineTaskUrl` / `isOfflineTaskCandidate` / `infoHashFromMagnet` 移出（执行器在行数棘轮基线上，只降不升），执行器保留再导出以兼容既有导入点 |
+
+### 9.2 设计取舍
+
+- **只在资源名自带视频后缀时改名**：`candidate.title` 通常来自种子/分享标题，`Show.S01E01.1080p.WEB-DL.mkv` 这类带后缀；拿不到后缀就原样保留，交给 §8 的读文件头方案。宁可少改，不可猜错——把 mkv 改成 mp4 会让播放器按错误容器解析。
+- **不额外发列举请求**：补名直接用 transfer 已有的 `after` 清单判定，只多花「改名」这一次调用（115 的调用预算按次计，转存阶段本就吃紧）。
+- **改名不改变 fileId**：`materializedFileIds` 与 `status` 在改名前后都成立，因此顺序上先算状态再改名。
+- **失败不阻断转存**：补名失败只 `console.warn`，转存结果照常返回。
+
+### 9.3 测试
+
+| 文件 | 覆盖 |
+| :--- | :--- |
+| `tests/execution/extensionless-video.test.ts`（8 例） | 后缀提取（含发布组后缀反例）、体积阈值、垃圾扩展名、规划逻辑（无后缀不规划） |
+| `tests/storage/landed-media.test.ts`（9 例） | 截断文件纳入、集号解析、递归包裹目录、小文件排除、改名成功/被拒/无后缀不发请求 |
+| `tests/storage/storage-115-executor.test.ts`（+2 例） | 转存落下截断文件时 **status=succeeded** 且 `renameFile` 被调用；资源名无后缀时不改名 |
+
+### 9.4 已知边界
+
+| 场景 | 行为 |
+| :--- | :--- |
+| 资源名也没有视频后缀 | 文件保持截断名 → 整理器认不出 → 由网盘页「一键补全扩展名」（读 magic bytes）修复 |
+| 115 cookie 通道改名固定原扩展名 | 对**无扩展名**的文件，`batch_rename` 可能静默不改；此时 `normalizeLandedExtensions` 记录告警，§8 的 `confirmRenames` 会在 UI 侧如实报「改名未生效」 |
+| 历史遗留的截断文件 | 不在 transfer 的 `before` 差异里，不会被本轮改名覆盖；需走 §8 的扫描 + 补后缀 |
