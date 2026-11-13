@@ -4,6 +4,7 @@ import {
   determineEffectiveDeliveryMode,
   buildStrmLinkCacheKey,
   shouldRetryWithFreshLink,
+  resolveForceProxyUaCategories,
   type StrmDeliveryMode,
 } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../../../lib/workflow-runtime";
@@ -169,12 +170,17 @@ async function handleStreamProxy(
 
     let upstreamResp: Response;
     try {
+      const upstreamStartedAt = Date.now();
       upstreamResp = await fetch(targetUrl, {
         method: isHead ? "HEAD" : "GET",
         headers: upstreamHeaders,
         redirect: "follow",
         signal: controller.signal,
       });
+      console.log(
+        "[strm-play] " +
+          JSON.stringify({ phase: "upstream", upstreamMs: Date.now() - upstreamStartedAt, status: upstreamResp.status }),
+      );
     } catch (err) {
       clearTimeout(headersTimer);
       if (timedOut) {
@@ -308,6 +314,7 @@ async function resolveAndCacheStream(options: {
       ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
       : (userAgent || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
 
+  const resolveStartedAt = Date.now();
   const resolved = await resolver.resolveStream({
     storageId,
     fileId,
@@ -320,6 +327,17 @@ async function resolveAndCacheStream(options: {
     ...(resolved.headers || {}),
     "User-Agent": resolverUa,
   };
+
+  console.log(
+    "[strm-play] " +
+      JSON.stringify({
+        storageId,
+        fileId,
+        delivery: deliveryMode,
+        cacheHit: false,
+        resolveMs: Date.now() - resolveStartedAt,
+      }),
+  );
 
   await repo.setStrmLinkCache({
     cacheKey,
@@ -415,6 +433,8 @@ export async function GET(request: NextRequest, context: RouteParams) {
     configuredMode: configuredDelivery,
     provider: config.provider,
     userAgent: clientUa,
+    // 允许通过 STRM_FORCE_PROXY_UA_CATEGORIES 灰度放开某个客户端直连
+    forceProxyUaCategories: resolveForceProxyUaCategories(),
   });
 
   // 多维隔离缓存键：proxy 模式统一共享，redirect 模式按 UA 分组隔离

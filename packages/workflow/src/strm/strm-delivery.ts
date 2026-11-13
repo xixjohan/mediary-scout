@@ -30,23 +30,49 @@ export function normalizeUserAgentCategory(ua: string | null | undefined): strin
 /**
  * 判断客户端在跟随 302 重定向时是否容易因 User-Agent 丢失/篡改或响应头兼容性导致播放失败
  */
-export function isUserAgentProneToRedirectFailure(ua: string | null | undefined): boolean {
+/**
+ * 默认「易因 302 直连失败」的播放器类别。
+ *
+ * 这些客户端对 115 的 UA 绑定签名更敏感，历史上一律强制代理。
+ * 允许通过 `STRM_FORCE_PROXY_UA_CATEGORIES` 覆盖（逗号分隔），
+ * 便于在确认某个客户端能直连后灰度放开，而不必改代码。
+ */
+export const DEFAULT_FORCE_PROXY_UA_CATEGORIES: readonly string[] = [
+  "potplayer",
+  "vlc",
+  "mpv",
+  "ffmpeg",
+  "plex",
+  "anonymous",
+];
+
+/** 解析强制代理的 UA 类别集合；未配置时使用默认值（行为与历史一致）。 */
+export function resolveForceProxyUaCategories(
+  raw: string | null | undefined = process.env.STRM_FORCE_PROXY_UA_CATEGORIES,
+): ReadonlySet<string> {
+  if (!raw || !raw.trim()) return new Set(DEFAULT_FORCE_PROXY_UA_CATEGORIES);
+  const parsed = raw
+    .split(/[\s,]+/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set(parsed.length > 0 ? parsed : DEFAULT_FORCE_PROXY_UA_CATEGORIES);
+}
+
+export function isUserAgentProneToRedirectFailure(
+  ua: string | null | undefined,
+  forced: ReadonlySet<string> = new Set(DEFAULT_FORCE_PROXY_UA_CATEGORIES),
+): boolean {
   if (!ua || !ua.trim()) return true;
   const category = normalizeUserAgentCategory(ua);
-  return (
-    category === "potplayer" ||
-    category === "vlc" ||
-    category === "mpv" ||
-    category === "ffmpeg" ||
-    category === "plex" ||
-    category === "anonymous"
-  );
+  return category === "anonymous" || forced.has(category);
 }
 
 export interface DetermineEffectiveDeliveryModeInput {
   configuredMode?: StrmDeliveryMode | "auto" | string | undefined;
   provider?: string | undefined;
   userAgent?: string | null | undefined;
+  /** 强制代理的 UA 类别；缺省用默认集合。 */
+  forceProxyUaCategories?: ReadonlySet<string> | undefined;
 }
 
 /**
@@ -66,6 +92,7 @@ export function determineEffectiveDeliveryMode(
   input: DetermineEffectiveDeliveryModeInput,
 ): "proxy" | "redirect" {
   const { configuredMode, provider, userAgent } = input;
+  const forcedUa = input.forceProxyUaCategories ?? new Set(DEFAULT_FORCE_PROXY_UA_CATEGORIES);
 
   if (configuredMode === "proxy") {
     return "proxy";
@@ -80,14 +107,14 @@ export function determineEffectiveDeliveryMode(
       return "proxy";
     }
     // 115 网盘在配置为 redirect 时，若客户端是易触发 403 签名校验失败的高危播放器，自动安全回退至 proxy
-    if (isUserAgentProneToRedirectFailure(userAgent)) {
+    if (isUserAgentProneToRedirectFailure(userAgent, forcedUa)) {
       return "proxy";
     }
     return configuredMode === "redirect" ? "redirect" : "proxy";
   }
 
   if (configuredMode === "auto") {
-    return isUserAgentProneToRedirectFailure(userAgent) ? "proxy" : "redirect";
+    return isUserAgentProneToRedirectFailure(userAgent, forcedUa) ? "proxy" : "redirect";
   }
 
   return configuredMode === "redirect" ? "redirect" : "proxy";

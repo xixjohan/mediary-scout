@@ -32,3 +32,5 @@ export * from "./credential-strategy.js";
 export * from "./storage-preflight-inspector.js";
 export * from "./reverse-storage-scanner.js";
 export * from "./storage-archive-adapter.js";
+export * from "./egress-no-proxy.js";
+export * from "./open-api-circuit.js";

@@ -1,6 +1,10 @@
 import { SingleFlight } from "../strm/single-flight.js";
 import { Pan115CookieClient } from "./pan115-cookie-client.js";
-import { Pan115OpenClient, type Pan115TokenRefreshCoordinator } from "./pan115-open-client.js";
+import {
+  Pan115OpenAuthError,
+  Pan115OpenClient,
+  type Pan115TokenRefreshCoordinator,
+} from "./pan115-open-client.js";
 import { QuarkCookieClient, QUARK_PROFILE, UC_PROFILE } from "./quark-cookie-client.js";
 import { isPan115OpenOAuthValid, type Pan115OpenOAuthCredentials } from "./account-credentials.js";
 import { withBrandPacing } from "./brand-pacing.js";
@@ -52,6 +56,9 @@ export class SingleFlightStreamResolver implements StorageStreamResolver {
     return this._flight.do(key, () => this._inner.resolveStream(input));
   }
 }
+
+import { ensureNoProxyHost } from "./egress-no-proxy.js";
+import { markOpenApiFatal, shouldSkipOpenApi } from "./open-api-circuit.js";
 
 export interface StorageCredentialsInfo {
   provider: string;
@@ -139,6 +146,9 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
         expirationSeconds: 7200,
       };
     } catch (err) {
+      if (err instanceof Pan115OpenAuthError && err.isFatal) {
+        markOpenApiFatal(input.storageId);
+      }
       console.warn(`[ProductionStorageStreamResolver] 115 Open API直链解析失败，尝试降级回Cookie:`, err);
       return null;
     }
@@ -218,11 +228,27 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
     creds: StorageCredentialsInfo,
     input: ResolveStreamInput,
   ): Promise<ResolvedStream> {
+    // 已判定 Open API 致命失效（refresh_token 无效）时直接走 Cookie：
+    // 省掉一次必然失败的刷新往返，首字节可少 0.3–1s。
+    if (shouldSkipOpenApi(input.storageId)) {
+      return this.resolvePan115CookieStream(creds, input);
+    }
     const openStream = await this.resolvePan115OpenStream(creds, input);
     return openStream ?? this.resolvePan115CookieStream(creds, input);
   }
 
   async resolveStream(input: ResolveStreamInput): Promise<ResolvedStream> {
+    const resolved = await this.resolveStreamInternal(input);
+    // CDN 域名由网盘动态下发，解析后即时补进 NO_PROXY，避免视频流被外网代理中转。
+    try {
+      ensureNoProxyHost(new URL(resolved.url).hostname);
+    } catch {
+      // url 形态异常不影响播放，忽略
+    }
+    return resolved;
+  }
+
+  private async resolveStreamInternal(input: ResolveStreamInput): Promise<ResolvedStream> {
     const creds = await this._lookup(input.storageId);
     if (!creds) {
       if (this._fallback) {

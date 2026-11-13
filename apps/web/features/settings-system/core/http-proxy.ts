@@ -127,6 +127,11 @@ export const DEFAULT_DOMESTIC_NO_PROXY = [
   "115cdn.com",
   "*.115cdn.com",
   ".115cdn.com",
+  // 115 实际下发的下载域名是 *.115cdn.net（如 cdnfhnfile.115cdn.net）。
+  // 只写 .com 会让视频流走外网代理：实测首字节 2.8-3.8s vs 直连 0.08-0.23s。
+  "115cdn.net",
+  "*.115cdn.net",
+  ".115cdn.net",
   "anxia.com",
   "*.anxia.com",
   ".anxia.com",
@@ -304,6 +309,17 @@ export interface CidrAwareProxyDispatcherOptions {
  * NO_PROXY CIDRs are dispatched through a direct Agent. No address enumeration
  * or per-request DNS lookup is needed, including for large prefixes such as /8.
  */
+import { isHostExcluded } from "@media-track/workflow";
+
+function matchesNoProxyHostname(origin: string | URL, noProxy: string): boolean {
+  try {
+    const url = origin instanceof URL ? origin : new URL(origin);
+    return isHostExcluded(url.hostname, noProxy);
+  } catch {
+    return false;
+  }
+}
+
 export class CidrAwareProxyDispatcher extends Dispatcher {
   private readonly directDispatcher: Dispatcher;
   private readonly proxyDispatcher: Dispatcher;
@@ -318,9 +334,11 @@ export class CidrAwareProxyDispatcher extends Dispatcher {
 
   public override dispatch(options: Dispatcher.DispatchOptions, handler: Dispatcher.DispatchHandler): boolean {
     const origin = options.origin;
-    const target = origin && matchesNoProxyCidr(origin, this.getNoProxy())
-      ? this.directDispatcher
-      : this.proxyDispatcher;
+    const noProxy = this.getNoProxy();
+    // 同时判定 CIDR 与主机名：EnvHttpProxyAgent 在构造时快照 NO_PROXY，
+    // 运行期补进来的域名（如解析后新增的 CDN 域）只有在这里判定才会生效。
+    const bypass = Boolean(origin) && (matchesNoProxyCidr(origin!, noProxy) || matchesNoProxyHostname(origin!, noProxy));
+    const target = bypass ? this.directDispatcher : this.proxyDispatcher;
     return target.dispatch(options, handler);
   }
 
