@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildOrganizeContext, findStagingParentCrumb } from "./use-folder-organize";
+import { buildOrganizeContext, describeFixResult, findStagingParentCrumb } from "./use-folder-organize";
 
 describe("buildOrganizeContext", () => {
   it("普通影视目录不带季号", () => {
@@ -71,5 +71,36 @@ describe("findStagingParentCrumb", () => {
 
   it("面包屑不足两级时不回退（避免越界）", () => {
     expect(findStagingParentCrumb("staging-x", [{ id: "root", name: "根目录" }])).toBeNull();
+  });
+});
+
+describe("describeFixResult", () => {
+  it("全部成功时只报数量", () => {
+    expect(describeFixResult({ fixed: 2, results: [{ to: "a.mkv" }, { to: "b.mp4" }] })).toBe(
+      "已为 2 个文件补全扩展名",
+    );
+  });
+
+  it("有跳过时列出原因（去重）", () => {
+    expect(
+      describeFixResult({
+        fixed: 1,
+        results: [
+          { to: "a.mkv" },
+          { reason: "无法识别容器格式（未改动）" },
+          { reason: "无法识别容器格式（未改动）" },
+        ],
+      }),
+    ).toBe("已为 1 个文件补全扩展名，2 个跳过（无法识别容器格式（未改动））");
+  });
+
+  it("一个都没改名时如实说明", () => {
+    expect(describeFixResult({ fixed: 0, results: [{ reason: "重命名失败：timeout" }] })).toBe(
+      "没有文件被改名，1 个跳过（重命名失败：timeout）",
+    );
+  });
+
+  it("空结果不抛错", () => {
+    expect(describeFixResult({})).toBe("没有文件被改名");
   });
 });

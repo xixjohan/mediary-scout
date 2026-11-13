@@ -1,4 +1,9 @@
-import type { MediaOrganizer, TrackedSeasonState } from "@media-track/workflow";
+import {
+  scanUnrecognizedMedia,
+  type MediaOrganizer,
+  type StorageExecutor,
+  type TrackedSeasonState,
+} from "@media-track/workflow";
 
 /** 把「归档重复版本 / 清理临时目录」拼成可选后缀，供整理结果文案复用。 */
 export function buildCleanupSuffix(archived: number, removed: number): string {
@@ -37,4 +42,23 @@ export async function dedupeAndCleanupShow(input: {
     removed: cleanup.removed.length,
     suffix: buildCleanupSuffix(dedupe.archivedCount, cleanup.removed.length),
   };
+}
+
+/** 「N 个文件缺少扩展名未参与整理」的后缀文案；为 0 时返回空串。 */
+export function buildUnrecognizedSuffix(count: number): string {
+  return count > 0 ? `，另有 ${count} 个文件缺少扩展名未参与整理` : "";
+}
+
+/**
+ * 扫描「缺扩展名的疑似正片」并给出结果文案后缀。
+ *
+ * 扫描失败不应让整理整体失败，因此这里吞掉异常并返回 0 —— 整理的主要目的
+ * （对齐正片、归档冗余）已经完成，缺扩展名只是附带信息。
+ */
+export async function scanUnrecognizedSummary(input: {
+  storage: StorageExecutor;
+  showDirectoryId: string;
+}): Promise<{ count: number; suffix: string }> {
+  const items = await scanUnrecognizedMedia(input).catch(() => []);
+  return { count: items.length, suffix: buildUnrecognizedSuffix(items.length) };
 }

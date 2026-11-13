@@ -54,7 +54,13 @@ export interface UseFolderOrganizeOptions {
 interface OrganizeResponse {
   ok: boolean;
   status: number;
-  body: { copy?: string; error?: string; code?: string };
+  body: { copy?: string; error?: string; code?: string; unrecognizedCount?: number };
+}
+
+interface UnrecognizedFixResponse {
+  scanned?: number;
+  fixed?: number;
+  results?: Array<{ from?: string; to?: string; reason?: string }>;
 }
 
 /**
@@ -124,10 +130,53 @@ async function postAdopt(context: OrganizeContext): Promise<void> {
   }
 }
 
+/**
+ * 一键补全缺扩展名的文件。
+ *
+ * 只把「盘 + 目录」交给服务端，由服务端自己重新扫描候选、读文件头判定容器，
+ * 客户端不参与"猜扩展名"——避免把 mkv 改成 mp4 这类不可逆错误。
+ */
+async function postFixUnrecognized(input: { storageId: string; directoryId: string }): Promise<UnrecognizedFixResponse> {
+  const response = await fetch("/api/titles/organize/unrecognized", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ storageId: input.storageId, directoryId: input.directoryId }),
+  });
+  const body = (await response.json().catch(() => ({}))) as UnrecognizedFixResponse & { error?: string };
+  if (!response.ok) throw new Error(body.error || "补全扩展名失败");
+  return body;
+}
+
+/** 汇总补后缀结果文案：修好几个、跳过几个、为什么跳过。 */
+export function describeFixResult(result: UnrecognizedFixResponse): string {
+  const fixed = result.fixed ?? 0;
+  const results = result.results ?? [];
+  const skipped = results.filter((item) => item.to === undefined);
+  const head = fixed > 0 ? `已为 ${fixed} 个文件补全扩展名` : "没有文件被改名";
+  if (skipped.length === 0) return head;
+  const reasons = Array.from(new Set(skipped.map((item) => item.reason ?? "未识别")));
+  return `${head}，${skipped.length} 个跳过（${reasons.join("；")}）`;
+}
+
 export function useFolderOrganize(options: UseFolderOrganizeOptions) {
   const [busy, setBusy] = useState(false);
   const [pendingAdopt, setPendingAdopt] = useState<OrganizeContext | null>(null);
+  const [pendingUnrecognized, setPendingUnrecognized] = useState<
+    { count: number; storageId: string; directoryId: string } | null
+  >(null);
   const { onSuccess, onError, onReload, onNavigateFolder, breadcrumbs, directoryName } = options;
+
+  /** 整理成功后：若有缺扩展名文件，挂出提示条（数量由服务端扫描得出）。 */
+  const handleOrganizeSuccess = useCallback(
+    (result: OrganizeResponse, context: OrganizeContext) => {
+      onSuccess(result.body.copy || "整理完成");
+      const count = result.body.unrecognizedCount ?? 0;
+      setPendingUnrecognized(
+        count > 0 ? { count, storageId: context.storageId, directoryId: context.directoryId } : null,
+      );
+    },
+    [onSuccess],
+  );
 
   const afterSuccess = useCallback(async () => {
     const stagingParent = findStagingParentCrumb(directoryName, breadcrumbs);
@@ -148,7 +197,7 @@ export function useFolderOrganize(options: UseFolderOrganizeOptions) {
           return;
         }
         if (!result.ok) throw new Error(result.body.error || "整理失败");
-        onSuccess(result.body.copy || "整理完成");
+        handleOrganizeSuccess(result, context);
         await afterSuccess();
       } catch (error) {
         onError(error instanceof Error ? error.message : "整理出错");
@@ -156,7 +205,7 @@ export function useFolderOrganize(options: UseFolderOrganizeOptions) {
         setBusy(false);
       }
     },
-    [afterSuccess, onError, onSuccess],
+    [afterSuccess, handleOrganizeSuccess, onError],
   );
 
   const organizeCurrentFolder = useCallback(() => {
@@ -182,16 +231,46 @@ export function useFolderOrganize(options: UseFolderOrganizeOptions) {
       setPendingAdopt(null);
       const result = await postOrganize(context);
       if (!result.ok) throw new Error(result.body.error || "纳入后整理仍失败");
-      onSuccess(result.body.copy || "已纳入媒体库并完成整理");
+      handleOrganizeSuccess(result, context);
       await afterSuccess();
     } catch (error) {
       onError(error instanceof Error ? error.message : "纳入并整理出错");
     } finally {
       setBusy(false);
     }
-  }, [afterSuccess, onError, onSuccess, pendingAdopt]);
+  }, [afterSuccess, handleOrganizeSuccess, onError, pendingAdopt]);
 
   const cancelAdopt = useCallback(() => setPendingAdopt(null), []);
 
-  return { busy, pendingAdopt, organizeCurrentFolder, confirmAdopt, cancelAdopt };
+  const fixUnrecognized = useCallback(async () => {
+    const pending = pendingUnrecognized;
+    if (!pending) return;
+    setBusy(true);
+    try {
+      const result = await postFixUnrecognized({
+        storageId: pending.storageId,
+        directoryId: pending.directoryId,
+      });
+      setPendingUnrecognized(null);
+      onSuccess(describeFixResult(result));
+      await onReload();
+    } catch (error) {
+      onError(error instanceof Error ? error.message : "补全扩展名出错");
+    } finally {
+      setBusy(false);
+    }
+  }, [onError, onReload, onSuccess, pendingUnrecognized]);
+
+  const dismissUnrecognized = useCallback(() => setPendingUnrecognized(null), []);
+
+  return {
+    busy,
+    pendingAdopt,
+    pendingUnrecognized,
+    organizeCurrentFolder,
+    confirmAdopt,
+    cancelAdopt,
+    fixUnrecognized,
+    dismissUnrecognized,
+  };
 }

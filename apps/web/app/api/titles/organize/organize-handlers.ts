@@ -18,7 +18,8 @@ import {
 } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import { seriesTargetFor } from "../../../../lib/series-target";
-import { buildCleanupSuffix, dedupeAndCleanupShow } from "./organize-cleanup";
+import { buildCleanupSuffix, dedupeAndCleanupShow, scanUnrecognizedSummary } from "./organize-cleanup";
+import { buildTvOrganizeResponse } from "./organize-tv-response";
 
 export const NO_STORE = { "Cache-Control": "no-store" } as const;
 
@@ -561,6 +562,9 @@ export async function handleTvOrganize(input: {
   // 整理过程中可能新建/残留 staging 目录（如上一轮删目录失败），收尾再扫一次
   const finalCleanup = await organizer.cleanupStagingDirectories({ showDirectoryId });
 
+  // 缺扩展名的正片整理器认不出（如 `...AAC-ColorTV`），如实告知并支持一键补后缀。
+  const unrecognized = await scanUnrecognizedSummary({ storage: input.storage, showDirectoryId });
+
   const reconciled = await reconcileTvSeasonDirectories({
     storage: input.storage,
     accountId: input.accountId,
@@ -572,43 +576,18 @@ export async function handleTvOrganize(input: {
 
   const mediaLabel = input.title.type === "anime" ? "动漫" : "剧集";
 
-  const cleanupSuffix = buildCleanupSuffix(cleanupResult.archived, cleanupResult.removed + finalCleanup.removed.length);
+  const cleanupSuffix =
+    buildCleanupSuffix(cleanupResult.archived, cleanupResult.removed + finalCleanup.removed.length) + unrecognized.suffix;
 
-  if (allPlaced.length === 0 && totalArchived === 0) {
-    if (reconciled.totalReconciledEpisodes > 0) {
-      return NextResponse.json(
-        {
-          status: "organized",
-          copy: `${mediaLabel}《${input.title.title}》文件已就绪，已成功对齐并点亮 ${reconciled.totalReconciledSeasons} 个季目录共 ${reconciled.totalReconciledEpisodes} 集物理正片${cleanupSuffix}，媒体库与订阅状态已更新！`,
-          moves: [],
-        },
-        { status: 200, headers: NO_STORE },
-      );
-    }
-
-    return NextResponse.json(
-      {
-        status: "manual_review",
-        copy: "目录中未找到可整理的剧集视频文件或暂存目录。",
-        review: { placeable: [], unresolved: [] },
-      },
-      { status: 200, headers: NO_STORE },
-    );
-  }
-
-  return NextResponse.json(
-    {
-      status: "organized",
-      copy: `${mediaLabel}《${input.title.title}》已整理就绪，共提取并规范命名 ${allPlaced.length} 集正片，自动归档 ${totalArchived} 个多余版本${cleanupSuffix}。`,
-      moves: allPlaced.map((code) => ({
-        fileId: code,
-        fileName: code,
-        episodeCode: code,
-        seasonNumber: 1,
-      })),
-    },
-    { status: 200, headers: NO_STORE },
-  );
+  return buildTvOrganizeResponse({
+    mediaLabel,
+    title: input.title.title,
+    cleanupSuffix,
+    unrecognizedCount: unrecognized.count,
+    placedEpisodes: allPlaced,
+    totalArchived,
+    reconciled,
+  });
 }
 
 export async function handleLegacyTvOrganize(input: {

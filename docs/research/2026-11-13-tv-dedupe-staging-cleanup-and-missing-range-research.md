@@ -160,3 +160,66 @@ OrganizeTvFlow
 | 实机 | `verify-organize-dedupe.mjs`：363 → 192，归档 194，staging 减少 |
 
 **注意**：测试夹具的视频体积必须 ≥40MB，否则会被 `isExtraOrSample` 判定为样片而归档（本轮踩过一次）。
+
+---
+
+## 8. 低风险版实施：缺扩展名文件的可观测与一键补全
+
+§7.2 列了三档方案，本轮落地推荐档（**只报告 + 读文件头补后缀**），不动「按文件名猜」这条高危路径。
+
+### 8.1 已实施
+
+| 项 | 落点 | 说明 |
+| :--- | :--- | :--- |
+| 疑似正片识别 | `packages/workflow/src/execution/unrecognized-media.ts` | `looksLikeVideoWithoutExtension()`：无视频扩展名 + 非垃圾扩展名 + 体积 ≥ 100MB。**不依赖文件名关键词**——发布组命名千奇百怪，关键词只会带来误判 |
+| 容器嗅探 | 同上 `sniffVideoContainer()` | 读前 32 字节按 magic bytes 判定：`ftyp`→mp4、EBML→mkv、`RIFF..AVI `→avi、`FLV`→flv、0x47 同步→ts；判不出返回 `unknown` |
+| 目录扫描 | 同上 `scanUnrecognizedMedia()` | 剧集根目录 + 各 `Season NN` + 各 `staging-*`；单目录失败不影响整体 |
+| 整理结果告知 | `organize-handlers.ts` + `organize-cleanup.ts` | 响应新增 `unrecognizedCount`，文案追加「另有 N 个文件缺少扩展名未参与整理」 |
+| 一键补后缀 API | `api/titles/organize/unrecognized/route.ts` | `GET` 列候选；`POST` 解析直链 → 读文件头 → 改名；含归属校验（403）与参数校验（400） |
+| 改名生效回查 | 同上 `confirmRenames()` | 改名后重新列举目录确认新名字存在，不在则按失败上报——**不采信上游「返回成功」** |
+| 前端提示条 | `storage/organize-unrecognized-prompt.tsx` + `use-folder-organize.ts` | 整理成功且 `unrecognizedCount>0` 时出现；点「一键补全扩展名」→ 调 API → 汇报「已为 N 个补全，M 个跳过（原因）」 |
+| 响应构造抽离 | `api/titles/organize/organize-tv-response.ts` | 处理器已到 600 行预算，把展示层分支（已对齐/无变化/需人工）移出编排逻辑 |
+
+单测：`unrecognized-media.test.ts`（17 例：识别/嗅探/改名/扫描容错）、`use-folder-organize.test.ts` 增补 `describeFixResult`（4 例）、`unrecognized/route-contract.test.ts`（AST 结构门禁 4 例）。
+
+### 8.2 实机验证（dev 3020）
+
+| 检查项 | 实测 | 结论 |
+| :--- | :--- | :--- |
+| 真实 mkv 文件头 | `1a 45 df a3 … matroska` | 嗅探为 `mkv` ✓ |
+| 真实 mp4 文件头 | `00 00 00 20 66 74 79 70 69 73 6f 6d` | 嗅探为 `mp4` ✓ |
+| `GET` 正常 | `200 {count:0}`（该剧集当前无缺扩展名文件） | ✓ |
+| `GET` 缺参数 | `400 {code:"INVALID_QUERY"}` | ✓ |
+| `GET` 越权盘 | `403 {code:"STORAGE_FORBIDDEN"}` | ✓ |
+| 提示条渲染 | 拦截 organize 返回 `unrecognizedCount:3` → 蓝色提示条「有 3 个文件缺少扩展名…」+ 两个按钮，pageerror 0 | ✓ |
+| 一键补全接线 | 点击后 POST `{storageId, directoryId}` → 提示条消失 → 结果文案「已为 2 个文件补全扩展名，1 个跳过（无法识别容器格式（未改动））」 | ✓ |
+
+### 8.3 平台约束（重要，实测得出）
+
+**115 的重命名会保留原扩展名，无法改扩展名。** 实测同一文件连续改名：
+
+| 请求的新名字 | 实际结果 |
+| :--- | :--- |
+| `probe_a.ColorTV` | `probe_a.mkv` |
+| `probe_b.mp4` | `probe_b.mkv` |
+| `probe_c`（无扩展名） | `probe_c.mkv` |
+
+即 `files/batch_rename` 只接受「主体名」，扩展名由平台固定。由此得到两个推论：
+
+1. **无法通过改名制造「缺扩展名」文件**，所以本轮端到端只能在真实盘上验证到「扫描 / 校验 / UI 接线」，
+   补后缀的成功路径由单测 + 真实文件头嗅探覆盖；
+2. 缺扩展名的文件只能来自**转存时的名字截断**，且补后缀在 cookie 通道上**可能被平台拒绝**。
+   为此路由增加了 `confirmRenames()` 回查：平台若静默不改，结果如实报「改名未生效（上游未接受）」，
+   绝不谎报成功。
+
+另外，115 执行器的 `renameFile` 会**优先走 Open API**（`file/update` 的 `file_name` 是全名，未观察到扩展名固定行为），
+Open API 不可用时才降级到 cookie 通道。因此 OAuth 正常时补后缀应当可用；生产当前 OAuth 处于 `frozen`，
+该功能会先在「无法解析直链」处失败并如实上报。
+
+### 8.4 仍未做
+
+| 项 | 原因 |
+| :--- | :--- |
+| 转存时保留扩展名（根治） | 需在 `transfer` 落盘阶段对目标名做「补全扩展名」策略，涉及秒传与分享目录结构，属独立改造 |
+| 无扩展名文件的播放兜底 | STRM 播放路由已支持 `?name=` 参数，理论上可传 `name=xxx.mkv` 让 Plex 识别；未做端到端验证 |
+| 缺扩展名文件的整理 | 平台不允许改扩展名时无解；只能在转存阶段预防 |

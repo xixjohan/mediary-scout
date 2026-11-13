@@ -12,6 +12,7 @@ import { StorageNavBar } from "./storage/storage-nav-bar";
 import { StorageOfflineModal } from "./storage/storage-offline-modal";
 import { ReverseScanModal } from "./storage/reverse-scan-modal";
 import { OrganizeAdoptPrompt } from "./storage/organize-adopt-prompt";
+import { OrganizeUnrecognizedPrompt } from "./storage/organize-unrecognized-prompt";
 import { useFolderOrganize } from "./storage/use-folder-organize";
 import { VideoPreviewModal } from "./storage/video-preview-modal";
 import { formatProviderLabel, StorageTopBar } from "./storage/storage-top-bar";
@@ -526,6 +527,13 @@ export function StorageManagerView({
         busy={organizeFlow.busy}
         onConfirm={() => void organizeFlow.confirmAdopt()}
         onCancel={organizeFlow.cancelAdopt}
+      />
+
+      <OrganizeUnrecognizedPrompt
+        prompt={organizeFlow.pendingUnrecognized}
+        busy={organizeFlow.busy}
+        onConfirm={() => void organizeFlow.fixUnrecognized()}
+        onDismiss={organizeFlow.dismissUnrecognized}
       />
 
       {error && (
