@@ -40,15 +40,23 @@ describe("System FS Browse API", () => {
     expect(data.directories.length).toBeGreaterThan(0);
   });
 
-  it("GET /api/system/fs-browse 列出指定工作区目录的子文件夹", async () => {
-    const cwd = process.cwd();
-    const req = new NextRequest(`http://localhost:3000/api/system/fs-browse?path=${encodeURIComponent(cwd)}`);
+  it("GET /api/system/fs-browse 列出白名单目录的子文件夹并过滤敏感目录", async () => {
+    // 不能依赖 process.cwd()：Linux 白名单只含 dataRoot 与挂载点，不含项目根，
+    // 否则该用例在 CI 上必然 403（Windows 因盘符白名单而侥幸通过）。
+    const base = path.join(programData, `fs-browse-list-${Date.now()}`);
+    for (const name of ["apps", "packages", ".git", "node_modules"]) {
+      fs.mkdirSync(path.join(base, name), { recursive: true });
+    }
+    tempDirs.push(base);
+
+    const req = new NextRequest(
+      `http://localhost:3000/api/system/fs-browse?path=${encodeURIComponent(base)}`,
+    );
     const res = await GET(req);
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.currentPath).toBe(path.resolve(cwd));
+    expect(data.currentPath).toBe(path.resolve(base));
     expect(Array.isArray(data.directories)).toBe(true);
-    // 应包含 apps, packages, docs
     const names = data.directories.map((d: any) => d.name);
     expect(names).toContain("apps");
     expect(names).toContain("packages");
@@ -67,7 +75,8 @@ describe("System FS Browse API", () => {
   });
 
   it("POST /api/system/fs-browse 在允许的目录下新建子文件夹", async () => {
-    const tempSub = path.join(process.cwd(), "run", `test-fs-dir-${Date.now()}`);
+    // 同样必须落在白名单内（dataRoot），而不是 process.cwd()。
+    const tempSub = path.join(programData, `test-fs-dir-${Date.now()}`);
     fs.mkdirSync(tempSub, { recursive: true });
     tempDirs.push(tempSub);
 
