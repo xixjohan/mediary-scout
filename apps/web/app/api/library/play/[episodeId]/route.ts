@@ -9,6 +9,7 @@ import {
   toSessionOverride,
 } from "@media-track/workflow";
 import type { SubtitleTrackInfo } from "@media-track/contracts";
+import { buildPlayStreamUrls } from "../../../../../features/player/play-stream-url";
 
 interface RouteParams {
   params: Promise<{ episodeId: string }>;
@@ -61,8 +62,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     userAgent: request.headers.get("user-agent"),
   });
 
-  const streamUrl = `/api/strm/play/${episode.storageId}/${episode.fileId}?name=${encodeURIComponent(episode.fileName)}`;
-  const proxyUrl = `/api/strm/play/${episode.storageId}/${episode.fileId}?name=${encodeURIComponent(episode.fileName)}&delivery=proxy`;
+  // pickCode 是 115 直链解析的最优路径入参：
+  // 1) 开放平台只认 pickCode，缺省会整条跳过；
+  // 2) Cookie 路径缺省时会先多调一次 getFileInfo 换取 pickCode。
+  // 单集记录在扫描阶段已落库（library-scanner 写入 pick_code），此处透传即可。
+  const { streamUrl: baseStreamUrl, proxyUrl } = buildPlayStreamUrls({
+    storageId: episode.storageId,
+    fileId: episode.fileId,
+    fileName: episode.fileName,
+    pickCode: episode.pickCode,
+  });
+  const streamUrl = decision.mode === "proxy" ? proxyUrl : baseStreamUrl;
 
   // 映射字幕 URL
   const subtitlesWithUrls = episode.subtitles.map((sub: SubtitleTrackInfo) => {
@@ -81,7 +91,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     deliveryMode: decision.mode,
     deliverySource: decision.source,
     deliveryReason: decision.reason,
-    streamUrl: decision.mode === "proxy" ? proxyUrl : streamUrl,
+    streamUrl,
     proxyUrl,
     subtitles: subtitlesWithUrls,
   });

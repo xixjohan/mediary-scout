@@ -442,6 +442,9 @@ export class Pan115CookieClient implements Pan115StorageApi {
       "User-Agent": this.userAgent,
       Accept: "application/json, text/plain, */*",
       Referer: "https://115.com/",
+      // 保留显式 Connection: close。115 对复用的长连接存在 stale socket reset，
+      // QR 登录侧已有同源先例与回归断言（pan115-qrcode-login.test.ts）。
+      // 首播延迟改由「透传 pickCode 减少一次 API 调用」来消除，不用连接复用换稳定性。
       Connection: "close",
     };
   }

@@ -6,6 +6,7 @@ import type { LibraryPathBinding } from "@media-track/contracts";
 import type { ConnectedStorageView } from "../../../lib/workflow-runtime";
 import type { DriveFileItem, DriveDirectoryListing } from "@media-track/workflow";
 import { MediaryPlayerModal } from "../../player/components/mediary-player-modal";
+import { buildPlayStreamUrls } from "../../player/play-stream-url";
 
 export interface LibraryFolderExplorerProps {
   libraryId: string;
@@ -290,8 +291,12 @@ export function LibraryFolderExplorer({
   };
 
   const handlePlayVideo = (file: DriveFileItem) => {
-    const streamUrl = `/api/strm/play/${selectedStorageId}/${file.id}?name=${encodeURIComponent(file.name)}`;
-    const proxyUrl = `/api/strm/play/${selectedStorageId}/${file.id}?name=${encodeURIComponent(file.name)}&delivery=proxy`;
+    const { streamUrl, proxyUrl } = buildPlayStreamUrls({
+      storageId: selectedStorageId,
+      fileId: file.id,
+      fileName: file.name,
+      pickCode: file.pickCode,
+    });
     // binding 显式配置优先；inherit 时向上继承库默认，不再硬编码 redirect。
     const binding = bindings.find((b) => b.storageId === selectedStorageId);
     const deliveryMode: "redirect" | "proxy" =

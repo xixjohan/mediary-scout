@@ -38,6 +38,19 @@ export function inferExtension(fileName: string): string {
   return fileName.slice(lastDot).toLowerCase();
 }
 
+/**
+ * 从网盘原始条目读取直链解析用的文件码（115 返回 `pick_code`，部分响应为 `pickcode`）。
+ * 取不到时返回 undefined 而不是空串——空串会让解析器误判为「已有可用文件码」。
+ */
+export function readPickCode(item: unknown): string | undefined {
+  if (typeof item !== "object" || item === null) return undefined;
+  const record = item as { pick_code?: unknown; pickcode?: unknown };
+  const raw = record.pick_code ?? record.pickcode;
+  if (raw === undefined || raw === null) return undefined;
+  const text = String(raw).trim();
+  return text === "" ? undefined : text;
+}
+
 export function inferFileType(fileName: string, isFolder: boolean): DriveItemType {
   if (isFolder) return "folder";
   const ext = inferExtension(fileName);
@@ -158,6 +171,7 @@ export class Pan115FileManagerAdapter implements DriveFileManager {
       const id = String(isFolder ? (r.cid ?? r.id) : (r.fid ?? r.file_id ?? r.id));
       const name = String(r.name ?? r.n ?? "");
       const sizeBytes = Number(r.size ?? r.s ?? 0);
+      const pickCode = readPickCode(r);
       return {
         id,
         name,
@@ -166,6 +180,8 @@ export class Pan115FileManagerAdapter implements DriveFileManager {
         sizeBytes,
         updatedAt: null,
         extension: inferExtension(name),
+        // 透传给扫描器落库：直链解析据此省掉一次 getFileInfo，并解锁开放平台路径。
+        pickCode,
       };
     });
 

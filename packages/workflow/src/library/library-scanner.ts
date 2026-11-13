@@ -416,7 +416,7 @@ export class MediaLibraryScanner {
           fileName: file.name,
           versionTag: quality.displayBadge,
           isDefaultVersion: false,
-          pickCode: (file as unknown as { pickCode?: string }).pickCode ?? null,
+          pickCode: file.pickCode ?? null,
           sizeBytes: file.sizeBytes,
           videoCodec: quality.videoCodec ?? identified.videoCodec,
           resolution: quality.resolution ?? identified.resolution,

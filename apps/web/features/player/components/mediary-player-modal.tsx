@@ -549,6 +549,8 @@ export function MediaryPlayerModal({
             title={title}
             subtitles={subtitles}
             poster={poster}
+            deliveryMode={currentMode}
+            deliverySource={deliverySource}
             onPlayerChange={(art) => {
               playerRef.current = art;
             }}

@@ -10,6 +10,14 @@ import {
   type LayoutPhase,
   type VideoFitMode,
 } from "../player-viewport";
+import {
+  createPlaybackMachine,
+  playbackStageLabel,
+  type PlaybackEvent,
+  type PlaybackPhase,
+} from "../playback-state-machine";
+import { buildTelemetrySample, readVideoTelemetry, type TelemetrySample } from "../player-telemetry";
+import { PlayerTelemetryHud, type TelemetryLevel } from "./player-telemetry-hud";
 import type { SubtitleTrackInfo } from "@media-track/contracts";
 
 export interface MediaryPlayerCoreProps {
@@ -19,9 +27,14 @@ export interface MediaryPlayerCoreProps {
   subtitles?: SubtitleTrackInfo[] | undefined;
   poster?: string | undefined;
   autoPlay?: boolean | undefined;
+  /** 当前投送模式与来源，仅用于播放统计面板展示，不参与播放决策。 */
+  deliveryMode?: "redirect" | "proxy" | undefined;
+  deliverySource?: string | undefined;
   onEnded?: (() => void) | undefined;
   /** 把实例交给弹窗层供快捷键命令分派使用；cleanup 时回传 null。 */
   onPlayerChange?: ((art: ArtplayerType | null) => void) | undefined;
+  /** 生命周期阶段变化（供弹窗层展示分段文案）。 */
+  onPhaseChange?: ((phase: PlaybackPhase) => void) | undefined;
 }
 
 export function MediaryPlayerCore({
@@ -31,8 +44,11 @@ export function MediaryPlayerCore({
   subtitles,
   poster,
   autoPlay = true,
+  deliveryMode,
+  deliverySource,
   onEnded,
   onPlayerChange,
+  onPhaseChange,
 }: MediaryPlayerCoreProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<ArtplayerType | null>(null);
@@ -42,17 +58,25 @@ export function MediaryPlayerCore({
   const [layoutPhase, setLayoutPhase] = useState<LayoutPhase>("pending");
   const layoutPhaseRef = useRef<LayoutPhase>("pending");
   const fitModeRef = useRef<VideoFitMode>("contain");
+  // 播放生命周期状态机：与布局阶段正交，互不覆盖。
+  const machineRef = useRef(createPlaybackMachine({ initialPhase: "connecting" }));
+  const [phase, setPhase] = useState<PlaybackPhase>("connecting");
+  const [telemetryLevel, setTelemetryLevel] = useState<TelemetryLevel>("off");
+  const [telemetry, setTelemetry] = useState<TelemetrySample | null>(null);
+  const lastSampleRef = useRef<{ bufferedAheadSeconds: number; sampledAtMs: number } | null>(null);
 
   // 用 ref 持有最新值，避免 settings / error 回调捕获首次渲染的过期闭包
   // （旧实现 effect 依赖数组缺 gainLevel / isUsingFallback / fallbackUrl）。
   const latestRef = useRef({ fallbackUrl, currentUrl, isUsingFallback: false });
   const onPlayerChangeRef = useRef(onPlayerChange);
   const onEndedRef = useRef(onEnded);
+  const onPhaseChangeRef = useRef(onPhaseChange);
   const subtitlesRef = useRef(subtitles);
   latestRef.current.fallbackUrl = fallbackUrl;
   latestRef.current.currentUrl = currentUrl;
   onPlayerChangeRef.current = onPlayerChange;
   onEndedRef.current = onEnded;
+  onPhaseChangeRef.current = onPhaseChange;
   subtitlesRef.current = subtitles;
 
   useEffect(() => {
@@ -61,7 +85,38 @@ export function MediaryPlayerCore({
     // 换流即回到 pending，避免把上一部片源的 fitted/fallback 状态带过去。
     layoutPhaseRef.current = "pending";
     setLayoutPhase("pending");
+    // 生命周期同样重置：新流从「连接中」重新计时，不复用上一部的分段耗时。
+    machineRef.current = createPlaybackMachine({ initialPhase: "connecting" });
+    setPhase("connecting");
+    lastSampleRef.current = null;
+    setTelemetry(null);
   }, [url, fallbackUrl]);
+
+  // 播放统计采样：仅在面板开启时存在定时器；关闭时零监听、零定时器。
+  useEffect(() => {
+    if (telemetryLevel === "off") {
+      lastSampleRef.current = null;
+      setTelemetry(null);
+      return;
+    }
+    const tick = () => {
+      const video = playerRef.current?.video;
+      if (!video) return;
+      const sample = buildTelemetrySample(
+        readVideoTelemetry(video),
+        lastSampleRef.current ?? undefined,
+        Date.now(),
+      );
+      lastSampleRef.current = {
+        bufferedAheadSeconds: sample.bufferedAheadSeconds,
+        sampledAtMs: sample.sampledAtMs,
+      };
+      setTelemetry(sample);
+    };
+    tick();
+    const timer = window.setInterval(tick, 500);
+    return () => window.clearInterval(timer);
+  }, [telemetryLevel, currentUrl]);
 
   useEffect(() => {
     let art: ArtplayerType | null = null;
@@ -110,6 +165,13 @@ export function MediaryPlayerCore({
       layoutPhaseRef.current = next;
       setLayoutPhase(next);
       applyVideoFit();
+    };
+
+    // 生命周期状态机唯一入口：非法迁移被状态机内部忽略，绝不打断播放链路。
+    const dispatchPhase = (event: PlaybackEvent) => {
+      const snap = machineRef.current.dispatch(event);
+      setPhase((prev) => (prev === snap.phase ? prev : snap.phase));
+      onPhaseChangeRef.current?.(snap.phase);
     };
 
     async function initPlayer() {
@@ -237,6 +299,21 @@ export function MediaryPlayerCore({
                 : label;
             },
           },
+          {
+            width: 220,
+            html: "播放统计",
+            tooltip: "关闭",
+            selector: [
+              { html: "关闭", value: "off", default: true },
+              { html: "精简 (进度/缓冲)", value: "compact" },
+              { html: "详细 (含网络与丢帧)", value: "detail" },
+            ],
+            onSelect: (item: any) => {
+              const value = String(item.value);
+              setTelemetryLevel(value === "compact" || value === "detail" ? value : "off");
+              return String(item.html ?? "");
+            },
+          },
         ],
       });
 
@@ -260,6 +337,16 @@ export function MediaryPlayerCore({
         gainPipelineRef.current?.resume();
       });
 
+      // ---- 生命周期事件：驱动状态机（文案、分段耗时、排障都读同一份状态） ----
+      art.on("video:loadstart", () => dispatchPhase("FIRST_BYTES"));
+      art.on("video:canplay", () => dispatchPhase("CAN_PLAY"));
+      art.on("video:playing", () => dispatchPhase("PLAYING"));
+      art.on("video:progress", () => {
+        if (art && !art.video.paused) dispatchPhase("PROGRESS");
+      });
+      art.on("video:seeking", () => dispatchPhase("SEEK_START"));
+      art.on("video:seeked", () => dispatchPhase("SEEK_END"));
+
       // 布局状态机：元数据到达即 fitted；videoWidth=0（凭据失效 / 格式不支持）
       // 直接落 fallback；窗口尺寸变化只重算 video 层样式，不动容器。
       art.on("video:loadedmetadata", () => {
@@ -270,6 +357,7 @@ export function MediaryPlayerCore({
             videoHeight: video?.videoHeight ?? 0,
           }),
         );
+        dispatchPhase("METADATA");
       });
       art.on("resize", () => applyVideoFit());
 
@@ -280,17 +368,22 @@ export function MediaryPlayerCore({
         });
       });
       art.on("video:waiting", () => {
+        dispatchPhase("WAITING");
         reportPlaybackMetric("rebuffer", 0, { at: art?.currentTime ?? 0 });
       });
       art.on("seeking", () => {
         reportPlaybackMetric("T_seek", 0, { at: art?.currentTime ?? 0 });
       });
-      art.on("video:ended", () => onEndedRef.current?.());
+      art.on("video:ended", () => {
+        dispatchPhase("ENDED");
+        onEndedRef.current?.();
+      });
 
       // 错误自愈：403 / CORS 时降级为代理流，同样只走 switchUrl 单一路径。
       art.on("error", (error) => {
         console.warn("[MediaryPlayer] 播放遇到异常:", error);
         transitionPhase("fallback");
+        dispatchPhase("ERROR");
         const { fallbackUrl: fallback, currentUrl: active } = latestRef.current;
         if (fallback && !latestRef.current.isUsingFallback && active !== fallback) {
           console.info("[MediaryPlayer] 尝试切换为代理播放流自愈降级...");
@@ -298,6 +391,7 @@ export function MediaryPlayerCore({
           reportPlaybackMetric("stream_switch", 0, { reason: "playback_error" });
           void art?.switchUrl(fallback).catch(() => {});
           void Promise.resolve(art?.play()).catch(() => {});
+          dispatchPhase("FALLBACK");
         }
       });
     }
@@ -344,18 +438,55 @@ export function MediaryPlayerCore({
     };
   }, [currentUrl, title, poster, autoPlay]);
 
+  const stageLabel = playbackStageLabel(phase);
+
   return (
-    <div
-      ref={containerRef}
-      data-layout-phase={layoutPhase}
-      style={{
-        width: "100%",
-        height: "100%",
-        minHeight: "420px",
-        background: "#000",
-        borderRadius: "8px",
-        overflow: "hidden",
-      }}
-    />
+    <div style={{ position: "relative", width: "100%", height: "100%", minHeight: "420px" }}>
+      <div
+        ref={containerRef}
+        data-layout-phase={layoutPhase}
+        data-playback-phase={phase}
+        style={{
+          width: "100%",
+          height: "100%",
+          minHeight: "420px",
+          background: "#000",
+          borderRadius: "8px",
+          overflow: "hidden",
+        }}
+      />
+      {telemetryLevel !== "off" && (
+        <PlayerTelemetryHud
+          level={telemetryLevel}
+          sample={telemetry}
+          phase={phase}
+          delivery={{ mode: deliveryMode, source: deliverySource }}
+        />
+      )}
+      {stageLabel !== null && (
+        <div
+          data-testid="player-stage-hint"
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: 96,
+            transform: "translateX(-50%)",
+            zIndex: 25,
+            maxWidth: "calc(100% - 32px)",
+            padding: "6px 12px",
+            borderRadius: 999,
+            background: "rgba(0, 0, 0, 0.6)",
+            border: "1px solid rgba(255, 255, 255, 0.12)",
+            color: "#f4f4f5",
+            fontSize: 12,
+            lineHeight: 1.4,
+            pointerEvents: "none",
+            whiteSpace: "nowrap",
+          }}
+        >
+          {stageLabel}
+        </div>
+      )}
+    </div>
   );
 }

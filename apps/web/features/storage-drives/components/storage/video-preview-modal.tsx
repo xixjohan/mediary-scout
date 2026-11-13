@@ -2,6 +2,7 @@
 
 import type { DriveFileItem } from "@media-track/workflow";
 import { MediaryPlayerModal } from "../../../player/components/mediary-player-modal";
+import { buildPlayStreamUrls } from "../../../player/play-stream-url";
 
 export function VideoPreviewModal({
   item,
@@ -12,8 +13,12 @@ export function VideoPreviewModal({
   storageId: string;
   onClose: () => void;
 }) {
-  const streamUrl = `/api/strm/play/${storageId}/${item.id}?name=${encodeURIComponent(item.name)}`;
-  const proxyUrl = `/api/strm/play/${storageId}/${item.id}?name=${encodeURIComponent(item.name)}&delivery=proxy`;
+  const { streamUrl, proxyUrl } = buildPlayStreamUrls({
+    storageId,
+    fileId: item.id,
+    fileName: item.name,
+    pickCode: item.pickCode,
+  });
 
   return (
     <MediaryPlayerModal

@@ -4,6 +4,7 @@ import {
   FakeFileManagerAdapter,
   inferExtension,
   inferFileType,
+  readPickCode,
   resolveCurrentDirectoryName,
   type DriveFileManagerOptions,
 } from "../../src/storage/drive-file-manager.js";
@@ -258,5 +259,26 @@ describe("drive-file-manager", () => {
       expect(dirItem.isFolder).toBe(true);
       expect(dirItem.type).toBe("folder");
     });
+  });
+});
+
+describe("readPickCode（直链解析文件码透传）", () => {
+  it("读取 115 的 pick_code 与兼容写法 pickcode", () => {
+    expect(readPickCode({ pick_code: "abc123" })).toBe("abc123");
+    expect(readPickCode({ pickcode: "def456" })).toBe("def456");
+    expect(readPickCode({ pick_code: 987654321 })).toBe("987654321");
+  });
+
+  it("缺失或空白时返回 undefined，不写入空串", () => {
+    expect(readPickCode({})).toBeUndefined();
+    expect(readPickCode({ pick_code: "" })).toBeUndefined();
+    expect(readPickCode({ pick_code: "   " })).toBeUndefined();
+    expect(readPickCode({ pick_code: null })).toBeUndefined();
+    expect(readPickCode(null)).toBeUndefined();
+    expect(readPickCode("not-an-object")).toBeUndefined();
+  });
+
+  it("首尾空白被裁剪", () => {
+    expect(readPickCode({ pick_code: "  xyz  " })).toBe("xyz");
   });
 });

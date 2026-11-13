@@ -18,6 +18,11 @@ export interface DriveFileItem {
   sizeBytes: number;
   updatedAt: string | null;
   extension: string;
+  /**
+   * 网盘直链解析用的文件码（目前仅 115 提供）。
+   * 透传它可以让直链解析少一次 getFileInfo 调用，并解锁开放平台路径。
+   */
+  pickCode?: string | undefined;
   mediaInfo?: DriveFileMediaInfo | undefined;
 }
 

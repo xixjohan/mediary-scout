@@ -36,6 +36,8 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
   } | null>(null);
 
   const [playError, setPlayError] = useState<string | null>(null);
+  // 分段加载反馈：解析直链发生在打开播放器之前，用户最容易把这段空白读成「卡死」。
+  const [resolvingEpisodeId, setResolvingEpisodeId] = useState<string | null>(null);
 
   const fetchDetails = async () => {
     try {
@@ -61,6 +63,7 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
   const handlePlayEpisode = async (episode: LibraryEpisode) => {
     try {
       setPlayError(null);
+      setResolvingEpisodeId(episode.id);
       const res = await fetch(`/api/library/play/${episode.id}`);
       if (!res.ok) throw new Error("获取播放直链失败");
       const json = await res.json();
@@ -75,6 +78,8 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
       });
     } catch (err) {
       setPlayError(`无法播放: ${err instanceof Error ? err.message : "未知错误"}`);
+    } finally {
+      setResolvingEpisodeId(null);
     }
   };
 
@@ -241,13 +246,15 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
                     <button
                       type="button"
                       className="btn btn-primary btn-sm"
+                      disabled={resolvingEpisodeId !== null}
                       onClick={() => {
                         const target = allEpisodes.find((e) => e.id === selectedMovieEpisodeId) || allEpisodes[0];
                         if (target) void handlePlayEpisode(target);
                       }}
                       style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.4rem 1.1rem", fontWeight: 600 }}
                     >
-                      <Play size={15} fill="currentColor" /> 立即播放
+                      <Play size={15} fill="currentColor" />
+                      {resolvingEpisodeId !== null ? "正在解析直链…" : "立即播放"}
                     </button>
                   )}
                   <button
@@ -375,13 +382,16 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
                   {currentSeason?.episodes.map((ep) => (
                     <div
                       key={ep.id}
-                      onClick={() => handlePlayEpisode(ep)}
+                      onClick={() => {
+                        if (resolvingEpisodeId !== null) return;
+                        void handlePlayEpisode(ep);
+                      }}
                       style={{
                         background: "rgba(255, 255, 255, 0.03)",
                         border: "1px solid var(--border-subtle, #27272a)",
                         borderRadius: "10px",
                         padding: "0.85rem",
-                        cursor: "pointer",
+                        cursor: resolvingEpisodeId !== null ? "progress" : "pointer",
                         transition: "all 0.2s ease",
                         display: "flex",
                         flexDirection: "column",
@@ -444,7 +454,8 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
                             </span>
                           )}
                           <span style={{ display: "inline-flex", alignItems: "center", gap: "0.2rem", color: "var(--accent, #22c55e)" }}>
-                            <Play size={12} fill="currentColor" /> 播放
+                            <Play size={12} fill="currentColor" />
+                            {resolvingEpisodeId === ep.id ? "解析直链…" : "播放"}
                           </span>
                         </div>
                       </div>
