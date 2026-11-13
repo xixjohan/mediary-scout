@@ -113,6 +113,22 @@ describe("createPan115OpenOAuthPersister", () => {
   });
 });
 
+describe("createPan115OpenOAuthRefreshCoordinator · 禁用实例", () => {
+  it("PAN115_OAUTH_REFRESH_DISABLED=1 时快速失败，绝不发起旋转", async () => {
+    process.env.PAN115_OAUTH_REFRESH_DISABLED = "1";
+    try {
+      const repository = {} as unknown as Parameters<typeof createPan115OpenOAuthRefreshCoordinator>[0];
+      const refresh = vi.fn();
+      const coordinator = createPan115OpenOAuthRefreshCoordinator(repository, "account-1", "storage-1");
+
+      await expect(coordinator(refresh)).rejects.toMatchObject({ code: 409, isFatal: true });
+      expect(refresh).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.PAN115_OAUTH_REFRESH_DISABLED;
+    }
+  });
+});
+
 describe("createPan115OpenOAuthRefreshCoordinator", () => {
   it("serializes refreshes across SQLite connections and lets the second caller reuse the persisted token", async () => {
     const directory = mkdtempSync(join(tmpdir(), "pan115-oauth-coordinator-"));

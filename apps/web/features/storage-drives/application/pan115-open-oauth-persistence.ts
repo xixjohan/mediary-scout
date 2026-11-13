@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type {
-  ConnectedStorage,
-  Pan115OpenOAuthCredentials,
-  Pan115TokenRefreshCoordinator,
-  WorkflowRepository,
+import {
+  Pan115OpenAuthError,
+  type ConnectedStorage,
+  type Pan115OpenOAuthCredentials,
+  type Pan115TokenRefreshCoordinator,
+  type WorkflowRepository,
 } from "@media-track/workflow";
 
 type Pan115OAuthPersisterRepository = Pick<WorkflowRepository, "persistPan115OpenOAuthCredentials">;
@@ -77,6 +78,15 @@ export function createPan115OpenOAuthRefreshCoordinator(
   storageId: string,
 ): Pan115TokenRefreshCoordinator {
   return async (refresh) => {
+    // 多副本共用同一 115 账号时，只允许一个写者刷新：旋转会让其它副本的 refresh_token 失效。
+    // 被禁用的实例必须"快速失败"，否则一次业务请求就会把生产实例打成需重新授权。
+    if (process.env.PAN115_OAUTH_REFRESH_DISABLED === "1") {
+      throw new Pan115OpenAuthError(
+        409,
+        "115 OAuth refresh is disabled on this instance (PAN115_OAUTH_REFRESH_DISABLED=1); " +
+          "re-authorize on the instance that owns the refresh token",
+      );
+    }
     const ownerId = randomUUID();
     const waitDeadline = Date.now() + REFRESH_LEASE_WAIT_TIMEOUT_MS;
     let pollDelayMs = 50;

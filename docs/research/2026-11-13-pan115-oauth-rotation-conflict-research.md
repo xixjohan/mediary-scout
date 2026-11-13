@@ -210,3 +210,51 @@ docker logs -t --since 24h mediary     | grep -c 40140137
 docker logs -t --since 24h mediary-dev | grep -c 40140137
 docker inspect -f '{{.Name}} {{.State.StartedAt}}' mediary-dev mediary
 ```
+
+---
+
+## 12. 实施记录与实机验收（P0 + P1 + P2）
+
+### 12.1 已实施
+
+| 项 | 落点 | 说明 |
+| :--- | :--- | :--- |
+| P0 刷新权归属 | `scripts/deploy-remote.ps1` | 仅在**开发容器**的 `docker run` 注入 `PAN115_OAUTH_REFRESH_DISABLED=1`；生产命令保持不变，仍是唯一刷新写者 |
+| P0 保活禁写 | `apps/web/lib/pan115-token-keepalive.ts` | 开关命中时整轮跳过（只打印一次提示），不再发起任何刷新 |
+| P0 请求路径禁写 | `pan115-open-oauth-persistence.ts` | 协调器在禁用实例上直接抛 `Pan115OpenAuthError(409, isFatal)`，避免"一次业务请求就把生产打成需重新授权" |
+| P1 失效落库 | `pan115-token-keepalive.ts` | 致命失效调用既有 `freezeConnectedStorage(storageId, "115_OAUTH_NEEDS_REAUTH: …")`，复用 `connected_storages.status/frozen_reason`，无需迁移 |
+| P1 停止空转 | 同上 | 已 `frozen` 的盘在保活循环中直接跳过（重试旧 refresh_token 会触发 115 的复用检测） |
+| P1 UI 提示 | 既有 `/settings` 网盘卡片 | 冻结态渲染 `drive-card.is-frozen` + 「掉线 · 重新绑定即恢复」 |
+| P2 阈值下调 | `PROACTIVE_REFRESH_THRESHOLD_MS` | 60 分钟 → **15 分钟**，重启后只有临近过期才刷新，降低"重启即旋转" |
+
+单测新增/更新：`pan115-token-keepalive.test.ts`（20 例，含禁用、冻结跳过、致命落库）、`pan115-open-oauth-persistence.test.ts`（禁用实例快速失败）、`pan115-refresh-ownership.test.ts`（静态门禁 2 例）。
+
+### 12.2 门禁（防复发）
+
+`apps/web/lib/pan115-refresh-ownership.test.ts` 直接读部署脚本并断言：
+
+1. `devRunCmd` 必须包含 `PAN115_OAUTH_REFRESH_DISABLED=1`；
+2. `prodRunCmd` **不得**包含该开关（生产必须是刷新写者）。
+
+这条门禁锁死了"单写者"约定——任何人删掉开关或误加到生产侧，CI 立刻失败。
+
+### 12.3 实机验收（开发实例 3020）
+
+| 检查项 | 实测 | 结论 |
+| :--- | :--- | :--- |
+| 开发容器环境 | `PAN115_OAUTH_REFRESH_DISABLED=1` | 通过 |
+| 生产容器环境 | 未设置（仍是写者） | 通过 |
+| 生产容器未被重建 | `StartedAt` 仍为 04:28:42Z（部署前后一致） | 通过 |
+| 请求路径拦截 | 日志出现 `code=409: 115 OAuth refresh is disabled on this instance…`，随后统一执行器降级到 cookie 通道，目录列举仍成功 | 通过 |
+| 冻结态 UI | 临时置 `frozen` 后 `/settings` 出现 `drive-card.is-frozen` 与「掉线 · 重新绑定」，pageerror 0（验证后已恢复 `active`） | 通过 |
+
+回归（同实例）：五页巡检 + R3–R6 全 true；播放器 UX（全屏 gap 0 / 复制 / 字幕 / V / 偏好记忆）全通过；字幕专项全通过；HUD 三档通过；整理验收中「未追踪 409 + 越权 403 + 无裸报错」仍通过（该标题已在本轮前被纳入追踪，故确认条不再出现，属预期状态差异）。
+
+### 12.4 未做与取舍
+
+| 项 | 说明 |
+| :--- | :--- |
+| P3 跨实例租约 | 需要 Redis/共享卷等外部依赖，先用"单写者约定 + 门禁"覆盖同一账号场景；多账号/多实例时再上 |
+| 冷却时间持久化 | 未落库；当前靠"冻结态跳过"已能阻止重启后的空转重试，暂不引入新表（避免动 schema 触发棘轮） |
+| 冻结与 cookie 双通道 | 115 适配器是"OAuth + Cookie 双轨"：OAuth 失效但 cookie 仍可列举目录。当前实现按 OAuth 致命失效即冻结（主链路 downurl 依赖 OAuth），若后续希望"半可用"状态，可细化为 `degraded` 状态 |
+| 重新授权 | 需用户在**生产实例**扫码（`/api/115/qrcode/*`）；dev 已禁写，不会再抢占令牌 |

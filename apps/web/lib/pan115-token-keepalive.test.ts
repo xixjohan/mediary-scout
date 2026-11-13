@@ -16,11 +16,13 @@ const {
   mockMakePan115OpenOAuthPersister,
   mockMakePan115OpenOAuthRefreshCoordinator,
   mockListConnectedStorages,
+  mockFreezeConnectedStorage,
 } = vi.hoisted(() => ({
   mockEnsureValidToken: vi.fn<() => Promise<string>>(),
   mockMakePan115OpenOAuthPersister: vi.fn(),
   mockMakePan115OpenOAuthRefreshCoordinator: vi.fn(),
   mockListConnectedStorages: vi.fn(),
+  mockFreezeConnectedStorage: vi.fn(),
 }));
 
 vi.mock("@media-track/workflow", () => {
@@ -49,6 +51,7 @@ vi.mock("@media-track/workflow", () => {
 vi.mock("../features/storage-drives/application/drive-service", () => ({
   makePan115OpenOAuthPersister: mockMakePan115OpenOAuthPersister,
   makePan115OpenOAuthRefreshCoordinator: mockMakePan115OpenOAuthRefreshCoordinator,
+  freezeConnectedStorage: mockFreezeConnectedStorage,
 }));
 
 vi.mock("../composition/runtime-container", () => ({
@@ -76,13 +79,15 @@ function makeStorage(
     provider?: string;
     expiresAt?: number;
     hasOAuth?: boolean;
+    status?: "active" | "frozen";
   } = {},
 ) {
   const {
     id = "storage-1",
     provider = "pan115",
-    expiresAt = NOW + 30 * 60 * 1000, // 30 min from now — within threshold
+    expiresAt = NOW + 10 * 60 * 1000, // 10 min from now — within 15min threshold
     hasOAuth = true,
+    status = "active",
   } = overrides;
 
   const openOAuth: Pan115OpenOAuthCredentials | undefined = hasOAuth
@@ -96,6 +101,7 @@ function makeStorage(
   return {
     id,
     provider,
+    status,
     payload: hasOAuth ? { openOAuth } : {},
   };
 }
@@ -115,6 +121,7 @@ describe("runPan115TokenKeepAlive", () => {
     mockMakePan115OpenOAuthPersister.mockReturnValue(vi.fn());
     mockMakePan115OpenOAuthRefreshCoordinator.mockReturnValue(vi.fn());
     mockEnsureValidToken.mockResolvedValue("new-access-token");
+    mockFreezeConnectedStorage.mockResolvedValue(undefined);
   });
 
   // -------------------------------------------------------------------------
@@ -144,9 +151,9 @@ describe("runPan115TokenKeepAlive", () => {
     expect(mockEnsureValidToken).not.toHaveBeenCalled();
   });
 
-  it("skips tokens with more than 1 hour remaining", async () => {
+  it("skips tokens with more than 15 minutes remaining", async () => {
     mockListConnectedStorages.mockResolvedValue([
-      makeStorage({ expiresAt: NOW + 61 * 60 * 1000 }), // 61 min left — above threshold
+      makeStorage({ expiresAt: NOW + 16 * 60 * 1000 }), // 16 min left — above threshold
     ]);
     const result = await runPan115TokenKeepAlive("account-1");
     expect(result.refreshed).toBe(0);
@@ -157,9 +164,9 @@ describe("runPan115TokenKeepAlive", () => {
   // Refresh triggered
   // -------------------------------------------------------------------------
 
-  it("refreshes a token expiring within 1 hour", async () => {
+  it("refreshes a token expiring within 15 minutes", async () => {
     mockListConnectedStorages.mockResolvedValue([
-      makeStorage({ expiresAt: NOW + 30 * 60 * 1000 }), // 30 min left
+      makeStorage({ expiresAt: NOW + 10 * 60 * 1000 }), // 10 min left
     ]);
     const result = await runPan115TokenKeepAlive("account-1");
     expect(result.refreshed).toBe(1);
@@ -174,6 +181,41 @@ describe("runPan115TokenKeepAlive", () => {
     ]);
     const result = await runPan115TokenKeepAlive("account-1");
     expect(result.refreshed).toBe(1);
+  });
+
+  it("完全跳过刷新：PAN115_OAUTH_REFRESH_DISABLED=1（多副本只留一个写者）", async () => {
+    process.env.PAN115_OAUTH_REFRESH_DISABLED = "1";
+    try {
+      mockListConnectedStorages.mockResolvedValue([makeStorage({ expiresAt: NOW - 60_000 })]);
+      const result = await runPan115TokenKeepAlive("account-1");
+      expect(result).toEqual({ refreshed: 0, failed: 0, fatal: 0 });
+      expect(mockEnsureValidToken).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.PAN115_OAUTH_REFRESH_DISABLED;
+    }
+  });
+
+  it("跳过已冻结的盘（需重新授权后不再空转重试）", async () => {
+    mockListConnectedStorages.mockResolvedValue([
+      makeStorage({ status: "frozen", expiresAt: NOW - 60_000 }),
+    ]);
+    const result = await runPan115TokenKeepAlive("account-1");
+    expect(result.refreshed).toBe(0);
+    expect(mockEnsureValidToken).not.toHaveBeenCalled();
+  });
+
+  it("致命失效时把盘标记为冻结，供 UI 提示重新授权", async () => {
+    const { Pan115OpenAuthError } = await import("@media-track/workflow");
+    mockEnsureValidToken.mockRejectedValue(new Pan115OpenAuthError(40140137, "refresh_token 已失效"));
+    mockListConnectedStorages.mockResolvedValue([makeStorage({ id: "stor-fatal" })]);
+
+    const result = await runPan115TokenKeepAlive("account-1");
+
+    expect(result.fatal).toBe(1);
+    expect(mockFreezeConnectedStorage).toHaveBeenCalledWith(
+      "stor-fatal",
+      expect.stringContaining("115_OAUTH_NEEDS_REAUTH"),
+    );
   });
 
   it("passes makeTokenPersister as onCredentialsPersist to Pan115OpenClient", async () => {

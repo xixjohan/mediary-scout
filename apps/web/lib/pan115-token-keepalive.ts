@@ -25,13 +25,14 @@ import {
   type Pan115OpenOAuthCredentials,
 } from "@media-track/workflow";
 import {
+  freezeConnectedStorage,
   makePan115OpenOAuthPersister,
   makePan115OpenOAuthRefreshCoordinator,
 } from "../features/storage-drives/application/drive-service";
 import { getWorkflowRepository } from "../composition/runtime-container";
 
-/** access_token 有效期少于此值时触发主动刷新（提前 1 小时） */
-const PROACTIVE_REFRESH_THRESHOLD_MS = 60 * 60 * 1000;
+/** access_token 有效期少于此值时触发主动刷新（提前 15 分钟，降低重启即旋转的概率） */
+const PROACTIVE_REFRESH_THRESHOLD_MS = 15 * 60 * 1000;
 
 /**
  * 同一 storage 两次成功刷新之间的最短间隔（内存防抖）。
@@ -48,6 +49,9 @@ const MIN_REFRESH_INTERVAL_MS = 20 * 60 * 1000; // 20 分钟
  */
 const TRANSIENT_FAILURE_COOLDOWN_MS = 5 * 60 * 1000; // 5 分钟
 const FATAL_FAILURE_COOLDOWN_MS = 30 * 60 * 1000; // 30 分钟
+
+/** 禁用提示只打印一次，避免每个 tick 刷屏 */
+let refreshDisabledLogged = false;
 
 /** 记录上次尝试刷新时间（成功或失败都记录，in-memory，重启后重置） */
 const lastRefreshedAt = new Map<string, number>();
@@ -119,6 +123,11 @@ async function refreshStorageToken(
         `[token-keepalive] FATAL: 115 Open OAuth for ${storage.id} requires re-authorization. ` +
           `Error: ${err instanceof Error ? err.message : String(err)}`,
       );
+      // 落库：把"需要重新授权"变成持久状态，UI 才能提示，重启也不会再空转重试。
+      await freezeConnectedStorage(
+        storage.id,
+        `115_OAUTH_NEEDS_REAUTH: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return;
     }
     result.failed++;
@@ -149,6 +158,20 @@ export async function runPan115TokenKeepAlive(
   accountId: string,
 ): Promise<TokenKeepAliveResult> {
   const result: TokenKeepAliveResult = { refreshed: 0, failed: 0, fatal: 0 };
+
+  // 多副本共用同一个 115 账号时，刷新会旋转 refresh_token 并作废其它副本。
+  // 开发实例通过该开关彻底放弃刷新权，只做只读使用，避免把生产实例打成"需重新授权"。
+  if (process.env.PAN115_OAUTH_REFRESH_DISABLED === "1") {
+    if (!refreshDisabledLogged) {
+      refreshDisabledLogged = true;
+      console.warn(
+        "[token-keepalive] disabled by PAN115_OAUTH_REFRESH_DISABLED=1: " +
+          "this instance will not refresh 115 OAuth (avoids rotation conflict with the other instance)",
+      );
+    }
+    return result;
+  }
+
   const now = Date.now();
 
   let storages: Awaited<ReturnType<ReturnType<typeof getWorkflowRepository>["listConnectedStorages"]>>;
@@ -160,6 +183,8 @@ export async function runPan115TokenKeepAlive(
   }
 
   for (const storage of storages) {
+    // 已冻结（需重新授权）的盘不再重试：重试旧 refresh_token 会触发 115 的复用检测。
+    if (storage.status === "frozen") continue;
     const openOAuth = openOAuthFromStorage(storage);
     if (!openOAuth || !shouldRefresh(storage.id, openOAuth.expiresAt, now)) continue;
     await refreshStorageToken(accountId, storage, openOAuth, openOAuth.expiresAt, now, result);
