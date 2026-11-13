@@ -286,3 +286,41 @@ BASE="http://<DEV_HOST>:3020" node test-results/probe-fs-sub.mjs
 ```
 
 三项探针均已落盘，可直接复跑；截图见 `test-results/browser-acceptance/probe-fullscreen-web.png`、`probe-fs-settings.png`。
+
+---
+
+## 9. 实施记录与实机验收（P0 + P1 + P2）
+
+### 9.1 已实施
+
+| 项 | 落点 | 说明 |
+| :--- | :--- | :--- |
+| 全屏铺满 | `mediary-player-core.tsx` + `app/globals.css` | 监听 `fullscreenWeb` 事件给 `<html>` 加/去 `mediary-web-fullscreen`；CSS 隐藏根滚动条并用 `100vw/100vh` 兜底；卸载时清理类名 |
+| 复制链接 | `features/player/clipboard.ts` + `mediary-player-modal.tsx` | 三级降级适配器（clipboard → execCommand → 手动面板）；按钮三态「复制链接 / 已复制 / 请手动复制」；按钮 title 按投送模式给出准确说明 |
+| 手动复制兜底 | `components/manual-copy-panel.tsx` | 程序化复制全失败时展示只读输入框并自动全选 |
+| 字幕一键控制 | `mediary-player-core.tsx` | 控制条右侧新增「字幕 <语言>」按钮，点击循环 关闭 → 各轨 → 关闭 |
+| 字幕快捷键 | `player-shortcuts.ts` + `player-api.ts` | `V` 键切换；命令经 WeakMap 注册表调用，避免全局状态；提示条文案同步更新 |
+| 字幕关闭修复 | `mediary-player-core.tsx` | ArtPlayer 的 `switch("")` 是空操作，改为显式清 `<track>` 的 src 与字幕层 |
+| 字幕偏好记忆 | `subtitle-preference.ts` | localStorage 记录 `{mode, language}`；刷新/换集后按上次选择选轨；非法值一律回落默认 |
+| 字幕控制器 | `subtitle-controller.ts` | 把「轨道装配 / 选轨 / 开关 / 编码 / 偏好 / 按钮文案」收敛为独立控制器；同时把核心组件从 604 行降到 572 行（600 行门禁） |
+
+单测新增：`clipboard.test.ts`（3 例）、`subtitle-preference.test.ts`（8 例），播放器相关合计 69 例通过。
+
+### 9.2 实机验收（开发实例 3020）
+
+| 检查项 | 实测 | 结论 |
+| :--- | :--- | :--- |
+| 全屏右侧间隙 | `gap = 0`（修复前 15），播放器宽 1440 = 视口宽 | 通过 |
+| 全屏类名 | 进入时 `<html>` 有 `mediary-web-fullscreen`、`overflow: hidden`；退出后移除 | 通过 |
+| 复制链接 | HTTP 源（`isSecureContext=false`、`clipboard=undefined`）下点击后按钮变「已复制」 | 通过 |
+| 字幕按钮 | 控制条出现「字幕 简体中文」 | 通过 |
+| V 键循环 | 中文 → 英文 → 关闭（cue 归零）→ 中文 | 通过 |
+| 偏好记忆 | 停在英文后刷新重开，默认仍为英文（cue 为英文文本） | 通过 |
+| 控制台 | pageerror 0 / console error 0 | 通过 |
+
+回归（同一实例）：五页巡检 + R3–R6 全 true；控制条 wrapper/controls/video 底部均 864、`object-fit: contain`；HUD 三档与分段文案通过；字幕专项（SRT 解析、语言识别、切轨、编码项）通过。
+
+### 9.3 与方案的偏差
+
+- **P2 改为设备级记忆**：方案原写「账号级 `subtitle_mode`」，本轮用 localStorage 实现设备级记忆（零后端改动、换集与刷新即生效）。账号级多设备同步留作后续，可与 `player_delivery_mode` 同构落地。
+- **P3（外部可用签名链接）未做**：需要先决定 token 签发入口与权限，暂缓。

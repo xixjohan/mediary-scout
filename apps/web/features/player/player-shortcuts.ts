@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type RefObject } from "react";
 import type ArtplayerType from "artplayer";
+import { getPlayerApi } from "./player-api";
 
 /**
  * 播放器快捷键命令注册表（唯一事实源）。
@@ -117,6 +118,15 @@ export const PLAYER_COMMANDS: readonly PlayerCommand[] = [
     },
   },
   {
+    code: "KeyV",
+    keyLabel: "V",
+    label: "字幕开关 / 切换下一条",
+    run: (art) => {
+      // 字幕轨道由播放器组件持有，经 WeakMap 命令注册表调用，避免全局状态。
+      getPlayerApi(art)?.cycleSubtitle();
+    },
+  },
+  {
     code: "BracketLeft",
     keyLabel: "[ / ]",
     label: "降低 / 提高倍速",
@@ -162,7 +172,7 @@ export const SHORTCUT_SUMMARY = Array.from(
 
 /** 左下角胶囊的一行提示，由注册表生成而非写死。 */
 export const SHORTCUT_HINT =
-  "空格播放/暂停 · 左右快进退 · F 全屏 · M 静音 · [ ] 倍速 · ? 查看全部";
+  "空格播放/暂停 · 左右快进退 · F 全屏 · M 静音 · V 字幕 · [ ] 倍速 · ? 查看全部";
 
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;

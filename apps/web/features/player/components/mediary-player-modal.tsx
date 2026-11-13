@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import { Check, Copy, Film, Volume2, X, RefreshCw, Zap, Keyboard, EyeOff } from "lucide-react";
 import type ArtplayerType from "artplayer";
 import { MediaryPlayerCore } from "./mediary-player-core";
+import { copyText } from "../clipboard";
+import { ManualCopyPanel } from "./manual-copy-panel";
 import { SHORTCUT_HINT, SHORTCUT_SUMMARY, usePlayerShortcuts } from "../player-shortcuts";
 import {
   HINT_VISIBILITY_LABELS,
@@ -44,7 +46,9 @@ export function MediaryPlayerModal({
   onClose,
 }: MediaryPlayerModalProps) {
   const [mounted, setMounted] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  // 程序化复制全部失败时（极少数浏览器/权限策略），给出可手动复制的兜底。
+  const [manualCopyUrl, setManualCopyUrl] = useState<string | null>(null);
   const [currentMode, setCurrentMode] = useState<"redirect" | "proxy">(deliveryMode);
   // P2-B：账号级投送偏好。三处播放入口（含不走 play 接口的文件夹视图）
   // 统一在弹窗内读取同一个 account_settings 键，避免偏好只在一处生效。
@@ -120,12 +124,18 @@ export function MediaryPlayerModal({
   const activeUrl = currentMode === "proxy" && proxyUrl ? proxyUrl : streamUrl;
   const fallbackUrl = currentMode === "redirect" && proxyUrl ? proxyUrl : undefined;
 
-  const copyAbsoluteLink = () => {
+  const copyAbsoluteLink = async () => {
     const fullUrl = activeUrl.startsWith("http") ? activeUrl : `${window.location.origin}${activeUrl}`;
-    void navigator.clipboard.writeText(fullUrl).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    });
+    // HTTP 局域网源下 navigator.clipboard 不存在，必须走三级降级适配器。
+    const strategy = await copyText(fullUrl);
+    if (strategy === "manual") {
+      setManualCopyUrl(fullUrl);
+      setCopyState("failed");
+      return;
+    }
+    setManualCopyUrl(null);
+    setCopyState("copied");
+    setTimeout(() => setCopyState("idle"), 2000);
   };
 
   const modeLabel = (mode: "redirect" | "proxy") =>
@@ -368,23 +378,38 @@ export function MediaryPlayerModal({
             <button
               type="button"
               className="btn btn-secondary btn-sm"
-              onClick={copyAbsoluteLink}
-              title="复制真实串流直链 (可直接在 PotPlayer / VLC 播放)"
+              onClick={() => void copyAbsoluteLink()}
+              title={
+                currentMode === "proxy"
+                  ? "复制播放地址（需本系统登录态；外部播放器请先切换为 302 直连）"
+                  : "复制播放地址（302 直连，可直接给 PotPlayer / VLC 尝试）"
+              }
               style={{
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "0.35rem",
                 fontSize: "0.8rem",
-                background: copied ? "rgba(34, 197, 94, 0.2)" : "rgba(255, 255, 255, 0.1)",
-                border: copied ? "1px solid rgba(34, 197, 94, 0.4)" : "1px solid rgba(255, 255, 255, 0.15)",
-                color: copied ? "#4ade80" : "#e4e4e7",
+                background:
+                  copyState === "copied"
+                    ? "rgba(34, 197, 94, 0.2)"
+                    : copyState === "failed"
+                      ? "rgba(239, 68, 68, 0.2)"
+                      : "rgba(255, 255, 255, 0.1)",
+                border:
+                  copyState === "copied"
+                    ? "1px solid rgba(34, 197, 94, 0.4)"
+                    : copyState === "failed"
+                      ? "1px solid rgba(239, 68, 68, 0.4)"
+                      : "1px solid rgba(255, 255, 255, 0.15)",
+                color:
+                  copyState === "copied" ? "#4ade80" : copyState === "failed" ? "#f87171" : "#e4e4e7",
                 padding: "0.35rem 0.75rem",
                 borderRadius: "8px",
                 backdropFilter: "blur(8px)",
               }}
             >
-              {copied ? <Check size={14} /> : <Copy size={14} />}
-              {copied ? "已复制播放链" : "复制链接"}
+              {copyState === "copied" ? <Check size={14} /> : <Copy size={14} />}
+              {copyState === "copied" ? "已复制" : copyState === "failed" ? "请手动复制" : "复制链接"}
             </button>
 
             <button
@@ -538,6 +563,17 @@ export function MediaryPlayerModal({
               </div>
             </div>
           </div>
+        )}
+
+        {/* 复制兜底：程序化写入被拦截时，给出可手动复制的输入框 */}
+        {manualCopyUrl && (
+          <ManualCopyPanel
+            url={manualCopyUrl}
+            onClose={() => {
+              setManualCopyUrl(null);
+              setCopyState("idle");
+            }}
+          />
         )}
 
         {/* 100% 满屏核心播放器画布 */}

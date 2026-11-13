@@ -122,3 +122,20 @@
   transform: translateX(4px);
   color: var(--text);
 }
+
+/*
+ * 网页全屏修正。
+ *
+ * ArtPlayer 的 .art-fullscreen-web 是 position:fixed + width:100%，而 fixed 的
+ * 包含块是「初始包含块」；存在经典滚动条时其宽度 = 视口宽 - 滚动条宽，
+ * 于是右侧会露出约 15px 的页面底色（观感即黑边）。
+ * 进入网页全屏时隐藏根滚动条，并用视口单位兜底，保证铺满。
+ */
+html.mediary-web-fullscreen {
+  overflow: hidden;
+}
+
+html.mediary-web-fullscreen .art-video-player.art-fullscreen-web {
+  width: 100vw !important;
+  height: 100vh !important;
+}

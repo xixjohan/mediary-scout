@@ -17,11 +17,8 @@ import {
   type PlaybackPhase,
 } from "../playback-state-machine";
 import { buildTelemetrySample, readVideoTelemetry, type TelemetrySample } from "../player-telemetry";
-import {
-  buildPlayerSubtitleTracks,
-  pickDefaultTrack,
-  type PlayerSubtitleTrack,
-} from "../subtitle-tracks";
+import { createSubtitleController } from "../subtitle-controller";
+import { registerPlayerApi, unregisterPlayerApi } from "../player-api";
 import { subtitleLanguageLabel } from "@media-track/workflow";
 import { PlayerTelemetryHud, type TelemetryLevel } from "./player-telemetry-hud";
 import type { SubtitleTrackInfo } from "@media-track/contracts";
@@ -187,29 +184,13 @@ export function MediaryPlayerCore({
 
       if (isDisposed || !containerRef.current) return;
 
-      const currentSubtitles = subtitlesRef.current;
-      // 轨道装配：按格式映射 ArtPlayer 类型（srt 必须声明成 srt 才会触发 srtToVtt），
-      // 并按语言优先选中文轨。PGS/SUB 位图字幕不进入列表。
-      const subtitleTracks = buildPlayerSubtitleTracks(currentSubtitles);
-      const defaultSubtitle = pickDefaultTrack(subtitleTracks);
-      let activeSubtitle: PlayerSubtitleTrack | null = defaultSubtitle;
-      let subtitleEncoding = "utf-8";
-      const applySubtitle = (track: PlayerSubtitleTrack | null, encoding: string) => {
-        activeSubtitle = track;
-        subtitleEncoding = encoding;
-        if (!art) return;
-        try {
-          if (!track) {
-            void art.subtitle.switch("").catch(() => {});
-            return;
-          }
-          void art.subtitle
-            .switch(track.url, { type: track.type, name: track.label, encoding })
-            .catch(() => {});
-        } catch {
-          // 切轨失败不影响播放，静默降级
-        }
-      };
+      // 字幕控制统一交给控制器：轨道装配、选轨、开关、编码、偏好记忆、按钮文案。
+      const subtitleController = createSubtitleController({
+        getArt: () => art,
+        subtitles: subtitlesRef.current,
+      });
+      const subtitleTracks = subtitleController.tracks;
+      const defaultSubtitle = subtitleController.initialTrack;
 
       art = new Artplayer({
         container: containerRef.current,
@@ -349,11 +330,11 @@ export function MediaryPlayerCore({
                 {
                   width: 260,
                   html: "字幕",
-                  tooltip: activeSubtitle
-                    ? subtitleLanguageLabel(activeSubtitle.language)
+                  tooltip: subtitleController.current()
+                    ? subtitleLanguageLabel(subtitleController.current()!.language)
                     : "关闭",
                   selector: [
-                    { html: "关闭", value: "off", default: activeSubtitle === null },
+                    { html: "关闭", value: "off", default: subtitleController.current() === null },
                     ...subtitleTracks.map((track) => ({
                       html: track.label,
                       value: track.id,
@@ -363,11 +344,11 @@ export function MediaryPlayerCore({
                   onSelect: (item: any) => {
                     const value = String(item.value);
                     if (value === "off") {
-                      applySubtitle(null, subtitleEncoding);
+                      subtitleController.apply(null);
                       return "关闭";
                     }
                     const track = subtitleTracks.find((t) => t.id === value) ?? null;
-                    applySubtitle(track, subtitleEncoding);
+                    subtitleController.apply(track);
                     return String(item.html ?? "");
                   },
                 },
@@ -380,7 +361,7 @@ export function MediaryPlayerCore({
                     { html: "GBK / GB18030", value: "gb18030" },
                   ],
                   onSelect: (item: any) => {
-                    applySubtitle(activeSubtitle, String(item.value));
+                    subtitleController.apply(subtitleController.current(), String(item.value));
                     return String(item.html ?? "");
                   },
                 },
@@ -393,6 +374,30 @@ export function MediaryPlayerCore({
       onPlayerChangeRef.current?.(art);
       // pending 阶段即写入确定性 contain，消除元数据到达前后的隐式布局差异。
       applyVideoFit();
+
+      // 字幕控制：控制条一键开关/切换 + 快捷键 V + 本地偏好记忆。
+      if (subtitleTracks.length > 0) {
+        subtitleController.attachButton(
+          art.controls.add({
+            name: "mediary-subtitle",
+            position: "right",
+            html: subtitleController.buttonLabel(),
+            tooltip: "字幕 (V)",
+            style: { fontSize: "12px", padding: "0 8px", whiteSpace: "nowrap" },
+            click: () => subtitleController.cycle(),
+          }),
+        );
+      }
+      registerPlayerApi(art, {
+        cycleSubtitle: () => subtitleController.cycle(),
+        currentSubtitleLabel: () => subtitleController.current()?.label ?? null,
+      });
+
+      // 网页全屏修正：ArtPlayer 用 width:100% 相对「扣掉滚动条」的初始包含块，
+      // 右侧会露出约 15px 底色（看起来就是黑边）。挂到 html 上做视口级修正。
+      art.on("fullscreenWeb", (on: boolean) => {
+        document.documentElement.classList.toggle("mediary-web-fullscreen", on);
+      });
 
       // 适配器式修补：ArtPlayer 内部在 autoplay / switchUrl 时直接调用
       // video.play() 且不 catch AbortError，快速切换流会产生未捕获拒绝。
@@ -502,11 +507,14 @@ export function MediaryPlayerCore({
       gainPipelineRef.current?.detach();
       gainPipelineRef.current = null;
       if (playerRef.current) {
+        unregisterPlayerApi(playerRef.current);
         try {
           playerRef.current.destroy(false);
         } catch {}
         playerRef.current = null;
       }
+      // 退出时清掉全屏修正类，避免影响其它页面。
+      document.documentElement.classList.remove("mediary-web-fullscreen");
     };
   }, [currentUrl, title, poster, autoPlay]);
 
