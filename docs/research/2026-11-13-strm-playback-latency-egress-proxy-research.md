@@ -200,3 +200,47 @@ docker exec mediary-dev printenv NO_PROXY
 ## 10. 一句话总结
 
 **慢的根源不在"跳转"，而在"每条播放请求都被迫经过服务端，而这条出口又绕进了外网代理"**——修好 `NO_PROXY` 的 `.115cdn.net` 缺口，再让 Plex 有机会走直连，首字节可从 2–7 秒回到 0.2–0.6 秒。
+
+---
+
+## 11. 实施记录与实测效果（P0 + P2 + P3，P1 以开关形式落地）
+
+### 11.1 已实施
+
+| 项 | 落点 | 说明 |
+| :--- | :--- | :--- |
+| P0 白名单补域 | `features/settings-system/core/http-proxy.ts` | `DEFAULT_DOMESTIC_NO_PROXY` 增加 `115cdn.net` / `*.115cdn.net` / `.115cdn.net` |
+| P0 判定增强 | 同文件 `CidrAwareProxyDispatcher.dispatch` | 原来只按 **CIDR** 判定（`matchesNoProxyCidr` 对主机名直接返回 false，域名条目实际依赖 `EnvHttpProxyAgent` 内部快照）；现同时按主机名后缀判定，使运行期补入的域名即时生效 |
+| P0 动态补白 | `packages/workflow/src/storage/egress-no-proxy.ts` + `stream-resolver.ts` | 解析出直链后取可注册域自动追加到 `NO_PROXY`（只增不删、幂等） |
+| P2 解析快路径 | `packages/workflow/src/storage/open-api-circuit.ts` + `stream-resolver.ts` | OAuth 致命失效（`40140137/40140116`）后 30 分钟内直接走 Cookie，跳过必然失败的 Open API 往返 |
+| P1 灰度开关 | `strm/strm-delivery.ts` | 强制代理 UA 类别支持 `STRM_FORCE_PROXY_UA_CATEGORIES` 覆盖；**默认值不变**（仍含 plex），需要时再放开 |
+| P3 观测 | `api/strm/play/[taskId]/[fileId]/route.ts` | 输出 `{"delivery","cacheHit","resolveMs"}` 与 `{"phase":"upstream","upstreamMs","status"}` 结构化日志 |
+
+### 11.2 实测效果（开发实例，同一 CDN 直链）
+
+| 指标 | 修复前 | 修复后 |
+| :--- | :--- | :--- |
+| `/api/strm/play` 首字节（Plex UA，proxy 投送） | **2.27 / 3.50 / 7.47 s** | **0.19 / 0.19 / 0.26 s** |
+| 容器内 `EnvHttpProxyAgent` 取 Range 0-1023 | 2823 / 3813 / 420 ms | 246 / 284 / 175 ms |
+| 容器内直连（基线） | 232 / 216 / 83 ms | 同左（未变） |
+
+即：**代理中转被消除后，服务端代理投送的首字节已接近直连基线**。
+
+日志实测：`[strm-play] {"phase":"upstream","upstreamMs":181,"status":206}` —— 上游首字节稳定在 ~180–240ms。
+
+### 11.3 门禁
+
+`apps/web/features/settings-system/core/no-proxy-coverage.test.ts`：
+
+1. 按「驱动 → CDN 域名」清单逐个断言必须直连（115cdn.net / 115cdn.com / quark.cn / uc.cn / 123pan.com / alipan.com）；
+2. 断言外网域名（themoviedb.org、github.com）不得被误放行。
+
+配套单测：`egress-no-proxy.test.ts`（可注册域、后缀匹配、幂等追加）、`open-api-circuit.test.ts`（熔断/到期/隔离/解除）。
+
+### 11.4 未做与遗留
+
+| 项 | 说明 |
+| :--- | :--- |
+| P1 真正放开 Plex 直连 | 只提供了开关，默认仍强制 proxy。放开前需验证 Plex 对 115 签名的 Range 请求是否 403，建议先在单条任务上灰度 |
+| P3 预解析 | 未做；当前解析已走缓存 + 熔断，收益小于改动面 |
+| 播放器控制条 53px 偏移 | 验收中发现 `.art-controls` 位于 `.art-bottom`（高度 828）之外（top 871，超出 864 共 53px，被 `overflow:hidden` 裁切）。本轮改动未触及播放器与 CSS，且与字幕开关无关，判定为**独立遗留缺陷**，需单独排查 |
