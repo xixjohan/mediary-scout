@@ -1,3 +1,4 @@
+import { LIBRARY_SCAN_JOBS_SCHEMA_SQL } from "./sqlite-library-scan-jobs.js";
 import type Database from "better-sqlite3";
 
 /**
@@ -6,8 +7,7 @@ import type Database from "better-sqlite3";
  * `push_*` 整族都是推送通道凭据（Server酱 sendkey / Bark / Webhook …）。
  */
 export const SECRET_SETTING_KEYS = new Set([
-  "api_key", // S5.2：API Key（换 JWT 的长期凭据）
-  "jwt_secret", // S5.3：JWT 签名 secret
+  "api_key", "jwt_secret", // S5.2 API Key / S5.3 JWT 签名 secret
   "pan115.cookie",
   "session_secret",
   "agent_api_token",
@@ -20,9 +20,7 @@ export const SECRET_SETTING_KEYS = new Set([
   "tmdb_api_key",
 ]);
 
-export function isSecretSettingKey(key: string): boolean {
-  return SECRET_SETTING_KEYS.has(key) || key.startsWith("push_");
-}
+export function isSecretSettingKey(key: string): boolean { return SECRET_SETTING_KEYS.has(key) || key.startsWith("push_"); }
 
 /**
  * The single SQLite schema (pure-SQLite single engine, task S1.4b — the Postgres
@@ -445,10 +443,271 @@ export const SQLITE_SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS idx_reverse_scan_items_job
     ON reverse_scan_items (job_id, review_status);
+
+  CREATE TABLE IF NOT EXISTS media_libraries (
+    id text PRIMARY KEY,
+    account_id text NOT NULL,
+    name text NOT NULL,
+    library_type text NOT NULL DEFAULT 'other',
+    poster_style text NOT NULL DEFAULT 'poster',
+    is_pinned integer NOT NULL DEFAULT 0,
+    sort_order integer NOT NULL DEFAULT 0,
+    default_delivery_mode text NOT NULL DEFAULT 'redirect',
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_media_libraries_account
+    ON media_libraries (account_id, sort_order, created_at);
+
+  CREATE TABLE IF NOT EXISTS library_path_bindings (
+    id text PRIMARY KEY,
+    library_id text NOT NULL,
+    storage_id text NOT NULL,
+    remote_folder_id text NOT NULL,
+    remote_path text NOT NULL,
+    scheduled_scan_enabled integer NOT NULL DEFAULT 0,
+    scan_interval_minutes integer NOT NULL DEFAULT 360,
+    scan_cron text,
+    scan_mode text NOT NULL DEFAULT 'incremental_missing',
+    min_file_size_mb integer NOT NULL DEFAULT 100,
+    exclude_keywords text NOT NULL DEFAULT '[]',
+    delivery_mode text NOT NULL DEFAULT 'inherit',
+    last_scan_at text,
+    last_scan_status text,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_library_bindings_lib
+    ON library_path_bindings (library_id);
+  CREATE INDEX IF NOT EXISTS idx_library_bindings_storage
+    ON library_path_bindings (storage_id);
+
+${LIBRARY_SCAN_JOBS_SCHEMA_SQL}
+
+  CREATE TABLE IF NOT EXISTS library_media_items (
+    id text PRIMARY KEY,
+    library_id text NOT NULL,
+    tmdb_id integer,
+    douban_id text,
+    media_type text NOT NULL DEFAULT 'movie',
+    title text NOT NULL,
+    original_title text,
+    release_year integer,
+    overview text,
+    poster_path text,
+    backdrop_path text,
+    rating real DEFAULT 0,
+    genres text NOT NULL DEFAULT '[]',
+    is_metadata_locked integer NOT NULL DEFAULT 0,
+    review_status text NOT NULL DEFAULT 'auto_accepted',
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_library_items_lib
+    ON library_media_items (library_id, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_library_items_tmdb
+    ON library_media_items (tmdb_id);
+
+  CREATE TABLE IF NOT EXISTS library_seasons (
+    id text PRIMARY KEY,
+    media_item_id text NOT NULL,
+    season_number integer NOT NULL,
+    name text NOT NULL,
+    total_episodes integer NOT NULL DEFAULT 0,
+    poster_path text,
+    air_date text
+  );
+  CREATE INDEX IF NOT EXISTS idx_library_seasons_item
+    ON library_seasons (media_item_id, season_number);
+
+  CREATE TABLE IF NOT EXISTS library_episodes (
+    id text PRIMARY KEY,
+    season_id text NOT NULL,
+    binding_id text NOT NULL DEFAULT '',
+    episode_number integer NOT NULL,
+    episode_name text,
+    storage_id text NOT NULL,
+    file_id text NOT NULL,
+    file_name text NOT NULL,
+    version_tag text DEFAULT '',
+    is_default_version integer NOT NULL DEFAULT 0,
+    pick_code text,
+    size_bytes integer NOT NULL DEFAULT 0,
+    video_codec text,
+    resolution text,
+    duration_seconds integer,
+    subtitles_json text NOT NULL DEFAULT '[]',
+    relative_path text,
+    created_at text NOT NULL,
+    updated_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_library_episodes_season
+    ON library_episodes (season_id, episode_number);
+  CREATE INDEX IF NOT EXISTS idx_library_episodes_season_version
+    ON library_episodes (season_id, episode_number, is_default_version DESC);
+  CREATE INDEX IF NOT EXISTS idx_library_episodes_binding
+    ON library_episodes (binding_id);
+  CREATE INDEX IF NOT EXISTS idx_library_episodes_storage_file
+    ON library_episodes (storage_id, file_id);
+
+  CREATE TABLE IF NOT EXISTS library_scan_snapshots (
+    id text PRIMARY KEY,
+    binding_id text NOT NULL,
+    dir_id text NOT NULL,
+    dir_name text NOT NULL,
+    dir_path text NOT NULL,
+    file_count integer NOT NULL DEFAULT 0,
+    last_modified_hash text NOT NULL,
+    checked_at text NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_library_snapshots_binding_dir
+    ON library_scan_snapshots (binding_id, dir_id);
+
   INSERT INTO accounts (id, username, password_hash, is_owner, created_at)
     VALUES ('acct_default', 'default', '', 1, '1970-01-01T00:00:00.000Z')
     ON CONFLICT (id) DO NOTHING;
 `;
+
+/**
+ * 补齐影视库全新体系可能缺失的数据表与列
+ */
+export function upgradeMediaLibraryShape(db: Database.Database): void {
+  // 如果已有老旧的 library_episodes 表，先增量补全字段，避免后续创建索引报错
+  const epCols = db.pragma("table_info(library_episodes)") as Array<{ name: string }>;
+  if (epCols.length > 0) {
+    if (!epCols.some((c) => c.name === "binding_id")) {
+      db.exec("ALTER TABLE library_episodes ADD COLUMN binding_id text NOT NULL DEFAULT ''");
+    }
+    if (!epCols.some((c) => c.name === "version_tag")) {
+      db.exec("ALTER TABLE library_episodes ADD COLUMN version_tag text DEFAULT ''");
+    }
+    if (!epCols.some((c) => c.name === "is_default_version")) {
+      db.exec("ALTER TABLE library_episodes ADD COLUMN is_default_version integer NOT NULL DEFAULT 0");
+    }
+  }
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS media_libraries (
+      id text PRIMARY KEY,
+      account_id text NOT NULL,
+      name text NOT NULL,
+      library_type text NOT NULL DEFAULT 'other',
+      poster_style text NOT NULL DEFAULT 'poster',
+      is_pinned integer NOT NULL DEFAULT 0,
+      sort_order integer NOT NULL DEFAULT 0,
+      default_delivery_mode text NOT NULL DEFAULT 'redirect',
+      created_at text NOT NULL,
+      updated_at text NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_media_libraries_account
+      ON media_libraries (account_id, sort_order, created_at);
+
+    CREATE TABLE IF NOT EXISTS library_path_bindings (
+      id text PRIMARY KEY,
+      library_id text NOT NULL,
+      storage_id text NOT NULL,
+      remote_folder_id text NOT NULL,
+      remote_path text NOT NULL,
+      scheduled_scan_enabled integer NOT NULL DEFAULT 0,
+      scan_interval_minutes integer NOT NULL DEFAULT 360,
+      scan_cron text,
+      scan_mode text NOT NULL DEFAULT 'incremental_missing',
+      min_file_size_mb integer NOT NULL DEFAULT 100,
+      exclude_keywords text NOT NULL DEFAULT '[]',
+      delivery_mode text NOT NULL DEFAULT 'inherit',
+      last_scan_at text,
+      last_scan_status text,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_bindings_lib
+      ON library_path_bindings (library_id);
+    CREATE INDEX IF NOT EXISTS idx_library_bindings_storage
+      ON library_path_bindings (storage_id);
+
+    ${LIBRARY_SCAN_JOBS_SCHEMA_SQL}
+
+    CREATE TABLE IF NOT EXISTS library_media_items (
+      id text PRIMARY KEY,
+      library_id text NOT NULL,
+      tmdb_id integer,
+      douban_id text,
+      media_type text NOT NULL DEFAULT 'movie',
+      title text NOT NULL,
+      original_title text,
+      release_year integer,
+      overview text,
+      poster_path text,
+      backdrop_path text,
+      rating real DEFAULT 0,
+      genres text NOT NULL DEFAULT '[]',
+      is_metadata_locked integer NOT NULL DEFAULT 0,
+      review_status text NOT NULL DEFAULT 'auto_accepted',
+      created_at text NOT NULL,
+      updated_at text NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_items_lib
+      ON library_media_items (library_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_library_items_tmdb
+      ON library_media_items (tmdb_id);
+
+    CREATE TABLE IF NOT EXISTS library_seasons (
+      id text PRIMARY KEY,
+      media_item_id text NOT NULL,
+      season_number integer NOT NULL,
+      name text NOT NULL,
+      total_episodes integer NOT NULL DEFAULT 0,
+      poster_path text,
+      air_date text
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_seasons_item
+      ON library_seasons (media_item_id, season_number);
+
+    CREATE TABLE IF NOT EXISTS library_episodes (
+      id text PRIMARY KEY,
+      season_id text NOT NULL,
+      binding_id text NOT NULL DEFAULT '',
+      episode_number integer NOT NULL,
+      episode_name text,
+      storage_id text NOT NULL,
+      file_id text NOT NULL,
+      file_name text NOT NULL,
+      version_tag text DEFAULT '',
+      is_default_version integer NOT NULL DEFAULT 0,
+      pick_code text,
+      size_bytes integer NOT NULL DEFAULT 0,
+      video_codec text,
+      resolution text,
+      duration_seconds integer,
+      subtitles_json text NOT NULL DEFAULT '[]',
+      relative_path text,
+      created_at text NOT NULL,
+      updated_at text NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_episodes_season
+      ON library_episodes (season_id, episode_number);
+    CREATE INDEX IF NOT EXISTS idx_library_episodes_season_version
+      ON library_episodes (season_id, episode_number, is_default_version DESC);
+    CREATE INDEX IF NOT EXISTS idx_library_episodes_binding
+      ON library_episodes (binding_id);
+    CREATE INDEX IF NOT EXISTS idx_library_episodes_storage_file
+      ON library_episodes (storage_id, file_id);
+
+    CREATE TABLE IF NOT EXISTS library_scan_snapshots (
+      id text PRIMARY KEY,
+      binding_id text NOT NULL,
+      dir_id text NOT NULL,
+      dir_name text NOT NULL,
+      dir_path text NOT NULL,
+      file_count integer NOT NULL DEFAULT 0,
+      last_modified_hash text NOT NULL,
+      checked_at text NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_library_snapshots_binding_dir
+      ON library_scan_snapshots (binding_id, dir_id);
+  `);
+}
+
 
 /**
  * 补上早于 last_taken_at 的库缺的列。

@@ -7,7 +7,7 @@ export const STRM_BASE_URL_SETTING_KEY = "strm_base_url";
 export type StrmScanMode = "incremental_missing" | "incremental_update" | "full_sync";
 export type StrmScheduleMode = "interval" | "manual";
 export type StrmTaskStatus = "idle" | "running" | "paused" | "error";
-export type StrmDeliveryMode = "redirect" | "proxy";
+export type StrmDeliveryMode = "redirect" | "proxy" | "auto";
 
 export interface StrmTask {
   id: string;

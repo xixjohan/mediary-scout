@@ -77,3 +77,6 @@ export {
 
 // Share Inspectors & Tree Engine (Adapter & FSM)
 export * from "./inspectors/index.js";
+
+// Media Library Management & Scanning
+export * from "./library/index.js";

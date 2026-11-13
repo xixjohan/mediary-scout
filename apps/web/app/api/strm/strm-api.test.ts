@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { InMemoryWorkflowRepository } from "@media-track/workflow";
+import { InMemoryWorkflowRepository, buildStrmLinkCacheKey } from "@media-track/workflow";
 import {
   setWorkflowRepositoryForTest,
   resetRuntimeContainerForTests,
@@ -17,7 +17,7 @@ import {
   GET as getReplaceBaseUrl,
   POST as replaceBaseUrl,
 } from "./replace-base-url/route";
-import { GET as playStream, HEAD as playHead } from "./play/[taskId]/[fileId]/route";
+import { GET as playStream, HEAD as playHead, OPTIONS as playOptions } from "./play/[taskId]/[fileId]/route";
 
 describe("STRM API Routes", () => {
   let repo: InMemoryWorkflowRepository;
@@ -207,7 +207,12 @@ describe("STRM API Routes", () => {
     expect(res.headers.get("Expires")).toBe("0");
 
     // 再次请求直接命中 Link Cache
-    const cached = await repo.getStrmLinkCache("cs_mock_drive:video_100");
+    const expectedKey = buildStrmLinkCacheKey({
+      storageId: "cs_mock_drive",
+      fileId: "video_100",
+      deliveryMode: "redirect",
+    });
+    const cached = await repo.getStrmLinkCache(expectedKey);
     expect(cached).not.toBeNull();
     expect(cached?.downloadUrl).toContain("video_100");
   });
@@ -449,7 +454,11 @@ describe("STRM API Routes", () => {
     });
 
     await repo.setStrmLinkCache({
-      cacheKey: "cs_115_real:video_dragon",
+      cacheKey: buildStrmLinkCacheKey({
+        storageId: "cs_115_real",
+        fileId: "video_dragon",
+        deliveryMode: "proxy",
+      }),
       downloadUrl: "https://mock-115-cdn.net/dragon.mkv",
       deliveryMode: "proxy",
       headersJson: null,
@@ -479,7 +488,7 @@ describe("STRM API Routes", () => {
         {
           headers: {
             Range: "bytes=0-1000",
-            "User-Agent": "Mozilla/5.0 Chrome/126.0.0.0",
+            "User-Agent": "PotPlayer64/23.09.05",
           },
         },
       );
@@ -495,6 +504,174 @@ describe("STRM API Routes", () => {
       expect(res.headers.get("content-disposition")).toContain("inline;");
       expect(res.headers.get("content-disposition")).toContain("filename*=");
       expect(res.headers.get("accept-ranges")).toBe("bytes");
+      // 必须包含 CORS 头，保障 Web Audio 软增益不静音
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("STRM 播放接口支持 ?delivery=proxy 显式覆写默认 redirect 模式，并提供 OPTIONS 预检支持", async () => {
+    await repo.upsertConnectedStorage({
+      id: "cs_generic_redirect_test",
+      accountId: "acct_default",
+      provider: "generic",
+      providerUid: "uid_generic",
+      payload: {},
+      createdAt: new Date().toISOString(),
+    });
+
+    const taskRedirect = await repo.createStrmTask({
+      id: "task_generic_redirect",
+      accountId: "acct_default",
+      name: "通用直连任务",
+      storageId: "cs_generic_redirect_test",
+      remoteFolderId: "f_redirect",
+      remotePath: "/Anime",
+      localOutputDir: "/tmp/generic_redirect",
+      deliveryMode: "redirect",
+    });
+
+    const testChromeUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+    await repo.setStrmLinkCache({
+      cacheKey: buildStrmLinkCacheKey({
+        storageId: "cs_generic_redirect_test",
+        fileId: "video_test",
+        deliveryMode: "redirect",
+        userAgent: testChromeUa,
+      }),
+      downloadUrl: "https://cdn.example.com/video_test.mp4",
+      deliveryMode: "redirect",
+      headersJson: null,
+      expiresAt: Math.floor(Date.now() / 1000) + 7200,
+    });
+
+    // 1. 测试 OPTIONS 预检请求
+    const optRes = await playOptions();
+    expect(optRes.status).toBe(204);
+    expect(optRes.headers.get("access-control-allow-origin")).toBe("*");
+    expect(optRes.headers.get("access-control-allow-methods")).toContain("GET");
+
+    // 2. 携带合规桌面浏览器 UA 时，尊重 redirect 配置返回 302 重定向
+    const redirectReq = new NextRequest(
+      `http://localhost:3000/api/strm/play/${taskRedirect.id}/video_test`,
+      { headers: { "User-Agent": testChromeUa } },
+    );
+    const context = {
+      params: Promise.resolve({ taskId: taskRedirect.id, fileId: "video_test" }),
+    };
+    const redirectRes = await playStream(redirectReq, context);
+    expect(redirectRes.status).toBe(302);
+    expect(redirectRes.headers.get("location")).toBe("https://cdn.example.com/video_test.mp4");
+
+    // 3. 当指定 ?delivery=proxy 时，覆盖默认的 redirect，以代理中继模式提供流媒体服务
+    await repo.setStrmLinkCache({
+      cacheKey: buildStrmLinkCacheKey({
+        storageId: "cs_generic_redirect_test",
+        fileId: "video_test",
+        deliveryMode: "proxy",
+      }),
+      downloadUrl: "https://cdn.example.com/video_test.mp4",
+      deliveryMode: "proxy",
+      headersJson: null,
+      expiresAt: Math.floor(Date.now() / 1000) + 7200,
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      const headers = new Headers();
+      headers.set("Content-Range", "bytes 0-100/5000");
+      headers.set("Content-Length", "101");
+      headers.set("Content-Type", "video/mp4");
+      headers.set("Accept-Ranges", "bytes");
+      return new Response(new Uint8Array([0, 1]), { status: 206, headers });
+    });
+
+    try {
+      const proxyReq = new NextRequest(
+        `http://localhost:3000/api/strm/play/${taskRedirect.id}/video_test?name=video_test.mp4&delivery=proxy`,
+        {
+          headers: { Range: "bytes=0-100" },
+        },
+      );
+      const proxyRes = await playStream(proxyReq, context);
+      expect(proxyRes.status).toBe(206);
+      expect(proxyRes.headers.get("access-control-allow-origin")).toBe("*");
+      expect(proxyRes.headers.get("content-type")).toBe("video/mp4");
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
+  it("针对 115 存储的 STRM 任务，PotPlayer 客户端即使任务配置为 redirect 也自适应降级为 proxy 模式流式输出，杜绝 403 签名错误", async () => {
+    await repo.upsertConnectedStorage({
+      id: "cs_115_potplayer",
+      accountId: "acct_default",
+      provider: "pan115",
+      providerUid: "uid_115_pot",
+      payload: { cookie: "test" },
+      createdAt: new Date().toISOString(),
+    });
+
+    const potTask = await repo.createStrmTask({
+      id: "task_115_pot",
+      accountId: "acct_default",
+      name: "115 PotPlayer 测试",
+      storageId: "cs_115_potplayer",
+      remoteFolderId: "f_pot",
+      remotePath: "/Movies",
+      localOutputDir: "/tmp/pot",
+      deliveryMode: "redirect", // 任务虽然配了 redirect
+    });
+
+    // 预设 proxy 共享缓存
+    await repo.setStrmLinkCache({
+      cacheKey: buildStrmLinkCacheKey({
+        storageId: "cs_115_potplayer",
+        fileId: "video_pot",
+        deliveryMode: "proxy",
+      }),
+      downloadUrl: "https://mock-115-cdn.net/movie.mkv",
+      deliveryMode: "proxy",
+      headersJson: JSON.stringify({ "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36" }),
+      expiresAt: Math.floor(Date.now() / 1000) + 7200,
+    });
+
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+      // 验证服务端代理向 115 CDN 发起的请求携带了合规的桌面浏览器 User-Agent，绝非 PotPlayer UA
+      const headers = (init?.headers as Record<string, string>) || {};
+      expect(headers["User-Agent"] || headers["user-agent"]).toContain("Chrome/126.0.0.0");
+
+      const respHeaders = new Headers();
+      respHeaders.set("Content-Range", "bytes 0-1000/1000000");
+      respHeaders.set("Content-Length", "1001");
+      respHeaders.set("Content-Type", "application/octet-stream");
+      respHeaders.set("Content-Disposition", 'attachment; filename="movie.mkv"');
+      respHeaders.set("Accept-Ranges", "bytes");
+
+      return new Response(new Uint8Array([1, 2, 3]), { status: 206, headers: respHeaders });
+    });
+
+    try {
+      // 模拟 PotPlayer 发起的请求（携带 PotPlayer User-Agent）
+      const potReq = new NextRequest(
+        `http://localhost:3000/api/strm/play/${potTask.id}/video_pot?name=movie.mkv`,
+        {
+          headers: {
+            "User-Agent": "PotPlayer64/23.09.05",
+            Range: "bytes=0-1000",
+          },
+        },
+      );
+      const context = {
+        params: Promise.resolve({ taskId: potTask.id, fileId: "video_pot" }),
+      };
+
+      const res = await playStream(potReq, context);
+      // 必须自适应走 proxy 模式返回 HTTP 206 流式响应，绝不能返回 302 重定向
+      expect(res.status).toBe(206);
+      expect(res.headers.get("content-type")).toBe("video/x-matroska");
+      expect(res.headers.get("content-disposition")).toContain("inline;");
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
     } finally {
       fetchSpy.mockRestore();
     }

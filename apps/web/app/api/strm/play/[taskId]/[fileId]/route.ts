@@ -1,5 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { verifyStrmPlayToken } from "@media-track/workflow";
+import {
+  verifyStrmPlayToken,
+  determineEffectiveDeliveryMode,
+  buildStrmLinkCacheKey,
+} from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../../../lib/workflow-runtime";
 import {
   ensureStorageStreamResolver,
@@ -60,6 +64,7 @@ function handleRedirect(targetUrl: string): Response {
       Pragma: "no-cache",
       Expires: "0",
       "Referrer-Policy": "no-referrer",
+      "Access-Control-Allow-Origin": "*",
     },
   });
 }
@@ -121,6 +126,16 @@ function buildProxyResponseHeaders(
     "content-disposition",
     `inline; filename="${asciiSafe}"; filename*=UTF-8''${encodedUtf8}`,
   );
+
+  // 跨域 CORS 支持：保障 Web Audio API 软增益与现代浏览器无障碍读取媒体流
+  responseHeaders.set("Access-Control-Allow-Origin", "*");
+  responseHeaders.set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS");
+  responseHeaders.set("Access-Control-Allow-Headers", "Range, Content-Type, Accept, Origin");
+  responseHeaders.set(
+    "Access-Control-Expose-Headers",
+    "Content-Range, Content-Length, Accept-Ranges, Content-Type, Content-Disposition",
+  );
+
   return responseHeaders;
 }
 
@@ -240,7 +255,7 @@ async function resolveAndCacheStream(options: {
   storageId: string;
   fileId: string;
   cacheKey: string;
-  deliveryMode: string;
+  deliveryMode: "proxy" | "redirect";
   fileName?: string | undefined;
   pickCode?: string | undefined;
   userAgent?: string | null | undefined;
@@ -251,35 +266,53 @@ async function resolveAndCacheStream(options: {
     const headers = doubleCheck.headersJson ? (JSON.parse(doubleCheck.headersJson) as Record<string, string>) : undefined;
     return {
       url: doubleCheck.downloadUrl,
-      deliveryMode: doubleCheck.deliveryMode,
+      deliveryMode,
       ...(headers ? { headers } : {}),
       expirationSeconds: 7200,
     };
   }
+
+  // 若为 proxy 模式，拉流由服务端统一代理完成，向上游网盘发起时使用标准桌面浏览器 UA；
+  // 若为 redirect 模式，则将客户端真实 UA 传给网盘以生成匹配签名的直链
+  const resolverUa =
+    deliveryMode === "proxy"
+      ? "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+      : (userAgent || "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
 
   const resolved = await resolver.resolveStream({
     storageId,
     fileId,
     ...(fileName !== undefined ? { fileName } : {}),
     ...(pickCode !== undefined ? { pickCode } : {}),
-    ...(userAgent ? { userAgent } : {}),
+    userAgent: resolverUa,
   });
+
+  const effectiveHeaders: Record<string, string> = {
+    ...(resolved.headers || {}),
+    "User-Agent": resolverUa,
+  };
 
   await repo.setStrmLinkCache({
     cacheKey,
     downloadUrl: resolved.url,
-    deliveryMode: resolved.deliveryMode || deliveryMode,
-    headersJson: resolved.headers ? JSON.stringify(resolved.headers) : null,
+    deliveryMode,
+    headersJson: JSON.stringify(effectiveHeaders),
     expiresAt: Math.floor(Date.now() / 1000) + resolved.expirationSeconds,
   });
 
-  return resolved;
+  return {
+    url: resolved.url,
+    deliveryMode,
+    headers: effectiveHeaders,
+    expirationSeconds: resolved.expirationSeconds,
+  };
 }
 
 export async function GET(request: NextRequest, context: RouteParams) {
   const { taskId, fileId } = await context.params;
   const fileName = request.nextUrl.searchParams.get("name") ?? undefined;
   const pickCode = request.nextUrl.searchParams.get("pickCode") ?? undefined;
+  const queryDelivery = request.nextUrl.searchParams.get("delivery");
   const token = request.nextUrl.searchParams.get("token");
   const expStr = request.nextUrl.searchParams.get("exp");
   const exp = expStr ? Number(expStr) : null;
@@ -291,14 +324,40 @@ export async function GET(request: NextRequest, context: RouteParams) {
   if (taskResult.error) return taskResult.error;
   const config = taskResult.config;
 
-  const { storageId, deliveryMode } = config;
-  const cacheKey = `${storageId}:${fileId}`;
+  const { storageId } = config;
+  const clientUa = request.headers.get("user-agent");
+
+  // 若前端请求显式指定了 delivery (如 proxy 模式自愈或直连)，优先尊重请求参数
+  const configuredDelivery =
+    queryDelivery === "proxy" || queryDelivery === "redirect" || queryDelivery === "auto"
+      ? queryDelivery
+      : config.deliveryMode;
+
+  const effectiveDelivery = determineEffectiveDeliveryMode({
+    configuredMode: configuredDelivery,
+    provider: config.provider,
+    userAgent: clientUa,
+  });
+
+  // 多维隔离缓存键：proxy 模式统一共享，redirect 模式按 UA 分组隔离
+  const cacheKey = buildStrmLinkCacheKey({
+    storageId,
+    fileId,
+    deliveryMode: effectiveDelivery,
+    userAgent: clientUa,
+  });
+
   const repo = getWorkflowRepository();
 
-  const cached = await repo.getStrmLinkCache(cacheKey);
+  let cached = await repo.getStrmLinkCache(cacheKey);
+  if (!cached) {
+    // 降级回退兼容纯净传统键 (${storageId}:${fileId})
+    cached = await repo.getStrmLinkCache(`${storageId}:${fileId}`);
+  }
+
   if (cached && !cached.downloadUrl.includes("mock-cdn.cloudpan.com")) {
     const headers = cached.headersJson ? (JSON.parse(cached.headersJson) as Record<string, string>) : undefined;
-    return serveStream(request, cached.downloadUrl, cached.deliveryMode || deliveryMode, headers, fileName);
+    return serveStream(request, cached.downloadUrl, effectiveDelivery, headers, fileName);
   }
 
   const singleFlight = getStrmSingleFlight();
@@ -311,13 +370,13 @@ export async function GET(request: NextRequest, context: RouteParams) {
         storageId,
         fileId,
         cacheKey,
-        deliveryMode,
+        deliveryMode: effectiveDelivery,
         fileName,
         pickCode,
-        userAgent: request.headers.get("user-agent"),
+        userAgent: clientUa,
       }),
     );
-    return serveStream(request, stream.url, stream.deliveryMode || deliveryMode, stream.headers, fileName);
+    return serveStream(request, stream.url, effectiveDelivery, stream.headers, fileName);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     return NextResponse.json({ error: `流媒体解析失败: ${message}` }, { status: 502 });
@@ -326,4 +385,17 @@ export async function GET(request: NextRequest, context: RouteParams) {
 
 export async function HEAD(request: NextRequest, context: RouteParams) {
   return GET(request, context);
+}
+
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
+      "Access-Control-Allow-Headers": "Range, Content-Type, Accept, Origin",
+      "Access-Control-Expose-Headers": "Content-Range, Content-Length, Accept-Ranges, Content-Type, Content-Disposition",
+      "Access-Control-Max-Age": "86400",
+    },
+  });
 }

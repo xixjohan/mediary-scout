@@ -27,7 +27,7 @@ const ROOT_DIR_ALLOWLIST = new Set([
   ".git", ".github", ".claude", ".githooks", ".next", ".venv", "node_modules",
   "apps", "packages", "workers", "scripts", "tools", "tests", "docs", "docs_secret", "site",
   "data", "backups", "env",
-  "e2e-run", "test-results", "playwright-report", ".codex-remote-attachments", // E2E 运行时产物（gitignored）
+  "e2e-run", "test-results", "playwright-report", ".codex-remote-attachments", ".workbuddy-ai", // E2E 产物与 AI 协作项目数据
   "run", // scripts/run-local-real.sh 的本地真实实例运行时产物（DB/日志/pid，gitignored）
 ]);
 

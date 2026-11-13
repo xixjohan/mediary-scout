@@ -87,3 +87,26 @@ export class UnauthenticatedAccountError extends Error {
     this.name = "UnauthenticatedAccountError";
   }
 }
+
+export type {
+  MediaLibraryType,
+  LibraryDeliveryMode,
+  BindingDeliveryMode,
+  LibraryScanMode,
+  MediaReviewStatus,
+  MediaLibrary,
+  LibraryPathBinding,
+  LibraryMediaItem,
+  LibrarySeason,
+  SubtitleTrackInfo,
+  LibraryEpisode,
+  LibraryScanSnapshot,
+  ScanStepStage,
+  LibraryScanProgressEvent,
+  LibraryScanJobStatus,
+  LibraryScanJob,
+  BatchRematchItemResult,
+  BatchRematchResponse,
+  PathConnectionTestResult,
+} from "./media-library.js";
+

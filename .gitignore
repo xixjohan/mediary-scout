@@ -101,3 +101,6 @@ docs_secret/
 /docs_secret/
 .codex-remote-attachments/
 
+# AI 协作的项目本地数据（记忆日志、会话产物），不随仓库分发
+.workbuddy-ai/
+

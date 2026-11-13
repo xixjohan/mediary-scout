@@ -50,4 +50,4 @@ flowchart LR
 - **六合一质量门禁（提交前必跑）**：
   - `npm run gate`（依次执行：`gate:layout` 物理结构与大文件行数棘轮门禁 ➔ `gate:deps` 循环依赖与跨层门禁 ➔ `gate:style` ➔ `gate:assets` ➔ `gate:http-timeout` ➔ `lint` ➔ `typecheck`）
 
-更细的历史设计背景可参考 [架构治理与纯 SQLite 重构方案](architecture-remediation-and-governance.md) 与 [Agent 响应性能诊断与设计模式优化方案](agent-speed-and-architecture-optimization-plan.md)。
+更细的历史设计背景可参考 [架构治理与纯 SQLite 重构方案](architecture-remediation-and-governance.md)、[Agent 响应性能诊断与设计模式优化方案](agent-speed-and-architecture-optimization-plan.md) 与 [影视库体系与增强网盘播放器架构设计方案](architecture/media-library-and-enhanced-player-design.md)。

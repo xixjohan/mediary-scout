@@ -72,6 +72,9 @@ import type {
   UpdateReverseScanItemPatch, ReverseScanItemReviewStatus,
 } from "../domain/reverse-scan-types.js";
 import { InMemoryReverseScanStore } from "./in-memory-reverse-scan.js";
+import { SqliteMediaLibraryRepository } from "./sqlite/sqlite-media-library.js";
+import { SQLITE_SCHEMA, upgradeMediaLibraryShape } from "./sqlite/sqlite-schema.js";
+import Database from "better-sqlite3";
 import { hasIncompleteEpisodeStates, syncSeasonAgainstMetadata } from "../execution/season-sync.js";
 
 /**
@@ -352,6 +355,7 @@ export type WorkflowRunReservationResult =
     };
 
 export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore, ChatConversationStore, MediaRequestStore, StrmStore, MediaServerStore, ReverseScanStore {
+  readonly mediaLibraryStore: SqliteMediaLibraryRepository;
   syncTrackedSeasonForManualSearch(input: ManualSeasonSyncInput): Promise<TrackedSeasonState | null>;
   saveWorkflowRunSnapshot(
     input: PersistWorkflowRunSnapshotInput & {
@@ -672,6 +676,16 @@ function capturePolicySnapshot(
 }
 
 export class InMemoryWorkflowRepository implements WorkflowRepository {
+  public readonly mediaLibraryStore: SqliteMediaLibraryRepository = (() => {
+    const memDb = new Database(":memory:");
+    memDb.exec(SQLITE_SCHEMA);
+    upgradeMediaLibraryShape(memDb);
+    return new SqliteMediaLibraryRepository({
+      db: memDb,
+      now: () => new Date().toISOString(),
+      transaction: <T>(fn: () => T) => memDb.transaction(fn),
+    });
+  })();
   async syncTrackedSeasonForManualSearch(input: ManualSeasonSyncInput): Promise<TrackedSeasonState | null> {
     const run = this.workflowRuns.get(input.workflowRunId);
     if (!run || run.workflowRun.status !== "running" || run.season.id !== input.trackedSeasonId ||

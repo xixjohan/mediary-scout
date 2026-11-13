@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Activity, Aperture, Bell, Bot, HardDrive, Library, Settings } from "lucide-react";
+import { Activity, Aperture, Bell, Bot, Film, HardDrive, Library, Settings } from "lucide-react";
 import { resolveIsDesktop } from "../../lib/workflow-runtime";
 import { globalNavHref } from "@media-track/workflow";
 import { SearchNavLink } from "../../features/catalog/components/search-memory";
@@ -10,7 +10,7 @@ import { SettingsAttentionBadge } from "../../features/settings-system/component
 import { WorkspaceSwitcherLoader } from "../../features/auth/components/workspace-switcher-loader";
 import { AccountIdentityLoader } from "../../features/auth/components/account-identity-loader";
 
-export type SidebarActiveTab = "search" | "library" | "notifications" | "activity" | "settings" | "storage" | "chat" | "none";
+export type SidebarActiveTab = "search" | "library" | "medialib" | "notifications" | "activity" | "settings" | "storage" | "chat" | "none";
 
 function SidebarHeader({
   activeStorageId,
@@ -97,6 +97,16 @@ function SidebarNav({
           >
             <HardDrive size={16} aria-hidden />
             网盘
+          </Link>
+        </li>
+        <li>
+          <Link
+            prefetch={true}
+            className={`nav-item ${active === "medialib" ? "is-active" : ""}`}
+            href={globalNavHref("/library", activeStorageId)}
+          >
+            <Film size={16} aria-hidden />
+            影视库
           </Link>
         </li>
         <li>

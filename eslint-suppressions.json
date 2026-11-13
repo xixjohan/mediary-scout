@@ -4,6 +4,11 @@
       "count": 1
     }
   },
+  "apps/web/app/api/library/items/[itemId]/rematch/route.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
   "apps/web/app/api/mcp/route.ts": {
     "complexity": {
       "count": 1
@@ -86,6 +91,31 @@
   "apps/web/features/catalog/components/title-action-buttons.tsx": {
     "complexity": {
       "count": 2
+    }
+  },
+  "apps/web/features/library/components/library-grid.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/library/components/library-item-modal.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/library/components/library-view.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/library/components/scan-progress-bar.tsx": {
+    "complexity": {
+      "count": 1
+    }
+  },
+  "apps/web/features/player/components/mediary-player-modal.tsx": {
+    "complexity": {
+      "count": 1
     }
   },
   "apps/web/features/settings-system/application/auto-update-service.ts": {
@@ -272,6 +302,11 @@
       "count": 1
     }
   },
+  "packages/workflow/src/domain/media-identification-engine.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
   "packages/workflow/src/domain/notification-report.ts": {
     "complexity": {
       "count": 2
@@ -310,6 +345,11 @@
       "count": 1
     }
   },
+  "packages/workflow/src/library/library-scanner.ts": {
+    "complexity": {
+      "count": 1
+    }
+  },
   "packages/workflow/src/persistence/repository.ts": {
     "complexity": {
       "count": 4
@@ -319,6 +359,16 @@
     }
   },
   "packages/workflow/src/persistence/sqlite.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/persistence/sqlite/sqlite-media-library.ts": {
+    "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/persistence/sqlite/sqlite-schema.ts": {
     "max-lines": {
       "count": 1
     }
@@ -389,6 +439,11 @@
       "count": 2
     },
     "max-lines": {
+      "count": 1
+    }
+  },
+  "packages/workflow/src/strm/strm-delivery.ts": {
+    "complexity": {
       "count": 1
     }
   },

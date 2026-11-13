@@ -4,3 +4,6 @@ export * from "./sqlite-json-cache.js";
 export * from "./db-schema.js";
 export * from "./repository.js";
 export * from "./subscription-policy-store.js";
+export * from "./sqlite/sqlite-media-library.js";
+export * from "./sqlite/sqlite-library-scan-jobs.js";
+export * from "./sqlite/sqlite-media-library-lookup.js";

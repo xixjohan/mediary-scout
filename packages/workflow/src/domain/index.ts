@@ -28,3 +28,5 @@ export * from "./workspace-resolution.js";
 export * from "./title-parse-chain.js";
 export * from "./reverse-scan-types.js";
 export * from "./media-kind-sniffer.js";
+export * from "./media-identification-engine.js";
+export * from "./filename-quality-adapter.js";

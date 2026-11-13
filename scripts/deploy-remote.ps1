@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateSet("Dev", "Official")]
     [string]$Mode = "Dev",
@@ -143,9 +143,15 @@ try {
         & icacls.exe $tempKeyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
     }
 
-    function Invoke-RemoteSsh([string]$cmd) {
+    function Invoke-RemoteSsh([string]$cmd, [int]$maxRetries = 3) {
         $sshArgs = @(
             "-p", "$deployPort",
+            "-o", "BatchMode=yes",
+            "-o", "ConnectTimeout=60",
+            "-o", "ServerAliveInterval=15",
+            "-o", "ServerAliveCountMax=6",
+            "-o", "TCPKeepAlive=yes",
+            "-o", "ConnectionAttempts=3",
             "-o", "StrictHostKeyChecking=no",
             "-o", "UserKnownHostsFile=/dev/null",
             "-o", "LogLevel=ERROR"
@@ -155,11 +161,18 @@ try {
         }
         $sshArgs += @("$deployUser@$deployHost", $cmd)
 
-        $output = & ssh @sshArgs
-        if ($LASTEXITCODE -ne 0) {
-            throw "SSH command failed (Exit $LASTEXITCODE): $cmd"
+        for ($attempt = 1; $attempt -le $maxRetries; $attempt++) {
+            $output = & ssh @sshArgs
+            if ($LASTEXITCODE -eq 0) {
+                return $output
+            }
+            if ($attempt -lt $maxRetries) {
+                Write-Warn "SSH attempt $attempt failed (Exit $LASTEXITCODE). Retrying in 3s..."
+                Start-Sleep -Seconds 3
+            } else {
+                throw "SSH command failed after $maxRetries attempts (Exit $LASTEXITCODE): $cmd"
+            }
         }
-        return $output
     }
 
     # 诊断分支 1: 穿透执行任意远程指令

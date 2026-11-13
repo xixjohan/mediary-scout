@@ -52,6 +52,7 @@ import type {
   WorkflowRun, WorkflowRunProgress,
 } from "../domain/domain.js";
 import { SqliteReverseScanStore } from "./sqlite/sqlite-reverse-scan.js";
+import { SqliteMediaLibraryRepository } from "./sqlite/sqlite-media-library.js";
 import type {
   ReverseScanJob, CreateReverseScanJobInput, UpdateReverseScanJobPatch,
   ReverseScanItem, CreateReverseScanItemInput, UpdateReverseScanItemPatch,
@@ -158,7 +159,7 @@ import type {
  * inline: a fresh SQLite database needs the FINAL shape up front, not migration
  * steps. The acct_default seed row matches what the old twin produced.
  */
-import { SQLITE_SCHEMA, upgradeStrmTasksShape } from "./sqlite/sqlite-schema.js";
+import { SQLITE_SCHEMA, upgradeStrmTasksShape, upgradeMediaLibraryShape } from "./sqlite/sqlite-schema.js";
 export { SQLITE_SCHEMA };
 
 // Lazy-load the native better-sqlite3 at CALL time (the desktop path), NOT at module
@@ -271,6 +272,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   private readonly strmStore: SqliteStrmRepository;
   private readonly mediaServerStore: SqliteMediaServerRepository;
   private readonly reverseScanStore: SqliteReverseScanStore;
+  public readonly mediaLibraryStore: SqliteMediaLibraryRepository;
 
   constructor(private readonly db: Database.Database) {
     // 凭据加密（任务单 S1.5）：工厂已按密钥文件初始化；直接 new（:memory: 测试等）
@@ -289,6 +291,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.strmStore = new SqliteStrmRepository(ctx);
     this.mediaServerStore = new SqliteMediaServerRepository(ctx);
     this.reverseScanStore = new SqliteReverseScanStore(ctx);
+    this.mediaLibraryStore = new SqliteMediaLibraryRepository(ctx);
     // 黄金 PRAGMA（规约见 docs/architecture-remediation-and-governance.md §1.3，
     // 测试见 tests/sqlite-pragmas.test.ts）：WAL 读写互不阻塞；synchronous=NORMAL
     // 在 WAL 下兼顾极速与断电安全；busy_timeout 让写锁冲突退避等待而非直接报错。
@@ -298,6 +301,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.db.pragma("temp_store = MEMORY");
     this.db.pragma("cache_size = -64000"); // 64MB 页面缓存
     this.db.pragma("foreign_keys = ON");
+    this.upgradeMediaLibraryShape();
     this.db.exec(SQLITE_SCHEMA);
     this.upgradeSubscriptionPolicyShape();
     this.upgradeStrmTasksShape();
@@ -336,6 +340,10 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
 
   private upgradeStrmTasksShape(): void {
     upgradeStrmTasksShape(this.db);
+  }
+
+  private upgradeMediaLibraryShape(): void {
+    upgradeMediaLibraryShape(this.db);
   }
 
   close(): void {
