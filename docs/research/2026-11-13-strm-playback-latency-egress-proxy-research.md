@@ -243,4 +243,4 @@ docker exec mediary-dev printenv NO_PROXY
 | :--- | :--- |
 | P1 真正放开 Plex 直连 | 只提供了开关，默认仍强制 proxy。放开前需验证 Plex 对 115 签名的 Range 请求是否 403，建议先在单条任务上灰度 |
 | P3 预解析 | 未做；当前解析已走缓存 + 熔断，收益小于改动面 |
-| 播放器控制条 53px 偏移 | 验收中发现 `.art-controls` 位于 `.art-bottom`（高度 828）之外（top 871，超出 864 共 53px，被 `overflow:hidden` 裁切）。本轮改动未触及播放器与 CSS，且与字幕开关无关，判定为**独立遗留缺陷**，需单独排查 |
+| 播放器控制条 53px 偏移（已澄清，非缺陷） | 验收中曾观察到 `.art-controls` top=871、超出容器 864 共 53px。进一步测量发现两个子元素都带 `transform: translateY(52.5px)` —— 这是**控制条空闲自动隐藏的滑出动画**；鼠标移入后 transform 归零，控制条回到 818–864，与容器底边完全贴合。结论：**布局正常，是验收脚本在隐藏态测量造成的误判**。脚本已改为测量前先唤出控制条，并新增 `controlsVisibleForMeasurement` 记录测量瞬间的可见性 |
