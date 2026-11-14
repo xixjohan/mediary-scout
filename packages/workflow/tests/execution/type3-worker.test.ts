@@ -59,11 +59,27 @@ function noCoverageModel() {
       usage: USAGE,
       warnings: [],
     });
+    const searchOutput = (prompt: unknown): any => {
+      const messages = prompt as Array<{ role: string; content: unknown }>;
+      for (let m = messages.length - 1; m >= 0; m--) {
+        const message = messages[m]!;
+        if (message.role !== "tool" || !Array.isArray(message.content)) continue;
+        for (const part of message.content as Array<{ type: string; toolName?: string; output?: { value?: unknown } }>) {
+          if (part.type === "tool-result" && part.toolName === "searchResources") return part.output?.value;
+        }
+      }
+      return undefined;
+    };
     return new MockLanguageModelV3({
-      doGenerate: async () => {
+      doGenerate: async (options) => {
         i += 1;
-        if (i === 1) return tool("searchResources", { keyword: "Show" });
-        if (i === 2) return tool("transferCandidate", { snapshotId: "snapshot_1", candidateId: "snapshot_1_candidate_1" });
+        // The bare title is pre-warmed; re-searching it returns the cached snapshot
+        // whose alias ids (s1 / s1-1) are what transferCandidate actually accepts.
+        if (i === 1) return tool("searchResources", { keyword: "Show show" });
+        if (i === 2) {
+          const search = searchOutput(options.prompt);
+          return tool("transferCandidate", { snapshotId: search.snapshot.id, candidateId: search.snapshot.candidates[0].id });
+        }
         if (i === 3) return tool("moveToSeason", { moves: [{ season: 1, fileIds: ["landed_1"] }] });
         if (i === 4) return tool("markObtained", { codes: [episodeCode] });
         if (i === 5) return tool("reportNoCoverage", { reason: "one left" });

@@ -98,7 +98,8 @@ describe("TaskSandbox — transferUntilLanded (movie-only, share-links-only, age
       packs: { live: { files: [{ path: "m.mkv", sizeBytes: 1 }] } },
       linkKinds: { live: "share" },
     });
-    await sandbox.searchResources("oppenheimer");
+    const snapshotId = (await sandbox.searchResources("oppenheimer")).snapshot!.id;
+    await sandbox.transferCandidate({ snapshotId, candidateId: "live" });
     await sandbox.markObtained({ codes: ["MOVIE"] });
     await expect(sandbox.transferUntilLanded({ candidateIds: ["live"] })).rejects.toThrow(/coverage/i);
   });
@@ -147,8 +148,8 @@ describe("TaskSandbox — transferUntilLanded (movie-only, share-links-only, age
     await sandbox.searchResources("oppenheimer");
     const result = await sandbox.transferUntilLanded({ candidateIds: ["dead_1", "live"] });
     expect(result.attempts).toEqual([
-      { candidateId: "dead_1", status: "failed", providerMessage: "链接已过期" },
-      { candidateId: "live", status: "succeeded" },
+      { candidateId: "dead_1", status: "failed", materializedFileIds: [], providerMessage: "链接已过期" },
+      { candidateId: "live", status: "succeeded", materializedFileIds: [expect.any(String)] },
     ]);
   });
 
@@ -358,7 +359,9 @@ describe("transferUntilLanded — no_target_change STOPS the loop (123 异步 co
 
     expect(executor.transfers).toEqual(["A"]); // B was never transferred
     expect(result.transferredCandidateId).toBeNull();
-    expect(result.attempts).toEqual([{ candidateId: "A", status: "failed", providerMessage: ntcMessage }]);
+    expect(result.attempts).toEqual([
+      { candidateId: "A", status: "failed", materializedFileIds: [], providerMessage: ntcMessage, noTargetChange: true },
+    ]);
     expect(result.systemicBlock).toBeUndefined(); // an ntc stop is NOT an account block
   });
 

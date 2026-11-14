@@ -1229,6 +1229,27 @@
   font-variant-numeric: tabular-nums;
 }
 
+.agent-timeline-status {
+  flex: none;
+  font-size: var(--text-2xs);
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+}
+
+.agent-timeline-status-succeeded {
+  color: var(--color-success);
+  border-color: var(--accent-subtle-border);
+  background: var(--accent-subtle);
+}
+
+.agent-timeline-status-failed {
+  color: var(--danger);
+  border-color: var(--negative-border);
+  background: var(--negative-subtle);
+}
+
 /* 详情页三个动作面板（资源 / 整理 / 订阅策略）共用的卡片容器。
    这里修掉两个问题：
    ① 边距——这三个面板是 .title-hub-immersive 的直接子级，而 immersive 用

@@ -7,6 +7,7 @@
  */
 
 import { parseGuangYaShareUrl } from "../storage/guangya-client.js";
+import type { TransferOutcome } from "../domain/domain.js";
 
 export type DeadLinkKind = "pan115" | "magnet" | "guangya";
 
@@ -114,6 +115,19 @@ export function deadLinkKey(url: string): { key: string; kind: DeadLinkKind } | 
 /** The known fail-loud death messages 115 returns for a dead share/magnet. */
 const DEATH_MESSAGE = /链接已过期|分享已取消|访问码错误|错误的链接/;
 
+/** Typed-outcome branch of deadLinkReason, split out to keep that function's
+ *  cyclomatic complexity bounded. pending/unknown may still land; an account
+ *  block says nothing about the link. */
+function deadLinkReasonFromOutcome(
+  outcome: TransferOutcome,
+  kind: DeadLinkKind,
+  message: string,
+): string | null {
+  if (outcome === "instant_miss") return kind === "magnet" ? message : null;
+  if (outcome === "rejected") return DEATH_MESSAGE.test(message) ? message : null;
+  return null;
+}
+
 /**
  * Decide whether a finished transfer attempt PROVES the link is dead, returning
  * the reason to record (or null to leave it alone). Conservative on purpose:
@@ -125,13 +139,18 @@ const DEATH_MESSAGE = /链接已过期|分享已取消|访问码错误|错误的
  *   resource is never poisoned by a one-off error.
  */
 export function deadLinkReason(
-  attempt: { status: "succeeded" | "failed" | "no_target_change"; providerMessage: string },
+  attempt: { status: "succeeded" | "failed" | "no_target_change"; providerMessage: string; outcome?: TransferOutcome },
   kind: DeadLinkKind,
 ): string | null {
   if (attempt.status === "succeeded") {
     return null;
   }
   const message = attempt.providerMessage ?? "";
+  // A typed outcome is authoritative: pending/unknown may still land, and an
+  // account block says nothing about the link.
+  if (attempt.outcome !== undefined) {
+    return deadLinkReasonFromOutcome(attempt.outcome, kind, message);
+  }
   if (kind === "guangya") {
     return attempt.status === "failed" && GUANGYA_DEATH_MESSAGE.test(message) ? message : null;
   }

@@ -9,11 +9,25 @@ import type { AssrtCandidate, AssrtSubtitleFile, AssrtProviderPort } from "../pr
 import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
 import { parseMediaFileName } from "../providers/media-title-parser.js";
+import { episodeCodeFromFileName } from "../domain/episode-code.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
+import { isExtraVideoName, movieCandidateRejection } from "./movie-admission.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
-import type { AuditEvent } from "../domain.js";
-import { isMergedSourceEvidenceUsable, type MergedSourceHealth } from "../domain/resource-source-health.js";
-import { JEV_UNCERTAIN_LEGEND, jevAllDroppedWarning, jevUncertaintyFlag } from "../providers/jev-judge.js";
+import type { AuditEvent, TransferOutcome } from "../domain.js";
+import { isMergedSourceEvidenceUsable } from "../domain/resource-source-health.js";
+import { verifiedSeasonInventory, type VerifiedInventorySink } from "./verified-inventory.js";
+import {
+  PRESEARCH_RETRY_DELAY_MS,
+  RAW_SNAPSHOT_ROW_LIMIT,
+  REPLACEMENT_NOT_IN_TARGET_NOTE,
+  isLargeSnapshot,
+  isSnapshotEvidenceUsable,
+  isSnapshotHealthTrusted,
+  presentSnapshotForAgent,
+  sourceHealthWarning,
+  stripNoticeFor,
+  stripQualitySubtitleTokens,
+} from "./snapshot-presentation.js";
 import {
   AGENT_MEMORY_LIMITS,
   memoryDriveAllows,
@@ -32,9 +46,6 @@ import type { PolicyRejectReason, PolicyResource } from "../execution/subscripti
  *  so appending them collapses recall (实测归零). Case-insensitive; word-ish so
  *  "1080p" / "WEB-DL" / "BluRay" match as units. 中字/国语/双语/字幕 are CJK so they
  *  match anywhere. */
-const QUALITY_SUBTITLE_TOKEN =
-  /\b(?:4k|2160p|1080p|720p|hdr|dv|remux|web-?dl|bluray|bdrip)\b|蓝光|中字|国语|双语|字幕/gi;
-
 const SUBTITLE_NAME_PATTERN = /\.(srt|ass|ssa|sub|idx|vtt|sup|smi)$/i;
 
 export const SUBTITLE_RENEWAL_CHUNK_SIZE = 24;
@@ -49,148 +60,6 @@ export interface SubtitleChunkDiagnostic {
   error?: string;
 }
 
-const STRIP_NOTICE =
-  "已从关键词移除画质/字幕词(如 4K/1080p/蓝光/中字/字幕):PanSou 是通配符匹配,加这些只会把召回打成子集或归零,raw 裸标题召回最全。已改用裸标题搜索。";
-
-/** Threshold for large snapshot digestion hint (病3). */
-const LARGE_SNAPSHOT_DIGEST_THRESHOLD = 10;
-
-/** 预搜(raw 预热)拿到**不可用**结果(unreachable / protocol_error 快照,或 provider
- *  直接抛错)时的退避重试间隔。生产实测源抖动多在 60 秒内自愈(2026-09 前那次持续
- *  11 天的 PanSou 抖动也是间歇的),5 秒窗口的救率高;重试仍坏就落首搜那份,不无限
- *  重试。degraded / healthy 都是可用证据,一律不重试(重试只为救「真的拿不到」,不为
- *  救「次优」——重试结果可能更坏,不得把可用结果换掉)。只作用于预搜路径——agent 的
- *  searchResources 不自动重试(dedup 只信健康快照已给它自愈能力,agent 自己会
- *  换词/重搜)。 */
-export const PRESEARCH_RETRY_DELAY_MS = 5000;
-
-/** Recorded (in place of "replaced") when the agent reports an episode replaced but a
- *  file it named for that episode is not in a target dir when it reports: still in
- *  staging (never moved beside the old one), or moved in and deleted since. The episode
- *  stays 待换 (moved in and reported again, it is upgraded). */
-const REPLACEMENT_NOT_IN_TARGET_NOTE =
-  "新文件不在目标目录(季目录/电影目录)里:还在暂存,或移进去后又被删掉了。不算完成替换,本轮记为未找到,留待下次巡检。";
-
-/** 缓存快照能否当「已搜过」(dedup 的信任判据)。只有 healthy(含老快照缺字段)可信;
- *  unreachable / protocol_error / degraded 都不信,跳过缓存重打真实源。
- *
- *  degraded 不信的理由:它是 fallback 救回的「部分证据」——主源仍坏,重搜很可能
- *  拿回更全的结果;而且它的语义本身就是「证据不完整」,拿去当「已搜过、不会再变」
- *  自相矛盾。代价是一次多余的重搜(罕见且低频),换来坏快照不再永久钉死关键词。
- *
- *  与 reportNoCoverage 的证据闸( isMergedSourceEvidenceUsable,degraded 算可用)
- *  是两道边界,别互相抄:那边管「能不能报缺」——把 degraded 也拦会再也报不出真实
- *  的「没有资源」;这边只管「缓存可不可信」。 */
-function isSnapshotHealthTrusted(snapshot: ResourceSnapshotV2): boolean {
-  return (snapshot.sourceHealth?.status ?? "healthy") === "healthy";
-}
-
-/** 快照算不算「有可用证据」——预搜重试的触发判据与落点择优都用它。
- *  unreachable / protocol_error(或 provider 直接抛错)才是「真的拿不到」;degraded /
- *  healthy(含老快照缺字段)都是可用证据,与 fallback-provider、reportNoCoverage 证据
- *  闸( isSourceUsable / isMergedSourceEvidenceUsable)同一套「degraded=可用」分类学。
- *  degraded 是 fallback 救回的可用快照(有候选):重试只为救「真的拿不到」,不为救
- *  「次优」——重试结果可能更坏,不得把可用结果换掉。
- *
- *  与 isSnapshotHealthTrusted(healthy-only,dedup 信任闸)是两道边界,别互相抄:
- *  那边管「缓存能不能当已搜过」,这边只管「结果值不值得为它退避重试/换掉手里的证据」。 */
-function isSnapshotEvidenceUsable(snapshot: ResourceSnapshotV2): boolean {
-  return isMergedSourceEvidenceUsable(snapshot.sourceHealth);
-}
-
-/**
- * 把快照的源健康态翻成给 agent 的祈使句警告。返回 undefined 表示证据完整
- * （healthy 或老快照无此字段）——那种情形下的空候选才是权威的「确实没有」，
- * 必须保持可区分，所以这里绝不能对每个空快照都告警。
- *
- * 同一条教义见 transfer-block.ts：把系统故障报成「暂未找到资源」是拿资源
- * 给系统问题背锅（别甩锅）。unreachable 与 protocol_error 分开措辞，因为用户的
- * 处置动作不同（源挂了/网络不通 vs 地址填错了、那头根本不是 PanSou）。
- */
-function sourceHealthWarning(health: MergedSourceHealth | undefined): string | undefined {
-  if (!health || health.status === "healthy") return undefined;
-  const sources = health.unhealthySources.length > 0 ? health.unhealthySources.join("、") : "未知";
-  switch (health.status) {
-    case "degraded":
-      return `搜索源「${sources}」本次未响应,只有部分源答复:本次结果是不完整证据。已返回的候选照常可用,可以正常筛选转存;但不要因为没搜到就下「没有资源」的结论,更不要据此 reportNoCoverage——缺的那部分源可能正好有。`;
-    case "protocol_error":
-      return `搜索源「${sources}」返回了无法解析的响应:配置的地址可能指向的根本不是 PanSou(填错地址/被网关或登录页拦截)。本次等于没搜,「没有资源」这个结论不被这份证据支持,不要 reportNoCoverage;请如实说明是搜索源配置有问题。`;
-    case "unreachable":
-      return `搜索源「${sources}」本次连不上,一个候选都没能取回。这是搜索源故障,不是这部片子没有资源:「没有资源」这个结论不被这份证据支持,不要 reportNoCoverage;请如实说明是搜索源不可用。`;
-  }
-}
-
-/** Rows viewResourceSnapshot renders before it truncates. Shared with the presenter
- *  so the legend is gated on exactly the rows that make it into the document. */
-const RAW_SNAPSHOT_ROW_LIMIT = 120;
-
-/** Below this many rows a majority of ⚠ can still point at something (2 of 3 is a
- *  real signal); from here on a majority means the judge could not tell. */
-const JEV_FLAG_NOISE_MIN_ROWS = 10;
-
-/** Shown in place of the flags when most rows would carry one. */
-const JEV_FLAGS_SUPPRESSED_NOTE =
-  "系统的片名预筛对这批候选里的大多数都拿不准是不是目标作品(长篇动画常见:字幕组的季号/总集数和 TMDB 对不上),所以本次没有逐条标 ⚠。请按标题自己判断。";
-
-/** The tool-facing view of a snapshot: the ⚠ suffix rendered into each title (same as
- *  the 活期文档), the raw score map stripped (the agent judges titles, not numbers).
- *  Both read paths (searchResources and viewResourceSnapshot) go through here so the
- *  agent can never see two different stories about the same candidates. */
-function presentSnapshotForAgent(snapshot: ResourceSnapshotV2, limit?: number): {
-  snapshot: ResourceSnapshotV2;
-  legend: string | undefined;
-  allDroppedWarning: string | undefined;
-} {
-  const scores = snapshot.prefilterScores;
-  if (!scores) return { snapshot, legend: undefined, allDroppedWarning: undefined };
-  // The legend explains a ⚠ the agent can SEE. viewResourceSnapshot truncates its
-  // rows, so a flag past the cut must not pull in a legend for a document that has
-  // no flag in it. `limit` undefined = every row is shown (searchResources).
-  // A flag only helps while it singles out a few rows. On a long-running anime the
-  // fansub numbering (第四季 / 总第78话) disagrees with TMDB's one-season listing, and
-  // the judge doubts nearly every row (Re:从零 patrol: 150 of 155) — a ⚠ on every
-  // line tells the agent nothing and costs tokens on every read. Past that point the
-  // flags are dropped and one line says why.
-  const flags = snapshot.candidates.map((c) => jevUncertaintyFlag(scores[c.id]));
-  // Judged on the rows the agent will actually see (viewResourceSnapshot cuts at `limit`).
-  const shown = limit === undefined ? flags : flags.slice(0, limit);
-  const shownFlagged = shown.filter((flag) => flag !== "").length;
-  if (shown.length >= JEV_FLAG_NOISE_MIN_ROWS && shownFlagged > shown.length / 2) {
-    const { prefilterScores: _scores, prefilterDropped: _dropped, ...rest } = snapshot;
-    return { snapshot: rest, legend: JEV_FLAGS_SUPPRESSED_NOTE, allDroppedWarning: undefined };
-  }
-  let flagged = 0;
-  const candidates = snapshot.candidates.map((c, index) => {
-    const flag = flags[index]!;
-    if (flag && (limit === undefined || index < limit)) flagged += 1;
-    return flag ? { ...c, title: `${c.title}${flag}` } : c;
-  });
-  // Both prefilter fields are stripped: the agent judges titles, not numbers, and the
-  // drop count only ever reaches it through the all-dropped warning below.
-  const { prefilterScores: _scores, prefilterDropped: _dropped, ...rest } = snapshot;
-  const dropped = snapshot.prefilterDropped ?? 0;
-  return {
-    snapshot: { ...rest, candidates },
-    legend: flagged > 0 ? JEV_UNCERTAIN_LEGEND : undefined,
-    allDroppedWarning: candidates.length === 0 && dropped > 0 ? jevAllDroppedWarning(dropped) : undefined,
-  };
-}
-
-/** Strip quality/subtitle tokens from a search keyword and fold the resulting
- *  whitespace. `stripped` is true ONLY when an actual QUALITY_SUBTITLE_TOKEN was
- *  removed — NOT when mere whitespace was collapsed (so "奥本海默   第二季" does
- *  not falsely trip the strip notice). */
-function stripQualitySubtitleTokens(keyword: string): { keyword: string; stripped: boolean } {
-  // QUALITY_SUBTITLE_TOKEN has the /g flag → RegExp.test() is stateful on lastIndex.
-  // Reset BEFORE and after the test so a non-zero lastIndex (from any prior/concurrent
-  // use of this shared regex) can never make `stripped` a false negative.
-  QUALITY_SUBTITLE_TOKEN.lastIndex = 0;
-  const stripped = QUALITY_SUBTITLE_TOKEN.test(keyword);
-  QUALITY_SUBTITLE_TOKEN.lastIndex = 0;
-  const cleaned = keyword.replace(QUALITY_SUBTITLE_TOKEN, " ").replace(/\s+/g, " ").trim();
-  return { keyword: cleaned, stripped };
-}
-
 /**
  * The task sandbox for the Acquisition V2 rebuild — the permission cage the
  * strong agent runs inside. It owns the budgets, the scope, the observed
@@ -201,6 +70,7 @@ function stripQualitySubtitleTokens(keyword: string): { keyword: string; strippe
  * This file grows one tool at a time (TDD). First tool: searchResources.
  */
 export interface TaskSandboxOptions {
+  onSeasonVerified?: VerifiedInventorySink;
   provider: ResourceProviderV2;
   /** Max distinct PanSou searches per task (the system's search budget). */
   searchBudget?: number;
@@ -377,6 +247,22 @@ export function withParsedFileName(file: SimTreeFile): SimTreeFile {
   return { ...file, parsed: parseMediaFileName(file.path) };
 }
 
+/** One candidate's transfer evidence, exactly as the executor reported it — the
+ *  landing point (ids), not just the status flag, is what the agent judges. */
+export interface TransferEvidence {
+  candidateId: string;
+  status: "succeeded" | "failed";
+  materializedFileIds: string[];
+  providerMessage?: string;
+  noTargetChange?: true;
+  /** Typed provider outcome (see TransferAttemptResult.outcome). */
+  outcome?: TransferOutcome;
+}
+
+/** What became of a submission: still running, files landed, or answered with
+ *  nothing landed (a miss, a refusal, or a throw whose side effect is unknown). */
+type SubmissionState = "in_flight" | "landed" | "unresolved";
+
 export class TaskSandbox {
   private readonly provider: ResourceProviderV2;
   private readonly searchBudget: number;
@@ -430,7 +316,7 @@ export class TaskSandbox {
   private readonly replace: TaskSandboxOptions["replace"];
   private readonly isRejected: TaskSandboxOptions["isRejected"];
   private readonly policyFileValidator: TaskSandboxOptions["policyFileValidator"];
-  private readonly policyBlockedCodes = new Set<string>();
+  private readonly onSeasonVerified: VerifiedInventorySink | undefined;
   private readonly protectExistingFiles: boolean;
   private readonly stagingListDepth: number | undefined;
   /** Set once captureProtectedFiles has listed the target dirs (see assertRejectedFirst). */
@@ -465,9 +351,13 @@ export class TaskSandbox {
    *  a file deleted or discarded with the staging dir. */
   private readonly filePlace = new Map<string, "kept" | "staging" | "thrown">();
   private readonly linkOf: TaskSandboxOptions["linkOf"];
-  /** Link key → the alias that reserved it. `landed` stays false until that
-   *  attempt materializes files; a concurrent call sees the reservation either way. */
-  private readonly linkHold = new Map<string, { owner: string; landed: boolean }>();
+  /** Candidate id AND link key → the submission that owns them. A submission is
+   *  never released: once 115 has been asked, asking again can only double-land
+   *  or burn quota, whatever the answer was (including a throw). */
+  private readonly submissionHold = new Map<string, { owner: string; state: SubmissionState }>();
+  /** In-flight directory reads, keyed by dir + depth. Shared only while pending:
+   *  a movie's staging IS its target, so one agent turn asks twice for one tree. */
+  private readonly treeReads = new Map<string, Promise<SimTreeFile[]>>();
   /** File → the episode it backs, for every "replaced" recorded this run. One new file
    *  backs one episode: E24 can never be reported replaced by E13's file. A backing file
    *  can no longer be deleted this run (see deleteFiles). */
@@ -481,6 +371,7 @@ export class TaskSandbox {
   private leftoverDiscarded = false;
 
   constructor(options: TaskSandboxOptions) {
+    this.onSeasonVerified = options.onSeasonVerified;
     this.provider = options.provider;
     this.subtitleFallback = options.subtitleFallback ?? false;
     // Movie 8+2: default to MOVIE_SEARCH_BUDGET (10) with a reserve at 8 when the
@@ -514,13 +405,25 @@ export class TaskSandbox {
     if (!this.storage) {
       throw new Error("SANDBOX: no storage configured");
     }
+    const depth = directoryId === this.stagingDirectoryId ? this.stagingListDepth : undefined;
+    const key = `${directoryId}:${depth ?? "default"}`;
+    const pending = this.treeReads.get(key);
+    if (pending) return pending;
     const listed =
-      directoryId === this.stagingDirectoryId && this.stagingListDepth !== undefined
-        ? this.storage.listTree({ directoryId, maxDepth: this.stagingListDepth })
-        : this.storage.listTree({ directoryId });
+      depth === undefined
+        ? this.storage.listTree({ directoryId })
+        : this.storage.listTree({ directoryId, maxDepth: depth });
     // 任务单 S3.1：每条 listing 都附上确定性解析——agent 的证据自带集号/画质/
     // 字幕组，微秒级、零 token、100% 可复现；判不出的留 null 交给 AI 裁决。
-    return listed.then((files) => files.map(withParsedFileName));
+    const read = listed.then((files) => files.map(withParsedFileName));
+    this.treeReads.set(key, read);
+    // Only coalesce while in flight: a later read must see what landed since, and
+    // a rejected read must not poison the next one.
+    void read.then(
+      () => this.treeReads.delete(key),
+      () => this.treeReads.delete(key),
+    );
+    return read;
   }
 
   /** Every scoped target directory (all seasons + the movie) — the union used for
@@ -547,9 +450,8 @@ export class TaskSandbox {
     return this.movieDir !== undefined && this.seasonDirs.size === 0;
   }
 
-  /** Validate every video before it can become library content. Remember its
-   *  episode as blocked too, so deleting a rejected file cannot be followed by a
-   *  false markObtained for that same episode. */
+  /** Validate every video before it can become library content, and un-mark the
+   *  episode it backs so a rejected file cannot leave a false markObtained. */
   private rejectedPolicyFiles(files: readonly SimTreeFile[]): Array<{ file: SimTreeFile; reason: PolicyRejectReason }> {
     if (!this.policyFileValidator) return [];
     const rejected: Array<{ file: SimTreeFile; reason: PolicyRejectReason }> = [];
@@ -559,7 +461,6 @@ export class TaskSandbox {
       if (!reason) continue;
       rejected.push({ file, reason });
       const blockedCode = this.isMovieRun() ? "MOVIE" : file.parsed?.episodeCode ?? "POLICY_UNKNOWN_FILE";
-      this.policyBlockedCodes.add(blockedCode);
       if (blockedCode === "POLICY_UNKNOWN_FILE") this.obtainedCodes.clear();
       else this.obtainedCodes.delete(blockedCode);
     }
@@ -587,21 +488,6 @@ export class TaskSandbox {
     if (rejected.length > 0) this.throwPolicyFileRejection(rejected);
   }
 
-  private async hasCompliantTargetVideo(code: string): Promise<boolean> {
-    if (!this.policyFileValidator || !this.storage) return false;
-    for (const directoryId of this.allTargetDirIds()) {
-      const files = await this.listTreeOf(directoryId);
-      for (const file of files) {
-        if (!file.isVideo || !this.materializedBy.has(file.id)) continue;
-        if (code !== "MOVIE" && file.parsed?.episodeCode && file.parsed.episodeCode !== code) continue;
-        if (this.policyFileValidator({ name: file.path, episodeCode: file.parsed?.episodeCode ?? null }) === null) {
-          return true;
-        }
-      }
-    }
-    return false;
-  }
-
   /** Remember which candidate materialized which files this run (reportReplacement
    *  checks the files an agent names for an episode against it). */
   private recordMaterialized(candidateId: string, fileIds: string[]): void {
@@ -624,44 +510,64 @@ export class TaskSandbox {
     }
   }
 
-  /** Take the link synchronously, before the transfer await. Returns the hold
-   *  already owned by another alias (in flight or landed); null means this call
-   *  now owns it. A link with no identity is never held. */
-  private reserveLink(candidateId: string): { owner: string; landed: boolean } | null {
-    const link = this.linkOf?.(candidateId);
-    if (!link) return null;
-    const existing = this.linkHold.get(link);
-    if (existing) return existing;
-    this.linkHold.set(link, { owner: candidateId, landed: false });
+  /** Take the candidate AND its link synchronously, before the transfer await.
+   *  Returns the hold that already owns either (in flight, landed or unresolved);
+   *  null means this call now owns them. A candidate with no link identity is
+   *  still held by its own id — that is what stops a resubmit of the same magnet. */
+  private reserveSubmission(candidateId: string): { owner: string; state: SubmissionState } | null {
+    const keys = this.submissionKeys(candidateId);
+    for (const key of keys) {
+      const existing = this.submissionHold.get(key);
+      if (existing) return existing;
+    }
+    for (const key of keys) this.submissionHold.set(key, { owner: candidateId, state: "in_flight" });
     return null;
   }
 
-  /** Drop a reservation that materialized nothing, including a transfer that threw. */
-  private releaseLink(candidateId: string): void {
+  private submissionKeys(candidateId: string): string[] {
     const link = this.linkOf?.(candidateId);
-    if (!link) return;
-    const hold = this.linkHold.get(link);
-    if (hold && hold.owner === candidateId && !hold.landed) this.linkHold.delete(link);
+    return link ? [`candidate:${candidateId}`, `link:${link}`] : [`candidate:${candidateId}`];
   }
 
-  private keepLink(candidateId: string): void {
-    const link = this.linkOf?.(candidateId);
-    if (!link) return;
-    const hold = this.linkHold.get(link);
-    if (hold && hold.owner === candidateId) hold.landed = true;
+  /** Settle a submission. The hold stays: an answered transfer is never re-asked
+   *  in this run, so a slow copy that lands later cannot be double-landed. */
+  private settleSubmission(candidateId: string, landed: boolean): void {
+    for (const key of this.submissionKeys(candidateId)) {
+      const hold = this.submissionHold.get(key);
+      if (hold?.owner === candidateId) hold.state = landed ? "landed" : "unresolved";
+    }
   }
 
-  private sameLinkError(candidateId: string, hold: { owner: string; landed: boolean }): string {
-    const why = hold.landed
-      ? "whose files already landed this run — inspect them instead of transferring again"
-      : "which is being transferred right now — wait for that result and inspect it instead of transferring again";
-    return `SANDBOX_SAME_LINK: ${candidateId} is the same link as ${hold.owner}, ${why}`;
+  private sameLinkWhy(hold: { owner: string; state: SubmissionState }): string {
+    if (hold.state === "landed") {
+      return "whose files already landed this run — inspect them instead of transferring again";
+    }
+    if (hold.state === "in_flight") {
+      return "which is being transferred right now — wait for that result and inspect it instead of transferring again";
+    }
+    return "which was already submitted this run and left nothing landed (未决 / unresolved) — read the landing point instead of transferring again";
   }
 
-  private sameLinkNote(hold: { owner: string; landed: boolean }): string {
-    return hold.landed
-      ? `same link as ${hold.owner} already landed this run`
-      : `same link as ${hold.owner}, which is being transferred right now — wait for that result and inspect it instead of transferring again`;
+  private sameLinkError(candidateId: string, hold: { owner: string; state: SubmissionState }): string {
+    return `SANDBOX_SAME_LINK: ${candidateId} is the same link as ${hold.owner}, ${this.sameLinkWhy(hold)}`;
+  }
+
+  private sameLinkNote(hold: { owner: string; state: SubmissionState }): string {
+    if (hold.state === "landed") return `same link as ${hold.owner} already landed this run`;
+    return `same link as ${hold.owner}, ${this.sameLinkWhy(hold)}`;
+  }
+
+  /** Movie-only admission: a disc image or a multi-film pack can never be the one
+   *  playable video this task needs, so it is refused before any side effect. */
+  private assertMovieAdmission(candidates: ReadonlyArray<{ id: string; title: string }>): void {
+    if (!this.isMovieRun()) return;
+    for (const candidate of candidates) {
+      const rejection = movieCandidateRejection(candidate.title);
+      if (!rejection) continue;
+      throw new Error(
+        `SANDBOX_MOVIE_CANDIDATE_REJECTED: ${candidate.id} "${candidate.title}" is ${rejection} — a movie must be ONE playable video file; pick a single-film video version (REMUX / WEB-DL mkv is fine)`,
+      );
+    }
   }
 
   private fateOf(fileIds: Iterable<string>): { kept: number; thrownAway: number } {
@@ -750,7 +656,7 @@ export class TaskSandbox {
     }
 
     const normalized = normalizeSearchKeyword(effectiveKeyword);
-    const notice = stripped.stripped ? STRIP_NOTICE : undefined;
+    const notice = stripNoticeFor(stripped.stripped);
 
     // 病2b: anime taboo-keyword validator (warnings only, before dedup).
     const tabooWarnings = this.profile
@@ -875,7 +781,7 @@ export class TaskSandbox {
     // 病3: register a large fresh snapshot for later digestion hint. Store the
     // effective (original-case) keyword for display; the trigger comparison
     // normalizes it.
-    if (snapshot.candidates.length >= LARGE_SNAPSHOT_DIGEST_THRESHOLD) {
+    if (isLargeSnapshot(snapshot.candidates.length)) {
       this.pendingDigest = { keyword: effectiveKeyword, count: snapshot.candidates.length };
     }
 
@@ -1047,7 +953,8 @@ export class TaskSandbox {
         `SANDBOX_CANDIDATE_REJECTED: ${input.candidateId} is a copy of a resource the user rejected — pick a different one`,
       );
     }
-    const held = this.reserveLink(input.candidateId);
+    this.assertMovieAdmission([candidate]);
+    const held = this.reserveSubmission(input.candidateId);
     if (held) throw new Error(this.sameLinkError(input.candidateId, held));
     this.transferAttempted = true;
     let attempt;
@@ -1057,16 +964,15 @@ export class TaskSandbox {
         intoDirectoryId: this.stagingDirectoryId,
       });
     } catch (error) {
-      this.releaseLink(input.candidateId);
+      // The submit may have reached the drive before the connection dropped.
+      this.settleSubmission(input.candidateId, false);
       throw error;
     }
     if (attempt.status === "succeeded" || attempt.materializedFileIds.length > 0) {
       this.succeededCandidates.add(input.candidateId);
       this.recordMaterialized(input.candidateId, attempt.materializedFileIds);
     }
-    // An empty id list landed nothing, even when the status says succeeded.
-    if (attempt.materializedFileIds.length > 0) this.keepLink(input.candidateId);
-    else this.releaseLink(input.candidateId);
+    this.settleSubmission(input.candidateId, attempt.materializedFileIds.length > 0);
     const staging = await this.listTreeOf(this.stagingDirectoryId);
     // A systemic block ONLY when nothing actually landed — a provider can mark an
     // attempt failed yet materialize files (e.g. quark); the truth is the landing
@@ -1095,7 +1001,7 @@ export class TaskSandbox {
   async transferUntilLanded(input: { candidateIds: string[] }): Promise<{
     landed: SimTreeFile[];
     transferredCandidateId: string | null;
-    attempts: Array<{ candidateId: string; status: "succeeded" | "failed"; providerMessage?: string }>;
+    attempts: TransferEvidence[];
     systemicBlock?: { reason: string };
   }> {
     if (!this.storage || !this.stagingDirectoryId) {
@@ -1131,22 +1037,24 @@ export class TaskSandbox {
         );
       }
     }
-    const attempts: Array<{ candidateId: string; status: "succeeded" | "failed"; providerMessage?: string }> = [];
+    this.assertMovieAdmission([...observed.values()]);
+    const attempts: TransferEvidence[] = [];
     let transferredCandidateId: string | null = null;
     let systemicBlock: { reason: string } | undefined;
     for (const candidateId of input.candidateIds) {
       // A copy of what the user rejected is skipped like a dead link (recorded, not
       // transferred) so the rest of the agent's ordered list still runs.
       if (this.isRejected && (await this.isRejected({ id: candidateId, title: observed.get(candidateId)!.title }))) {
-        attempts.push({ candidateId, status: "failed", providerMessage: "user rejected" });
+        attempts.push({ candidateId, status: "failed", materializedFileIds: [], providerMessage: "user rejected" });
         continue;
       }
-      // Same as a rejected copy: record it and keep going, so the rest of the
-      // ranked list still runs. The hold is either files already landed, or a
-      // transfer of this link that has not returned yet.
-      const held = this.reserveLink(candidateId);
+      const held = this.reserveSubmission(candidateId);
       if (held) {
-        attempts.push({ candidateId, status: "failed", providerMessage: this.sameLinkNote(held) });
+        attempts.push({ candidateId, status: "failed", materializedFileIds: [], providerMessage: this.sameLinkNote(held) });
+        // An UNRESOLVED hold means the drive may still be writing this resource:
+        // stop the whole batch, not just this alias, so a late copy plus the next
+        // candidate cannot land the film twice. A landed hold is safe to skip.
+        if (held.state !== "landed") break;
         continue;
       }
       this.transferAttempted = true;
@@ -1157,26 +1065,30 @@ export class TaskSandbox {
           intoDirectoryId: this.stagingDirectoryId,
         });
       } catch (error) {
-        this.releaseLink(candidateId);
+        this.settleSubmission(candidateId, false);
         throw error;
       }
       attempts.push({
         candidateId,
         status: attempt.status,
+        materializedFileIds: attempt.materializedFileIds,
         ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
+        ...(attempt.noTargetChange ? { noTargetChange: true } : {}),
+        ...(attempt.outcome !== undefined ? { outcome: attempt.outcome } : {}),
       });
       // Failed-but-landed (quark) counts too: the landing point, not the status flag.
-      // The loop still stops only on succeeded.
       if (attempt.status === "succeeded" || attempt.materializedFileIds.length > 0) {
         this.succeededCandidates.add(candidateId);
         this.recordMaterialized(candidateId, attempt.materializedFileIds);
       }
-      if (attempt.materializedFileIds.length > 0) this.keepLink(candidateId);
-      else this.releaseLink(candidateId);
-      if (attempt.status === "succeeded") {
+      this.settleSubmission(candidateId, attempt.materializedFileIds.length > 0);
+      if (attempt.materializedFileIds.length > 0) {
         transferredCandidateId = candidateId;
         break;
       }
+      // "succeeded" with no file is NOT a landing: nothing to flatten, nothing to
+      // mark. Stop and hand the evidence back instead of burning the next share.
+      if (attempt.status === "succeeded") break;
       // Layer-1: stop on the first failure that is a SYSTEMIC block (quota / auth /
       // VIP) — it may come after one or more dead-link failures, but once we see a
       // systemic one every remaining candidate will fail the same way, so don't
@@ -1301,6 +1213,7 @@ export class TaskSandbox {
     for (const move of resolved) {
       if (move.season !== undefined) {
         seasons[move.season] = await this.listTreeOf(move.targetDir);
+        await this.onSeasonVerified?.(verifiedSeasonInventory(move.season, move.targetDir, seasons[move.season]!));
       }
     }
     return { seasons, staging: await this.listTreeOf(this.stagingDirectoryId) };
@@ -1350,43 +1263,40 @@ export class TaskSandbox {
     return [...this.unmovedFileIds];
   }
 
-  /** Record the episodes the agent declares obtained — the agent's FINAL action,
-   *  pure agent judgment. The system does NOT mechanically re-read 115 to verify
-   *  a backing file exists (§12, 2026-06-15): move/flatten already force-reread
-   *  and handed the truth back; the mark is reversible; and §1.13 has the agent
-   *  re-judge from the real files every patrol, so a stale mark self-heals next
-   *  round. Correctness is the prompt ordering (clean/flatten, THEN mark last),
-   *  not a system gate that costs extra 115 reads. No fileId↔episode map (§1.13):
-   *  the code IS the unit; the agent names what it judged present.
+  /** Record the episodes the agent declares obtained — its FINAL action, and the
+   *  only thing that turns into 入库. Which code is present stays the agent's
+   *  judgment (no fileId↔episode map), but the system verifies the evidence: a
+   *  non-empty video for that exact code in its OWN target directory. A mark
+   *  without a file is how an empty directory was reported 入库成功, so the whole
+   *  call is refused and nothing is recorded (see obtainedEvidence).
    *
-   *  Replace runs are the one exception: a requested/rejected episode's OLD file is
-   *  already there, and marking it would meet coverage and block every transfer. So
-   *  such a mark is refused (whole call, nothing recorded) until at least one
-   *  transfer succeeded this run. Deliberately coarse — any landed transfer unlocks
-   *  the mark; which episodes that transfer carried stays the agent's judgment. The
-   *  mark still neither counts toward coverage nor leaves the sandbox in finish()
-   *  until reportReplacement records the episode replaced (see countsAsObtained). */
+   *  Replace runs add a second gate: a requested/rejected episode's OLD file is
+   *  already there, so such a mark is refused until at least one transfer landed
+   *  this run. The mark still neither counts toward coverage nor leaves the
+   *  sandbox in finish() until reportReplacement records the episode replaced
+   *  (see countsAsObtained). */
   async markObtained(input: { codes: string[]; subtitleFallback?: boolean }): Promise<{ confirmed: string[] }> {
-    const policyBlocked: string[] = [];
-    for (const code of input.codes) {
-      if (!this.policyBlockedCodes.has(code) && !this.policyBlockedCodes.has("POLICY_UNKNOWN_FILE")) continue;
-      if (await this.hasCompliantTargetVideo(code)) {
-        this.policyBlockedCodes.delete(code);
-      } else {
-        policyBlocked.push(code);
-      }
-    }
-    if (policyBlocked.length > 0) {
-      throw new Error(
-        `SUBSCRIPTION_POLICY_MARK_BLOCKED: ${policyBlocked.join(", ")} has video file(s) rejected by the saved policy; choose a compliant file before marking obtained`,
-      );
-    }
     if (this.replace && this.succeededCandidates.size === 0) {
       const guarded = this.replaceGuardedEpisodes();
       const early = input.codes.filter((code) => guarded.has(code));
       if (early.length > 0) {
         throw new Error(
           `SANDBOX_REPLACEMENT_NOT_LANDED: ${early.join(",")} — the user wants these replaced and nothing has landed this run; the OLD file does not count. Mark them only after the NEW file is in place`,
+        );
+      }
+    }
+    const evidence = await this.obtainedEvidence(input.codes);
+    if (this.policyFileValidator) {
+      const blocked: string[] = [];
+      for (const [code, files] of evidence) {
+        const compliant = files.some(
+          (file) => this.policyFileValidator!({ name: file.path, episodeCode: file.parsed?.episodeCode ?? null }) === null,
+        );
+        if (!compliant) blocked.push(code);
+      }
+      if (blocked.length > 0) {
+        throw new Error(
+          `SUBSCRIPTION_POLICY_MARK_BLOCKED: ${blocked.join(", ")} has video file(s) rejected by the saved policy; choose a compliant file before marking obtained`,
         );
       }
     }
@@ -1399,6 +1309,72 @@ export class TaskSandbox {
       this.subtitleFallbackUsed = true;
     }
     return { confirmed: input.codes };
+  }
+
+  /** The real video files backing each code, read from ITS OWN target directory
+   *  (a season's dir for an episode, the movie dir for MOVIE) — never staging, and
+   *  never another season. One read per directory for the whole batch. Throws for
+   *  the entire call when any code lacks evidence: a half-recorded mark is how an
+   *  empty directory ended up "入库成功". */
+  private async obtainedEvidence(codes: readonly string[]): Promise<Map<string, SimTreeFile[]>> {
+    if (!this.storage) throw new Error("SANDBOX: no storage configured");
+    const trees = new Map<string, SimTreeFile[]>();
+    const readDir = async (directoryId: string): Promise<SimTreeFile[]> => {
+      const cached = trees.get(directoryId);
+      if (cached) return cached;
+      const files = await this.listTreeOf(directoryId);
+      trees.set(directoryId, files);
+      return files;
+    };
+    const evidence = new Map<string, SimTreeFile[]>();
+    const unverified: string[] = [];
+    for (const code of codes) {
+      if (code === "MOVIE") {
+        const dir = this.isMovieRun() ? this.movieDir : undefined;
+        const files = dir === undefined ? [] : await readDir(dir);
+        if (this.replace) {
+          // A replace swaps the film: the OLD (protected) feature may still sit
+          // beside the NEW one, nested or already flattened. Verify a real feature
+          // exists; reportReplacement checks the exact NEW id, not this gate.
+          const features = files.filter(
+            (file) => file.isVideo && !isExtraVideoName(file.path) && file.sizeBytes > 0,
+          );
+          if (features.length > 0) evidence.set(code, features);
+          else unverified.push(code);
+          continue;
+        }
+        // One flattened feature: no wrapper, no trailer, no second title, not empty.
+        const features = files.filter(
+          (file) => file.isVideo && !file.path.includes("/") && !isExtraVideoName(file.path) && file.sizeBytes > 0,
+        );
+        if (features.length === 1) evidence.set(code, features);
+        else unverified.push(code);
+        continue;
+      }
+      const season = this.seasonOfEpisode(code);
+      const dir = season === undefined ? undefined : this.resolveTargetDir(season);
+      if (season === undefined || dir === undefined) {
+        unverified.push(code);
+        continue;
+      }
+      const files = await readDir(dir);
+      const matches = files.filter(
+        (file) =>
+          file.isVideo &&
+          file.sizeBytes > 0 &&
+          // A bare "Show - 13.mkv" carries no season: the directory it sits in is
+          // the season. A name that DOES state one must agree with the code.
+          (episodeCodeFromFileName(file.path, season) === code || file.parsed?.episodeCode === code),
+      );
+      if (matches.length > 0) evidence.set(code, matches);
+      else unverified.push(code);
+    }
+    if (unverified.length > 0) {
+      throw new Error(
+        `SANDBOX_OBTAINED_NOT_VERIFIED: ${unverified.join(", ")} — no non-empty video for it in its own target directory (an episode needs its exact code in its season dir; a movie needs ONE flattened feature, trailers aside). Move/flatten the real file into place, then mark again; nothing was recorded`,
+      );
+    }
+    return evidence;
   }
 
   /** TV/anime clean-up: wipe THIS task's staging dir wholesale after the agent has

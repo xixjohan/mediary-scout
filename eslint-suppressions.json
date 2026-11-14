@@ -264,11 +264,6 @@
       "count": 1
     }
   },
-  "packages/workflow/src/acquisition-v2/real-storage-adapter.ts": {
-    "complexity": {
-      "count": 1
-    }
-  },
   "packages/workflow/src/acquisition-v2/run-tv-v2.ts": {
     "complexity": {
       "count": 1

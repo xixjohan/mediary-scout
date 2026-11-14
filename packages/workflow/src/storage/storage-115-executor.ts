@@ -1,8 +1,10 @@
 import { LeakyBucketPacer } from "@media-track/shared";
 import type {
+  OfflineTaskFacts,
   PackageTreeFile,
   ResourceCandidate,
   TransferAttempt,
+  TransferOutcome,
   TransferStatus,
   VerifiedFile,
 } from "../domain/domain.js";
@@ -11,6 +13,7 @@ import { isExtensionlessVideoName } from "../execution/extensionless-video.js";
 import { collectLandedVideos, normalizeLandedExtensions } from "./landed-media.js";
 import { infoHashFromMagnet, isOfflineTaskCandidate, isOfflineTaskUrl } from "./pan115-offline-task.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
+import { isSystemicTransferBlockMessage } from "../acquisition-v2/transfer-block.js";
 import type { StorageExecutor, UnparsedVideoFile } from "../domain/ports.js";
 
 /**
@@ -603,45 +606,46 @@ export class Storage115Executor implements StorageExecutor {
     this.apiGuard.assertTransferBudget(isOfflineTaskCandidate(input.candidate) ? "addOfflineTask" : "receiveShare");
     const safeDirectoryId = await this.assertWithinWriteScope(input.directoryId, "transfer");
     const before = new Set((await this.listLanded(safeDirectoryId)).map((file) => file.id));
-    const action = await this.executeCandidateTransfer(input.candidate, safeDirectoryId);
+    const offline = isOfflineTaskCandidate(input.candidate);
+    // A submit that threw (connection reset, timeout) may still have reached 115.
+    // Its outcome is unknown, never a miss: the caller must reconcile, not resubmit.
+    // A guard refusal is raised before the call, so it still propagates.
+    let submitError: string | null = null;
+    let action: Pan115ActionResult;
+    try {
+      action = await this.executeCandidateTransfer(input.candidate, safeDirectoryId);
+    } catch (error) {
+      if (error instanceof Pan115RiskControlError) throw error;
+      submitError = errorMessage(error) || "submit failed";
+      action = { ok: false, message: submitError };
+    }
 
-    // Offline tasks (magnets/ed2k): a 秒传 hit means 115 ALREADY has the
-    // resource cached, so it reflects in the staging dir within a second or two
-    // of acceptance. Briefly confirm that — probing the tree by video EXTENSION
-    // (movies have no SxxExx). If nothing lands in this short window, 115 has no
-    // cached copy and would have to truly download it; we do NOT wait for that —
-    // transferStatus stays no_target_change and the workflow switches to the
-    // next candidate, hunting for one that can 秒传. (115 share receives are
-    // synchronous, so this only applies to offline tasks.)
-    const offlineInfoHash = isOfflineTaskCandidate(input.candidate)
-      ? infoHashFromMagnet(stringValue(input.candidate.providerPayload["url"]))
-      : null;
-    // Did 115 report the task as a COMPLETED 秒传? Then a not-yet-listed file is
-    // just a lagging directory index, NOT a failure — so we extend the grace and
-    // must not cancel it (the bug the wall-clock-only window had).
+    // Offline tasks (magnets/ed2k): a 秒传 hit means 115 ALREADY has the resource
+    // cached, so it reflects in the staging dir within a second or two of
+    // acceptance. Confirm that in a short window; a miss is never waited out.
+    const offlineInfoHash = offline ? infoHashFromMagnet(stringValue(input.candidate.providerPayload["url"])) : null;
+    // Only a task THIS call created is ours to cancel; "任务已存在" is a prior task.
+    const createdByThisCall = offline && action.ok && !action.alreadyTransferred;
+    // 115 reporting the task COMPLETED means a not-yet-listed file is a lagging
+    // index — never cancelled, never a miss.
     let offlineTaskComplete = false;
-    // 115 showing the raw infohash as the task NAME means it could not resolve any
-    // metadata (no peers) — a fake or thoroughly-dead torrent. Captured so the
-    // dead-link recorder can give it a much longer (still non-permanent) TTL.
-    let nameIsInfohash = false;
-    if (action.ok && isOfflineTaskCandidate(input.candidate)) {
+    if (action.ok && offline) {
       let remaining = this.offlineMaterializeAttempts;
       let extendedForCompletion = false;
       while (remaining > 0) {
-        if (await this.stagingTreeHasVideo(safeDirectoryId)) {
-          break; // file landed → 秒传 confirmed by the dir
+        let landed: boolean;
+        try {
+          landed = await this.stagingTreeHasVideo(safeDirectoryId);
+        } catch {
+          break; // the final listing below decides; a probe failure proves nothing
         }
+        if (landed) break;
         if (offlineInfoHash) {
           const task = await this.findOfflineTask(offlineInfoHash);
-          if (task) {
-            if (!offlineTaskComplete && (/成功|完成/.test(task.statusText) || task.percentDone >= 100)) offlineTaskComplete = true;
-            if (task.name.trim().toLowerCase() === offlineInfoHash) nameIsInfohash = true;
-          }
+          if (task && (/成功|完成/.test(task.statusText) || task.percentDone >= 100)) offlineTaskComplete = true;
         }
         if (offlineTaskComplete && !extendedForCompletion) {
-          // One-time grace extension for a confirmed 秒传 whose listing is slow;
-          // a real (still-downloading) task never reaches here, so it isn't
-          // extended — keeps the 115 call budget bounded (≤ 2× attempts).
+          // One-time grace for a confirmed 秒传 whose listing is slow (≤ 2× attempts).
           remaining += this.offlineMaterializeAttempts;
           extendedForCompletion = true;
         }
@@ -650,47 +654,50 @@ export class Storage115Executor implements StorageExecutor {
       }
     }
 
-    const after = await this.listLanded(safeDirectoryId);
-    const materializedFileIds = after
-      .filter((file) => !before.has(file.id))
-      .map((file) => file.id);
+    let after: VerifiedFile[] = [];
+    let landingReadError: string | null = null;
+    try {
+      after = await this.listLanded(safeDirectoryId);
+    } catch (error) {
+      // The submit already happened: an unreadable landing is unknown, not a throw.
+      // A guard refusal still stops the run; the caller's hold keeps it unresolved.
+      if (error instanceof Pan115RiskControlError) throw error;
+      landingReadError = errorMessage(error) || "landing read failed";
+    }
+    const landingReadFailed = landingReadError !== null;
+    const landedFiles = after.filter((file) => !before.has(file.id));
+    const materializedFileIds = landedFiles.map((file) => file.id);
     const status = transferStatus(action, materializedFileIds);
 
-    // 落盘即补扩展名：转存常把名字截断在发布组后缀上，补上后整理器才认得出。
-    // 只改名字不改 id，因此上面的 materializedFileIds 与 status 仍然成立。
+    // 落盘即补扩展名：只改名字不改 id，materializedFileIds 与 status 仍然成立。
+    // The rename goes through the guard: it is a real 115 call, counted and paced.
     if (status === "succeeded") {
       await normalizeLandedExtensions({
-        landed: after,
+        landed: landedFiles,
         sourceTitle: input.candidate.title,
-        rename: (fileId, newName) => this.api.renameFile({ fileId, newName }),
+        rename: (fileId, newName) => this.callApi("renameFile", () => this.api.renameFile({ fileId, newName })),
         warn: (message, error) => console.warn(`[Storage115Executor] ${message}`, error ?? ""),
       });
     }
 
-    // Non-秒传 offline task: 115 had no cached copy, so it queued a real
-    // download we never wait for. Cancel it (`task_del`) to free the offline
-    // quota and not leave junk tasks behind. Best-effort — never fail the
-    // transfer over cleanup. NEVER cancel: an `alreadyTransferred` result
-    // ("任务已存在", 115 refusing a duplicate of a PRIOR task), nor a task 115
-    // reports as a COMPLETED 秒传 (its file is merely slow to list).
-    if (
-      status !== "succeeded" &&
-      !action.alreadyTransferred &&
-      !offlineTaskComplete &&
-      isOfflineTaskCandidate(input.candidate)
-    ) {
-      if (offlineInfoHash) {
-        try {
-          await this.callApi("removeOfflineTask", () =>
-            this.api.removeOfflineTask({ infoHashes: [offlineInfoHash] }),
-          );
-        } catch {
-          // Cleanup is best-effort; the transfer outcome stands regardless.
-        }
+    // Our task with no cached copy queued a real download we never wait for:
+    // cancel it to free quota. Only a CONFIRMED cancellation turns it into a miss.
+    let cancellation: OfflineTaskFacts["cancellation"] = "not_attempted";
+    if (status !== "succeeded" && createdByThisCall && !offlineTaskComplete && offlineInfoHash) {
+      try {
+        const removed = await this.callApi("removeOfflineTask", () =>
+          this.api.removeOfflineTask({ infoHashes: [offlineInfoHash] }),
+        );
+        cancellation = removed.ok ? "confirmed" : "failed";
+      } catch {
+        cancellation = "unknown";
       }
     }
-    const providerMessage = transferMessage(input.candidate, action, status, offlineTaskComplete, nameIsInfohash);
 
+    const outcome = transferOutcome({
+      action, materializedFileIds, submitError, landingReadFailed, offline,
+      createdByThisCall, offlineTaskComplete, cancellation,
+    });
     const attempt: TransferAttempt = {
       // Scope the id to the run: the per-executor counter resets when the worker
       // process restarts, so a bare `transfer_N` collides across runs on the
@@ -699,8 +706,12 @@ export class Storage115Executor implements StorageExecutor {
       workflowRunId: input.workflowRunId,
       candidateId: input.candidate.id,
       status,
-      providerMessage,
+      providerMessage: transferMessage(input.candidate, action, outcome, landingReadError, offlineTaskComplete),
       materializedFileIds,
+      outcome,
+      ...(offline
+        ? { offlineTask: { infoHash: offlineInfoHash, createdByThisCall, completed: offlineTaskComplete, cancellation } }
+        : {}),
     };
     this.nextTransferNumber += 1;
     return attempt;
@@ -1570,46 +1581,62 @@ function errorMessage(error: unknown): string {
 }
 
 function transferStatus(action: Pan115ActionResult, materializedFileIds: string[]): TransferStatus {
-  if (!action.ok) {
-    return action.alreadyTransferred ? "no_target_change" : "failed";
-  }
-  return materializedFileIds.length > 0 ? "succeeded" : "no_target_change";
+  // New file IDs are the only proof of landing, and they outrank whatever the
+  // submit response claimed.
+  if (materializedFileIds.length > 0) return "succeeded";
+  if (!action.ok) return action.alreadyTransferred ? "no_target_change" : "failed";
+  return "no_target_change";
 }
 
-/** Offline-task (cloud-download) urls — magnets land asynchronously, unlike a
- *  synchronous 115 share receive, so they get a materialization grace window. */
+function transferOutcome(facts: {
+  action: Pan115ActionResult;
+  materializedFileIds: string[];
+  submitError: string | null;
+  landingReadFailed: boolean;
+  offline: boolean;
+  createdByThisCall: boolean;
+  offlineTaskComplete: boolean;
+  cancellation: OfflineTaskFacts["cancellation"];
+}): TransferOutcome {
+  if (facts.materializedFileIds.length > 0) return "landed";
+  if (facts.submitError !== null || facts.landingReadFailed) return "unknown";
+  if (!facts.action.ok && !facts.action.alreadyTransferred) {
+    return isSystemicTransferBlockMessage(facts.action.message) ? "account_blocked" : "rejected";
+  }
+  if (!facts.offline) return "accepted_pending";
+  if (!facts.createdByThisCall || facts.offlineTaskComplete) return "accepted_pending";
+  if (facts.cancellation === "confirmed") return "instant_miss";
+  // No identifiable task to cancel (ed2k) may still be downloading.
+  if (facts.cancellation === "not_attempted") return "accepted_pending";
+  return "unknown";
+}
+
 function transferMessage(
   candidate: ResourceCandidate,
   action: Pan115ActionResult,
-  status: TransferStatus,
+  outcome: TransferOutcome,
+  landingReadError: string | null,
   offlineTaskComplete: boolean,
-  nameIsInfohash: boolean,
 ): string {
-  // A CONFIRMED 秒传 (115 reported 下载成功) whose file merely lagged the listing
-  // window is ALIVE, not dead — say so explicitly so the dead-link recorder never
-  // poisons it (deadLinkReason whitelists 下载成功).
-  if (candidate.type === "magnet" && status === "no_target_change" && offlineTaskComplete) {
-    return "115 秒传 confirmed (下载成功); file listing lagging";
+  switch (outcome) {
+    case "landed":
+      return action.ok ? action.message : `landed despite response: ${action.message}`;
+    case "instant_miss":
+      return "115 秒传 miss (instant miss): no cached copy, offline task cancelled";
+    case "rejected":
+    case "account_blocked":
+      return action.message;
+    case "unknown":
+      if (landingReadError) return `transfer outcome unknown: landing read failed (${landingReadError})`;
+      if (!action.ok) return `transfer outcome unknown: ${action.message}`;
+      return "transfer outcome unknown: offline task cancellation not confirmed";
+    default:
+      break;
   }
-  // 115 showed the infohash as the task name → it resolved NO metadata (no peers):
-  // a fake or thoroughly-dead torrent. Signal it so the recorder gives it a long
-  // (still non-permanent) dead-link TTL.
-  if (candidate.type === "magnet" && status === "no_target_change" && nameIsInfohash) {
-    return "offline task unresolved (name == infohash); likely fake/dead, no target materialized";
-  }
-  if (action.message) {
-    if (candidate.type === "magnet" && status === "no_target_change") {
-      return `${action.message}; no target video materialized yet`;
-    }
-    return action.message;
-  }
-  if (candidate.type === "magnet" && status === "no_target_change") {
-    return "offline task accepted; no target video materialized yet";
-  }
-  if (status === "no_target_change") {
-    return "transfer accepted; no target video materialized yet";
-  }
-  return "";
+  if (action.alreadyTransferred) return action.message || "任务已存在";
+  if (offlineTaskComplete) return "115 秒传 confirmed (下载成功); file listing lagging";
+  const kind = candidate.type === "magnet" ? "offline task" : "transfer";
+  return `${kind} accepted; landing pending, not cancelled`;
 }
 
 function parseShareUrl(url: string): { shareCode: string; receiveCode: string } | null {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runTvAcquisitionV2 } from "../../src/acquisition-v2/run-tv-v2.js";
 import { FakeStorageExecutor } from "../../src/domain/fakes.js";
+import { QuarkAuthError } from "../../src/storage/quark-cookie-client.js";
 import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { MediaTitle, ResourceSnapshot } from "../../src/domain.js";
 
@@ -51,6 +52,16 @@ const title = {
 } as unknown as MediaTitle;
 
 describe("runTvAcquisitionV2 — single TV entry over the V2 engine", () => {
+  it("surfaces inventory authentication errors unchanged instead of treating the directory as empty", async () => {
+    const storage = new FakeStorageExecutor();
+    const error = new QuarkAuthError("expired credential");
+    storage.listChildDirectories = async () => { throw error; };
+    await expect(runTvAcquisitionV2({ title, mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "1080p" }],
+      categoryParentId: "tv_root", resourceProvider: emptyProvider(), storage, model: searchThenReportModel(), workflowRunId: "inventory_auth",
+    })).rejects.toBe(error);
+  });
+
   it("single-season type2 with no coverage → verify-or-creates the dir, agent runs, status no_coverage", async () => {
     const storage = new FakeStorageExecutor();
     const result = await runTvAcquisitionV2({

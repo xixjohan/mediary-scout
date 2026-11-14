@@ -8,11 +8,14 @@ import type { ResourceProvider } from "../../src/domain/ports.js";
 import type { ResourceSnapshot } from "../../src/domain.js";
 
 async function setup(
-  options: { isRejected?: (candidate: { id: string; title: string }) => Promise<boolean>; alreadyRejectedEpisodes?: string[] } = {},
+  options: { isRejected?: (candidate: { id: string; title: string }) => Promise<boolean>; alreadyRejectedEpisodes?: string[]; seedEpisodes?: string[] } = {},
 ) {
+  // Extra pre-run episodes a test needs as markObtained evidence (the gate now
+  // refuses a mark with no file behind it). Opt-in: default setup is unchanged.
+  const extraOld = (options.seedEpisodes ?? []).map((n) => ({ path: `Show - ${n} [CR 1080p].mkv`, sizeBytes: 1_400_000_000 }));
   const storage = new Storage115Simulator({
     packs: {
-      old_pack: { files: [{ path: "Show - 13 [CR 1080p].mkv", sizeBytes: 1_400_000_000 }, { path: "Show - 24 [CR 1080p].mkv", sizeBytes: 1_400_000_000 }] },
+      old_pack: { files: [{ path: "Show - 13 [CR 1080p].mkv", sizeBytes: 1_400_000_000 }, { path: "Show - 24 [CR 1080p].mkv", sizeBytes: 1_400_000_000 }, ...extraOld] },
       cand_new13: { files: [{ path: "[Nekomoe] Show - 13 [1080p].mkv", sizeBytes: 1_100_000_000 }] },
       cand_cr13: { files: [{ path: "Show - 13 [CR 1080p].mkv", sizeBytes: 1_400_000_000 }] },
     },
@@ -332,7 +335,7 @@ describe("TaskSandbox — replace", () => {
   });
 
   it("markObtained of a requested or rejected episode is refused until a transfer lands this run (the old file does not count)", async () => {
-    const { sandbox, old13, old24, rejectE24 } = await setup();
+    const { sandbox, old13, old24, rejectE24 } = await setup({ seedEpisodes: ["01"] });
     await expect(sandbox.markObtained({ codes: ["S01E13"] })).rejects.toThrow(/SANDBOX_REPLACEMENT_NOT_LANDED: S01E13/);
     // Rejected (not requested) episodes are guarded too; the whole call is refused.
     await sandbox.rejectCurrentSource({ rejections: [{ episode: "S01E25", fileIds: [old24] }], reason: "x" });
@@ -349,7 +352,7 @@ describe("TaskSandbox — replace", () => {
   });
 
   it("an episode marked before it was rejected does not meet coverage (nor block a transfer) until it is reported replaced", async () => {
-    const { sandbox, old13, old24, rejectE24 } = await setup();
+    const { sandbox, old13, old24, rejectE24 } = await setup({ seedEpisodes: ["25"] });
     // Not requested yet → the mark is accepted...
     await sandbox.markObtained({ codes: ["S01E25"] });
     // ...then the agent rejects its current file: it joins the need as a guarded episode.
@@ -396,7 +399,9 @@ describe("TaskSandbox — replace", () => {
     await sandbox.captureProtectedFiles();
     await sandbox.rejectCurrentSource({ rejections: [{ episode: "S01E13", fileIds: [old13] }], reason: "发蓝" });
     const snap = (await sandbox.searchResources("Show")).snapshot!;
-    await sandbox.transferCandidate({ snapshotId: snap.id, candidateId: "cand_e14" });
+    const out14 = await sandbox.transferCandidate({ snapshotId: snap.id, candidateId: "cand_e14" });
+    // E14 must reach its season dir to be markable: the evidence gate reads the target.
+    await sandbox.moveToSeason({ moves: [{ season: 1, fileIds: out14.attempt.materializedFileIds }] });
     // Something landed, so the marks are accepted — but E13's is still the old file.
     await sandbox.markObtained({ codes: ["S01E13", "S01E14"] });
     expect(sandbox.isCoverageMet()).toBe(false);
@@ -413,8 +418,14 @@ describe("TaskSandbox — replace", () => {
     expect((await sandbox.finish()).missing).toEqual([]);
   });
 
-  it("a normal (non-replace) run marks and meets coverage without any transfer", async () => {
-    const sandbox = new TaskSandbox({ provider: new FakeResourceProviderV2(), need: ["S01E13"] });
+  it("a normal (non-replace) run marks a pre-existing file and meets coverage without any transfer", async () => {
+    const storage = new Storage115Simulator({ packs: { seed: { files: [{ path: "Show - 13 [CR 1080p].mkv", sizeBytes: 1_400_000_000 }] } } });
+    const staging = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const season = await storage.createDirectory({ name: "Season 01", parentId: "root" });
+    await storage.transferCandidate({ candidateId: "seed", intoDirectoryId: season });
+    const sandbox = new TaskSandbox({
+      provider: new FakeResourceProviderV2(), storage, stagingDirectoryId: staging, targetSeasonDirectoryIds: { 1: season }, need: ["S01E13"],
+    });
     await expect(sandbox.markObtained({ codes: ["S01E13"] })).resolves.toEqual({ confirmed: ["S01E13"] });
     expect(sandbox.isCoverageMet()).toBe(true);
   });
@@ -448,8 +459,10 @@ describe("TaskSandbox — replace", () => {
     const new13 = (await sandbox.transferCandidate({ snapshotId: snap.id, candidateId: "cand_new13" })).attempt.materializedFileIds;
     const e14 = (await sandbox.transferCandidate({ snapshotId: snap.id, candidateId: "cand_e14" })).attempt.materializedFileIds;
     await sandbox.moveToSeason({ moves: [{ season: 1, fileIds: [...new13, ...e14] }] });
-    // Any landed transfer unlocks the marks — E24's too, though nothing of E24 landed.
-    await sandbox.markObtained({ codes: ["S01E13", "S01E14", "S01E24"] });
+    // E13/E14 landed and are markable; E24 was declared file-less, so it has no
+    // evidence and its mark is refused — an empty slot is not 入库.
+    await sandbox.markObtained({ codes: ["S01E13", "S01E14"] });
+    await expect(sandbox.markObtained({ codes: ["S01E24"] })).rejects.toThrow(/SANDBOX_OBTAINED_NOT_VERIFIED: S01E24/);
     // Not reported yet: only the plain gap leaves the sandbox obtained.
     expect((await sandbox.finish()).obtained).toEqual(["S01E14"]);
     await sandbox.reportReplacement({
@@ -466,7 +479,23 @@ describe("TaskSandbox — replace", () => {
   });
 
   it("outside a replace run every marked code leaves the sandbox unchanged, beyond-need codes included", async () => {
-    const sandbox = new TaskSandbox({ provider: new FakeResourceProviderV2(), need: ["S01E13", "S01E14"] });
+    const storage = new Storage115Simulator({
+      packs: {
+        seed: {
+          files: [
+            { path: "Show - 13 [CR 1080p].mkv", sizeBytes: 1_400_000_000 },
+            { path: "Show - 14 [CR 1080p].mkv", sizeBytes: 1_400_000_000 },
+            { path: "Show - 15 [CR 1080p].mkv", sizeBytes: 1_400_000_000 },
+          ],
+        },
+      },
+    });
+    const staging = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const season = await storage.createDirectory({ name: "Season 01", parentId: "root" });
+    await storage.transferCandidate({ candidateId: "seed", intoDirectoryId: season });
+    const sandbox = new TaskSandbox({
+      provider: new FakeResourceProviderV2(), storage, stagingDirectoryId: staging, targetSeasonDirectoryIds: { 1: season }, need: ["S01E13", "S01E14"],
+    });
     await sandbox.markObtained({ codes: ["S01E14", "S01E13", "S01E15"] });
     expect((await sandbox.finish()).obtained).toEqual(["S01E13", "S01E14", "S01E15"]);
   });
@@ -1395,9 +1424,10 @@ describe("TaskSandbox — replace (movie: the movie dir is also staging)", () =>
     await sandbox.searchResources("film");
     await sandbox.rejectCurrentSource({ rejections: [{ fileIds: [old.find((f) => f.isVideo)!.id] }], reason: "x" });
     const result = await sandbox.transferUntilLanded({ candidateIds: ["rej_share", "good_share"] });
+    const newFilmId = result.landed.find((f) => f.path.endsWith("Film.2023.2160p.REMUX.mkv"))!.id;
     expect(result.attempts).toEqual([
-      { candidateId: "rej_share", status: "failed", providerMessage: "user rejected" },
-      { candidateId: "good_share", status: "succeeded" },
+      { candidateId: "rej_share", status: "failed", providerMessage: "user rejected", materializedFileIds: [] },
+      { candidateId: "good_share", status: "succeeded", materializedFileIds: [newFilmId] },
     ]);
     expect(result.transferredCandidateId).toBe("good_share");
   });
@@ -1632,7 +1662,7 @@ describe("TaskSandbox — replace: the transfer-time rejection check behind the 
     expect(snap.candidates.map((c) => c.id)).toEqual(["s1-1", "s1-2"]);
     const result = await sandbox.transferUntilLanded({ candidateIds: ["s1-1", "s1-2"] });
     expect(seen).toContainEqual({ id: "s1-1", title: "Film 2023 1080p WEB 4.0G" });
-    expect(result.attempts[0]).toEqual({ candidateId: "s1-1", status: "failed", providerMessage: "user rejected" });
+    expect(result.attempts[0]).toEqual({ candidateId: "s1-1", status: "failed", providerMessage: "user rejected", materializedFileIds: [] });
     expect(result.transferredCandidateId).toBe("s1-2");
   });
 

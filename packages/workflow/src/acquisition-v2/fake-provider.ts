@@ -22,6 +22,15 @@ export interface SimResourceCandidate {
   linkHistory?: string;
 }
 
+export interface SearchFilterSummary {
+  inputCount: number;
+  keptCount: number;
+  deadLinkDropped: number;
+  userRejectedDropped: number;
+  policyDropped: number;
+  policyReasons: Record<string, number>;
+}
+
 export interface ResourceSnapshotV2 {
   id: string;
   keyword: string;
@@ -37,6 +46,7 @@ export interface ResourceSnapshotV2 {
   prefilterScores?: Record<string, number>;
   /** How many candidates the prefilter removed from this search (only when it ran). */
   prefilterDropped?: number;
+  filterSummary?: SearchFilterSummary;
 }
 
 /** The provider surface the sandbox depends on — the fake and the real PanSou

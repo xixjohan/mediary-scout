@@ -3,6 +3,7 @@ import {
   type ResourceCandidate,
   type ResourceSnapshot,
   type TransferAttempt,
+  type TransferOutcome,
   type TransferStatus,
   type VerifiedFile,
 } from "./domain.js";
@@ -23,10 +24,12 @@ export interface CandidateFixture {
   providerPayload?: Record<string, unknown>;
 }
 
-export interface TransferOutcome {
+export interface FakeTransferOutcome {
   status: TransferStatus;
   providerMessage: string;
   files: VerifiedFile[];
+  /** Typed provider outcome to surface through the adapter (absent = unclassified). */
+  outcome?: TransferOutcome;
 }
 
 
@@ -75,7 +78,7 @@ export class FakeResourceProvider implements ResourceProvider {
 
 export class FakeStorageExecutor implements StorageExecutor {
   private readonly directories: Map<string, VerifiedFile[]>;
-  private readonly transferOutcomes: Record<string, TransferOutcome>;
+  private readonly transferOutcomes: Record<string, FakeTransferOutcome>;
   private readonly nestedDirectories: Set<string>;
   private nextDirectoryNumber = 1;
   private nextTransferNumber = 1;
@@ -86,7 +89,7 @@ export class FakeStorageExecutor implements StorageExecutor {
 
   constructor(input: {
     directories?: Record<string, VerifiedFile[]>;
-    transferOutcomes?: Record<string, TransferOutcome>;
+    transferOutcomes?: Record<string, FakeTransferOutcome>;
     nestedDirectories?: Set<string>;
     packageTrees?: Record<string, FakePackageTreeFile[]>;
     unparsedFiles?: Record<string, UnparsedVideoFile[]>;
@@ -203,6 +206,7 @@ export class FakeStorageExecutor implements StorageExecutor {
       status: outcome.status,
       providerMessage: outcome.providerMessage,
       materializedFileIds,
+      ...(outcome.outcome !== undefined ? { outcome: outcome.outcome } : {}),
     };
     this.nextTransferNumber += 1;
     return attempt;
@@ -379,7 +383,7 @@ export class FakeStorageExecutor implements StorageExecutor {
   }
 }
 
-function cloneTransferOutcomes(transferOutcomes: Record<string, TransferOutcome>): Record<string, TransferOutcome> {
+function cloneTransferOutcomes(transferOutcomes: Record<string, FakeTransferOutcome>): Record<string, FakeTransferOutcome> {
   return Object.fromEntries(
     Object.entries(transferOutcomes).map(([candidateId, outcome]) => [
       candidateId,

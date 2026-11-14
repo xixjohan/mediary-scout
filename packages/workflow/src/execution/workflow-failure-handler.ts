@@ -158,7 +158,10 @@ async function persistFailureSnapshot(
     decisions: willRetry ? claimed.decisions : [],
     transferAttempts: willRetry ? claimed.transferAttempts : [],
     notifications: silent ? [] : [notification],
-    ...(silent || manualSubscription ? { keepCurrentEpisodes: true } : {}),
+    // A failed/requeued run records an outcome, not an authoritative inventory.
+    // Preserve the CURRENT rows, including discoveries committed after this run
+    // was claimed; replaying claimed.episodes can lose those just as [] does.
+    keepCurrentEpisodes: true,
     ...(manualSubscription ? { requireTrackedSeason: true, requireRunningWorkflowRun: true } : {}),
   });
 }

@@ -53,6 +53,7 @@ import type {
 } from "../domain/domain.js";
 import { SqliteReverseScanStore } from "./sqlite/sqlite-reverse-scan.js";
 import { SqliteMediaLibraryRepository } from "./sqlite/sqlite-media-library.js";
+import { AcquisitionOperationStore } from "./acquisition-operations.js";
 import type {
   ReverseScanJob, CreateReverseScanJobInput, UpdateReverseScanJobPatch,
   ReverseScanItem, CreateReverseScanItemInput, UpdateReverseScanItemPatch,
@@ -273,6 +274,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
   private readonly mediaServerStore: SqliteMediaServerRepository;
   private readonly reverseScanStore: SqliteReverseScanStore;
   public readonly mediaLibraryStore: SqliteMediaLibraryRepository;
+  public readonly acquisitionOperations: AcquisitionOperationStore;
 
   constructor(private readonly db: Database.Database) {
     // 凭据加密（任务单 S1.5）：工厂已按密钥文件初始化；直接 new（:memory: 测试等）
@@ -292,6 +294,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     this.mediaServerStore = new SqliteMediaServerRepository(ctx);
     this.reverseScanStore = new SqliteReverseScanStore(ctx);
     this.mediaLibraryStore = new SqliteMediaLibraryRepository(ctx);
+    this.acquisitionOperations = new AcquisitionOperationStore(db);
     // 黄金 PRAGMA（规约见 docs/architecture-remediation-and-governance.md §1.3，
     // 测试见 tests/sqlite-pragmas.test.ts）：WAL 读写互不阻塞；synchronous=NORMAL
     // 在 WAL 下兼顾极速与断电安全；busy_timeout 让写锁冲突退避等待而非直接报错。
@@ -366,18 +369,19 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     return true;
   }
 
-  private mergeCurrentManualSnapshot(snapshot: PersistWorkflowRunSnapshotInput): void {
+  private mergeCurrentManualSnapshot(snapshot: PersistWorkflowRunSnapshotInput, inventoryDirectoryId?: string): void {
     const storage = snapshot.connectedStorageId ?? UNSCOPED_STORAGE;
     snapshot.episodes = mergeEpisodeStatesPreservingObtained(snapshot.episodes, this.selectEpisodeStates(snapshot.season.id, storage));
     const row = this.db.prepare("SELECT payload FROM tracked_seasons WHERE id = ? AND connected_storage_id = ? AND account_id = ?")
       .get(snapshot.season.id, storage, snapshot.accountId ?? DEFAULT_ACCOUNT_ID) as { payload: string } | undefined;
     if (row) snapshot.season = mergeSeasonPreservingCurrent(JSON.parse(row.payload) as TrackedSeason, snapshot.season, snapshot.episodes);
+    if (inventoryDirectoryId) snapshot.season.storageDirectoryId = inventoryDirectoryId;
   }
 
   async saveWorkflowRunSnapshot(
-    input: PersistWorkflowRunSnapshotInput & { keepCurrentEpisodes?: boolean; requireTrackedSeason?: boolean; requireRunningWorkflowRun?: boolean; mergeCurrentEpisodes?: boolean; requireNoMissingEpisodes?: boolean },
+    input: PersistWorkflowRunSnapshotInput & { keepCurrentEpisodes?: boolean; requireTrackedSeason?: boolean; requireRunningWorkflowRun?: boolean; mergeCurrentEpisodes?: boolean; requireNoMissingEpisodes?: boolean; inventoryDirectoryId?: string },
   ): Promise<void> {
-    const { keepCurrentEpisodes, requireTrackedSeason, requireRunningWorkflowRun, mergeCurrentEpisodes, requireNoMissingEpisodes, ...rest } = input;
+    const { keepCurrentEpisodes, requireTrackedSeason, requireRunningWorkflowRun, mergeCurrentEpisodes, requireNoMissingEpisodes, inventoryDirectoryId, ...rest } = input;
     validateWorkflowRunSnapshot(rest);
     const snapshot = cloneWorkflowValue(rest);
     const isAuxiliary = isEpisodePreservingWorkflowKind(snapshot.workflowRun.kind);
@@ -390,7 +394,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       const existing = this.loadSnapshot(snapshot.workflowRun.id);
       if (!this.canSaveManualSnapshot(snapshot, existing, { requireRunning: requireRunningWorkflowRun === true,
         requireTracked, requireNoMissing: requireNoMissingEpisodes === true })) return;
-      if (mergeCurrentEpisodes && !shouldKeepEpisodes) this.mergeCurrentManualSnapshot(snapshot);
+      if (mergeCurrentEpisodes && !shouldKeepEpisodes) this.mergeCurrentManualSnapshot(snapshot, inventoryDirectoryId);
       preserveQueuedRunMetadata(snapshot, existing);
       if (!existing) this.captureSubscriptionPolicySnapshot(snapshot, snapshot.accountId ?? DEFAULT_ACCOUNT_ID);
       this.replaceWorkflowRunSnapshot(snapshot, { runOnly: shouldKeepEpisodes });
@@ -999,6 +1003,28 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
           "ON CONFLICT (workflow_run_id, ordinal) DO NOTHING",
       )
       .run(workflowRunId, step.ordinal, JSON.stringify(step));
+  }
+
+  async updateAgentStepEnd(
+    workflowRunId: string,
+    callId: string,
+    end: { endedAt: string; status: "succeeded" | "failed"; error?: string },
+  ): Promise<void> {
+    // Best-effort outcome write onto the existing start row, matched by callId in
+    // the JSON payload. No-op when no row carries that callId (start write lost).
+    // json_set merges the outcome into the blob — no schema migration needed.
+    const hasError = end.error !== undefined;
+    this.db
+      .prepare(
+        "UPDATE agent_steps SET payload = json_set(payload, '$.endedAt', ?, '$.status', ?" +
+          (hasError ? ", '$.error', ?" : "") +
+          ") WHERE workflow_run_id = ? AND json_extract(payload, '$.callId') = ?",
+      )
+      .run(
+        ...(hasError ? [end.endedAt, end.status, end.error] : [end.endedAt, end.status]),
+        workflowRunId,
+        callId,
+      );
   }
 
   async listAgentSteps(workflowRunId: string, scopeArg: ScopeArg = undefined): Promise<AgentStep[]> {

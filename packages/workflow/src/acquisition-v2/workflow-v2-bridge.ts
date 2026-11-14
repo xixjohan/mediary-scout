@@ -17,6 +17,7 @@ import {
 import { buildReplacementReport, buildSeasonReport, buildSeriesReport, formatReportPushText } from "../domain/notification-report.js";
 import { classifyTransferBlock } from "./transfer-block.js";
 import { classifySearchSourceFault } from "./search-source-fault.js";
+import { searchFilterFailureReason } from "./search-filter-diagnostics.js";
 import type { RunAcquisitionV2WorkflowResult } from "./workflow-v2.js";
 
 /**
@@ -129,6 +130,7 @@ export function bridgeV2WorkflowToResult(input: {
     status,
     transferBlockReason,
     searchSourceFaultReason,
+    searchFilterReason: searchFilterFailureReason(v2.auditEvents),
     newlyObtainedCodes,
     workflowRunId,
     now: input.now,
@@ -259,6 +261,7 @@ function buildNotification(input: {
   /** Honest 转存失败 reason when transfers were systemically blocked (else null). */
   transferBlockReason?: string | null;
   searchSourceFaultReason?: string | null;
+  searchFilterReason?: string | null;
   newlyObtainedCodes: string[];
   workflowRunId: string;
   now: () => string;
@@ -301,6 +304,7 @@ function buildNotification(input: {
       noCoverage,
       transferBlockReason: input.transferBlockReason ?? null,
       searchSourceFaultReason: input.searchSourceFaultReason ?? null,
+      searchFilterReason: input.searchFilterReason ?? null,
       meta: titleMeta,
       ...sizeInput(input),
     });
@@ -332,6 +336,7 @@ function buildNotification(input: {
     noCoverage,
     transferBlockReason: input.transferBlockReason ?? null,
     searchSourceFaultReason: input.searchSourceFaultReason ?? null,
+    searchFilterReason: input.searchFilterReason ?? null,
     meta: titleMeta,
     ...sizeInput(input),
   });

@@ -2360,6 +2360,34 @@ export function runRepositoryContract(name: string, harness: RepoHarness): void 
         expect(await repo.listAgentSteps(runId)).toEqual([]);
       });
 
+      it("updateAgentStepEnd merges the outcome onto the matching callId step; unknown callId is a no-op", async () => {
+        const repo = await fresh();
+        const snapshot = workflowPersistenceFixture();
+        await repo.saveWorkflowRunSnapshot(snapshot);
+        const runId = snapshot.workflowRun.id;
+        await repo.appendAgentStep(runId, { ...step(0, "searchResources"), callId: "c1" });
+        await repo.appendAgentStep(runId, { ...step(1, "transferCandidate"), callId: "c2" });
+
+        await repo.updateAgentStepEnd(runId, "c1", {
+          endedAt: "2026-06-22T00:00:01.000Z",
+          status: "failed",
+          error: "boom",
+        });
+        // Unknown callId → no-op, never throws.
+        await repo.updateAgentStepEnd(runId, "missing", {
+          endedAt: "2026-06-22T00:00:02.000Z",
+          status: "succeeded",
+        });
+
+        const steps = await repo.listAgentSteps(runId);
+        expect(steps[0]!.status).toBe("failed");
+        expect(steps[0]!.endedAt).toBe("2026-06-22T00:00:01.000Z");
+        expect(steps[0]!.error).toBe("boom");
+        // The other step is untouched.
+        expect(steps[1]!.status).toBeUndefined();
+        expect(steps[1]!.endedAt).toBeUndefined();
+      });
+
       it("updateWorkflowRunProgress clamps percent monotonically; unknown run is a no-op", async () => {
         const repo = await fresh();
         const snapshot = workflowPersistenceFixture();

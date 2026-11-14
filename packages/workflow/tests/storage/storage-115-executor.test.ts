@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { deadLinkReason } from "../../src/acquisition-v2/dead-links.js";
 import {
   createBootstrapPan115CookieStorageExecutor,
   createProtectedStorage115Executor,
@@ -317,7 +318,7 @@ describe("Storage115Executor", () => {
     ]);
     expect(attempt).toMatchObject({
       status: "no_target_change",
-      providerMessage: "offline task accepted; no target video materialized yet",
+      providerMessage: "offline task accepted; landing pending, not cancelled",
       materializedFileIds: [],
     });
   });
@@ -551,8 +552,9 @@ describe("Storage115Executor", () => {
 
     expect(attempt.status).toBe("no_target_change");
     expect(api.removedOfflineHashes).toEqual([hash]); // still cancelled (frees quota)
-    // The attempt carries the signal the dead-link recorder uses to pick a longer TTL.
-    expect(attempt.providerMessage).toMatch(/name == infohash/);
+    // A task name is not death evidence. Only the confirmed cancellation is a miss.
+    expect(attempt.providerMessage).not.toMatch(/fake|dead|name == infohash/);
+    expect(attempt.outcome).toBe("instant_miss");
   });
 
   it("cancels an offline task that task status shows still downloading (not 秒传)", async () => {
@@ -1920,6 +1922,173 @@ describe("transfer · 落盘文件名被截断（转存丢扩展名）", () => {
 
     expect(attempt.status).toBe("succeeded");
     expect(api.renames).toEqual([]);
+  });
+});
+
+describe("transfer outcome facts (instant-only)", () => {
+  const hash = "a".repeat(40);
+  const candidate = candidateFixture({
+    type: "magnet",
+    providerPayload: { url: `magnet:?xt=urn:btih:${hash}`, rawType: "magnet" },
+  });
+  const input = { workflowRunId: "run_outcome", directoryId: "staging", candidate };
+  const executorFor = (api: FakePan115Api) => new Storage115Executor({
+    api, offlineMaterializeAttempts: 1, offlineMaterializePollMs: 1, sleep: async () => {},
+  });
+
+  it("records instant_miss only after cancelling a task created by this call", async () => {
+    const api = new FakePan115Api();
+    const result = await executorFor(api).transfer(input);
+    expect(result).toMatchObject({
+      status: "no_target_change", outcome: "instant_miss", materializedFileIds: [],
+      offlineTask: { infoHash: hash, createdByThisCall: true, completed: false, cancellation: "confirmed" },
+    });
+    expect(api.removedOfflineHashes).toEqual([hash]);
+    expect(deadLinkReason(result, "magnet")).toMatch(/instant|秒传/);
+  });
+
+  it.each(["false", "throw", "guard"] as const)("unconfirmed cancellation (%s) is unknown, never a dead link", async (failure) => {
+    const api = new FakePan115Api({
+      offlineTaskList: [{ infoHash: hash, name: hash, percentDone: 0, status: 1, statusText: "等待中", url: "" }],
+    });
+    api.removeOfflineTask = async () => {
+      if (failure === "throw") throw new Error("mock connection reset");
+      return { ok: false, message: "mock cancellation refused" };
+    };
+    const executor = failure === "guard"
+      ? new Storage115Executor({ api, offlineMaterializeAttempts: 0, apiGuardOptions: { maxCallsPerOperation: 3 } })
+      : executorFor(api);
+    const result = await executor.transfer(input);
+    expect(result.outcome).toBe("unknown");
+    expect(result.offlineTask?.cancellation).toBe(failure === "false" ? "failed" : "unknown");
+    expect(deadLinkReason(result, "magnet")).toBeNull();
+    expect(result.providerMessage).not.toMatch(/fake|dead|name == infohash/);
+  });
+
+  it.each([true, false])("never cancels an existing task even when ok=%s", async (ok) => {
+    const api = new FakePan115Api();
+    api.addOfflineTask = async () => ({ ok, alreadyTransferred: true, message: "任务已存在" });
+    const result = await executorFor(api).transfer(input);
+    expect(result).toMatchObject({
+      outcome: "accepted_pending",
+      offlineTask: { createdByThisCall: false, cancellation: "not_attempted" },
+    });
+    expect(api.removedOfflineHashes).toEqual([]);
+    expect(deadLinkReason(result, "magnet")).toBeNull();
+  });
+
+  it.each(["错误的链接", "mock refusal"])("a rejected submission (%s) does not own a task to cancel", async (message) => {
+    const api = new FakePan115Api();
+    api.addOfflineTask = async () => ({ ok: false, message });
+    const result = await executorFor(api).transfer(input);
+    expect(result.outcome).toBe("rejected");
+    expect(result.offlineTask?.createdByThisCall).toBe(false);
+    expect(api.removedOfflineHashes).toEqual([]);
+  });
+
+  it.each(["下载成功", "已完成"])("completed task (%s) stays accepted_pending while the index lags", async (statusText) => {
+    const api = new FakePan115Api({
+      offlineTaskList: [{ infoHash: hash, name: hash, percentDone: 0, status: 1, statusText, url: "" }],
+    });
+    const result = await executorFor(api).transfer(input);
+    expect(result).toMatchObject({
+      outcome: "accepted_pending", offlineTask: { completed: true, cancellation: "not_attempted" },
+    });
+    expect(api.removedOfflineHashes).toEqual([]);
+    expect(api.listOfflineTasksCalls).toBe(2); // bounded completion grace, not a long download
+    expect(deadLinkReason(result, "magnet")).toBeNull();
+  });
+
+  it("acceptance without an identifiable cancellable task is pending, not a miss", async () => {
+    const api = new FakePan115Api();
+    const result = await executorFor(api).transfer({
+      ...input,
+      candidate: candidateFixture({ type: "magnet", providerPayload: { url: "magnet:?xt=urn:btih:not-a-hash", rawType: "magnet" } }),
+    });
+    expect(result.outcome).toBe("accepted_pending");
+    expect(result.offlineTask?.cancellation).toBe("not_attempted");
+    expect(api.removedOfflineHashes).toEqual([]);
+  });
+
+  it("an ambiguous submit exception remains unknown without cancelling another task", async () => {
+    const api = new FakePan115Api();
+    api.addOfflineTask = async () => { throw new Error("mock request timeout"); };
+    const result = await executorFor(api).transfer(input);
+    expect(result).toMatchObject({ outcome: "unknown", materializedFileIds: [] });
+    expect(api.removedOfflineHashes).toEqual([]);
+    expect(deadLinkReason(result, "magnet")).toBeNull();
+  });
+
+  it("a failed landing read cannot prove instant_miss even if cancellation succeeds", async () => {
+    const api = new FakePan115Api();
+    let reads = 0;
+    api.listItems = async () => {
+      if (++reads > 1) throw new Error("mock listing timeout");
+      return [];
+    };
+    const result = await executorFor(api).transfer(input);
+    expect(result.outcome).toBe("unknown");
+    expect(result.offlineTask?.cancellation).toBe("confirmed");
+    expect(api.removedOfflineHashes).toEqual([hash]);
+    expect(deadLinkReason(result, "magnet")).toBeNull();
+  });
+
+  it("new file IDs outrank a contradictory rejection", async () => {
+    const api = new FakePan115Api();
+    api.addOfflineTask = async () => {
+      api.directories["staging"] = [{ fid: "landed", n: "Mock.mkv", s: "1000000000" }];
+      return { ok: false, message: "错误的链接" };
+    };
+    const result = await executorFor(api).transfer(input);
+    expect(result).toMatchObject({ status: "succeeded", outcome: "landed", materializedFileIds: ["landed"] });
+    expect(api.removedOfflineHashes).toEqual([]);
+    expect(deadLinkReason(result, "magnet")).toBeNull();
+  });
+
+  it("reports an explicit quota refusal as account_blocked, not a link rejection", async () => {
+    const api = new FakePan115Api();
+    api.addOfflineTask = async () => ({ ok: false, message: "离线下载配额不足" });
+    const result = await executorFor(api).transfer(input);
+    expect(result.outcome).toBe("account_blocked");
+    expect(api.removedOfflineHashes).toEqual([]);
+    expect(deadLinkReason(result, "magnet")).toBeNull();
+  });
+});
+
+describe("transfer extension normalization guard", () => {
+  const name = "Mock.1080p.WEB-DL.H264.AAC-Group";
+  const input = {
+    workflowRunId: "run_rename", directoryId: "staging",
+    candidate: { ...candidateFixture({ type: "115", providerPayload: { url: "https://115.com/s/mockshare" } }), title: "Mock.mkv" },
+  };
+
+  it("counts and paces automatic extension renames", async () => {
+    const api = new FakePan115Api({ shareFiles: { mockshare: [{ fid: "landed", n: name, s: "1000000000" }] } });
+    const sleeps: number[] = [];
+    let now = 0;
+    const executor = new Storage115Executor({ api, apiGuardOptions: {
+      minDelayMs: 10, now: () => now, sleep: async (ms) => { sleeps.push(ms); now += ms; },
+    } });
+    const result = await executor.transfer(input);
+    expect(result.outcome).toBe("landed");
+    expect(api.renames).toEqual([{ fileId: "landed", newName: `${name}.mkv` }]);
+    expect(executor.apiCallCount()).toBe(4); // before + receive + after + rename
+    expect(sleeps).toEqual([10, 10, 10]);
+  });
+
+  it("does not rename outside the API budget and still reports landed IDs", async () => {
+    const api = new FakePan115Api({ shareFiles: { mockshare: [{ fid: "landed", n: name, s: "1000000000" }] } });
+    const executor = new Storage115Executor({ api, apiGuardOptions: { maxCallsPerOperation: 3 } });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = await executor.transfer(input);
+      expect(result.outcome).toBe("landed");
+      expect(api.renames).toEqual([]);
+      expect(executor.apiCallCount()).toBe(3);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

@@ -80,7 +80,7 @@ describe("TaskSandbox — same link is not transferred twice in one run", () => 
     );
   });
 
-  it("allows the second candidate when the first transfer of that link landed nothing", async () => {
+  it("holds the link even when the first transfer landed nothing — a dead link is never re-asked this run", async () => {
     const { sandbox, snapshotId } = await tvSandbox({
       ids: ["dead", "live"],
       linkOf: (id) => (id === "dead" || id === "live" ? SAME : null),
@@ -90,9 +90,9 @@ describe("TaskSandbox — same link is not transferred twice in one run", () => 
     const first = await sandbox.transferCandidate({ snapshotId, candidateId: "dead" });
     expect(first.attempt.materializedFileIds).toEqual([]);
 
-    const second = await sandbox.transferCandidate({ snapshotId, candidateId: "live" });
-    expect(second.attempt.status).toBe("succeeded");
-    expect(second.attempt.materializedFileIds.length).toBeGreaterThan(0);
+    await expect(sandbox.transferCandidate({ snapshotId, candidateId: "live" })).rejects.toThrow(
+      /SANDBOX_SAME_LINK: live is the same link as dead.*未决/,
+    );
   });
 
   it("allows a candidate whose link is different", async () => {
@@ -119,13 +119,13 @@ describe("TaskSandbox — same link is not transferred twice in one run", () => 
     const result = await sandbox.transferUntilLanded({ candidateIds: ["b", "c"] });
 
     expect(result.attempts).toEqual([
-      { candidateId: "b", status: "failed", providerMessage: "same link as a already landed this run" },
-      { candidateId: "c", status: "succeeded" },
+      { candidateId: "b", status: "failed", materializedFileIds: [], providerMessage: "same link as a already landed this run" },
+      { candidateId: "c", status: "succeeded", materializedFileIds: [expect.any(String)] },
     ]);
     expect(result.transferredCandidateId).toBe("c");
   });
 
-  it("transferUntilLanded does not skip a link whose earlier attempt landed nothing", async () => {
+  it("transferUntilLanded stops on a link whose earlier attempt left nothing landed", async () => {
     const { sandbox } = await movieSandbox({
       ids: ["dead", "live"],
       linkOf: () => SAME,
@@ -136,31 +136,33 @@ describe("TaskSandbox — same link is not transferred twice in one run", () => 
 
     const result = await sandbox.transferUntilLanded({ candidateIds: ["dead", "live"] });
 
-    expect(result.attempts[0]).toMatchObject({ candidateId: "dead", status: "failed" });
-    expect(result.attempts[0]!.providerMessage).not.toMatch(/same link/);
-    expect(result.transferredCandidateId).toBe("live");
+    expect(result.attempts).toHaveLength(2);
+    expect(result.attempts[0]).toMatchObject({ candidateId: "dead", status: "failed", materializedFileIds: [] });
+    expect(result.attempts[1]?.providerMessage).toMatch(/same link as dead.*未决/);
+    expect(result.transferredCandidateId).toBeNull();
   });
 
-  it("a succeeded transfer that materialized no file does not block transferCandidate", async () => {
+  it("a succeeded transfer that materialized no file still holds the link (transferCandidate)", async () => {
     const { sandbox, snapshotId, transferred } = await emptySuccessSandbox("tv");
     const first = await sandbox.transferCandidate({ snapshotId, candidateId: "a" });
     expect(first.attempt).toMatchObject({ status: "succeeded", materializedFileIds: [] });
 
-    const second = await sandbox.transferCandidate({ snapshotId, candidateId: "b" });
-    expect(second.attempt.status).toBe("succeeded");
-    expect(transferred).toEqual(["a", "b"]);
+    await expect(sandbox.transferCandidate({ snapshotId, candidateId: "b" })).rejects.toThrow(/SANDBOX_SAME_LINK/);
+    expect(transferred).toEqual(["a"]);
   });
 
-  it("a succeeded transfer that materialized no file does not block transferUntilLanded", async () => {
+  it("a succeeded transfer that materialized no file is not a landing and still holds the link (transferUntilLanded)", async () => {
     const { sandbox, transferred } = await emptySuccessSandbox("movie");
     const first = await sandbox.transferUntilLanded({ candidateIds: ["a"] });
-    expect(first.transferredCandidateId).toBe("a");
-    expect(first.attempts[0]).toMatchObject({ status: "succeeded" });
+    expect(first.transferredCandidateId).toBeNull();
+    expect(first.attempts[0]).toMatchObject({ status: "succeeded", materializedFileIds: [] });
 
     const second = await sandbox.transferUntilLanded({ candidateIds: ["b"] });
-    expect(second.attempts).toEqual([{ candidateId: "b", status: "succeeded" }]);
-    expect(second.transferredCandidateId).toBe("b");
-    expect(transferred).toEqual(["a", "b"]);
+    expect(second.attempts).toEqual([
+      { candidateId: "b", status: "failed", materializedFileIds: [], providerMessage: expect.stringMatching(/未决/) },
+    ]);
+    expect(second.transferredCandidateId).toBeNull();
+    expect(transferred).toEqual(["a"]);
   });
 
   it("reserves the link before the transfer await, so two concurrent transferCandidate calls hit storage once", async () => {
@@ -209,6 +211,7 @@ describe("TaskSandbox — same link is not transferred twice in one run", () => 
       {
         candidateId: "b",
         status: "failed",
+        materializedFileIds: [],
         providerMessage:
           "same link as a, which is being transferred right now — wait for that result and inspect it instead of transferring again",
       },
@@ -217,7 +220,7 @@ describe("TaskSandbox — same link is not transferred twice in one run", () => 
     await inflight;
   });
 
-  it("releases the reservation when the in-flight transfer materializes nothing, so a later alias transfers", async () => {
+  it("keeps the reservation when the in-flight transfer materializes nothing, so a later alias is refused", async () => {
     const gate = deferred();
     const calls: string[] = [];
     const { sandbox, snapshotId } = await aliasedSandbox({
@@ -238,9 +241,10 @@ describe("TaskSandbox — same link is not transferred twice in one run", () => 
     );
     gate.resolve();
     await inflight;
-    const later = await sandbox.transferCandidate({ snapshotId, candidateId: "c" });
-    expect(later.attempt.materializedFileIds).toEqual(["c-file"]);
-    expect(calls).toEqual(["a", "c"]);
+    await expect(sandbox.transferCandidate({ snapshotId, candidateId: "c" })).rejects.toThrow(
+      /SANDBOX_SAME_LINK: c is the same link as a.*未决/,
+    );
+    expect(calls).toEqual(["a"]);
   });
 });
 

@@ -20,6 +20,10 @@ import { redactAgentStepArgs } from "./agent-step-redaction.js";
  */
 export interface AgentStepView {
   ordinal: number;
+  /** Groups steps of one execution attempt; lets the timeline separate retries. */
+  attemptId?: string;
+  /** Correlates the start record with its post-execution end update. */
+  callId?: string;
   toolName: string;
   /** Human-readable one-liner (「搜索 孤独摇滚」). */
   activity: string;
@@ -27,6 +31,11 @@ export interface AgentStepView {
   /** Cumulative drive API calls before this step — the cost the user actually feels. */
   apiCalls?: number;
   at: string;
+  /** Post-execution outcome (absent until the tool returns/throws). */
+  endedAt?: string;
+  status?: "succeeded" | "failed";
+  /** Structured failure detail: the thrown message or a guard refusal string. */
+  error?: string;
   /** Redacted tool args. Credentials and URLs are gone by construction. */
   args: Record<string, unknown>;
 }
@@ -41,11 +50,16 @@ export const MAX_TIMELINE_STEPS = 50;
 export function toAgentStepViews(steps: readonly AgentStep[]): AgentStepView[] {
   return steps.map((step) => ({
     ordinal: step.ordinal,
+    ...(step.attemptId !== undefined ? { attemptId: step.attemptId } : {}),
+    ...(step.callId !== undefined ? { callId: step.callId } : {}),
     toolName: step.toolName,
     activity: step.activity,
     phase: step.phase,
     ...(typeof step.apiCalls === "number" ? { apiCalls: step.apiCalls } : {}),
     at: step.at,
+    ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
+    ...(step.status !== undefined ? { status: step.status } : {}),
+    ...(step.error !== undefined ? { error: step.error } : {}),
     args: redactAgentStepArgs(step.args),
   }));
 }

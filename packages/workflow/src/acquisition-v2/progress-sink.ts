@@ -31,6 +31,11 @@ export function makeProgressSink(input: {
   let stepsInPhase = 0;
 
   return (event: AgentToolEvent) => {
+    // End events carry only the post-execution outcome; progress is driven by the
+    // start event alone, so an end must not advance the bar or re-count obtained.
+    if (event.kind === "end") {
+      return;
+    }
     if (event.toolName === "markObtained") {
       const codes = Array.isArray(event.args.codes) ? event.args.codes : [];
       obtained += codes.filter((code) => code !== "MOVIE").length;

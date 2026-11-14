@@ -208,15 +208,20 @@ describe("§6b acceptance — the 12 invariants", () => {
     ).rejects.toThrow(/SIM_DIR_NOT_FOUND/);
   });
 
-  it("#10 markObtained records the agent's declared codes — no mechanical present-check", async () => {
-    // 2026-06-15: the system no longer re-reads 115 to verify a backing file (the
-    // mark is reversible, move/flatten already reread, §1.13 re-judges each
-    // patrol). markObtained is the agent's final declaration; ordering (mark LAST,
-    // after flatten) is enforced by the prompt, not a system gate.
-    const { sandbox } = await makeSandbox({ results: {}, packs: {}, need: episodes(1) });
-    const result = await sandbox.markObtained({ codes: ["S01E01"] });
-    expect(result.confirmed).toEqual(["S01E01"]);
-    expect(sandbox.isCoverageMet()).toBe(true);
+  it("#10 markObtained needs real evidence — an empty target dir is refused, a seeded file is recorded", async () => {
+    // The mark is the agent's final declaration, but the system verifies a non-empty
+    // video for the exact code in its OWN season dir. An empty directory was how a
+    // run got wrongly reported 入库成功, so a mark with no file is refused outright.
+    const empty = await makeSandbox({ results: {}, packs: {}, need: episodes(1) });
+    await expect(empty.sandbox.markObtained({ codes: ["S01E01"] })).rejects.toThrow(/SANDBOX_OBTAINED_NOT_VERIFIED: S01E01/);
+    expect(empty.sandbox.isCoverageMet()).toBe(false);
+
+    const seeded = await makeSandbox({
+      results: {}, packs: {}, need: episodes(1),
+      seedSeason: { files: [{ path: "Show - 01.mkv", sizeBytes: 9 }] },
+    });
+    await expect(seeded.sandbox.markObtained({ codes: ["S01E01"] })).resolves.toEqual({ confirmed: ["S01E01"] });
+    expect(seeded.sandbox.isCoverageMet()).toBe(true);
   });
 
   it("#11 dedup keeps the larger files (Life Tree) when the agent groups duplicates", async () => {

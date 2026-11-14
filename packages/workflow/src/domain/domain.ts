@@ -83,6 +83,27 @@ export type WorkflowStatus =
   | "reserved";
 export type ResourceType = "115" | "magnet" | "manual" | "quark" | "uc" | "tianyi" | "123" | "guangya";
 export type TransferStatus = "succeeded" | "failed" | "no_target_change";
+/**
+ * What the provider call PROVES. `accepted_pending` and `unknown` mean a side effect
+ * may still materialize: callers must reconcile, never blindly resubmit or treat the
+ * link as dead.
+ */
+export type TransferOutcome =
+  | "landed"
+  | "accepted_pending"
+  | "instant_miss"
+  | "rejected"
+  | "transient_error"
+  | "account_blocked"
+  | "unknown";
+
+export interface OfflineTaskFacts {
+  infoHash: string | null;
+  /** Only a task this call created may be cancelled — never a pre-existing one. */
+  createdByThisCall: boolean;
+  completed: boolean;
+  cancellation: "confirmed" | "failed" | "unknown" | "not_attempted";
+}
 export type Confidence = "low" | "medium" | "high";
 
 export interface MediaTitle {
@@ -273,6 +294,11 @@ export interface AgentDecision {
  */
 export interface AgentStep {
   ordinal: number;
+  /** Groups the steps of one execution attempt; a retry under the same run id
+   *  gets a fresh attemptId so both attempts stay distinguishable in the trace. */
+  attemptId?: string;
+  /** Correlates this step's start record with its post-execution end update. */
+  callId?: string;
   toolName: string;
   args: Record<string, unknown>;
   activity: string;
@@ -280,6 +306,11 @@ export interface AgentStep {
   /** Cumulative 115 API calls before this step ran (real 115 runs only; omitted otherwise). */
   apiCalls?: number;
   at: string;
+  /** Post-execution outcome (recorded when the tool returns/throws). */
+  endedAt?: string;
+  status?: "succeeded" | "failed";
+  /** Structured failure detail: the thrown message or a guard refusal string. */
+  error?: string;
 }
 
 export type CandidateDispositionKind = "selected" | "rejected" | "uncertain";
@@ -317,6 +348,9 @@ export interface TransferAttempt {
   status: TransferStatus;
   providerMessage: string;
   materializedFileIds: string[];
+  /** Typed result; absent from executors that do not classify their calls yet. */
+  outcome?: TransferOutcome;
+  offlineTask?: OfflineTaskFacts;
   /**
    * What became of the files this transfer materialized, counted at the end of
    * its run: kept = moved into a target dir (or landed in the movie dir) and

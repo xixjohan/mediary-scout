@@ -1,6 +1,10 @@
+import Database from "better-sqlite3";
 import { describe, expect, it } from "vitest";
 import { RealStorageV2 } from "../../src/acquisition-v2/real-storage-adapter.js";
 import { CandidateRegistry } from "../../src/acquisition-v2/candidate-registry.js";
+import { AcquisitionOperationStore } from "../../src/persistence/acquisition-operations.js";
+import { claimOperationsSession } from "../../src/acquisition-v2/operations-session.js";
+import { resourceLinkKey } from "../../src/acquisition-v2/resource-link.js";
 import { GuangYaAuthError } from "../../src/storage/guangya-client.js";
 import { Pan115AuthError } from "../../src/storage/pan115-cookie-client.js";
 import type { StorageExecutor, UnparsedVideoFile } from "../../src/domain/ports.js";
@@ -28,7 +32,7 @@ class RecordingExecutor implements StorageExecutor {
   /** Present only when opts.subtitleBatch — TS optional METHODS can't be made
    *  per-instance, so it's a property the constructor installs (115 has it, 光鸭 doesn't). */
   transferSubtitleUrls?: (input: { files: Array<{ url: string; filename: string }>; directoryId: string; workflowRunId: string }) => Promise<TransferAttempt[]>;
-  constructor(private readonly opts: { status?: TransferAttempt["status"]; message?: string; tree?: PackageTreeFile[]; removeOk?: boolean; subtitleBatch?: boolean; subtitleFail?: (filename: string) => string | null } = {}) {
+  constructor(private readonly opts: { status?: TransferAttempt["status"]; message?: string; tree?: PackageTreeFile[]; removeOk?: boolean; subtitleBatch?: boolean; subtitleFail?: (filename: string) => string | null; outcome?: TransferAttempt["outcome"] } = {}) {
     if (opts.subtitleBatch) {
       this.transferSubtitleUrls = async (input) => {
         this.subtitleBatchCalls.push({ files: input.files.map((f) => f.filename), directoryId: input.directoryId, workflowRunId: input.workflowRunId });
@@ -59,6 +63,7 @@ class RecordingExecutor implements StorageExecutor {
       status: this.opts.status ?? "succeeded",
       providerMessage: this.opts.message ?? "",
       materializedFileIds: this.opts.status && this.opts.status !== "succeeded" ? [] : ["f1", "f2"],
+      ...(this.opts.outcome !== undefined ? { outcome: this.opts.outcome } : {}),
     };
   }
   async listTree(): Promise<PackageTreeFile[]> {
@@ -151,6 +156,29 @@ describe("RealStorageV2 — StorageExecutor → StorageV2 adapter", () => {
     // the flag lets brand-agnostic callers (transferUntilLanded) tell a silent-late
     // async copy (123's settle window — possible FALSE miss) from a loud dead link
     expect(result.noTargetChange).toBe(true);
+  });
+
+  it("surfaces the executor's typed outcome while status stays collapsed (accurate result, P0)", async () => {
+    // accepted_pending: the side effect may still land — NOT a dead link. The agent
+    // must be able to tell this from instant_miss / rejected / account_blocked.
+    for (const outcome of ["accepted_pending", "instant_miss", "rejected", "account_blocked", "unknown"] as const) {
+      const executor = new RecordingExecutor({ status: "no_target_change", outcome });
+      const { storage, registry } = adapter(executor);
+      registry.record(candidate("cand"));
+
+      const result = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+      expect(result.status).toBe("failed"); // collapsed for iterate-on-failure consumers
+      expect(result.outcome).toBe(outcome); // typed truth rides along
+    }
+  });
+
+  it("omits outcome when the executor does not classify its call", async () => {
+    const executor = new RecordingExecutor({ status: "succeeded" });
+    const { storage, registry } = adapter(executor);
+    registry.record(candidate("cand"));
+
+    const result = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    expect(result.outcome).toBeUndefined();
   });
 
   it("surfaces the executor's providerMessage on a failed transfer (so the agent sees WHY)", async () => {
@@ -504,5 +532,82 @@ describe("RealStorageV2 — 光鸭 share dead-links are recorded softly", () => 
     expect(recorded).toEqual([
       expect.objectContaining({ key: "guangya:1945376531793305622_aeWnPia0Twth-NLu", kind: "guangya", permanent: false, ttlMs: GUANGYA_DEAD_LINK_TTL_MS }),
     ]);
+  });
+});
+
+describe("RealStorageV2 — durable operation ledger (begin before submit / finish after / unresolved blocks resubmit)", () => {
+  const scope = "account:drive:title";
+  const url = "https://115.com/s/abc";
+  const intentKey = `staging:${resourceLinkKey(url)}`;
+
+  function ledger() {
+    const db = new Database(":memory:");
+    const store = new AcquisitionOperationStore(db);
+    let t = 0;
+    const session = (runId: string) =>
+      claimOperationsSession({ store, scope, runId, attemptId: `${runId}-a`, now: () => (t += 1), ttlMs: 1000 })!;
+    return { db, store, session };
+  }
+
+  function storageWith(executor: StorageExecutor, session: ReturnType<typeof claimOperationsSession>) {
+    const registry = new CandidateRegistry();
+    registry.record(candidate("cand"));
+    return new RealStorageV2({ executor, registry, workflowRunId: "run-7", ...(session ? { operations: session } : {}) });
+  }
+
+  it("registers the intent before transfer and finishes it landed (no unresolved left)", async () => {
+    const { db, store, session } = ledger();
+    const executor = new RecordingExecutor();
+    const storage = storageWith(executor, session("run1"));
+    const result = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    expect(result.status).toBe("succeeded");
+    expect(executor.transfers).toHaveLength(1);
+    expect(store.unresolved(scope)).toEqual([]);
+    db.close();
+  });
+
+  it("refuses a repeat transfer of the same candidate+dir within the run; executor called once", async () => {
+    const { db, session } = ledger();
+    const executor = new RecordingExecutor();
+    const storage = storageWith(executor, session("run1"));
+    await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    const second = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    expect(executor.transfers).toHaveLength(1);
+    expect(second.status).toBe("succeeded"); // a landed op replays its files idempotently
+    expect(second.materializedFileIds).toEqual(["f1", "f2"]);
+    db.close();
+  });
+
+  it("refuses across runs: an unresolved intent from a prior run blocks resubmission", async () => {
+    const { db, store, session } = ledger();
+    const first = session("run1");
+    first.begin({ key: intentKey, kind: "transfer", directoryId: "staging", resourceKey: resourceLinkKey(url)!, fileIds: [] });
+    first.release(); // leaves status=intent (unresolved)
+    const executor = new RecordingExecutor();
+    const storage = storageWith(executor, session("run2"));
+    const result = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    expect(executor.transfers).toHaveLength(0);
+    expect(result.status).toBe("failed");
+    expect(result.outcome).toBe("accepted_pending");
+    expect(result.providerMessage).toMatch(/ACQUISITION_OPERATION/);
+    expect(store.unresolved(scope)).toHaveLength(1);
+    db.close();
+  });
+
+  it("finishes a no_target_change as instant_miss so a later run may retry the same key", async () => {
+    const { db, store, session } = ledger();
+    const executor = new RecordingExecutor({ status: "no_target_change" });
+    const storage = storageWith(executor, session("run1"));
+    await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    expect(store.unresolved(scope)).toEqual([]);
+    db.close();
+  });
+
+  it("without an operations session, transfer is unchanged (no ledger)", async () => {
+    const executor = new RecordingExecutor();
+    const storage = storageWith(executor, null);
+    const result = await storage.transferCandidate({ candidateId: "cand", intoDirectoryId: "staging" });
+    expect(result.status).toBe("succeeded");
+    expect(executor.transfers).toHaveLength(1);
   });
 });

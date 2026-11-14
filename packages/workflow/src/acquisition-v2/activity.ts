@@ -18,10 +18,19 @@ export interface AgentActivity {
 }
 
 /** A single tool call surfaced to the progress sink: the interpreted activity +
- *  the raw name/args (the sink reads markObtained codes to accumulate obtained). */
+ *  the raw name/args (the sink reads markObtained codes to accumulate obtained).
+ *  One invocation emits a "start" event (pre-execution, crash-safe) and an "end"
+ *  event (post-execution outcome); `callId` correlates the two. `kind` defaults to
+ *  "start" so existing start-only producers stay valid. */
 export interface AgentToolEvent extends AgentActivity {
   toolName: string;
   args: Record<string, unknown>;
+  callId?: string;
+  kind?: "start" | "end";
+  /** End-only: whether the tool execution succeeded or failed. */
+  status?: "succeeded" | "failed";
+  endedAt?: string;
+  error?: string;
 }
 
 function asArray(value: unknown): unknown[] {

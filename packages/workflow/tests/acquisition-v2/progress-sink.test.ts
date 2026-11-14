@@ -49,6 +49,16 @@ describe("makeProgressSink", () => {
     expect(repo.writes.at(-1)!.progress.obtained).toBe(0);
   });
 
+  it("ignores end events: no extra progress write and no double-counted obtained", () => {
+    const repo = fakeRepo();
+    const sink = makeProgressSink({ repository: repo, workflowRunId: "r", neededHint: 2, now: () => "t" });
+    sink({ toolName: "markObtained", args: { codes: ["S1E1"] }, activity: "已确认 1 集入库", phase: "mark", callId: "c1", kind: "start" });
+    const writesAfterStart = repo.writes.length;
+    sink({ toolName: "markObtained", args: { codes: ["S1E1"] }, activity: "已确认 1 集入库", phase: "mark", callId: "c1", kind: "end", status: "succeeded" });
+    expect(repo.writes.length).toBe(writesAfterStart);
+    expect(repo.writes.at(-1)!.progress.obtained).toBe(1);
+  });
+
   it("swallows repository write errors (progress must never fail the run)", () => {
     const sink = makeProgressSink({
       repository: {

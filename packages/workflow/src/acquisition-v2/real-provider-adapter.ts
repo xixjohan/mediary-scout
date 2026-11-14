@@ -1,11 +1,24 @@
-import type { ResourceSnapshot } from "../domain.js";
+import type { AuditEvent, ResourceSnapshot } from "../domain.js";
 import type { ResourceProvider } from "../domain/ports.js";
 import { resourceFingerprintMatches } from "../user-requests.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import { deadLinkKey, type DeadLinkStore } from "./dead-links.js";
 import { resourceLinkKey } from "./resource-link.js";
 import type { PolicyResource } from "../execution/subscription-policy.js";
-import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js";
+import type { ResourceProviderV2, ResourceSnapshotV2, SearchFilterSummary } from "./fake-provider.js";
+
+function filterAuditEvent(snapshot: ResourceSnapshot, keyword: string, summary: SearchFilterSummary): AuditEvent {
+  return { type: "resource_filter_applied", message: "候选准入结果", data: {
+    keyword, snapshotId: snapshot.id, ...summary,
+    sourceStatus: snapshot.sourceHealth?.status ?? "healthy",
+    unhealthySources: snapshot.sourceHealth?.unhealthySources ?? [],
+  } };
+}
+
+function countPolicyRejection(filter: RealResourceProviderV2Options["policyFilter"], name: string, counts: Record<string, number>): void {
+  const reason = filter?.rejectReason?.({ name, episodeCode: null }) ?? "policy";
+  counts[reason] = (counts[reason] ?? 0) + 1;
+}
 
 /**
  * Phase 6 — the real PanSou provider as a ResourceProviderV2. It runs the real
@@ -54,7 +67,7 @@ export interface RealResourceProviderV2Options {
    *  argument makes it read `undefined` and throw, and a pre-warm error is swallowed by
    *  design, so the whole policy filter silently stops filtering. Matching the domain
    *  type exactly is what lets the compiler catch that. */
-  policyFilter?: { accept: (candidate: PolicyResource) => boolean; rank?: (candidate: PolicyResource) => number };
+  policyFilter?: { accept: (candidate: PolicyResource) => boolean; rejectReason?: (candidate: PolicyResource) => string | null; rank?: (candidate: PolicyResource) => number };
 }
 
 export class RealResourceProviderV2 implements ResourceProviderV2 {
@@ -66,6 +79,9 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
   private readonly linkHistory: ReadonlyMap<string, string> | undefined;
   private readonly policyFilter: RealResourceProviderV2Options["policyFilter"];
   private readonly observedSnapshots = new Map<string, ResourceSnapshot>();
+  private readonly filterEvents: AuditEvent[] = [];
+
+  auditTrail(): AuditEvent[] { return [...this.filterEvents]; }
   /** real snapshot id → `sN`. Content-addressed providers repeat a snapshot id
    *  across keywords; the same snapshot keeps the same alias. */
   private readonly snapshotAliases = new Map<string, string>();
@@ -97,6 +113,7 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
     let deadDropped = 0;
     let rejectedDropped = 0;
     let policyDropped = 0;
+    const policyReasons: Record<string, number> = {};
     const kept = snapshot.candidates.filter((candidate) => {
       const url = String(candidate.providerPayload?.["url"] ?? "");
       const identity = deadLinkKey(url);
@@ -122,11 +139,15 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
         // null rather than a parsed value keeps the parsing in ONE place.
         if (!this.policyFilter.accept({ name: candidate.title, episodeCode: null })) {
           policyDropped++;
+          countPolicyRejection(this.policyFilter, candidate.title, policyReasons);
           return false;
         }
       }
       return true;
     });
+    const filterSummary = { inputCount: snapshot.candidates.length, keptCount: kept.length,
+      deadLinkDropped: deadDropped, userRejectedDropped: rejectedDropped, policyDropped, policyReasons };
+    this.filterEvents.push(filterAuditEvent(snapshot, keyword, filterSummary));
     if (this.policyFilter?.rank) {
       kept.sort((a, b) =>
         this.policyFilter!.rank!({ name: a.title, episodeCode: null }) - this.policyFilter!.rank!({ name: b.title, episodeCode: null }) ||
@@ -169,6 +190,7 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
     return {
       id: snapshotAlias,
       keyword: snapshot.keyword,
+      filterSummary,
       candidates: kept.map((candidate) => {
         const postedAt = postedAtFromDatetime(candidate.providerPayload?.["datetime"]);
         const rawUrl = candidate.providerPayload?.["url"];

@@ -373,7 +373,7 @@ ${memoryBlock(options)}${userRequestBlock(options)}${protectExistingLine(options
 You own the COMPLETE acquisition judgment for ONE movie: target正片 identification (guard against remakes/wrong films — cross-check BOTH title AND year), main-file selection, quality tradeoff, rejection of extras/trailers/foreign works, import cleanup, and marking. A movie is a SINGLE video file — there are no seasons or episodes; its one synthetic coverage token is "MOVIE".
 
 Identity (the hard part): the candidate must be THIS film, not a remake, sequel, prequel, or same-IP different film. Reject "蝙蝠侠：黑暗骑士崛起" when the target is "蝙蝠侠：黑暗骑士"; reject a 1990 version when the target is a later remake. When identity is unclear, do not transfer speculatively.
-Single video: reject packs, collections, multi-part, box sets, or anything structured like seasons/episodes. ALSO reject disc images — a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film: you need ONE playable video file (mkv/mp4/ts). Prefer a 4K REMUX or 4K video over a 原盘/ISO even when the disc image is nominally higher quality; if the only candidate is a disc image, take a lower-quality VIDEO version instead. Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p). If a single transferred share folder bundles multiple quality/resolution copies of the SAME movie (e.g. 1080p + 4K WEB-DL + 4K REMUX in one folder), after flattenMovie() keep ONLY the single best playable video matching the user's quality preference (with its matching subtitles) and deleteFiles the redundant versions — only one copy of the film may remain (except protected pre-existing files on a replace run). Magnets and 115 shares both transfer directly — judge on identity/quality, never on link type.
+Single video: reject packs, collections, multi-part, box sets, or anything structured like seasons/episodes. ALSO reject disc images — a 蓝光原盘 / ISO / BDMV full-disc dump (often 50–100GB+, isVideo=false) is NOT a usable film: you need ONE playable video file (mkv/mp4/ts). Prefer a 4K REMUX or 4K video over a 原盘/ISO even when the disc image is nominally higher quality; if the only candidate is a disc image, take a lower-quality VIDEO version instead. Among confirmed identity matches prefer the highest quality VIDEO stated transparently (4K REMUX/video > 1080p > 720p). If a single transferred share folder bundles multiple quality/resolution copies of the SAME movie (e.g. 1080p + 4K WEB-DL + 4K REMUX in one folder), after flattenMovie() keep ONLY the single best playable video matching the user's quality preference (with its matching subtitles) and deleteFiles the redundant versions — only one copy of the film may remain (except protected pre-existing files on a replace run). Magnets and 115 shares are both valid sources — judge on identity/quality, never on link type; but accepted ≠ landed, so verify the real files (a magnet does not fail loud — read inspectStaging).
 
 Dead links are the norm — many shares are expired/cancelled (链接已过期 / 分享已取消 / 错误的链接). When you have RANKED several share candidates that are all the SAME target film (best resource first), hand that ORDERED list to transferUntilLanded({candidateIds:[...]}): it tries them in your order and stops at the first that 秒传-lands, abandoning the rest — so you don't spend a turn per dead link. It takes fail-loud SHARE links ONLY (115/夸克/天翼/123/光鸭 转存分享 — never magnets) and the SET must be your vetted choice (a keyword search mixes in same-named DIFFERENT works — e.g. a variety show or an unrelated cartoon — which you must exclude FIRST). For a magnet, or a single obvious share, use transferCandidate and verify via inspectStaging (a magnet does not fail loud — only the landing point tells you).
 
@@ -438,6 +438,8 @@ export interface RunTvAnimeRequest extends TaskAgentPromptOptions {
   apiCallCount?: () => number | undefined;
   /** SOFT-warning threshold derived from the configured hard budget. */
   budgetSoftAt?: number;
+  /** Agent-facing HARD budget — lets the loop label an exhausted run io_budget. */
+  hardBudget?: number;
 }
 
 export interface RunMovieRequest extends TaskAgentPromptOptions {
@@ -450,10 +452,21 @@ export interface RunMovieRequest extends TaskAgentPromptOptions {
   apiCallCount?: () => number | undefined;
   /** SOFT-warning threshold derived from the configured hard budget. */
   budgetSoftAt?: number;
+  /** Agent-facing HARD budget — lets the loop label an exhausted run io_budget. */
+  hardBudget?: number;
+}
+
+/** Optional budget fields, spread only when present (exactOptionalPropertyTypes).
+ *  Kept out of the task-agent bodies so their cyclomatic complexity stays bounded. */
+function budgetPassthrough(budgetSoftAt?: number, hardBudget?: number) {
+  return {
+    ...(budgetSoftAt === undefined ? {} : { budgetSoftAt }),
+    ...(hardBudget === undefined ? {} : { hardBudget }),
+  };
 }
 
 export async function runTvAnimeTaskAgent(request: RunTvAnimeRequest): Promise<AcquisitionAgentResult> {
-  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, budgetSoftAt, ...promptOptions } = request;
+  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, budgetSoftAt, hardBudget, ...promptOptions } = request;
   const seasonsLabel =
     target.seasons.length === 1 ? `season ${target.seasons[0]}` : `seasons ${target.seasons.join(", ")}`;
   // A user request on a complete library has nothing missing: say so, instead of an
@@ -483,12 +496,12 @@ If one pack covers multiple seasons, distribute its files in ONE plan with a mov
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
     ...(apiCallCount ? { apiCallCount } : {}),
-    ...(budgetSoftAt === undefined ? {} : { budgetSoftAt }),
+    ...budgetPassthrough(budgetSoftAt, hardBudget),
   });
 }
 
 export async function runMovieTaskAgent(request: RunMovieRequest): Promise<AcquisitionAgentResult> {
-  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, budgetSoftAt, ...promptOptions } = request;
+  const { sandbox, model, target, maxSteps, onProgress, apiCallCount, budgetSoftAt, hardBudget, ...promptOptions } = request;
   // Only a film that was obtained before this run is known to be in the library.
   const requestLine = promptOptions.userRequests
     ? `\n${
@@ -512,6 +525,6 @@ Find the one correct film, transfer it, keep the directory clean, mark it presen
     ...(maxSteps === undefined ? {} : { maxSteps }),
     ...(onProgress ? { onProgress } : {}),
     ...(apiCallCount ? { apiCallCount } : {}),
-    ...(budgetSoftAt === undefined ? {} : { budgetSoftAt }),
+    ...budgetPassthrough(budgetSoftAt, hardBudget),
   });
 }

@@ -400,17 +400,9 @@ export async function runQueuedReplaceRequest(
     // queued again decides who picks the messages up (see releaseAfterFailure).
     let requeued = false;
     try {
-      // The failure record keeps the lock season's CURRENT episodes, not the queue-time
-      // copy; none at all when the work is no longer tracked here. Only when the read
-      // itself fails does the queue-time copy stand in (never wipe a real library).
-      //
-      // "No longer tracked" still saves the season (with no episodes): the repository port
-      // has no status-only run write, and a run row without its season is worse — the DB
-      // and SQLite load a run through its tracked_seasons row (loading it throws; SQLite's
-      // tracked list, built from run rows, throws too), and InMemory derives tracking from
-      // the run records themselves. It does not happen to a claimed run in practice:
-      // untrackTitle refuses while a replace run of the work is queued or running, so this
-      // only covers a read that disagrees with the claim.
+      // Refresh report context when possible. The failure writer preserves the
+      // repository's current inventory even if this read fails or disagrees with
+      // the claim; an empty projection is not proof the files were removed.
       const current = await workStates(repository, work).then(
         (states) => states.find((s) => s.season.id === claimed.season.id) ?? null,
         () => undefined,

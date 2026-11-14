@@ -135,20 +135,21 @@ describe("TaskSandbox — multi-season distribution", () => {
     expect((await sandbox.inspectTargetDir({ season: 1 })).filter((file) => file.isVideo).map((file) => file.path)).toEqual([
       "Show.S01E02.mkv",
     ]);
-    await expect(sandbox.markObtained({ codes: ["S01E01"] })).rejects.toThrow(/SUBSCRIPTION_POLICY_MARK_BLOCKED/);
+    // E01's file was refused at the move boundary, so there is no evidence for it
+    // at all — the mark is refused as unverified (a policy-rejected file that IS
+    // in the target is refused as SUBSCRIPTION_POLICY_MARK_BLOCKED instead).
+    await expect(sandbox.markObtained({ codes: ["S01E01"] })).rejects.toThrow(/SANDBOX_OBTAINED_NOT_VERIFIED/);
     await expect(sandbox.markObtained({ codes: ["S01E02"] })).resolves.toMatchObject({ confirmed: ["S01E02"] });
   });
 
-  it("blocks a movie from finishing with an out-of-policy video already at the target", async () => {
-    const provider = new FakeResourceProviderV2({ results: { film: [{ id: "film", title: "Film 2024" }] } });
+  it("blocks a movie whose only video is out of policy, at the mark AND at finish", async () => {
+    const provider = new FakeResourceProviderV2({
+      results: { film: [{ id: "film", title: "Film 2024" }, { id: "film4k", title: "Film 2024 2160p" }] },
+    });
     const storage = new Storage115Simulator({
       packs: {
-        film: {
-          files: [
-            { path: "Film 2160p.mkv", sizeBytes: 20 },
-            { path: "Film 1080p.mkv", sizeBytes: 10 },
-          ],
-        },
+        film: { files: [{ path: "Film 1080p.mkv", sizeBytes: 10 }] },
+        film4k: { files: [{ path: "Film 2160p.mkv", sizeBytes: 20 }] },
       },
     });
     const movieDirectoryId = await storage.createDirectory({ name: "Film", parentId: "root" });
@@ -163,12 +164,13 @@ describe("TaskSandbox — multi-season distribution", () => {
 
     const search = await sandbox.searchResources("film");
     await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "film" });
-    await sandbox.markObtained({ codes: ["MOVIE"] });
+    await expect(sandbox.markObtained({ codes: ["MOVIE"] })).rejects.toThrow(/SUBSCRIPTION_POLICY_MARK_BLOCKED/);
     await expect(sandbox.finish()).rejects.toThrow(/SUBSCRIPTION_POLICY_FILE_REJECTED.*1080p.*missing_term/);
 
     const landed = await sandbox.inspectStaging();
     const rejected = landed.find((file) => file.path.includes("1080p"))!;
     await sandbox.deleteFiles({ directory: "staging", fileIds: [rejected.id] });
+    await sandbox.transferCandidate({ snapshotId: search.snapshot!.id, candidateId: "film4k" });
     await sandbox.markObtained({ codes: ["MOVIE"] });
     await expect(sandbox.finish()).resolves.toMatchObject({ coverageMet: true, obtained: ["MOVIE"] });
   });

@@ -367,7 +367,7 @@ describe("runAcquisitionV2Workflow — user request (replace_request run)", () =
     expect((await executor.listTree({ directoryId: seasonId })).map((f) => f.providerFileId)).toContain("old13");
   });
 
-  it("an episode declared file-less, marked after another episode's transfer and reported not_found, is not reconciled as obtained", async () => {
+  it("an episode declared file-less is not reconciled as obtained: its mark is refused (no evidence) and it is reported not_found", async () => {
     const executor = new FakeStorageExecutor({
       transferOutcomes: {
         cand_new13: {
@@ -410,8 +410,9 @@ describe("runAcquisitionV2Workflow — user request (replace_request run)", () =
         // The raw pre-search is the first snapshot the agent sees (s1).
         if (calls === 3) return tool("transferCandidate", { snapshotId: "s1", candidateId: "s1-1" });
         if (calls === 4) return tool("moveToSeason", { moves: [{ season: 1, fileIds: ["new13"] }] });
-        // Something landed, so the marks are accepted — E24's too, though only E13 landed.
-        if (calls === 5) return tool("markObtained", { codes: ["S01E13", "S01E24"] });
+        // Only E13 landed and is markable; E24 has no file, so its mark would be
+        // refused (no evidence) — it is reported not_found without a mark.
+        if (calls === 5) return tool("markObtained", { codes: ["S01E13"] });
         if (calls === 6) {
           return tool("reportReplacement", {
             results: [

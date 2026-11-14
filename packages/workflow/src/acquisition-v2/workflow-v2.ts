@@ -22,7 +22,9 @@ import { runAcquisitionV2, type AcquisitionV2Outcome, type RunAcquisitionV2Reque
 import type { JevJudge } from "../providers/jev-judge.js";
 import { syncSeasonNeed } from "./sync-need.js";
 import { RunStateMachine, type Compensation, type RunState } from "./run-state-machine.js";
+import type { AcquisitionOperationsSession } from "./operations-session.js";
 import type { SearchProfile } from "./search-profile.js";
+import type { VerifiedInventorySink } from "./verified-inventory.js";
 
 /**
  * Phase 7c — the outer workflow orchestration (TV/anime). It is the same
@@ -39,6 +41,7 @@ export interface V2WorkflowSeason {
 }
 
 export interface RunAcquisitionV2WorkflowRequest {
+  onInventory?: VerifiedInventorySink;
   provider: ResourceProvider;
   executor: StorageExecutor;
   model: LanguageModel;
@@ -70,6 +73,9 @@ export interface RunAcquisitionV2WorkflowRequest {
   /** Optional Jev candidate prefilter (see orchestrator.jevJudge). */
   jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
+  /** Durable side-effect ledger session (see orchestrator.operations). Also persists
+   *  the run's FSM snapshot at the terminal boundaries so a recovery can read it. */
+  operations?: AcquisitionOperationsSession;
   /** Agent memory (see orchestrator.memory). */
   memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
   /** A replace_request run (see orchestrator.userRequest). Its episodes join the
@@ -117,6 +123,20 @@ export interface RunAcquisitionV2WorkflowResult {
 }
 
 const EMPTY_OUTCOME: AcquisitionV2Outcome = { resourceSnapshots: [], decisions: [], transferAttempts: [] };
+
+/** Persist the run's FSM snapshot to the durable ledger (best-effort: a diagnostic
+ *  snapshot, not the authoritative fence — that lives in the adapter's begin/finish).
+ *  A lost lease must never mask the run's own outcome, so failures are swallowed. */
+function persistRunState(operations: AcquisitionOperationsSession | undefined, fsm: RunStateMachine): void {
+  try {
+    operations?.saveState({
+      state: fsm.state,
+      context: { compensations: fsm.pendingCompensations.map((c) => c.kind), failureReason: fsm.failedReason },
+    });
+  } catch {
+    // best-effort snapshot
+  }
+}
 
 export async function runAcquisitionV2Workflow(
   request: RunAcquisitionV2WorkflowRequest,
@@ -197,6 +217,7 @@ export async function runAcquisitionV2Workflow(
   if (before.missing.length === 0 && !request.userRequest && !request.stagingRecovery) {
     // Already current — no agent run, no side effects (the type-3 no-op path).
     fsm.send({ type: "NOTHING_TO_DO" });
+    persistRunState(request.operations, fsm);
     return {
       directories,
       missingBefore: [],
@@ -215,6 +236,12 @@ export async function runAcquisitionV2Workflow(
 
   // Run the strong TV/anime agent over the sandbox.
   const v2 = await runAcquisitionV2({
+    onSeasonVerified: async (inventory) => {
+      await request.onInventory?.(inventory);
+      // Keep the terminal report consistent with files already committed by the
+      // checkpoint, including a run that never reaches the agent's final mark.
+      priorObtained.push(...inventory.files.flatMap((file) => file.episodeCode ? [file.episodeCode] : []));
+    },
     provider: request.provider,
     executor: request.executor,
     model: request.model,
@@ -244,6 +271,7 @@ export async function runAcquisitionV2Workflow(
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.jevJudge === undefined ? {} : { jevJudge: request.jevJudge }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+    ...(request.operations ? { operations: request.operations } : {}),
     ...(request.memory ? { memory: request.memory } : {}),
     ...(request.userRequest ? { userRequest: request.userRequest } : {}),
     ...(request.stagingRecovery
@@ -293,6 +321,7 @@ export async function runAcquisitionV2Workflow(
   fsm.send({ type: "ORGANIZED" });
   fsm.send({ type: "DEDUPED" });
   fsm.send({ type: "PURGED" });
+  persistRunState(request.operations, fsm);
   return {
     directories,
     missingBefore: before.missing,
@@ -331,6 +360,7 @@ export async function runAcquisitionV2Workflow(
     if (kinds.length > 0) {
       fsm.send({ type: "COMPENSATED" });
     }
+    persistRunState(request.operations, fsm);
     console.log(
       `[workflow] run ${request.workflowRunId} saga: compensations=[${kinds.join(", ") || "none"}] → ${fsm.state}`,
     );

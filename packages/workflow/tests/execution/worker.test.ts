@@ -184,7 +184,7 @@ describe("runQueuedType2Workflow (V2 engine)", () => {
     expect(finishedAt! > notification!.createdAt).toBe(true);
   });
 
-  it("marks a claimed run failed and clears initial episode state when the agent model dies mid-run", async () => {
+  it("marks a claimed run failed while preserving initial episode state when the model dies", async () => {
     const repository = new InMemoryWorkflowRepository();
     const { title, season } = trackedFixture();
     await queueTrackingInitialization({
@@ -220,9 +220,10 @@ describe("runQueuedType2Workflow (V2 engine)", () => {
           { type: "workflow_failed" },
         ],
       },
-      episodes: [],
     });
-    await expect(repository.listEpisodeStates(season.id)).resolves.toEqual([]);
+    const episodes = await repository.listEpisodeStates(season.id);
+    expect(episodes).toHaveLength(2);
+    expect(episodes.every((episode) => !episode.obtained)).toBe(true);
   });
 });
 

@@ -14,7 +14,9 @@ import { resourceLinkKey } from "./resource-link.js";
 import { resourceFingerprintMatches, type LinkHistoryRow } from "../user-requests.js";
 import type { UserRequestPromptInput } from "./user-request-block.js";
 import { RealResourceProviderV2 } from "./real-provider-adapter.js";
+import type { VerifiedInventorySink } from "./verified-inventory.js";
 import { RealStorageV2 } from "./real-storage-adapter.js";
+import type { AcquisitionOperationsSession } from "./operations-session.js";
 import { budgetSoftThreshold } from "./agent-loop-guards.js";
 import { TaskSandbox } from "./sandbox.js";
 import { JANITOR_LIST_DEPTH } from "../execution/staging-depth.js";
@@ -44,6 +46,7 @@ export type AcquisitionV2Target =
   | ({ kind: "movie" } & MovieTarget);
 
 export interface RunAcquisitionV2Request {
+  onSeasonVerified?: VerifiedInventorySink;
   provider: ResourceProvider;
   executor: StorageExecutor;
   model: LanguageModel;
@@ -76,6 +79,10 @@ export interface RunAcquisitionV2Request {
   /** Filters known-dead candidates from search results before the agent sees them,
    *  and records newly-proven-dead links from failed transfers (#15). */
   deadLinkStore?: DeadLinkStore;
+  /** Durable side-effect ledger session for this run (claimed by the runner). When
+   *  present, each transfer registers its intent before submitting and an already
+   *  unresolved operation is refused instead of resubmitted (§8.4). Absent = no ledger. */
+  operations?: AcquisitionOperationsSession;
   /** assrt token (Settings → 字幕来源). When set AND origin is non-CN AND the
    *  drive is 115, the orchestrator pre-warms a subtitle snapshot and the agent
    *  gets viewSubtitleSnapshot/transferSubtitle tools. Undefined/empty = no
@@ -282,6 +289,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     registry,
     workflowRunId: request.workflowRunId,
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+    ...(request.operations ? { operations: request.operations } : {}),
   });
   const need = request.target.kind === "tv" ? needForTvTarget(request.target) : needForMovie();
   const userRequest = request.userRequest;
@@ -350,6 +358,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
         }
       : undefined;
   const sandbox = new TaskSandbox({
+    ...(request.onSeasonVerified ? { onSeasonVerified: request.onSeasonVerified } : {}),
     provider,
     storage,
     // The agent names aliases, never urls. Two PanSou titles of one share only
@@ -626,7 +635,10 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     // hard limit minus the harness cleanup reserve) so the nudge lands before the
     // wall the agent can hit, including when MEDIA_TRACK_115_MAX_API_CALLS overrides it.
     ...(request.executor.apiCallBudget
-      ? { budgetSoftAt: budgetSoftThreshold(request.executor.apiCallBudget()) }
+      ? {
+          budgetSoftAt: budgetSoftThreshold(request.executor.apiCallBudget()),
+          hardBudget: request.executor.apiCallBudget(),
+        }
       : {}),
     // Inject the prefetched candidate count into the prompt so the pointer renders.
     ...(prefetchedCandidateCount === undefined ? {} : { prefetchedCandidateCount }),
@@ -729,7 +741,17 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
   return {
     ...result,
     outcome: { resourceSnapshots, decisions, transferAttempts },
-    auditEvents: sandbox.auditTrail(),
+    auditEvents: [
+      ...sandbox.auditTrail(),
+      ...provider.auditTrail(),
+      // Durable business stop reason (研究文档 §11.1): rides the existing audit
+      // channel into the snapshot — no new schema. SDK finishReason stays separate.
+      {
+        type: "loop_stopped",
+        message: `智能体循环结束：${result.stopReason}（共 ${result.steps} 步）`,
+        data: { stopReason: result.stopReason, steps: result.steps },
+      },
+    ],
     ...(userRequest
       ? {
           replacement: {

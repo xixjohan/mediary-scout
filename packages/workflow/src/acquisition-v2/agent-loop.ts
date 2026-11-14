@@ -13,6 +13,8 @@ import {
   prepareStepSystemOverride,
 } from "./agent-loop-guards.js";
 import { interpretTool, type AgentToolEvent } from "./activity.js";
+import { wrapTools, type ToolCallMeta } from "./agent-tool-wrap.js";
+import { deriveLoopStopReason, type LoopStopReason } from "./agent-stop-reason.js";
 import { LINK_HISTORY_PROMPT } from "./link-history.js";
 import { createTitleResearchTools, type TitleResearchConfig } from "./title-research.js";
 import { stagingKeptUnmovedOf } from "./directory-lifecycle.js";
@@ -66,55 +68,30 @@ function peakInputTokensOf(turn: unknown): number | undefined {
   return values.length > 0 ? Math.max(...values) : undefined;
 }
 
-/**
- * Opt-in observability (MEDIA_TRACK_AGENT_LOG=1): log every sandbox tool call the
- * agent makes — the keyword it searches, the candidate it transfers, what it
- * moves/marks, and the evidence that comes back. Off by default (silent in
- * tests); turned on for live e2e so the agent loop is not a black box.
- */
-/**
- * Wrap every tool's execute so each call can (a) emit a cleaned progress event for
- * the activity page (always, when `onToolCall` is given) and (b) log the raw
- * call/result to stdout (opt-in via MEDIA_TRACK_AGENT_LOG=1). The wrapper is a
- * passthrough when neither is active. The progress emit is best-effort — a throw
- * in `onToolCall` must never break the agent's tool execution.
- */
-function wrapTools(
-  tools: ToolSet,
-  options: { onToolCall?: (toolName: string, args: Record<string, unknown>) => void; log: boolean },
-): ToolSet {
-  if (!options.onToolCall && !options.log) {
-    return tools;
-  }
-  const wrapped: Record<string, unknown> = {};
-  for (const [name, tool] of Object.entries(tools)) {
-    const execute = (tool as { execute: (args: unknown, options: unknown) => Promise<unknown> }).execute;
-    wrapped[name] = {
-      ...(tool as object),
-      execute: async (args: unknown, executeOptions: unknown) => {
-        if (options.onToolCall) {
-          try {
-            options.onToolCall(name, (args && typeof args === "object" ? args : {}) as Record<string, unknown>);
-          } catch {
-            // progress is a display nicety — never let it break a tool call
-          }
-        }
-        if (options.log) {
-          const argStr =
-            args && typeof args === "object" && Object.keys(args).length > 0
-              ? ` ${JSON.stringify(args).slice(0, 240)}`
-              : "";
-          console.log(`[agent] → ${name}${argStr}`);
-        }
-        const result = await execute(args, executeOptions);
-        if (options.log) {
-          console.log(`[agent] ← ${name}: ${JSON.stringify(result).slice(0, 400)}`);
-        }
-        return result;
-      },
-    };
-  }
-  return wrapped as ToolSet;
+/** The video-acquisition surface: searching for and transferring new resources.
+ *  Pointless once every needed token is confirmed obtained — the sandbox already
+ *  refuses transferCandidate/transferUntilLanded post-coverage, so hiding these
+ *  stops the model burning steps on refused calls and steers it to organize →
+ *  mark → finish (§9.1 状态门控). The soft subtitle goal and guidance tools are
+ *  deliberately NOT gated. */
+const ACQUISITION_TOOL_NAMES: ReadonlySet<string> = new Set([
+  "viewResourceSnapshot",
+  "searchResources",
+  "transferCandidate",
+  "transferUntilLanded",
+]);
+
+/** Per-step activeTools override: once coverage is met, drop the acquisition
+ *  tools so only observe/organize/commit/finish remain. Returns undefined when
+ *  nothing should change (coverage not met, or no acquisition tool present — e.g.
+ *  the finish-only recovery turn). */
+export function coverageGatedActiveTools(
+  toolNames: readonly string[],
+  coverageMet: boolean,
+): string[] | undefined {
+  if (!coverageMet) return undefined;
+  const gated = toolNames.filter((name) => !ACQUISITION_TOOL_NAMES.has(name));
+  return gated.length === toolNames.length ? undefined : gated;
 }
 
 /** Build the AI SDK ToolSet that exposes the sandbox to the model. Each tool's
@@ -132,7 +109,7 @@ export function buildSandboxToolSet(
      *  can land external subtitle urls (transferSubtitleUrl capability probe —
      *  today 115; any brand lights up by implementing the method). */
     subtitle?: boolean;
-    onToolCall?: (toolName: string, args: Record<string, unknown>) => void;
+    onToolCall?: (toolName: string, args: Record<string, unknown>, meta: ToolCallMeta) => void;
     /** The run's drive brand — selects the brand-specific dead-links section. */
     storageProvider?: string;
     /** Leftover staging: no search, no transfer, no subtitle landing.
@@ -377,6 +354,9 @@ export interface AcquisitionAgentRequest {
   /** SOFT-warning threshold, derived from the configured HARD budget upstream
    *  (budgetSoftThreshold). Absent → falls back to BUDGET_SOFT_REMIND_AT. */
   budgetSoftAt?: number;
+  /** Agent-facing HARD budget (apiCallBudget). Lets the stop-reason derivation
+   *  label an exhausted-budget run io_budget. Absent (fakes/sim) → not derivable. */
+  hardBudget?: number;
 }
 
 export interface AcquisitionAgentResult {
@@ -386,6 +366,8 @@ export interface AcquisitionAgentResult {
   steps: number;
   /** Final honest coverage picture, read from the sandbox after the loop. */
   coverage: { coverageMet: boolean; obtained: string[]; missing: string[]; subtitleFallback: boolean };
+  /** Why the loop ended (业务停止原因, separate from the SDK finishReason). */
+  stopReason: LoopStopReason;
 }
 
 /** Run the strong agent's self-driven loop over the sandbox tools. */
@@ -401,8 +383,8 @@ export async function runAcquisitionAgent(
     ...(request.storageProvider === undefined ? {} : { storageProvider: request.storageProvider }),
     ...(onProgress
       ? {
-          onToolCall: (toolName: string, args: Record<string, unknown>) =>
-            onProgress({ toolName, args, ...interpretTool(toolName, args) }),
+          onToolCall: (toolName: string, args: Record<string, unknown>, meta: ToolCallMeta) =>
+            onProgress({ toolName, args, ...interpretTool(toolName, args), ...meta }),
         }
       : {}),
   });
@@ -438,7 +420,17 @@ export async function runAcquisitionAgent(
           ...(typeof request.budgetSoftAt === "number" ? { budgetSoftAt: request.budgetSoftAt } : {}),
           ...(request.stagingRecovery ? { stagingRecovery: true } : {}),
         });
-        return overriddenSystem ? { system: overriddenSystem } : undefined;
+        // Once coverage is met, hide the acquisition surface so the model only
+        // observes/organizes/commits (§9.1). `?.` guards partial test doubles.
+        const activeTools = coverageGatedActiveTools(
+          Object.keys(toolSet),
+          request.sandbox.isCoverageMet?.() ?? false,
+        );
+        if (!overriddenSystem && !activeTools) return undefined;
+        return {
+          ...(overriddenSystem ? { system: overriddenSystem } : {}),
+          ...(activeTools ? { activeTools } : {}),
+        };
       },
     });
 
@@ -465,6 +457,7 @@ export async function runAcquisitionAgent(
             text: `[Deterministic Fallback] 上游 AI 网关 503 异常，已自动切换规则降级完成获取：${fallback.candidateTitle ?? ""}`,
             steps: 1,
             coverage: await request.sandbox.finish(),
+            stopReason: "coverage_met",
           };
         }
         throw retryError;
@@ -483,6 +476,7 @@ export async function runAcquisitionAgent(
             text: `[Deterministic Fallback] 上游 AI 内容审查阻断，已自动切换规则降级完成获取：${fallback.candidateTitle ?? ""}`,
             steps: 1,
             coverage: await request.sandbox.finish(),
+            stopReason: "coverage_met",
           };
         }
         throw new AgentContentFilterError();
@@ -513,6 +507,7 @@ export async function runAcquisitionAgent(
           text: `[Deterministic Fallback] 智能体回答被模型内容审查切断，已自动通过确定性规则完成优质资源转存：${fallback.candidateTitle ?? ""}`,
           steps,
           coverage: await request.sandbox.finish(),
+          stopReason: "coverage_met",
         };
       }
       throw new AgentContentFilterError();
@@ -579,10 +574,18 @@ export async function runAcquisitionAgent(
       `[agent] loop done: steps=${steps} tokens=${total ?? "n/a"}${perStep}${peakStr} finish=${result.finishReason}`,
     );
   }
+  const apiCallsSpent = request.apiCallCount?.();
   return {
     text: result.text,
     steps,
     coverage: await request.sandbox.finish(),
+    stopReason: deriveLoopStopReason({
+      steps: result.steps ?? [],
+      ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason }),
+      stepLimit: maxSteps,
+      ...(typeof apiCallsSpent === "number" ? { apiCallsSpent } : {}),
+      ...(typeof request.hardBudget === "number" ? { hardBudget: request.hardBudget } : {}),
+    }),
   };
 }
 

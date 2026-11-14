@@ -142,6 +142,10 @@ async function crawlDriveDirectories(
   return { folders: discoveredFolders, aborted: false };
 }
 
+function isAnimationMatch(candidate: { tmdbId: number; genreIds?: number[] }, tmdbId: number | undefined): boolean {
+  return candidate.tmdbId === (tmdbId ?? candidate.tmdbId) && candidate.genreIds?.includes(16) === true;
+}
+
 async function resolveMetadata(
   item: DiscoveredMediaFolder,
   initialKind: "movie" | "tv",
@@ -152,6 +156,7 @@ async function resolveMetadata(
   resolvedTitle: string;
   resolvedYear: number;
   mediaKind: "movie" | "tv";
+  animation?: boolean;
   matchedPosterPath?: string | null;
   seasons?: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> | undefined;
 }> {
@@ -160,6 +165,7 @@ async function resolveMetadata(
   let resolvedYear = item.parsedYear ?? 2024;
   let mediaKind: "movie" | "tv" = initialKind;
   let matchedPosterPath: string | null = null;
+  let animation = false;
   let seasons: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> | undefined;
 
   const searchQuery = item.parsedTitle ?? item.folderName;
@@ -170,6 +176,7 @@ async function resolveMetadata(
         ? candidates.find((c) => c.tmdbId === resolvedTmdbId) ?? candidates[0]
         : candidates[0];
       if (topMatch) {
+        animation = isAnimationMatch(topMatch, resolvedTmdbId);
         if (!resolvedTmdbId) {
           resolvedTmdbId = topMatch.tmdbId;
           resolvedTitle = topMatch.title;
@@ -196,7 +203,7 @@ async function resolveMetadata(
     }
   }
 
-  return { resolvedTmdbId, resolvedTitle, resolvedYear, mediaKind, matchedPosterPath, seasons };
+  return { resolvedTmdbId, resolvedTitle, resolvedYear, mediaKind, animation, matchedPosterPath, seasons };
 }
 
 function buildExistingEpisodes(
@@ -279,6 +286,7 @@ async function adoptDiscoveredMedia(
     resolvedTitle: string;
     resolvedYear: number;
     mediaKind: "movie" | "tv";
+    animation?: boolean;
     matchedPosterPath?: string | null;
     seasons?: Array<{ seasonNumber: number; totalEpisodes: number; latestAiredEpisode: number }> | undefined;
   },
@@ -287,7 +295,9 @@ async function adoptDiscoveredMedia(
   const titleObj: MediaTitle = {
     id: buildTitleId({ source: "tmdb", mediaKind: meta.mediaKind, id: meta.resolvedTmdbId }),
     tmdbId: meta.resolvedTmdbId,
-    type: meta.mediaKind,
+    // TMDB's API namespace is "tv" for animated series as well. Preserve the
+    // explicit Anime shelf so a later acquisition does not create an empty TV copy.
+    type: meta.mediaKind === "tv" && (ctx.category === "anime" || meta.animation) ? "anime" : meta.mediaKind,
     title: meta.resolvedTitle,
     originalTitle: meta.resolvedTitle,
     year: meta.resolvedYear,
@@ -460,7 +470,7 @@ export async function runReverseStorageScan(options: ReverseStorageScannerOption
       fileManager,
       accountId,
       storageId,
-      category,
+      category: category === "auto" && options.targetCid === options.storageCids?.animeCid ? "anime" : category,
       repo,
       searchProvider,
       storageCids: options.storageCids,

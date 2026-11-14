@@ -10,6 +10,7 @@ import { FakeStorageExecutor } from "../../src/domain/fakes.js";
 import { InMemoryWorkflowRepository } from "../../src/persistence/repository.js";
 import { createEpisodeStates, type MediaTitle, type ResourceSnapshot, type TrackedSeason } from "../../src/domain.js";
 import type { ResourceProvider } from "../../src/domain/ports.js";
+import { handleWorkflowRunFailure } from "../../src/execution/workflow-failure-handler.js";
 
 const USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
@@ -115,6 +116,63 @@ async function reserveQueuedRun(
 }
 
 describe("runner-v2 persist wrappers — V2 engine results persisted in the existing record shapes", () => {
+  it("keeps a newly moved episode when the model fails before markObtained or finish", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const season = trackedSeason();
+    await reserveQueuedRun(repository, tvTitle, season, "type2_init");
+    const claimed = (await repository.getWorkflowRunSnapshot(workflowRun.id))!;
+    const file = { id: "new_1", providerFileId: "new_1", storageDirectoryId: "unused", name: "示例剧 - S01E01.mp4", sizeBytes: 1000, episodeCode: "S01E01" };
+    const storage = new FakeStorageExecutor({ transferOutcomes: { new_candidate: { status: "succeeded", providerMessage: "ok", files: [file] } } });
+    const provider: ResourceProvider = { search: async ({ keyword }) => ({ id: "snap_new", provider: "fake", keyword,
+      createdAt: workflowRun.startedAt, candidates: [{ id: "new_candidate", snapshotId: "snap_new", index: 0,
+        title: "示例剧 S01E01", type: "115", source: "fake", providerPayload: { url: "https://115.com/s/testfixture" } }],
+    }) };
+    let step = 0;
+    const model = new MockLanguageModelV3({ doGenerate: async () => {
+      step++;
+      if (step > 2) throw new Error("model failed after move");
+      const toolName = step === 1 ? "transferCandidate" : "moveToSeason";
+      const input = step === 1 ? { snapshotId: "s1", candidateId: "s1-1" } : { moves: [{ season: 1, fileIds: ["new_1"] }] };
+      return { content: [{ type: "tool-call" as const, toolCallId: `move_${step}`, toolName, input: JSON.stringify(input) }],
+        finishReason: { unified: "tool-calls" as const, raw: "tool-calls" as const }, usage: USAGE, warnings: [] };
+    } });
+    await expect(runType2InitializationV2AndPersist({ title: tvTitle, season, categoryParentId: "tv_root", resourceProvider: provider,
+      storage, model, repository, workflowRun })).rejects.toThrow("model failed after move");
+    await handleWorkflowRunFailure({ repository, claimed, error: new Error("model failed after move"), now: () => "2026-11-14T00:00:00Z" });
+    const episodes = await repository.listEpisodeStates(season.id);
+    expect(episodes.find((ep) => ep.episodeCode === "S01E01")).toMatchObject({ obtained: true, verifiedFileIds: ["new_1"] });
+    expect(episodes.filter((ep) => ep.obtained)).toHaveLength(1);
+    expect((await repository.getWorkflowRunSnapshot(workflowRun.id))?.workflowRun.status).toBe("failed");
+  });
+
+  it("checkpoints 198 existing files before a later model failure (only E197 remains missing)", async () => {
+    const repository = new InMemoryWorkflowRepository();
+    const season = { ...trackedSeason(), totalEpisodes: 210, latestAiredEpisode: 199 };
+    await reserveQueuedRun(repository, tvTitle, season, "type2_init");
+    const storage = new FakeStorageExecutor();
+    const showId = await storage.createDirectory({ parentId: "tv_root", name: "示例剧 (2024) {tmdb-100}" });
+    const dirId = await storage.createDirectory({ parentId: showId, name: "Season 01" });
+    storage.seedDirectoryFiles(dirId, Array.from({ length: 199 }, (_, i) => i + 1).filter((n) => n !== 197).map((n) => ({
+      id: `file_${n}`, providerFileId: `file_${n}`, storageDirectoryId: dirId,
+      name: `示例剧 - S01E${String(n).padStart(2, "0")}.mp4`, sizeBytes: 1000,
+      episodeCode: `S01E${String(n).padStart(2, "0")}`,
+    })));
+    storage.seedDirectoryFiles(dirId, [
+      { id: "empty_197", providerFileId: "empty_197", storageDirectoryId: dirId, name: "示例剧 - S01E197.mp4", sizeBytes: 0, episodeCode: "S01E197" },
+      { id: "other_season", providerFileId: "other_season", storageDirectoryId: dirId, name: "示例剧 - S02E01.mp4", sizeBytes: 1000, episodeCode: "S02E01" },
+    ]);
+    await expect(runType2InitializationV2AndPersist({
+      title: tvTitle, season, categoryParentId: "tv_root", resourceProvider: emptyProvider(), storage,
+      model: new MockLanguageModelV3({ doGenerate: async () => { throw new Error("model unavailable"); } }),
+      repository, workflowRun,
+    })).rejects.toThrow("model unavailable");
+    const episodes = await repository.listEpisodeStates(season.id);
+    expect(episodes.filter((ep) => ep.obtained)).toHaveLength(198);
+    expect(episodes.filter((ep) => ep.airStatus === "aired" && !ep.obtained).map((ep) => ep.episodeCode)).toEqual(["S01E197"]);
+    expect(episodes.find((ep) => ep.episodeCode === "S01E198")?.verifiedFileIds).toEqual(["file_198"]);
+    expect((await repository.listTrackedSeasonStates())[0]?.season.storageDirectoryId).toBe(dirId);
+  });
+
   it("type2 init: persists one type2_init snapshot with the tracked season and episodes", async () => {
     const repository = new InMemoryWorkflowRepository();
     await reserveQueuedRun(repository, tvTitle, trackedSeason(), "type2_init");

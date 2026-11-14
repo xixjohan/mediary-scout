@@ -74,6 +74,7 @@ import type {
 import { InMemoryReverseScanStore } from "./in-memory-reverse-scan.js";
 import { SqliteMediaLibraryRepository } from "./sqlite/sqlite-media-library.js";
 import { SQLITE_SCHEMA, upgradeMediaLibraryShape } from "./sqlite/sqlite-schema.js";
+import { AcquisitionOperationStore } from "./acquisition-operations.js";
 import Database from "better-sqlite3";
 import { hasIncompleteEpisodeStates, syncSeasonAgainstMetadata } from "../execution/season-sync.js";
 
@@ -105,12 +106,16 @@ export function mergeEpisodeStatesPreservingObtained(incoming: EpisodeState[], c
 }
 
 export function mergeSeasonPreservingCurrent(current: TrackedSeason, incoming: TrackedSeason, episodes: EpisodeState[]): TrackedSeason {
-  if (current.status === "completed" || incoming.status !== "completed" ||
-      current.totalEpisodes <= 0 || current.latestAiredEpisode < current.totalEpisodes) return current;
+  current = { ...current,
+    totalEpisodes: Math.max(current.totalEpisodes, incoming.totalEpisodes),
+    latestAiredEpisode: Math.max(current.latestAiredEpisode, incoming.latestAiredEpisode),
+    storageDirectoryId: current.storageDirectoryId || incoming.storageDirectoryId,
+  };
+  if (current.totalEpisodes <= 0 || current.latestAiredEpisode < current.totalEpisodes) return { ...current, status: "active" };
   const obtained = new Set(episodes.filter((episode) => episode.obtained).map((episode) => episode.episodeCode));
   const prefix = `S${String(current.seasonNumber).padStart(2, "0")}E`;
   for (let number = 1; number <= current.totalEpisodes; number++) {
-    if (!obtained.has(`${prefix}${String(number).padStart(2, "0")}`)) return current;
+    if (!obtained.has(`${prefix}${String(number).padStart(2, "0")}`)) return { ...current, status: "active" };
   }
   return { ...current, status: "completed" };
 }
@@ -356,6 +361,10 @@ export type WorkflowRunReservationResult =
 
 export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, UserRequestStore, ChatConversationStore, MediaRequestStore, StrmStore, MediaServerStore, ReverseScanStore {
   readonly mediaLibraryStore: SqliteMediaLibraryRepository;
+  /** Durable side-effect ledger (leases + operation intents) for acquisition scopes
+   *  (account × drive × work). The runner claims a lease per run; the storage adapter
+   *  registers each transfer intent before submitting (§8.4). */
+  readonly acquisitionOperations: AcquisitionOperationStore;
   syncTrackedSeasonForManualSearch(input: ManualSeasonSyncInput): Promise<TrackedSeasonState | null>;
   saveWorkflowRunSnapshot(
     input: PersistWorkflowRunSnapshotInput & {
@@ -368,6 +377,8 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
       /** Finalize only the still-running scoped run and merge the latest episode bucket. */
       requireRunningWorkflowRun?: boolean;
       mergeCurrentEpisodes?: boolean;
+      /** A verified inventory checkpoint may repair this season's directory binding. */
+      inventoryDirectoryId?: string;
       requireNoMissingEpisodes?: boolean;
     },
   ): Promise<void>;
@@ -434,6 +445,14 @@ export interface WorkflowRepository extends DeadLinkStore, AgentMemoryStore, Use
   /** Append one live agent tool-call step to the run's durable trace. Best-effort,
    *  fire-and-forget at the call site (a trace write must never fail an acquisition). */
   appendAgentStep(workflowRunId: string, step: AgentStep): Promise<void>;
+  /** Record a tool call's post-execution outcome onto its existing trace step,
+   *  matched by callId. Best-effort, fire-and-forget; a no-op when no step carries
+   *  that callId (e.g. the start write was lost). Never fails an acquisition. */
+  updateAgentStepEnd(
+    workflowRunId: string,
+    callId: string,
+    end: { endedAt: string; status: "succeeded" | "failed"; error?: string },
+  ): Promise<void>;
   /** The run's ordered step trace for post-mortem复盘. When a scope is given it is
    *  fail-closed (returns [] if the run isn't visible to that scope); no scope =
    *  raw read (direct-SQL复盘 / autonomous diagnosis). */
@@ -686,6 +705,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       transaction: <T>(fn: () => T) => memDb.transaction(fn),
     });
   })();
+  public readonly acquisitionOperations: AcquisitionOperationStore = new AcquisitionOperationStore(new Database(":memory:"));
   async syncTrackedSeasonForManualSearch(input: ManualSeasonSyncInput): Promise<TrackedSeasonState | null> {
     const run = this.workflowRuns.get(input.workflowRunId);
     if (!run || run.workflowRun.status !== "running" || run.season.id !== input.trackedSeasonId ||
@@ -1518,16 +1538,27 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     return true;
   }
 
-  private mergeCurrentManualSnapshot(snapshot: PersistWorkflowRunSnapshotInput, key: string): void {
+  private mergeCurrentManualSnapshot(snapshot: PersistWorkflowRunSnapshotInput, key: string, inventoryDirectoryId?: string): void {
     snapshot.episodes = mergeEpisodeStatesPreservingObtained(snapshot.episodes, this.episodesBySeason.get(key) ?? []);
     const latest = this.latestScopedSeasonSnapshot(snapshot);
     if (latest) snapshot.season = mergeSeasonPreservingCurrent(latest.season, snapshot.season, snapshot.episodes);
+    if (inventoryDirectoryId) {
+      snapshot.season.storageDirectoryId = inventoryDirectoryId;
+      // SQLite loads every run through the current tracked_seasons row. Mirror
+      // that binding in memory even when two runs have identical startedAt.
+      for (const stored of this.workflowRuns.values()) {
+        if (stored.season.id === snapshot.season.id && stored.accountId === snapshot.accountId &&
+            stored.connectedStorageId === snapshot.connectedStorageId) {
+          stored.season = { ...stored.season, storageDirectoryId: inventoryDirectoryId };
+        }
+      }
+    }
   }
 
   async saveWorkflowRunSnapshot(
-    input: PersistWorkflowRunSnapshotInput & { keepCurrentEpisodes?: boolean; requireTrackedSeason?: boolean; requireRunningWorkflowRun?: boolean; mergeCurrentEpisodes?: boolean; requireNoMissingEpisodes?: boolean },
+    input: PersistWorkflowRunSnapshotInput & { keepCurrentEpisodes?: boolean; requireTrackedSeason?: boolean; requireRunningWorkflowRun?: boolean; mergeCurrentEpisodes?: boolean; requireNoMissingEpisodes?: boolean; inventoryDirectoryId?: string },
   ): Promise<void> {
-    const { keepCurrentEpisodes, requireTrackedSeason: _requireTrackedSeason, requireRunningWorkflowRun, mergeCurrentEpisodes, requireNoMissingEpisodes, ...snapshot } = input;
+    const { keepCurrentEpisodes, requireTrackedSeason: _requireTrackedSeason, requireRunningWorkflowRun, mergeCurrentEpisodes, requireNoMissingEpisodes, inventoryDirectoryId, ...snapshot } = input;
     validateWorkflowRunSnapshot(snapshot);
 
     const cloned = cloneWorkflowValue(snapshot);
@@ -1550,7 +1581,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     if (!this.canSaveManualSnapshot(cloned, existing, { requireRunning: requireRunningWorkflowRun === true,
       requireTracked, requireNoMissing: requireNoMissingEpisodes === true })) return;
     const bucketKey = seasonScopeKey(cloned.season.id, cloned.connectedStorageId);
-    if (mergeCurrentEpisodes && !shouldKeepEpisodes) this.mergeCurrentManualSnapshot(cloned, bucketKey);
+    if (mergeCurrentEpisodes && !shouldKeepEpisodes) this.mergeCurrentManualSnapshot(cloned, bucketKey, inventoryDirectoryId);
     if (shouldKeepEpisodes) {
       const current = this.episodesBySeason.get(bucketKey);
       if (current) cloned.episodes = cloneWorkflowValue(current);
@@ -1837,6 +1868,22 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const list = this.agentSteps.get(workflowRunId) ?? [];
     list.push(cloneWorkflowValue(step));
     this.agentSteps.set(workflowRunId, list);
+  }
+
+  async updateAgentStepEnd(
+    workflowRunId: string,
+    callId: string,
+    end: { endedAt: string; status: "succeeded" | "failed"; error?: string },
+  ): Promise<void> {
+    const step = this.agentSteps.get(workflowRunId)?.find((s) => s.callId === callId);
+    if (!step) {
+      return;
+    }
+    step.endedAt = end.endedAt;
+    step.status = end.status;
+    if (end.error !== undefined) {
+      step.error = end.error;
+    }
   }
 
   async listAgentSteps(workflowRunId: string, scopeArg: ScopeArg = undefined): Promise<AgentStep[]> {

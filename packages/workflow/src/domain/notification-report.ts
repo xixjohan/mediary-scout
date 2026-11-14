@@ -83,6 +83,7 @@ export interface SeasonReportInput {
    *  transferBlockReason 同一形制:只在 noCoverage 时有意义,存在则覆盖
    *  「暂未找到可用资源」——源连不上不等于这部片子没有资源(别甩锅)。 */
   searchSourceFaultReason?: string | null;
+  searchFilterReason?: string | null;
   /** Real landed video files: count + summed bytes. The card/push show the true
    *  per-episode size from these (总字节 / 文件数), not a claimed quality tag. */
   fileCount?: number;
@@ -109,6 +110,7 @@ function sizeFields(input: { fileCount?: number; totalBytes?: number }): {
 export function emptyRunOutcome(
   transferBlockReason?: string | null,
   searchSourceFaultReason?: string | null,
+  searchFilterReason?: string | null,
 ): { status: NotificationReportStatus; lines: string[] } {
   if (transferBlockReason && transferBlockReason.trim()) {
     // 转存受阻优先于搜索源故障:能走到转存说明资源已经找到了,用户手上的问题是
@@ -122,6 +124,7 @@ export function emptyRunOutcome(
     // 看一眼就该知道去修配置/等源恢复,而不是以为片源不存在。
     return { status: "failed", lines: [searchSourceFaultReason.trim()] };
   }
+  if (searchFilterReason?.trim()) return { status: "failed", lines: [searchFilterReason.trim()] };
   return { status: "no_coverage", lines: ["暂未找到可用资源 · 将持续尝试"] };
 }
 
@@ -142,7 +145,7 @@ export function buildSeasonReport(input: SeasonReportInput): NotificationReport 
     return {
       titleName: input.titleName,
       seasonLabel: label,
-      ...emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason),
+      ...emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason, input.searchFilterReason),
       newlyObtained: [],
       realMissing,
       ...(input.meta ?? {}),
@@ -200,6 +203,7 @@ export function buildSeriesReport(input: {
   transferBlockReason?: string | null;
   /** See SeasonReportInput.searchSourceFaultReason — honest 搜索源故障. */
   searchSourceFaultReason?: string | null;
+  searchFilterReason?: string | null;
   meta?: NotificationTitleMeta;
   fileCount?: number;
   totalBytes?: number;
@@ -208,7 +212,7 @@ export function buildSeriesReport(input: {
     return {
       titleName: input.titleName,
       seasonLabel: null,
-      ...emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason),
+      ...emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason, input.searchFilterReason),
       newlyObtained: [],
       realMissing: [],
       ...(input.meta ?? {}),

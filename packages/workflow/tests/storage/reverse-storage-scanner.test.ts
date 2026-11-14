@@ -127,7 +127,7 @@ describe("runReverseStorageScan", () => {
     expect(tracked).toHaveLength(2);
   });
 
-  it("accurately discovers TV show with Season XX subfolders and marks episodes obtained without collapsing to 1 episode", async () => {
+  it.each([["tv", "tv"], ["anime", "anime"], ["auto", "anime"]] as const)("restores %s shelf identity with Season folders and obtained episodes", async (category, expectedType) => {
     const mock = new MockDriveFileManager();
     mock.setDirectory("target_root", {
       items: [
@@ -168,6 +168,7 @@ describe("runReverseStorageScan", () => {
         {
           tmdbId: 253811,
           mediaType: "tv",
+          genreIds: category === "auto" ? [16] : [],
           title: "桃源暗鬼",
           originalTitle: "桃源暗鬼",
           year: 2025,
@@ -190,6 +191,7 @@ describe("runReverseStorageScan", () => {
       targetCid: "target_root",
       repo,
       searchProvider: searchProvider as any,
+      category,
       pacerDelayMs: 0,
     });
 
@@ -203,6 +205,7 @@ describe("runReverseStorageScan", () => {
 
     const s1 = tracked[0]!;
     expect(s1.title.tmdbId).toBe(253811);
+    expect(s1.title.type).toBe(expectedType);
     expect(s1.season.seasonNumber).toBe(1);
     // 关键断言：总集数必须是权威 12 集，绝不能缩水为 1 集！
     expect(s1.season.totalEpisodes).toBe(12);

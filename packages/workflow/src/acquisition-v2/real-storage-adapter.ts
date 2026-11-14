@@ -1,4 +1,4 @@
-import type { TransferAttempt } from "../domain.js";
+import type { ResourceCandidate, TransferAttempt, TransferOutcome } from "../domain.js";
 import { parseGuangYaShareUrl } from "../storage/guangya-client.js";
 import { parsePan123ShareUrl } from "../storage/pan123-storage-executor.js";
 import type { StorageExecutor } from "../domain/ports.js";
@@ -13,6 +13,9 @@ import {
   UNRESOLVED_MAGNET_DEAD_LINK_TTL_MS,
   type DeadLinkStore,
 } from "./dead-links.js";
+import type { AcquisitionOperation, OperationStatus } from "../persistence/acquisition-operations.js";
+import type { AcquisitionOperationsSession } from "./operations-session.js";
+import { resourceLinkKey } from "./resource-link.js";
 import type { SimTreeFile, StorageV2, SubtitleLandingResult, TransferAttemptResult } from "./storage-115-simulator.js";
 
 /**
@@ -40,6 +43,55 @@ export interface RealStorageV2Options {
   /** When set, a transfer PROVEN dead (115 fail-loud / magnet-no-秒传) records the
    *  link so future PanSou searches filter it out before the agent sees it (#15). */
   deadLinkStore?: DeadLinkStore;
+  /** When set, every transfer is registered in the durable side-effect ledger
+   *  BEFORE the provider call and finished after; an already-registered unresolved
+   *  operation (any run) is refused instead of resubmitted (§8.4). Absent = no ledger. */
+  operations?: AcquisitionOperationsSession;
+}
+
+/** The ledger status for a finished transfer: the typed outcome when the executor
+ *  classified it, else a conservative fallback (a success landed; a silent miss is
+ *  an instant_miss; anything else stays unknown so it is never blindly resubmitted). */
+function operationStatusFromAttempt(attempt: TransferAttempt): OperationStatus {
+  if (attempt.outcome !== undefined) return attempt.outcome;
+  if (attempt.status === "succeeded") return "landed";
+  if (attempt.status === "no_target_change") return "instant_miss";
+  return "unknown";
+}
+
+/** The outcome to surface when refusing a resubmission: the prior operation's own
+ *  status, with a bare intent (side effect possibly still in flight) read as pending. */
+function priorTransferOutcome(status: OperationStatus): TransferOutcome {
+  return status === "intent" ? "accepted_pending" : status;
+}
+
+/** The result for a transfer the ledger refused (already registered): a landed
+ *  operation replays its files idempotently; anything else surfaces its prior status
+ *  so the agent moves on instead of resubmitting. */
+function operationRefusalResult(prior: AcquisitionOperation): TransferAttemptResult {
+  if (prior.status === "landed") {
+    return { status: "succeeded", materializedFileIds: prior.fileIds, outcome: "landed", providerMessage: "ACQUISITION_OPERATION_REPLAY: already landed this run" };
+  }
+  return {
+    status: "failed",
+    materializedFileIds: [],
+    outcome: priorTransferOutcome(prior.status),
+    providerMessage: `ACQUISITION_OPERATION_ALREADY_REGISTERED: ${prior.status} for this target+resource — not resubmitting`,
+  };
+}
+
+/** Map one subtitle transfer attempt to the agent-facing result. Unlike the video
+ *  path, `noTargetChange` is deliberately NOT propagated: no iterate-on-failure
+ *  consumer burns a candidate on a miss, so collapsed succeeded/failed is all the
+ *  agent needs to decide keep-going vs. give-up on a soft goal. */
+function subtitleLandingResult(filename: string, attempt: TransferAttempt): SubtitleLandingResult {
+  return {
+    filename,
+    status: attempt.status === "succeeded" ? "succeeded" : "failed",
+    materializedFileIds: attempt.materializedFileIds,
+    ...(attempt.materializedNames?.[0] ? { landedFilename: attempt.materializedNames[0] } : {}),
+    ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
+  };
 }
 
 export class RealStorageV2 implements StorageV2 {
@@ -47,6 +99,7 @@ export class RealStorageV2 implements StorageV2 {
   private readonly registry: CandidateRegistry;
   private readonly workflowRunId: string;
   private readonly deadLinkStore: DeadLinkStore | undefined;
+  private readonly operations: AcquisitionOperationsSession | undefined;
   private readonly recordedAttempts: TransferAttempt[] = [];
 
   constructor(options: RealStorageV2Options) {
@@ -54,6 +107,7 @@ export class RealStorageV2 implements StorageV2 {
     this.registry = options.registry;
     this.workflowRunId = options.workflowRunId;
     this.deadLinkStore = options.deadLinkStore;
+    this.operations = options.operations;
   }
 
   /** Every transfer attempt this run, for the workflow to persist. */
@@ -133,12 +187,17 @@ export class RealStorageV2 implements StorageV2 {
         `REAL_STORAGE_CANDIDATE_NOT_REGISTERED: ${input.candidateId} was never observed in a search this run`,
       );
     }
+    const { operationId, refusal } = this.registerTransfer(candidate, input.intoDirectoryId);
+    if (refusal) return refusal;
     const attempt = await this.executor.transfer({
       workflowRunId: this.workflowRunId,
       directoryId: input.intoDirectoryId,
       candidate,
     });
     this.recordedAttempts.push(attempt);
+    if (operationId) {
+      this.operations?.finish(operationId, operationStatusFromAttempt(attempt), attempt.materializedFileIds);
+    }
     await this.maybeRecordDeadLink(candidate.providerPayload?.["url"], attempt);
     // Only a real materialization counts as success; no_target_change (115 has no
     // cached copy) is a miss the agent must recover from, surfaced as failed +
@@ -149,8 +208,33 @@ export class RealStorageV2 implements StorageV2 {
       status: attempt.status === "succeeded" ? "succeeded" : "failed",
       materializedFileIds: attempt.materializedFileIds,
       ...(attempt.status === "no_target_change" ? { noTargetChange: true as const } : {}),
+      ...(attempt.outcome !== undefined ? { outcome: attempt.outcome } : {}),
       ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
     };
+  }
+
+  /** Durable side-effect ledger (§8.4): register the intent BEFORE the provider call,
+   *  keyed by physical target + canonical resource identity (NOT the volatile
+   *  candidateId). An already-registered operation — unresolved from any run, or
+   *  settled this run — yields a refusal result instead of a new submission: the
+   *  root-cause guard against the same collection being submitted again and again.
+   *  No ledger → operationId null, no refusal (byte-identical to the unguarded path). */
+  private registerTransfer(
+    candidate: ResourceCandidate,
+    directoryId: string,
+  ): { operationId: string | null; refusal: TransferAttemptResult | null } {
+    if (!this.operations) return { operationId: null, refusal: null };
+    const url = String(candidate.providerPayload?.["url"] ?? "");
+    const resourceKey = resourceLinkKey(url) ?? url;
+    const registered = this.operations.begin({
+      key: `${directoryId}:${resourceKey}`,
+      kind: "transfer",
+      directoryId,
+      resourceKey,
+      fileIds: [],
+    });
+    if (!registered.created) return { operationId: null, refusal: operationRefusalResult(registered.operation) };
+    return { operationId: registered.operation.id, refusal: null };
   }
 
   /** Whole-package subtitle landing. Batch-capable executor (115) → one call;
@@ -162,60 +246,66 @@ export class RealStorageV2 implements StorageV2 {
     files: Array<{ url: string; filename: string }>;
     intoDirectoryId: string;
   }): Promise<SubtitleLandingResult[]> {
-    // Unlike transferCandidate, the subtitle path has no iterate-on-failure consumer
-    // (nothing burns "the next candidate" on a miss), so `noTargetChange` is
-    // deliberately NOT propagated here — status collapsed to succeeded/failed is all
-    // the agent needs to decide keep-going vs. give-up on a soft goal.
-    const toResult = (filename: string, attempt: TransferAttempt): SubtitleLandingResult => ({
-      filename,
-      status: attempt.status === "succeeded" ? "succeeded" : "failed",
-      materializedFileIds: attempt.materializedFileIds,
-      ...(attempt.materializedNames?.[0] ? { landedFilename: attempt.materializedNames[0] } : {}),
-      ...(attempt.providerMessage ? { providerMessage: attempt.providerMessage } : {}),
-    });
-    if (this.executor.transferSubtitleUrls) {
-      let attempts: TransferAttempt[];
-      try {
-        attempts = await this.executor.transferSubtitleUrls({
-          files: input.files,
-          directoryId: input.intoDirectoryId,
-          workflowRunId: this.workflowRunId,
-        });
-      } catch (error) {
-        // A batch-level throw (write-scope violation, a before-snapshot listTree the
-        // guard refused, …) kills the whole package at once. Subtitles are a SOFT
-        // goal — the sandbox promises the agent {status:"failed"}, never an {error}
-        // — so map it to the same per-file soft failure the fallback loop produces
-        // for a thrown per-file error. EXCEPT a dead cookie/token: that is not a
-        // landing miss, and softening it would hide the one error the worker freezes
-        // the drive on (the video path's transfer() lets it out the same way).
-        if (isBrandStorageAuthError(error)) {
-          throw error;
-        }
-        return input.files.map((file) => ({
-          filename: file.filename,
-          status: "failed" as const,
-          materializedFileIds: [],
-          providerMessage: error instanceof Error ? error.message : String(error),
-        }));
-      }
-      // The port contract is one attempt per input file, in input order. A brand that
-      // drops a file instead of marking it failed would otherwise surface as a bare
-      // TypeError that asEvidence turns into an inscrutable {error} for the agent —
-      // fail loud by name instead. (Order cannot be cross-checked via candidateId: the
-      // 115 executor rewrites it for path-y filenames.) NOT caught by the wrapper
-      // above: a contract violation stays loud.
-      if (attempts.length !== input.files.length) {
-        throw new Error(
-          `REAL_STORAGE_SUBTITLE_BATCH_ARITY: executor returned ${attempts.length} attempts for ${input.files.length} files — ` +
-            `transferSubtitleUrls must return one attempt per input file, in input order`,
-        );
-      }
-      return input.files.map((file, index) => toResult(file.filename, attempts[index]!));
-    }
+    if (this.executor.transferSubtitleUrls) return this.transferSubtitleBatch(input);
     if (!this.executor.transferSubtitleUrl) {
       throw new Error("REAL_STORAGE_NO_SUBTITLE_SUPPORT: this storage brand has no transferSubtitleUrl");
     }
+    return this.transferSubtitlePerFile(input);
+  }
+
+  /** Batch-capable executor (115) → ONE call with every file, results in input order. */
+  private async transferSubtitleBatch(input: {
+    files: Array<{ url: string; filename: string }>;
+    intoDirectoryId: string;
+  }): Promise<SubtitleLandingResult[]> {
+    let attempts: TransferAttempt[];
+    try {
+      attempts = await this.executor.transferSubtitleUrls!({
+        files: input.files,
+        directoryId: input.intoDirectoryId,
+        workflowRunId: this.workflowRunId,
+      });
+    } catch (error) {
+      // A batch-level throw (write-scope violation, a before-snapshot listTree the
+      // guard refused, …) kills the whole package at once. Subtitles are a SOFT
+      // goal — the sandbox promises the agent {status:"failed"}, never an {error}
+      // — so map it to the same per-file soft failure the fallback loop produces
+      // for a thrown per-file error. EXCEPT a dead cookie/token: that is not a
+      // landing miss, and softening it would hide the one error the worker freezes
+      // the drive on (the video path's transfer() lets it out the same way).
+      if (isBrandStorageAuthError(error)) {
+        throw error;
+      }
+      return input.files.map((file) => ({
+        filename: file.filename,
+        status: "failed" as const,
+        materializedFileIds: [],
+        providerMessage: error instanceof Error ? error.message : String(error),
+      }));
+    }
+    // The port contract is one attempt per input file, in input order. A brand that
+    // drops a file instead of marking it failed would otherwise surface as a bare
+    // TypeError that asEvidence turns into an inscrutable {error} for the agent —
+    // fail loud by name instead. (Order cannot be cross-checked via candidateId: the
+    // 115 executor rewrites it for path-y filenames.) NOT caught by the wrapper
+    // above: a contract violation stays loud.
+    if (attempts.length !== input.files.length) {
+      throw new Error(
+        `REAL_STORAGE_SUBTITLE_BATCH_ARITY: executor returned ${attempts.length} attempts for ${input.files.length} files — ` +
+          `transferSubtitleUrls must return one attempt per input file, in input order`,
+      );
+    }
+    return input.files.map((file, index) => subtitleLandingResult(file.filename, attempts[index]!));
+  }
+
+  /** Per-file fallback (光鸭) under the consecutive-failure abort. The attempts stay
+   *  OUT of attempts(): their synthetic `subtitle:<filename>` candidateIds belong to
+   *  no snapshot, and persisting them would abort the run's snapshot save after the
+   *  video already landed. */
+  private async transferSubtitlePerFile(input: {
+    files: Array<{ url: string; filename: string }>;
+    intoDirectoryId: string;
+  }): Promise<SubtitleLandingResult[]> {
     const results: SubtitleLandingResult[] = [];
     let consecutiveFailures = 0;
     let lastError: string | undefined;
@@ -228,9 +318,9 @@ export class RealStorageV2 implements StorageV2 {
       }
       let result: SubtitleLandingResult;
       try {
-        result = toResult(
+        result = subtitleLandingResult(
           file.filename,
-          await this.executor.transferSubtitleUrl({
+          await this.executor.transferSubtitleUrl!({
             url: file.url,
             filename: file.filename,
             directoryId: input.intoDirectoryId,

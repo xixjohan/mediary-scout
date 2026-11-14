@@ -17,11 +17,13 @@ import {
 import { buildMovieReport, buildReplacementReport, emptyRunOutcome, formatReportPushText } from "../domain/notification-report.js";
 import { classifyTransferBlock } from "../acquisition-v2/transfer-block.js";
 import { classifySearchSourceFault } from "../acquisition-v2/search-source-fault.js";
+import { searchFilterFailureReason } from "../acquisition-v2/search-filter-diagnostics.js";
 import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
 import type { DeadLinkStore } from "../acquisition-v2/dead-links.js";
 import { readLandedSize, type LandedSize } from "../acquisition-v2/landed-size.js";
 import type { AgentToolEvent } from "../acquisition-v2/activity.js";
 import { runAcquisitionV2, type RunAcquisitionV2Request, type RunAcquisitionV2Result } from "../acquisition-v2/orchestrator.js";
+import type { AcquisitionOperationsSession } from "../acquisition-v2/operations-session.js";
 import type { JevJudge } from "../providers/jev-judge.js";
 import { getQualityGuidance, getSearchRecipe } from "../acquisition-v2/search-profile.js";
 import { ensureMediaLibraryDirectory } from "../domain/media-library-folder.js";
@@ -58,6 +60,8 @@ export interface RunMovieAcquisitionV2Request {
   /** Optional Jev candidate prefilter (see orchestrator.jevJudge). */
   jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
+  /** Durable side-effect ledger session (see orchestrator.operations). */
+  operations?: AcquisitionOperationsSession;
   /** Agent memory (see orchestrator.memory). */
   memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
   /** A replace_request run (see orchestrator.userRequest; requestedEpisodes ["MOVIE"]). */
@@ -180,6 +184,7 @@ export async function runMovieAcquisitionV2(
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.jevJudge === undefined ? {} : { jevJudge: request.jevJudge }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+    ...(request.operations ? { operations: request.operations } : {}),
     ...(request.memory ? { memory: request.memory } : {}),
     ...(request.userRequest ? { userRequest: request.userRequest } : {}),
     ...(request.protectExisting ? { protectExisting: request.protectExisting } : {}),
@@ -192,7 +197,7 @@ export async function runMovieAcquisitionV2(
       : { subscriptionSearchKeywords: request.subscriptionSearchKeywords }),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
-  });
+  }).finally(() => request.operations?.release());
 
   // Truth = the AGENT'S coverage (its markObtained), NOT a mechanical file scan
   // (§1.13/§7b). The agent looked at the real files and declared coverage; the
@@ -321,6 +326,7 @@ function buildResult(input: {
         ...emptyRunOutcome(
           classifyTransferBlock(input.attempts)?.reason ?? null,
           classifySearchSourceFault(input.auditEvents)?.reason ?? null,
+          searchFilterFailureReason(input.auditEvents),
         ),
       };
   const notification: NotificationEvent = {

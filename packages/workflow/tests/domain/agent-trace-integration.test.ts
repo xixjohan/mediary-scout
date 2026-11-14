@@ -109,6 +109,15 @@ describe("agent trace — runner-v2 wires the durable step trace", () => {
     const search = steps.find((s) => s.toolName === "searchResources")!;
     expect(search.args.keyword).toBe("show"); // the real keyword is复盘-able
     expect(steps.some((s) => s.toolName === "reportNoCoverage")).toBe(true);
+    // Attempt identity: one sink ⇒ one attemptId stamped on every step.
+    const attemptIds = new Set(steps.map((s) => s.attemptId));
+    expect(attemptIds.size).toBe(1);
+    expect([...attemptIds][0]).toBeTruthy();
+
+    // The business stop reason persists durably via the snapshot's audit channel.
+    const snapshot = await repository.getWorkflowRunSnapshot("run-x");
+    const loopStopped = snapshot?.workflowRun.auditEvents.find((e) => e.type === "loop_stopped");
+    expect(loopStopped?.data?.stopReason).toBe("candidate_exhausted");
   });
 
   it("crash-safe: steps before a mid-run crash survive even though the snapshot never persists", async () => {

@@ -3,7 +3,7 @@ import type { WorkflowPolicySnapshotLookup } from "../domain/domain.js";
 import { matchPolicy } from "./subscription-policy.js";
 import type { WorkflowRepository } from "../persistence/repository.js";
 
-type PolicyFilter = { accept: (candidate: PolicyResource) => boolean; rank: (candidate: PolicyResource) => number };
+type PolicyFilter = { accept: (candidate: PolicyResource) => boolean; rejectReason: (candidate: PolicyResource) => PolicyRejectReason | null; rank: (candidate: PolicyResource) => number };
 type PolicyFileValidator = (file: PolicyResource) => PolicyRejectReason | null;
 
 /** Load one title-scoped policy once per task and expose the shared deterministic matcher. */
@@ -40,6 +40,10 @@ export async function loadSubscriptionPolicyFilter(input: {
   return {
     policyFilter: {
       accept: (candidate) => matchPolicy(matcher, candidate).matched,
+      rejectReason: (candidate) => {
+        const verdict = matchPolicy(matcher, candidate);
+        return verdict.matched ? null : verdict.reason;
+      },
       rank: (candidate) => {
         const verdict = matchPolicy(matcher, candidate);
         if (!verdict.matched || !verdict.priorityGroupId) return 0;

@@ -49,6 +49,23 @@ describe("toAgentStepViews — 展示字段原样透传", () => {
     toAgentStepViews(steps);
     expect(steps).toEqual(before);
   });
+
+  it("callId/endedAt/status/error 原样透传；未上报时不塞键", () => {
+    const views = toAgentStepViews([
+      step({ callId: "c1", endedAt: "2024-05-01T10:00:02Z", status: "failed", error: "预算已用尽" }),
+      step({ ordinal: 2 }),
+    ]);
+    expect(views[0]).toMatchObject({
+      callId: "c1",
+      endedAt: "2024-05-01T10:00:02Z",
+      status: "failed",
+      error: "预算已用尽",
+    });
+    expect(views[1]).not.toHaveProperty("callId");
+    expect(views[1]).not.toHaveProperty("endedAt");
+    expect(views[1]).not.toHaveProperty("status");
+    expect(views[1]).not.toHaveProperty("error");
+  });
 });
 
 describe("toAgentStepViews — args 脱敏（结果级断言）", () => {

@@ -1,6 +1,6 @@
 import type { AgentMemoryStore } from "../domain/agent-memory.js";
 import type { LanguageModel } from "ai";
-import type { MediaTitle } from "../domain.js";
+import type { MediaTitle, VerifiedFile } from "../domain.js";
 import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
 import {
   bridgeV2WorkflowToResult,
@@ -11,6 +11,7 @@ import {
 import type { DeadLinkStore } from "./dead-links.js";
 import type { JevJudge } from "../providers/jev-judge.js";
 import { runAcquisitionV2Workflow, type RunAcquisitionV2WorkflowRequest } from "./workflow-v2.js";
+import type { AcquisitionOperationsSession } from "./operations-session.js";
 import { getQualityGuidance, getSearchRecipe, searchProfile } from "./search-profile.js";
 import type { AgentToolEvent } from "./activity.js";
 import { ensureMediaLibraryDirectory } from "../domain/media-library-folder.js";
@@ -42,6 +43,8 @@ export interface RunTvAcquisitionV2Request {
   /** 实有 = the DB obtained marks (agent's prior markObtained); empty for a first
    *  acquisition, the type-3 patrol passes the DB obtained codes. */
   priorObtained?: string[];
+  /** Persist verified inventory independently of the eventual acquisition outcome. */
+  onInventory?: (input: { seasonNumber: number; directoryId: string; files: VerifiedFile[] }) => Promise<void>;
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
@@ -54,6 +57,8 @@ export interface RunTvAcquisitionV2Request {
   /** Optional Jev candidate prefilter (Settings); resolved per account by the worker. */
   jevJudge?: JevJudge;
   deadLinkStore?: DeadLinkStore;
+  /** Durable side-effect ledger session (see orchestrator.operations). */
+  operations?: AcquisitionOperationsSession;
   /** Agent memory (see orchestrator.memory). */
   memory?: { store: AgentMemoryStore; accountId: string; drive?: string };
   /** A replace_request run (see orchestrator.userRequest). */
@@ -90,6 +95,8 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
   const qualityGuidance = getQualityGuidance(profile, request.qualityPreference);
 
   const discoveredObtainedSet = new Set<string>();
+  const inventories: Array<{ seasonNumber: number; directoryId: string; files: VerifiedFile[] }> = [];
+  let inventoryError: unknown;
   if (!request.userRequest && !request.stagingRecovery) {
     try {
       const showDirectoryId = await ensureMediaLibraryDirectory({
@@ -136,24 +143,34 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
         const seasonMatch = /^Season\s+(\d+)$/i.exec(dir.name);
         if (!seasonMatch?.[1]) continue;
         const seasonNum = Number(seasonMatch[1]);
+        if (!request.seasons.some((season) => season.seasonNumber === seasonNum)) continue;
         const videos = await request.storage.listVideoFiles(dir.id);
+        const verified: VerifiedFile[] = [];
         for (const v of videos) {
           const code = episodeCodeFromFileName(v.name, seasonNum);
-          if (code) {
+          if (code && code.startsWith(`S${String(seasonNum).padStart(2, "0")}E`) && v.sizeBytes > 0) {
             discoveredObtainedSet.add(code);
+            verified.push({ ...v, episodeCode: code, storageDirectoryId: dir.id });
           }
         }
+        inventories.push({ seasonNumber: seasonNum, directoryId: dir.id, files: verified });
       }
-    } catch {
-      // Pre-flight probe failed; proceed without pre-flight hints
+    } catch (error) {
+      inventoryError = error;
     }
   }
+
+  // A read/commit failure is not an empty library. Keep successful discoveries
+  // from earlier seasons, then surface the failure instead of searching blindly.
+  for (const inventory of inventories) await request.onInventory?.(inventory);
+  if (inventoryError) throw inventoryError; // Keep brand auth/rate-limit identity for the worker.
 
   const mergedPriorObtained = Array.from(
     new Set([...(request.priorObtained ?? []), ...discoveredObtainedSet]),
   );
 
   const v2 = await runAcquisitionV2Workflow({
+    ...(request.onInventory ? { onInventory: request.onInventory } : {}),
     provider: request.resourceProvider,
     executor: request.storage,
     model: request.model,
@@ -182,6 +199,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.assrtToken === undefined ? {} : { assrtToken: request.assrtToken }),
     ...(request.jevJudge === undefined ? {} : { jevJudge: request.jevJudge }),
     ...(request.deadLinkStore ? { deadLinkStore: request.deadLinkStore } : {}),
+    ...(request.operations ? { operations: request.operations } : {}),
     ...(request.memory ? { memory: request.memory } : {}),
     ...(request.userRequest ? { userRequest: request.userRequest } : {}),
     ...(request.protectExisting ? { protectExisting: request.protectExisting } : {}),
@@ -195,7 +213,7 @@ export async function runTvAcquisitionV2(request: RunTvAcquisitionV2Request): Pr
     ...(request.stagingRecovery ? { stagingRecovery: request.stagingRecovery } : {}),
     ...(request.titleResearch === undefined ? {} : { titleResearch: request.titleResearch }),
     ...(request.onProgress ? { onProgress: request.onProgress } : {}),
-  });
+  }).finally(() => request.operations?.release());
 
   const bridged = bridgeV2WorkflowToResult({
     title: request.title,

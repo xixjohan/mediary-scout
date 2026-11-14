@@ -22,15 +22,17 @@ describe("getSearchRecipe — post-deep-research recipe", () => {
     expect(r).toContain("国漫"); // +国漫 still present as disambiguator
   });
 
-  it("jp-anime forbids +年份 (脆/偏) and mandates 复搜 on 0", () => {
+  it("jp-anime forbids +年份 (脆/偏) and carries the health-aware 0 law", () => {
     const r = getSearchRecipe("jp-anime");
     expect(r).toMatch(/避免[^]*年份|年份[^]*(避免|禁|脆|别)/);
     expect(r).toMatch(/复搜/);
   });
 
-  it("universal laws: 复搜 hardened (multiple times), 子类型词 forbidden (国漫 exception), 语言 follows 字幕偏好", () => {
+  it("universal laws: health-aware empty handling (no same-word thrash), 子类型词 forbidden (国漫 exception), 语言 follows 字幕偏好", () => {
     const r = getSearchRecipe("movie"); // laws ride on every recipe
-    expect(r).toMatch(/复搜[^。]*[2-3]|[2-3][^。]*次/); // re-search 2-3 times
+    expect(r).toMatch(/健康空结果复搜只返回同一份缓存|deduped/); // healthy empty is deduped, not new evidence
+    expect(r).toMatch(/源健康/); // distinguish source-down from genuinely-empty
+    expect(r).not.toContain("2-3 次"); // the old same-word re-search thrash mandate is gone
     expect(r).toContain("子类型词"); // the new sub-type-token law
     expect(r).toContain("国漫"); // its stated exception
     expect(r).toMatch(/字幕偏好|偏好[^。]*中文译名/); // search-language-follows-subtitle law

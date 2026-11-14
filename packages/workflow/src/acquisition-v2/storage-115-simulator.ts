@@ -9,6 +9,7 @@
  */
 
 import type { MediaFileNameParse } from "../providers/media-title-parser.js";
+import type { TransferOutcome } from "../domain.js";
 
 export interface SimTreeFile {
   /** Stable file id (provider file id analogue). */
@@ -40,6 +41,13 @@ export interface TransferAttemptResult {
    *  copy plus a second transfer = the film landed twice). Status stays collapsed
    *  to "failed" for existing consumers. */
   noTargetChange?: true;
+  /** What the provider call PROVES (研究文档 §11.1 / P0 准确结果). `status` stays
+   *  collapsed to succeeded/failed for iterate-on-failure consumers; this typed
+   *  outcome lets the agent tell a silent miss (instant_miss) from a still-copying
+   *  task (accepted_pending), an unknown result, a real rejection, or an account
+   *  block — instead of treating every non-success as a dead link. Absent from
+   *  executors that do not classify their calls yet. */
+  outcome?: TransferOutcome;
 }
 
 /** One file's outcome inside a subtitle package landing (StorageV2.transferSubtitleUrls). */

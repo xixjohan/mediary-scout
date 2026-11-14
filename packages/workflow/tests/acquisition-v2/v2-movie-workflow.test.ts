@@ -62,6 +62,33 @@ const title = {
 } as unknown as MediaTitle;
 
 describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, never a mechanical file count", () => {
+  // The evidence gate refuses a MOVIE mark with no film behind it, so a coverage
+  // test lands a real film first (a pre-seeded dir would trip the preflight hit).
+  const landedFilmExecutor = () =>
+    new FakeStorageExecutor({
+      transferOutcomes: {
+        cand_film: {
+          status: "succeeded",
+          providerMessage: "ok",
+          files: [{ id: "film", storageDirectoryId: "staging", name: "Inception.2010.1080p.mkv", sizeBytes: 4_000_000_000, episodeCode: null, providerFileId: "film" }],
+        },
+      },
+    });
+  const filmProvider = (): ResourceProvider => ({
+    search: async ({ keyword }): Promise<ResourceSnapshot> => ({
+      id: `snap_${keyword}`,
+      provider: "pansou",
+      keyword,
+      candidates: [{ id: "cand_film", snapshotId: `snap_${keyword}`, index: 0, title: "盗梦空间 2010 1080p", type: "magnet", source: "pansou", providerPayload: { url: "magnet:?xt=urn:btih:abc" } }],
+      createdAt: "2026-06-14T00:00:00.000Z",
+    }),
+  });
+  const landThenMark = (extra: Record<string, unknown> = {}) => [
+    { tool: "searchResources", input: { keyword: "盗梦空间" } },
+    { tool: "transferCandidate", input: { snapshotId: "s1", candidateId: "s1-1" } },
+    { tool: "markObtained", input: { codes: ["MOVIE"], ...extra } },
+    { tool: "finish", input: {} },
+  ];
   it("no coverage → status no_coverage, the synthetic movie episode is not obtained", async () => {
     const executor = new FakeStorageExecutor();
     const result = await runMovieAcquisitionV2({
@@ -140,18 +167,14 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
     expect(result.notification.kind).toBe("transfer_failed");
   });
 
-  it("obtained TRUE when the agent declares MOVIE coverage (agent mark, not files on disk)", async () => {
-    const executor = new FakeStorageExecutor();
+  it("obtained TRUE when the agent declares MOVIE coverage (the mark, backed by the landed film)", async () => {
     const result = await runMovieAcquisitionV2({
       title,
-      resourceProvider: emptyProvider(),
-      storage: executor,
-      // The agent declares MOVIE obtained; coverage is met by the mark, not a scan.
-      model: scriptModel([
-        { tool: "searchResources", input: { keyword: "盗梦空间" } },
-        { tool: "markObtained", input: { codes: ["MOVIE"] } },
-        { tool: "finish", input: {} },
-      ]),
+      resourceProvider: filmProvider(),
+      storage: landedFilmExecutor(),
+      // The agent lands the film, then declares MOVIE obtained; coverage is met by
+      // the mark (verified against the real file), not a mechanical scan.
+      model: scriptModel(landThenMark()),
       workflowRunId: "run-m2",
       moviesParentDirectoryId: "movies_root",
       now: () => "2026-06-14T00:00:00.000Z",
@@ -162,19 +185,14 @@ describe("runMovieAcquisitionV2 — obtained comes from the AGENT'S coverage, ne
   });
 
   it("中文字幕软兜底: markObtained({subtitleFallback:true}) flags 可能无中文字幕 in the notification (环太平洋)", async () => {
-    const executor = new FakeStorageExecutor();
     const result = await runMovieAcquisitionV2({
       title,
-      resourceProvider: emptyProvider(),
-      storage: executor,
+      resourceProvider: filmProvider(),
+      storage: landedFilmExecutor(),
       // The agent exhausted its 中字 budget and landed a raw-name match of the correct
       // film — declaring the subtitle fallback. The thread markObtained→finish→
       // coverage→buildResult→buildMovieReport must surface it.
-      model: scriptModel([
-        { tool: "searchResources", input: { keyword: "盗梦空间" } },
-        { tool: "markObtained", input: { codes: ["MOVIE"], subtitleFallback: true } },
-        { tool: "finish", input: {} },
-      ]),
+      model: scriptModel(landThenMark({ subtitleFallback: true })),
       workflowRunId: "run-m-fb",
       moviesParentDirectoryId: "movies_root",
       now: () => "2026-06-14T00:00:00.000Z",

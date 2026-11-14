@@ -72,6 +72,21 @@ describe("bridgeV2WorkflowToResult — newlyObtainedCodes (cooldown watermark so
 });
 
 describe("bridgeV2WorkflowToResult — V2 facts → per-season WorkflowResult shape", () => {
+  it("reports policy exclusions and degraded sources instead of claiming resources do not exist", () => {
+    const result = bridgeV2WorkflowToResult({ title, mode: "type2",
+      seasons: [{ seasonNumber: 1, totalEpisodes: 3, latestAiredEpisode: 3, qualityPreference: "1080p" }],
+      v2: v2Result({ missingBefore: ["S01E03"], stillMissing: ["S01E03"], obtained: ["S01E01", "S01E02"],
+        auditEvents: [{ type: "resource_filter_applied", message: "候选准入结果", data: {
+          inputCount: 76, keptCount: 0, policyDropped: 76, policyReasons: { missing_term: 76 }, sourceStatus: "degraded", unhealthySources: ["pansou"],
+        } }],
+      }), workflowRunId: "filtered", now: () => "2026-11-14T00:00:00Z",
+    });
+    expect(result.notification.report?.status).toBe("failed");
+    expect(result.notification.report?.lines.join(" ")).toContain("订阅规则");
+    expect(result.notification.report?.lines.join(" ")).toContain("部分搜索源不可用");
+    expect(result.notification.report?.realMissing).toEqual(["E03"]);
+  });
+
   it("single-season type2, everything obtained → succeeded, season tracked with the V2 directory, all episodes obtained, user notification", () => {
     const result = bridgeV2WorkflowToResult({
       title,

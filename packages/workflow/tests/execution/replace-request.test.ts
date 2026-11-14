@@ -1343,7 +1343,7 @@ describe("runQueuedReplaceRequest — scope, metadata and bookkeeping", () => {
     expect((await repository.getWorkflowRunSnapshot("run_rr_giveup", SCOPE))?.workflowRun.status).not.toBe("failed");
   });
 
-  it("a work no longer tracked fails without writing its queue-time episodes back", async () => {
+  it("a tracking read that disagrees with the claim fails without clearing current inventory", async () => {
     const { repository } = await trackedShow();
     await repository.createUserMessage({ ...WORK, body: "换", episodeTags: [], now: NOW });
     await queueReplaceRequest({ repository, work: WORK, now: fixedNow, createWorkflowRunId: () => "run_rr_gone" });
@@ -1353,7 +1353,9 @@ describe("runQueuedReplaceRequest — scope, metadata and bookkeeping", () => {
     const result = await runQueuedReplaceRequest(baseRun(repository, new FakeStorageExecutor(), throwingModel()));
 
     expect(result).toMatchObject({ status: "failed", workflowRunId: "run_rr_gone" });
-    expect((await repository.getWorkflowRunSnapshot("run_rr_gone", SCOPE))?.episodes).toEqual([]);
+    const saved = await repository.getWorkflowRunSnapshot("run_rr_gone", SCOPE);
+    expect(saved?.workflowRun.status).toBe("failed");
+    expect(saved?.episodes.filter((episode) => episode.obtained)).toHaveLength(2);
   });
 
   it("the movie replace prompt says the film is already in the library only when it was obtained before the run", async () => {
@@ -1775,7 +1777,7 @@ describe("replace_request notifications — patrol vs user", () => {
         cand_new: {
           status: "succeeded",
           providerMessage: "ok",
-          files: [{ id: "new03", storageDirectoryId: "staging", name: "[NewGroup] Show 03.mkv", sizeBytes: 2_000_000_000, episodeCode: "S01E03", providerFileId: "new03" }],
+          files: [{ id: "new03", storageDirectoryId: "staging", name: "[NewGroup] Show - 03.mkv", sizeBytes: 2_000_000_000, episodeCode: "S01E03", providerFileId: "new03" }],
         },
       },
     });
@@ -1787,14 +1789,15 @@ describe("replace_request notifications — patrol vs user", () => {
       doGenerate: async (options) => {
         i += 1;
         if (i === 1) return tool("searchResources", { keyword: "Show 03" }, i);
-        if (i === 2) {
+        if (i === 2) return tool("rejectCurrentSource", { rejections: [{ episode: "S01E01", fileIds: ["present_S01E01"] }], reason: "发蓝" }, i);
+        if (i === 3) {
           const search = lastToolOutput(options.prompt, "searchResources");
           return tool("transferCandidate", { snapshotId: search.snapshot.id, candidateId: search.snapshot.candidates[0].id }, i);
         }
-        if (i === 3) return tool("moveToSeason", { moves: [{ season: 1, fileIds: ["new03"] }] }, i);
-        if (i === 4) return tool("markObtained", { codes: ["S01E03"] }, i);
-        if (i === 5) return tool("reportReplacement", { results: [{ episode: "S01E01", outcome: "not_found", note: "没找到" }] }, i);
-        if (i === 6) return tool("finish", {}, i);
+        if (i === 4) return tool("moveToSeason", { moves: [{ season: 1, fileIds: ["new03"] }] }, i);
+        if (i === 5) return tool("markObtained", { codes: ["S01E03"] }, i);
+        if (i === 6) return tool("reportReplacement", { results: [{ episode: "S01E01", outcome: "not_found", note: "没找到" }] }, i);
+        if (i === 7) return tool("finish", {}, i);
         return text("done");
       },
     });

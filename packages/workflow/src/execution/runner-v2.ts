@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { DEFAULT_ACCOUNT_ID } from "../domain/domain.js";
 import type { AgentMemoryStore } from "../domain/agent-memory.js";
 import type { LanguageModel } from "ai";
@@ -18,6 +19,7 @@ import type { TitleResearchOptions } from "../acquisition-v2/title-research.js";
 import type { BridgedV2Result } from "../acquisition-v2/workflow-v2-bridge.js";
 import { makeProgressSink } from "../acquisition-v2/progress-sink.js";
 import { makeAgentTraceSink, combineToolEventSinks } from "../acquisition-v2/agent-trace-sink.js";
+import { acquisitionScope, claimOperationsSession, type AcquisitionOperationsSession } from "../acquisition-v2/operations-session.js";
 import { runMovieAcquisitionV2, type MovieAcquisitionV2Result, type RunMovieAcquisitionV2Request } from "./movie-workflow-v2.js";
 import type { JevJudge } from "../providers/jev-judge.js";
 import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
@@ -25,6 +27,7 @@ import type { PersistWorkflowRunSnapshotInput, WorkflowRepository } from "../per
 import { userMessageDrive } from "./user-requests.js";
 import { stampReplaceNotification } from "../domain/notification-report.js";
 import { loadSubscriptionPolicyFilter } from "./subscription-policy-filter.js";
+import { inventoryCheckpoint } from "./inventory-checkpoint.js";
 
 /**
  * Phase 7d — production persist wrappers on the V2 engine. These mirror the old
@@ -91,6 +94,7 @@ function resolveNow(input: { now?: () => string }): () => string {
 
 // ⚠ TS does not excess-property-check spread expressions: a field spread by worker.ts that is NOT listed here is silently dropped (this happened to jevJudge on 2026-09-20 and was only caught by the live A/B). Every optional worker→workflow field must appear in TvV2Common, here, and in run-tv-v2.ts.
 function passthrough(input: TvV2Common): {
+  onInventory: NonNullable<RunTvAcquisitionV2Request["onInventory"]>;
   searchBudget?: number;
   maxSteps?: number;
   preferredLanguage?: string;
@@ -102,6 +106,7 @@ function passthrough(input: TvV2Common): {
   titleResearch?: TitleResearchOptions;
 } {
   return {
+    onInventory: inventoryCheckpoint(input),
     ...memoryOption(input),
     ...(input.searchBudget === undefined ? {} : { searchBudget: input.searchBudget }),
     ...(input.maxSteps === undefined ? {} : { maxSteps: input.maxSteps }),
@@ -129,6 +134,37 @@ function memoryOption(input: {
   // run carries no connected storage (legacy single-drive setups).
   const drive = input.connectedStorageId ?? input.storageProvider;
   return { memory: { store: input.repository, accountId: input.accountId ?? DEFAULT_ACCOUNT_ID, ...(drive ? { drive } : {}) } };
+}
+
+/** Claim the durable side-effect lease for this run's scope (account × drive × work)
+ *  and hand the session to the acquisition entry, which releases it when the workflow
+ *  settles (§8.4). A live owner already holding the scope (or a store error) yields no
+ *  session: the run proceeds without the ledger — the queue is the primary serializer,
+ *  the ledger is the cross-run / crash-recovery guard, so it fails open, never blocking. */
+function operationsOption(input: {
+  repository: WorkflowRepository;
+  accountId?: string;
+  connectedStorageId?: string | null;
+  storageProvider?: string;
+  title: MediaTitle;
+  workflowRun: WorkflowRunMetadata;
+}): { operations?: AcquisitionOperationsSession } {
+  try {
+    const session = claimOperationsSession({
+      store: input.repository.acquisitionOperations,
+      scope: acquisitionScope({
+        accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
+        drive: input.connectedStorageId ?? input.storageProvider ?? "brand",
+        titleKey: input.title.id,
+      }),
+      runId: input.workflowRun.id,
+      attemptId: randomUUID(),
+    });
+    return session ? { operations: session } : {};
+  } catch (error) {
+    console.error(`[acquisition-ops] could not claim lease for ${input.title.id}: ${String(error).slice(0, 300)}`);
+    return {};
+  }
 }
 
 /** Episodes of this work (on this drive) that hold an old + replacement copy on
@@ -277,6 +313,7 @@ async function persistSingleSeason(input: {
     decisions: input.bridged.decisions,
     transferAttempts: input.bridged.transferAttempts,
     notifications: input.bridged.notifications,
+    mergeCurrentEpisodes: true,
     ...(input.protectRunningRun ? { requireTrackedSeason: true, requireRunningWorkflowRun: true, mergeCurrentEpisodes: true } : {}),
   });
 }
@@ -311,6 +348,7 @@ export async function runType2InitializationV2AndPersist(
       storage: input.storage,
     }),
     ...passthrough(input),
+    ...operationsOption(input),
     ...(await protectExistingOption(input)),
     ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
@@ -368,6 +406,7 @@ export async function runType3MonitoringV2AndPersist(
       storage: input.storage,
     }),
     ...passthrough(input),
+    ...operationsOption(input),
     ...(await protectExistingOption(input)),
     ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
@@ -423,6 +462,7 @@ export async function runSeriesInitializationV2AndPersist(
       storage: input.storage,
     }),
     ...passthrough(input),
+    ...operationsOption(input),
     ...(await protectExistingOption(input)),
     ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
@@ -466,6 +506,7 @@ export async function runSeriesInitializationV2AndPersist(
               workflowRunId: seasonRunId,
             }))
           : [],
+      mergeCurrentEpisodes: true,
     });
   }
   return bridged;
@@ -531,6 +572,7 @@ export async function runReplaceRequestV2AndPersist(
       storage: input.storage,
     }),
     ...passthrough(input),
+    ...operationsOption(input),
     ...(await protectExistingOption(input)),
     ...(await subscriptionPolicyFilterOption(input)),
     ...rejectedLookupOption(input),
@@ -641,6 +683,7 @@ export async function runStagingRecoveryV2AndPersist(
       storage: input.storage,
     }),
     ...passthrough(input),
+    ...operationsOption(input),
     ...(await subscriptionPolicyFilterOption(input)),
   });
 
@@ -838,6 +881,7 @@ export async function runMovieAcquisitionV2AndPersist(input: {
     ...rejectedLookupOption(input),
     ...linkHistoryOption({ ...input, workflowRunId: input.workflowRun.id, now }),
     ...memoryOption(input),
+    ...operationsOption(input),
     ...(input.titleResearch === undefined ? {} : { titleResearch: input.titleResearch }),
   });
 

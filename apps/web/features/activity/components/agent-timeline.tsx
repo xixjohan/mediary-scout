@@ -19,7 +19,7 @@ export function AgentTimeline({ steps }: { steps: AgentStepView[] }) {
   return (
     <details className="agent-timeline">
       <summary>
-        agent 步骤 <span className="agent-timeline-count">{steps.length}</span>
+        工具调用记录 <span className="agent-timeline-count">{steps.length}</span> 条
       </summary>
       <ol className="agent-timeline-list">
         {steps.map((step) => (
@@ -28,7 +28,17 @@ export function AgentTimeline({ steps }: { steps: AgentStepView[] }) {
             <span className="agent-timeline-tool">{step.toolName}</span>
             <span className="agent-timeline-activity">{step.activity}</span>
             {step.apiCalls !== undefined && (
-              <span className="agent-timeline-calls">{step.apiCalls} 次调用</span>
+              <span className="agent-timeline-calls" title="该工具开始前累计的网盘 API 调用（guard 计数，非模型请求数）">
+                网盘 API 累计 {step.apiCalls} 次
+              </span>
+            )}
+            {step.status !== undefined && (
+              <span
+                className={`agent-timeline-status agent-timeline-status-${step.status}`}
+                title={step.error ?? (step.status === "failed" ? "工具执行失败" : "工具执行成功")}
+              >
+                {step.status === "failed" ? "失败" : "成功"}
+              </span>
             )}
           </li>
         ))}
