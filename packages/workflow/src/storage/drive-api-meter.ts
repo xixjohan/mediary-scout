@@ -3,12 +3,13 @@ import { classifyDriveApiCall, type DriveApiQuotaClass } from "./drive-api-quota
 /**
  * 网盘 API 分类计量器（任务单：下载类计数独立显示）。
  *
- * 为什么是**旁路**而不是塞进 Pan115ApiGuard：guard 的调用硬限是为**单次采集
- * 运行**设计的，而直链解析是用户交互、跨月持续的行为（播放一次解析一次），
- * 两者语义冲突。塞进 guard 会改变调用路径与限流行为，违反「纯观测」原则。
+ * 为什么是**旁路**而不是塞进 Pan115ApiGuard：guard 承载调用硬限与限流，塞进去
+ * 会改变调用路径与限流行为，违反「纯观测」原则。
  *
- * 计量作用域 = **本次任务内**（与 trace 的 `apiCalls`「开始前累计值」语义一致）。
- * 刻意不做月度持久化：UI 只展示任务内次数，不展示月限额，跨月累计没有消费方。
+ * 计量作用域 = **本次任务内**，由 executor **自持一个实例**达成——每次采集运行
+ * 经 factory 新建 executor（与 `apiGuard.callsSpent()` 的 `apiCalls` 完全对称）。
+ * 刻意不用进程级单例：那会跨任务累加，且把 STRM 播放侧的直链解析混进任务计数。
+ * 也刻意不做月度持久化：UI 只展示任务内次数，不展示月限额。
  *
  * 纪律：
  *   - `record()` **绝不抛错**——纯观测不能阻断业务调用
@@ -17,7 +18,7 @@ import { classifyDriveApiCall, type DriveApiQuotaClass } from "./drive-api-quota
  */
 
 export interface DriveApiMeterSnapshot {
-  /** 有月度限额的调用次数（直链解析／http 离线任务／离线任务管理）。 */
+  /** 有月度限额的调用次数（http 离线任务／离线任务管理）。 */
   download: number;
   /** 无月限的调用次数（秒传转存／目录与文件管理）。 */
   free: number;
@@ -30,11 +31,9 @@ export interface DriveApiMeter {
   record(platform: string, operation: string, url?: string): void;
   /** 本次任务内的分类计数。 */
   snapshot(): DriveApiMeterSnapshot;
-  /** 清零（一次采集任务开始时）。 */
-  reset(): void;
 }
 
-/** 进程内计量器。多 worker（external 模式）下各 worker 只累计自己发出的调用。 */
+/** 每个 executor 一个实例，生命周期即一次采集运行。 */
 export class InMemoryDriveApiMeter implements DriveApiMeter {
   private download = 0;
   private free = 0;
@@ -55,15 +54,7 @@ export class InMemoryDriveApiMeter implements DriveApiMeter {
   snapshot(): DriveApiMeterSnapshot {
     return { download: this.download, free: this.free, total: this.download + this.free };
   }
-
-  reset(): void {
-    this.download = 0;
-    this.free = 0;
-  }
 }
-
-/** 共享单例：guard（采集侧）与 stream-resolver（播放侧）都向它上报。 */
-export const driveApiMeter: DriveApiMeter = new InMemoryDriveApiMeter();
 
 /** 分类常量的再导出，方便调用方只引一个模块。 */
 export type { DriveApiQuotaClass };

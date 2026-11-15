@@ -1066,6 +1066,15 @@ export interface StorageDiagnosticsReport {
     expiresInSec?: number | undefined;
     error?: string | undefined;
   } | undefined;
+  /** 云下载配额（仅 115 + 有效 Open OAuth 可查）。字段缺失表示平台未返回该值，
+   *  不拿 0 冒充。`available: false` 表示当前链路查不到（Cookie-only／OAuth 失效／
+   *  查询失败），UI 据此显示「暂不可用」而不是显示一个假的 0。 */
+  quota?: {
+    available: boolean;
+    error?: string | undefined;
+    total?: { count?: number; used?: number; surplus?: number } | undefined;
+    packages?: Array<{ name: string; count?: number; used?: number; surplus?: number }> | undefined;
+  } | undefined;
   routingSummary: {
     transferEngine: "cookie" | "open" | "none";
     listingEngine: "cookie" | "open";
@@ -1123,6 +1132,34 @@ function isCredentialConfigured(authKind: string, cookie?: string, credential?: 
   return authKind === "cookie" ? Boolean(cookie) : Boolean(credential);
 }
 
+/** 查云下载配额（剩余下载／离线额度）。只有 Open OAuth 这条链路能查——Cookie
+ *  引擎没有配额端点。任何失败都降级为 `available: false` 并带原因，绝不阻断诊断
+ *  报告本身（配额是附加信息，不是连接健康的判据）。 */
+async function probeQuotaInfo(
+  accountId: string,
+  storageId: string,
+  openOAuth: Pan115OpenOAuthCredentials,
+): Promise<NonNullable<StorageDiagnosticsReport["quota"]>> {
+  try {
+    const openClient = new Pan115OpenClient({
+      credentials: openOAuth,
+      onCredentialsPersist: makePan115OpenOAuthPersister(accountId, storageId),
+      coordinateTokenRefresh: makePan115OpenOAuthRefreshCoordinator(accountId, storageId),
+    });
+    const info = await openClient.getQuotaInfo();
+    return {
+      available: true,
+      total: info.total,
+      packages: info.packages,
+    };
+  } catch (err) {
+    return {
+      available: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 function buildRoutingSummary(
   isConfigured: boolean,
   supportsOpenOAuth: boolean,
@@ -1176,6 +1213,14 @@ export async function diagnoseStorageConnection(
   if (supportsOpenOAuth && openOAuth) {
     const oauthHealth = await probeOpenOAuthHealth(accountId, storageId, provider, openOAuth);
     report.openOAuthStatus = { configured: true, ...oauthHealth };
+    // 配额只有 Open OAuth 能查；OAuth 不健康时不白跑一次注定失败的请求。
+    if (oauthHealth.valid) {
+      report.quota = await probeQuotaInfo(accountId, storageId, openOAuth);
+    } else {
+      report.quota = { available: false, error: "Open OAuth 不可用，无法查询配额" };
+    }
+  } else if (provider === "pan115") {
+    report.quota = { available: false, error: "未配置 Open OAuth，配额仅开放平台可查" };
   }
 
   return report;

@@ -8,7 +8,6 @@ import {
 import { QuarkCookieClient, QUARK_PROFILE, UC_PROFILE } from "./quark-cookie-client.js";
 import { isPan115OpenOAuthValid, type Pan115OpenOAuthCredentials } from "./account-credentials.js";
 import { withBrandPacing } from "./brand-pacing.js";
-import { driveApiMeter } from "./drive-api-meter.js";
 
 /**
  * StorageStreamResolver (网盘流媒体直链与反代解析器)
@@ -134,7 +133,6 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
       );
       const downloadInput: { pickCode: string; userAgent?: string } = { pickCode: input.pickCode };
       if (input.userAgent !== undefined) downloadInput.userAgent = input.userAgent;
-      driveApiMeter.record("pan115", "getDownloadUrl");
       const result = await client.getDownloadUrl(downloadInput);
       return {
         url: result.url,
@@ -175,7 +173,6 @@ export class ProductionStorageStreamResolver implements StorageStreamResolver {
       this._pan115CookieClients.set(input.storageId, client);
     }
 
-    driveApiMeter.record("pan115", "getDownloadUrl");
     const result = await client.getDownloadUrl({
       fileId: input.fileId,
       ...(input.pickCode !== undefined ? { pickCode: input.pickCode } : {}),

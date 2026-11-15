@@ -95,6 +95,24 @@ describe("diagnoseStorageConnectionAction & revealStorageCredentialAction", () =
     expect(res.report?.openOAuthStatus?.error).toBeDefined();
     expect(res.report?.openOAuthStatus?.expiresInSec).toBeDefined();
     expect(res.report?.openOAuthStatus?.expiresInSec).toBeLessThan(0);
+    // OAuth 不健康时不该白跑一次注定失败的配额查询；直接标为不可用并带原因。
+    expect(res.report?.quota?.available).toBe(false);
+    expect(res.report?.quota?.error).toBeTruthy();
+  });
+
+  it("diagnoseStorageConnectionAction reports quota unavailable for a cookie-only 115 drive", async () => {
+    await repo.upsertConnectedStorage(
+      testDualEngineDrive({
+        id: "cs_115_cookie_only",
+        payload: { cookie: "UID=115001; CID=c1; SEID=seid_secret_123" },
+      }),
+    );
+
+    const res = await diagnoseStorageConnectionAction("cs_115_cookie_only");
+    expect(res.ok).toBe(true);
+    // 配额只有 Open OAuth 能查；Cookie-only 部署必须如实说「不可用」而不是显示 0。
+    expect(res.report?.quota?.available).toBe(false);
+    expect(res.report?.quota?.error).toContain("Open OAuth");
   });
 
   it("diagnoseStorageConnectionAction for quark does not report openOAuth and sets supportsOpenOAuth to false", async () => {

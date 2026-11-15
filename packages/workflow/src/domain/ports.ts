@@ -57,6 +57,9 @@ export interface StorageExecutor {
    *  loop's budget soft-warning. Optional: only the real 115 executor implements it;
    *  fakes/sims omit it. */
   apiCallCount?(): number;
+  /** 本次运行内有月度限额的调用次数（下载类）。与 apiCallCount 同为 per-run
+   *  口径，独立计数、不相加减。Optional：只有真实 115 executor 实现。 */
+  downloadApiCallCount?(): number;
   /** The agent-facing 115 call budget (hard limit minus the harness cleanup
    *  reserve). The agent loop derives its SOFT warning from this. Optional
    *  (real 115 executor only). */

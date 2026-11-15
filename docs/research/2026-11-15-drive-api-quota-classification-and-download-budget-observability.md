@@ -312,8 +312,8 @@ P0／P1／P2 已全部落地并通过本地门禁；P3 未实施（需单独授�
 | 阶段 | 实现 | 落点 |
 | --- | --- | --- |
 | P0 分类模型 | `download` / `free` 两类；转存与磁力／ed2k 离线任务为 `free`，直链解析、http 离线任务、离线任务管理（`listOfflineTasks` / `removeOfflineTask`）为 `download` | [drive-api-quota.ts:35](../../packages/workflow/src/storage/drive-api-quota.ts#L35)、[:74](../../packages/workflow/src/storage/drive-api-quota.ts#L74) |
-| P0 旁路计量 | 不拦截、不改写、不抛错、不存 URL 的累计计量器 | [drive-api-meter.ts:38](../../packages/workflow/src/storage/drive-api-meter.ts#L38) |
-| P0 埋点 | executor 单一出口 `callApi` 上报；**直链解析绕过 guard**，故在 stream-resolver 的 Open／Cookie 两条路径分别补埋 | [stream-resolver.ts:137](../../packages/workflow/src/storage/stream-resolver.ts#L137)、[:178](../../packages/workflow/src/storage/stream-resolver.ts#L178) |
+| P0 旁路计量 | 不拦截、不改写、不抛错、不存 URL；**executor 自持一个实例**，生命周期即一次运行（与 `apiGuard.callsSpent()` 的 `apiCalls` 对称） | [drive-api-meter.ts:37](../../packages/workflow/src/storage/drive-api-meter.ts#L37)、[storage-115-executor.ts:562](../../packages/workflow/src/storage/storage-115-executor.ts#L562) |
+| P0 埋点 | executor 单一出口 `callApi` 上报，经 `downloadApiCallCount()` → trace sink → 视图 → UI | [runner-v2.ts:280](../../packages/workflow/src/execution/runner-v2.ts#L280) |
 | P0 展示 | `AgentStep.downloadApiCalls` → 视图投影 → 时间线第二枚徽标（仅任务内次数，**不显示月限额**） | [agent-timeline.tsx:35](../../apps/web/features/activity/components/agent-timeline.tsx#L35) |
 | P1 配额查询 | `/open/offline/get_quota_info`，兼容 `data[]` 与 `{package:[]}` 两种形态；缺失字段保持 `undefined`，不拿 0 冒充 | [pan115-open-client.ts:757](../../packages/workflow/src/storage/pan115-open-client.ts#L757) |
 | P1 错误分类 | 配额类拒绝包装成可操作说明并保留原始信息；**不进 UI 月限额展示** | [pan115-quota-exhausted.ts:39](../../packages/workflow/src/storage/pan115-quota-exhausted.ts#L39) |
@@ -342,3 +342,66 @@ P0／P1／P2 已全部落地并通过本地门禁；P3 未实施（需单独授�
 ### 12.5 对本文前期结论的两处更正
 
 调研初期曾判断「115 无上传实现，字幕改上传不可行」与「配额不可查询」，均被用户推翻并已核实为**错误**：上传链路（`/open/upload/init` 秒传）与配额查询端点在官方文档中真实存在，本地缺实现不等于平台不支持。§11 末尾的本地设施核对清单中「Open 端点清单（无上传）」「123 上传（115 无对应实现）」两条描述的是**改造前**状态，现已失效。
+
+### 12.6 验收期发现并修复的缺陷：下载计数跨任务累加
+
+首次部署后做 /activity 验收时发现：`driveApiMeter` 原为**进程级单例且全代码库无任何 `reset()` 调用**，导致
+
+1. 第二个任务显示的是「上一个任务 + 本任务」的累计值，违背用户要求的**任务内调用次数**口径；
+2. STRM 播放侧的直链解析（`stream-resolver`）也向同一单例上报，把**与任务无关的播放流量**混进任务徽标。
+
+对照既有设计：`apiCalls` 走 `apiGuard.callsSpent()`，guard 是 **per-executor 实例**，而每次采集运行经 factory 新建 executor，因此天然按任务隔离。下载计数破坏了这一对称性。
+
+**修法**（用户 2026-11-15 决策）：计量器改为 executor 自持实例，新增 `downloadApiCallCount()`，`StorageExecutor` 端口加同名可选方法，runner-v2 改读 `storage.downloadApiCallCount?.()`；**移除全局单例与 stream-resolver 两处播放埋点**。
+
+播放侧直链观测归入已延后的 P3：核实 `resolveStream` 只被 `/api/strm/play/[taskId]/[fileId]` 路由调用，采集链路从不走它，故播放调用没有任务上下文，本就不该进任务徽标；保留一个无消费方的全局计数器只是死代码。
+
+**红绿验证**：临时把计量器改回共享实例后，新增的隔离测试报 `expected 14 to be +0`（另有 2 个测试因跨用例污染同时变红）；恢复 per-instance 后 5/5 通过。回归测试「计数按任务隔离：第二个 executor 不继承第一个的下载类次数」即此缺陷的长期守卫。
+
+修复后复验：`build:workflow`／`typecheck`／`gate` 均 exit 0，`packages/workflow` 全量 **309 文件 / 3829 测试通过**。
+
+### 12.7 Dev 实机验收（3020，修复后构建）
+
+在隔离的 Dev 实例部署含 §12.6 修复的构建后，触发两次真实获取，于 `/activity` 目视 + 接口双通道验收：
+
+| 运行 | 路径 | 总调用 / 下载类 | 结论 |
+| :--- | :--- | :--- | :--- |
+| 国产剧（凡人修仙传 第 1 季） | 分享转存，无离线任务 | 160 / **0** | 无额限操作不误报为下载类 |
+| 非国产（葬送的芙莉莲 第 1 季） | 字幕上传不可用 → 静默降级 http 离线任务 | 87 / **25** | 下载类真实计数并渲染 |
+
+- 非国产运行的 `transferSubtitle` 一步发出 34 次调用、其中 25 次下载类（http `addOfflineTask` 提交 + `listOfflineTasks` 轮询）；其后继 free-only 步骤徽标稳定停在 25，不再增长。该步最终报「offline task accepted but file did not materialize in window」——**调用已发生即计数**，与落地成败无关，口径正确。
+- 任务隔离实机可见：前一运行累计到 160，后一运行仍从自己的 10 起算，互不继承。
+- 双徽标渲染正确：新运行每步「网盘 API 累计 N 次」+ 独立玫瑰色描边的「下载类 M 次」；字段缺失的历史运行只显示单徽标（`downloadApiCalls !== undefined` 门控）。
+- 控制台无 error、无水合崩溃；截图留存于会话临时目录（不入库）。
+
+至此 §12.3 中「徽标是否正常显示」一项结案；仍待真实授权环境结案的只剩「上传秒传命中前后 `get_quota_info` surplus 不变」这一平台侧额度假设。
+
+## 13. 后续增量：网盘/设置页显示当月剩余下载与离线额度（2026-11-15）
+
+用户在活动页徽标验收通过后追加需求：**在设置页／网盘页／115 页面显示当月剩余下载与离线额度**。
+
+这**不推翻** P0 的展示纪律，两者口径分工明确：
+
+| 位置 | 显示内容 | 数据来源 |
+| --- | --- | --- |
+| 活动页任务徽标 | 本次任务内的**调用次数**（不分额度） | 本地计量器 |
+| 网盘/设置页 115 诊断 | 平台侧**当月剩余 / 总额度** + 各配额类型明细 | `get_quota_info` |
+
+### 13.1 实现
+
+- 报告类型 `StorageDiagnosticsReport` 增加 `quota`：`available` / `error` / `total` / `packages`。
+- `diagnoseStorageConnection` 在 Open OAuth 健康时调用 `probeQuotaInfo`；OAuth 不健康或 Cookie-only 时直接给 `available:false` + 原因，**不白跑注定失败的请求**。
+- 诊断弹窗新增 `QuotaCard`，不可用时显示「暂不可用：<原因>」而不是显示 0——`surplus` 缺失保持 `undefined`，不拿 0 冒充「额度耗尽」。
+
+### 13.2 为什么按需查询
+
+用户选择「打开诊断/展开卡片时」才查：每次查询都消耗一次 115 Open API 调用，网盘列表页每次加载都查会造成无谓消耗。纯展示的列表不触发查询。
+
+### 13.3 硬边界（必须如实呈现）
+
+配额**只有 Open OAuth 链路可查**（Cookie 引擎没有配额端点）。因此：
+
+- Cookie-only 部署、OAuth 失效（如 40140137）时，UI 显示「暂不可用」而非任何数字；
+- 查询失败不阻断诊断报告本身——配额是附加信息，不是连接健康的判据。
+
+验证：`apps/web` + `packages/workflow` 回归通过；`gate` exit 0；诊断 action 测试新增 Cookie-only 与 OAuth 失效两条不可用断言，并做过红绿验证（移除 Cookie-only 分支后该用例变红）。

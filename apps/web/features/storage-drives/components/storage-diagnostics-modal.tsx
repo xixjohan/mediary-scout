@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, AlertTriangle, LoaderCircle, X, Activity, Server, Zap, ShieldCheck } from "lucide-react";
+import { CheckCircle2, AlertTriangle, LoaderCircle, X, Activity, Server, Zap, ShieldCheck, Gauge } from "lucide-react";
 import { diagnoseStorageConnectionAction } from "../../../app/actions/storage-drives-actions";
 import type { StorageDiagnosticsReport } from "../application/drive-service";
 
@@ -195,6 +195,62 @@ function OpenOAuthTrackCard({ openOAuthStatus }: { openOAuthStatus: StorageDiagn
   );
 }
 
+function QuotaCard({ quota }: { quota: StorageDiagnosticsReport["quota"] }) {
+  if (!quota) return null;
+
+  if (!quota.available) {
+    return (
+      <div style={{ padding: 14, background: "rgba(255, 255, 255, 0.02)", borderRadius: 8, border: "1px dashed rgba(255, 255, 255, 0.1)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 600, color: "#e4e4e7", marginBottom: 6 }}>
+          <Gauge size={14} style={{ color: "#a1a1aa" }} />
+          本月剩余下载 / 离线额度
+        </div>
+        <div style={{ fontSize: 12, color: "#a1a1aa", lineHeight: 1.5 }}>
+          暂不可用：{quota.error ?? "当前链路无法查询"}
+        </div>
+      </div>
+    );
+  }
+
+  const fmt = (n: number | undefined) => (n === undefined ? "-" : String(n));
+  const totalSurplus = quota.total?.surplus;
+  const totalCount = quota.total?.count;
+  // 各配额类型（如「云下载配额」）逐项列出，便于看清是哪一类额度在消耗。
+  const packages = quota.packages ?? [];
+
+  return (
+    <div style={{ padding: 14, background: "rgba(255, 255, 255, 0.03)", borderRadius: 8, border: "1px solid rgba(255, 255, 255, 0.08)" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+        <span style={{ fontWeight: 600, fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}>
+          <Gauge size={14} style={{ color: "#10b981" }} />
+          本月剩余下载 / 离线额度
+        </span>
+        <span style={{ fontSize: 12, color: "#10b981", fontWeight: 600 }}>
+          {totalSurplus === undefined ? "-" : `${fmt(totalSurplus)}${totalCount === undefined ? "" : ` / ${fmt(totalCount)}`}`}
+        </span>
+      </div>
+      <div style={{ fontSize: 12, color: "#a1a1aa", lineHeight: 1.7 }}>
+        {packages.length === 0 ? (
+          <div>平台未返回分项明细</div>
+        ) : (
+          packages.map((p) => (
+            <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <span>{p.name || "未命名配额"}</span>
+              <span style={{ color: "#e4e4e7", fontVariantNumeric: "tabular-nums" }}>
+                剩余 {fmt(p.surplus)}
+                {p.count === undefined ? "" : ` / ${fmt(p.count)}`}
+              </span>
+            </div>
+          ))
+        )}
+        <div style={{ marginTop: 8, fontSize: 11, color: "#71717a", lineHeight: 1.4 }}>
+          数据来自 115 开放平台配额接口，只有 Open OAuth 链路可查；转存不占额度，直链下载／离线任务占用。
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RoutingSummaryCard({
   routing,
   supportsOpenOAuth,
@@ -279,6 +335,7 @@ function DiagnosisReportView({
         {isDual ? <OpenOAuthTrackCard openOAuthStatus={report.openOAuthStatus} /> : null}
       </div>
       <RoutingSummaryCard routing={report.routingSummary} supportsOpenOAuth={report.supportsOpenOAuth} />
+      <QuotaCard quota={report.quota} />
     </div>
   );
 }

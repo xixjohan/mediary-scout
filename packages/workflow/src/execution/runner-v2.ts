@@ -28,7 +28,6 @@ import { userMessageDrive } from "./user-requests.js";
 import { stampReplaceNotification } from "../domain/notification-report.js";
 import { loadSubscriptionPolicyFilter } from "./subscription-policy-filter.js";
 import { inventoryCheckpoint } from "./inventory-checkpoint.js";
-import { driveApiMeter } from "../storage/drive-api-meter.js";
 
 /**
  * Phase 7d — production persist wrappers on the V2 engine. These mirror the old
@@ -278,7 +277,7 @@ function progressAndTraceSink(input: {
       repository: input.repository,
       workflowRunId: input.workflowRunId,
       apiCallCount: () => input.storage.apiCallCount?.(),
-      downloadApiCallCount: () => driveApiMeter.snapshot().download,
+      downloadApiCallCount: () => input.storage.downloadApiCallCount?.(),
     }),
   );
 }

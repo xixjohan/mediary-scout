@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { InMemoryDriveApiMeter, driveApiMeter } from "../../src/storage/drive-api-meter.js";
+import { InMemoryDriveApiMeter } from "../../src/storage/drive-api-meter.js";
 
 /**
  * 计量器的契约。重点：`record()` 绝不抛错（观测不能成为故障源），以及
@@ -21,11 +21,13 @@ describe("InMemoryDriveApiMeter", () => {
     expect(snap.total).toBe(snap.download + snap.free);
   });
 
-  it("reset 清零", () => {
-    const meter = new InMemoryDriveApiMeter();
-    meter.record("pan115", "listOfflineTasks");
-    meter.reset();
-    expect(meter.snapshot()).toEqual({ download: 0, free: 0, total: 0 });
+  it("实例之间互不影响——任务内计数不跨任务累加", () => {
+    const runA = new InMemoryDriveApiMeter();
+    const runB = new InMemoryDriveApiMeter();
+    runA.record("pan115", "listOfflineTasks");
+    runA.record("pan115", "removeOfflineTask");
+    expect(runA.snapshot().download).toBe(2);
+    expect(runB.snapshot()).toEqual({ download: 0, free: 0, total: 0 });
   });
 
   it("初始快照全零", () => {
@@ -45,14 +47,5 @@ describe("InMemoryDriveApiMeter", () => {
     expect(() => meter.record("pan115", "addOfflineTask", undefined)).not.toThrow();
     expect(() => meter.record("pan115", "")).not.toThrow();
     expect(meter.snapshot().total).toBe(2);
-  });
-});
-
-describe("共享单例", () => {
-  it("driveApiMeter 是可用的计量器", () => {
-    driveApiMeter.reset();
-    driveApiMeter.record("pan115", "listOfflineTasks");
-    expect(driveApiMeter.snapshot().download).toBe(1);
-    driveApiMeter.reset();
   });
 });

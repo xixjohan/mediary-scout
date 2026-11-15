@@ -15,7 +15,7 @@ import { collectLandedVideos, normalizeLandedExtensions } from "./landed-media.j
 import { infoHashFromMagnet, isOfflineTaskCandidate, isOfflineTaskUrl } from "./pan115-offline-task.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import { isSystemicTransferBlockMessage } from "../acquisition-v2/transfer-block.js";
-import { driveApiMeter } from "./drive-api-meter.js";
+import { InMemoryDriveApiMeter } from "./drive-api-meter.js";
 import { annotateQuotaExhausted } from "./pan115-quota-exhausted.js";
 import type { StorageExecutor, UnparsedVideoFile } from "../domain/ports.js";
 
@@ -507,6 +507,7 @@ export class Storage115Executor implements StorageExecutor {
   private readonly minVideoSizeBytes: number;
   private readonly videoExtensions: Set<string>;
   private readonly apiGuard: Pan115ApiGuard;
+  private readonly driveMeter = new InMemoryDriveApiMeter();
   private readonly offlineMaterializeAttempts: number;
   private readonly offlineMaterializePollMs: number;
   private readonly subtitleMaterializeAttempts: number;
@@ -553,6 +554,13 @@ export class Storage115Executor implements StorageExecutor {
    *  drive the agent loop's budget soft-warning. */
   apiCallCount(): number {
     return this.apiGuard.callsSpent();
+  }
+
+  /** 本次运行内**有月度限额**的调用次数（http 离线任务／离线任务管理）。与
+   *  `apiCallCount()` 同为 per-executor 口径：每次运行新建 executor，故天然按
+   *  任务隔离，不跨任务累加。独立于 apiCalls，两者不相加减。 */
+  downloadApiCallCount(): number {
+    return this.driveMeter.snapshot().download;
   }
 
   /** The agent-facing call budget (hard limit minus the harness cleanup reserve).
@@ -1522,7 +1530,7 @@ export class Storage115Executor implements StorageExecutor {
    *  quota classification (a magnet addOfflineTask is a 秒传, an http one is a
    *  real server-side fetch) — it is never stored, logged or persisted. */
   private async callApi<T>(operation: Pan115Operation, call: () => Promise<T>, url?: string): Promise<T> {
-    driveApiMeter.record("pan115", operation, url);
+    this.driveMeter.record("pan115", operation, url);
     return this.apiGuard.run(operation, call);
   }
 }

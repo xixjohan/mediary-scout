@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   Storage115Executor,
   type Pan115ActionResult,
@@ -7,7 +7,6 @@ import {
   type Pan115OfflineTask,
   type Pan115StorageApi,
 } from "../../src/index.js";
-import { driveApiMeter } from "../../src/storage/drive-api-meter.js";
 
 /**
  * 埋点集成测试：验证 executor 的真实调用确实按类别进了 meter。
@@ -88,10 +87,6 @@ function executor(api: Pan115StorageApi): Storage115Executor {
   });
 }
 
-afterEach(() => {
-  driveApiMeter.reset();
-});
-
 describe("executor → meter 埋点", () => {
   it("磁力转存：addOfflineTask 计 free，其间的 listOfflineTasks 计 download", async () => {
     const api = fakeApi();
@@ -107,9 +102,8 @@ describe("executor → meter 埋点", () => {
     });
     // 磁力提交本身无月限；但转存流程要 listOfflineTasks 判定秒传/在途，
     // 而离线任务管理与直链下载共享月限（用户口径）——所以 download > 0 是对的。
-    const snap = driveApiMeter.snapshot();
-    expect(snap.download).toBeGreaterThanOrEqual(1);
-    expect(snap.free).toBeGreaterThanOrEqual(1);
+    expect(ex.downloadApiCallCount()).toBeGreaterThanOrEqual(1);
+    expect(ex.apiCallCount()).toBeGreaterThan(ex.downloadApiCallCount()); // 其余为 free
   });
 
   it("字幕 http 离线任务计 download（同一 addOfflineTask 按 url 协议分流）", async () => {
@@ -121,18 +115,17 @@ describe("executor → meter 埋点", () => {
       directoryId: "season_1",
       workflowRunId: "run-1",
     });
-    const snap = driveApiMeter.snapshot();
-    expect(snap.download).toBeGreaterThanOrEqual(1);
-    expect(snap.free).toBeGreaterThanOrEqual(1); // write-scope + before-snapshot
+    expect(ex.downloadApiCallCount()).toBeGreaterThanOrEqual(1);
+    // write-scope 校验与 before 快照都是 free，故总调用数大于下载类
+    expect(ex.apiCallCount()).toBeGreaterThan(ex.downloadApiCallCount());
   });
 
   it("目录列举计 free", async () => {
     const api = fakeApi();
     const ex = executor(api);
     await ex.listVideoFiles("season_1");
-    const snap = driveApiMeter.snapshot();
-    expect(snap.download).toBe(0);
-    expect(snap.free).toBeGreaterThanOrEqual(1);
+    expect(ex.downloadApiCallCount()).toBe(0);
+    expect(ex.apiCallCount()).toBeGreaterThanOrEqual(1);
   });
 
   it("meter 不影响调用结果——上报前后行为一致", async () => {
@@ -148,6 +141,23 @@ describe("executor → meter 埋点", () => {
       } as never,
     });
     expect(result).toBeDefined();
-    expect(driveApiMeter.snapshot().total).toBeGreaterThan(0);
+    expect(ex.apiCallCount()).toBeGreaterThan(0);
+  });
+
+  it("计数按任务隔离：第二个 executor 不继承第一个的下载类次数", async () => {
+    const runA = executor(fakeApi());
+    await runA.transferSubtitleUrl({
+      url: "https://example.com/Show.S01E01.ass",
+      filename: "Show.S01E01.ass",
+      directoryId: "season_1",
+      workflowRunId: "run-a",
+    });
+    expect(runA.downloadApiCallCount()).toBeGreaterThanOrEqual(1);
+
+    // 每次采集运行经 factory 新建 executor —— 新任务必须从 0 起算。
+    const runB = executor(fakeApi());
+    await runB.listVideoFiles("season_1");
+    expect(runB.downloadApiCallCount()).toBe(0);
+    expect(runB.apiCallCount()).toBeGreaterThanOrEqual(1);
   });
 });
