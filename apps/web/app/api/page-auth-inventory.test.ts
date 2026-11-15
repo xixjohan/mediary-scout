@@ -76,8 +76,9 @@ describe("S5.7 页面登录守卫清单（app/**/page.tsx）", () => {
   const pages = collectPages(APP_ROOT);
 
   it("扫描到的页面入口数量符合预期（新增页面必须显式表态，别让清单悄悄变空）", () => {
-    // 10 个受管页面（含 /library）+ 3 个系统页面 + login（豁免）。数量变化 = 有人加了/删了页面，必须回来看一眼。
-    expect(pages.length).toBe(14);
+    // 11 个受管页面（含 /library 与 /account）+ 3 个系统页面 + login（豁免）。
+    // 数量变化 = 有人加了/删了页面，必须回来看一眼（新增页是否也包了登录守卫）。
+    expect(pages.length).toBe(15);
   });
 
   it("除 /login 外每个页面入口都 import 并在 <Suspense> 内渲染 PageLoginGuard", () => {

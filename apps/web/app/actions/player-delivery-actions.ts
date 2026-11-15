@@ -45,6 +45,15 @@ export async function savePlayerDeliveryPreferenceAction(
       "../../lib/workflow-runtime"
     );
     const accountId = await getCurrentAccountId();
+    // 需求 2：被锁定播放方式的账号不得写入覆盖偏好——否则前端藏了按钮，
+    // 服务端仍会收下这条"用户选择"，下次解析时又要专门过滤，等于把守卫拆成两处。
+    const { resolvePageAccess } = await import("../../lib/page-permission-guard");
+    const { shouldHonorDeliveryPreference } = await import("../../lib/playback-mode-policy");
+    const access = await resolvePageAccess();
+    const secLike = { isMaster: access.isOwner, permissions: access.permissions } as const;
+    if (!shouldHonorDeliveryPreference(secLike)) {
+      return { success: false };
+    }
     await getWorkflowRepository().setAccountSetting(
       accountId,
       PLAYER_DELIVERY_MODE_SETTING_KEY,

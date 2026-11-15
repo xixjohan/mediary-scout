@@ -283,7 +283,7 @@ export function UserProfileModal({
           }}
         >
           <a
-            href="/settings?tab=account#password"
+            href="/account#password"
             className="btn btn-secondary"
             onClick={onClose}
             style={{

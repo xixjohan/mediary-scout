@@ -3,6 +3,7 @@
 import type { DriveFileItem } from "@media-track/workflow";
 import { MediaryPlayerModal } from "../../../player/components/mediary-player-modal";
 import { buildPlayStreamUrls } from "../../../player/play-stream-url";
+import { useAuth } from "../../../auth/hooks/use-auth";
 
 export function VideoPreviewModal({
   item,
@@ -13,6 +14,7 @@ export function VideoPreviewModal({
   storageId: string;
   onClose: () => void;
 }) {
+  const { can } = useAuth();
   const { streamUrl, proxyUrl } = buildPlayStreamUrls({
     storageId,
     fileId: item.id,
@@ -25,6 +27,7 @@ export function VideoPreviewModal({
       title={item.name}
       streamUrl={streamUrl}
       proxyUrl={proxyUrl}
+      modeLocked={!can("storage:browse_any")}
       onClose={onClose}
     />
   );

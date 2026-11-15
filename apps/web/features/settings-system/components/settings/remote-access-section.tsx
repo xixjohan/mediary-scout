@@ -179,7 +179,7 @@ export async function RemoteAccessSection({
             管理系统用户
           </Link>
           <Link
-            href="/settings?tab=account#password"
+            href="/account#password"
             className="btn btn-secondary btn-sm"
             style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
           >

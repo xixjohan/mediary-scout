@@ -7,6 +7,7 @@ import type { LibraryMediaItem, LibrarySeason, LibraryEpisode, SubtitleTrackInfo
 import { MediaryPlayerModal } from "../../player/components/mediary-player-modal";
 import { buildPlayStreamUrls } from "../../player/play-stream-url";
 import { EditMetadataModal } from "./edit-metadata-modal";
+import { useAuth } from "../../auth/hooks/use-auth";
 
 export interface SeasonWithEpisodes extends LibrarySeason {
   episodes: LibraryEpisode[];
@@ -19,6 +20,7 @@ export interface LibraryItemModalProps {
 }
 
 export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModalProps) {
+  const { can } = useAuth();
   const [data, setData] = useState<{ item: LibraryMediaItem; seasons: SeasonWithEpisodes[] } | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedSeasonIndex, setSelectedSeasonIndex] = useState(0);
@@ -510,6 +512,7 @@ export function LibraryItemModal({ itemId, onClose, onRefresh }: LibraryItemModa
           deliveryMode={playingEp.deliveryMode}
           deliverySource={playingEp.deliverySource}
           deliveryReason={playingEp.deliveryReason}
+          modeLocked={!can("storage:browse_any")}
           onClose={() => setPlayingEp(null)}
         />
       )}

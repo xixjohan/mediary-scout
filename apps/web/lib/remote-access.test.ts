@@ -334,12 +334,14 @@ describe("scoutConnectBaseUrl（心跳与 waitlist 表单的唯一来源）", ()
   });
 });
 
-describe("accountPasswordHref（保留 ?w 工作区上下文）", () => {
+describe("accountPasswordHref（独立 /account 页，保留 ?w 工作区上下文）", () => {
   it("无 w → 基础链接；有 w → 带上且仍以 #password 收尾", () => {
-    expect(accountPasswordHref()).toBe("/settings?tab=account#password");
+    // 改密已从 /settings 迁到独立 /account：/settings 是实例配置面（成员无权），
+    // 改自己的密码是个人面，两者必须分开，否则成员会被设置页守卫拦在 403。
+    expect(accountPasswordHref()).toBe("/account#password");
     const withW = accountPasswordHref("cs_abc");
     expect(withW).toContain("w=cs_abc");
-    expect(withW).toContain("tab=account");
+    expect(withW).not.toContain("/settings");
     expect(withW.endsWith("#password")).toBe(true);
   });
 

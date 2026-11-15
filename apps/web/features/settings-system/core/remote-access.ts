@@ -330,9 +330,10 @@ export async function resolveInstanceConnectHostname(): Promise<string | null> {
  * 里透传同一个 `w`，这里跟随同一约定。）
  */
 export function accountPasswordHref(w?: string): string {
-  const params = new URLSearchParams({ tab: "account" });
+  const params = new URLSearchParams();
   if (w) params.set("w", w);
-  return `/settings?${params.toString()}#password`;
+  const query = params.toString();
+  return `/account${query ? `?${query}` : ""}#password`;
 }
 
 /**

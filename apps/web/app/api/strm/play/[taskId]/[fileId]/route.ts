@@ -8,6 +8,8 @@ import {
   type StrmDeliveryMode,
 } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../../../lib/workflow-runtime";
+import { resolveSecurityContext } from "../../../../../../lib/auth-chain";
+import { shouldHonorDeliveryQuery } from "../../../../../../lib/playback-mode-policy";
 import {
   ensureStorageStreamResolver,
   ensureStrmTaskConfigRegistry,
@@ -404,6 +406,34 @@ async function serveCachedWithHealing(options: {
   }
 }
 
+/**
+ * 解析本次请求应使用的投送配置。
+ *
+ * 需求 2：普通用户只能使用影视库设置的方式播放——播放路由过去**优先尊重客户端**
+ * `?delivery=`，等于给了任何登录用户一层覆盖权。这里按账号能力收口：只有能改盘上
+ * 任意目录的人（站长/管理员）才允许覆盖。
+ *
+ * 安全上下文解析失败（外部 STRM 客户端无会话）时按"不锁"处理：那类请求的设备语义
+ * 由 STRM 任务配置决定，不属于应用内播放器这条需求。
+ *
+ * 抽成独立函数是为了让 GET 的复杂度留在限额内（此前内联 try/catch 把它顶到 16）。
+ */
+async function resolveConfiguredDelivery(input: {
+  request: NextRequest;
+  queryDelivery: string | null;
+  configured: StrmDeliveryMode;
+}): Promise<StrmDeliveryMode> {
+  const { request, queryDelivery, configured } = input;
+  let canOverride = true;
+  try {
+    canOverride = shouldHonorDeliveryQuery(await resolveSecurityContext(request));
+  } catch {
+    canOverride = true;
+  }
+  const isKnown = queryDelivery === "proxy" || queryDelivery === "redirect" || queryDelivery === "auto";
+  return canOverride && isKnown ? (queryDelivery as StrmDeliveryMode) : configured;
+}
+
 export async function GET(request: NextRequest, context: RouteParams) {
   const { taskId, fileId } = await context.params;
   const fileName = request.nextUrl.searchParams.get("name") ?? undefined;
@@ -423,11 +453,11 @@ export async function GET(request: NextRequest, context: RouteParams) {
   const { storageId } = config;
   const clientUa = request.headers.get("user-agent");
 
-  // 若前端请求显式指定了 delivery (如 proxy 模式自愈或直连)，优先尊重请求参数
-  const configuredDelivery =
-    queryDelivery === "proxy" || queryDelivery === "redirect" || queryDelivery === "auto"
-      ? queryDelivery
-      : config.deliveryMode;
+  const configuredDelivery = await resolveConfiguredDelivery({
+    request,
+    queryDelivery,
+    configured: config.deliveryMode,
+  });
 
   const effectiveDelivery = determineEffectiveDeliveryMode({
     configuredMode: configuredDelivery,

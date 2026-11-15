@@ -19,6 +19,14 @@ import {
   savePlayerDeliveryPreferenceAction,
 } from "../../../app/actions/player-delivery-actions";
 import type { SubtitleTrackInfo } from "@media-track/contracts";
+import {
+  canOfferModeSwitch,
+  deliveryControlText,
+  initialDeliveryControl,
+  modeLabel as modeLabelOf,
+  reduceDeliveryControl,
+  type DeliveryControlState,
+} from "../core/delivery-control-fsm";
 
 export interface MediaryPlayerModalProps {
   title: string;
@@ -31,6 +39,9 @@ export interface MediaryPlayerModalProps {
   deliverySource?: string | undefined;
   /** 人类可读的决策原因，hover 标签可见。 */
   deliveryReason?: string | undefined;
+  /** 成员等无切换权的账号：不渲染切换/恢复按钮，且不读账号偏好。
+   *  真正的边界在服务端（播放路由忽略 ?delivery= 且不读偏好），UI 只是不给无用的按钮。 */
+  modeLocked?: boolean;
   onClose: () => void;
 }
 
@@ -43,19 +54,16 @@ export function MediaryPlayerModal({
   deliveryMode = "redirect",
   deliverySource,
   deliveryReason,
+  modeLocked = false,
   onClose,
 }: MediaryPlayerModalProps) {
   const [mounted, setMounted] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
   // 程序化复制全部失败时（极少数浏览器/权限策略），给出可手动复制的兜底。
   const [manualCopyUrl, setManualCopyUrl] = useState<string | null>(null);
-  const [currentMode, setCurrentMode] = useState<"redirect" | "proxy">(deliveryMode);
-  // P2-B：账号级投送偏好。三处播放入口（含不走 play 接口的文件夹视图）
-  // 统一在弹窗内读取同一个 account_settings 键，避免偏好只在一处生效。
-  const rememberedModeRef = useRef<"redirect" | "proxy" | null>(null);
-  const [overrideActive, setOverrideActive] = useState(deliverySource === "session");
-  const [preferenceReset, setPreferenceReset] = useState(false);
-  const [decisionNote, setDecisionNote] = useState<string | null>(null);
+  // 投送控制 = 显式状态机（mode + origin）。旧实现用 4 个并行标志表达同一事实，
+  // 无法穷举测试；见 features/player/core/delivery-control-fsm.ts。
+  const [delivery, setDelivery] = useState<DeliveryControlState>(() => initialDeliveryControl(deliveryMode));
   const [controlsVisible, setControlsVisible] = useState(true);
   const [hintVisibility, setHintVisibility] = useState<HintVisibility>("auto");
   const [showHelp, setShowHelp] = useState(false);
@@ -76,33 +84,25 @@ export function MediaryPlayerModal({
     setMounted(true);
     setHintVisibility(readHintVisibility());
     resetHideTimer();
-    // 读取失败 / 演示站只读：静默降级为服务端解析结果，不阻断播放。
-    void readPlayerDeliveryPreferenceAction()
-      .then((preference) => {
-        if (preference !== "proxy" && preference !== "redirect") return;
-        rememberedModeRef.current = preference;
-        setCurrentMode(preference);
-        setOverrideActive(true);
-        setDecisionNote(
-          `已记忆的投送偏好：${preference === "proxy" ? "服务器分片代理" : "302 CDN 直连"}（刷新后保持）`,
-        );
-      })
-      .catch(() => {});
+    // 锁定账号（成员）不读账号偏好：历史值即使还在库里也不得生效。
+    if (!modeLocked) {
+      // 读取失败 / 演示站只读：静默降级为服务端解析结果，不阻断播放。
+      void readPlayerDeliveryPreferenceAction()
+        .then((preference) => {
+          if (preference !== "proxy" && preference !== "redirect") return;
+          setDelivery((prev) => reduceDeliveryControl(prev, { type: "PREFERENCE_LOADED", preference }).state);
+        })
+        .catch(() => {});
+    }
     return () => {
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
     };
-  }, [resetHideTimer]);
+  }, [resetHideTimer, modeLocked]);
 
-  // 父级交付模式异步到达后同步显示；若已有账号级偏好，以偏好为准。
+  // 父级交付模式异步到达 → 交状态机裁决（policy 态接受，user 态不被覆盖）。
   useEffect(() => {
-    setCurrentMode(rememberedModeRef.current ?? deliveryMode);
-  }, [deliveryMode]);
-
-  useEffect(() => {
-    if (rememberedModeRef.current === null) {
-      setOverrideActive(deliverySource === "session");
-    }
-  }, [deliverySource]);
+    setDelivery((prev) => reduceDeliveryControl(prev, { type: "SERVER_DECISION", mode: deliveryMode, source: deliverySource }).state);
+  }, [deliveryMode, deliverySource]);
 
   // 统一快捷键分派（全局焦点策略 + Escape 单一归属），取代旧的 window Escape 监听。
   usePlayerShortcuts({
@@ -121,8 +121,10 @@ export function MediaryPlayerModal({
     });
   }, []);
 
-  const activeUrl = currentMode === "proxy" && proxyUrl ? proxyUrl : streamUrl;
-  const fallbackUrl = currentMode === "redirect" && proxyUrl ? proxyUrl : undefined;
+  const activeUrl = delivery.mode === "proxy" && proxyUrl ? proxyUrl : streamUrl;
+  const fallbackUrl = delivery.mode === "redirect" && proxyUrl ? proxyUrl : undefined;
+  const switchable = canOfferModeSwitch(delivery, { locked: modeLocked, canToggle: Boolean(proxyUrl) });
+  const modeLabel = modeLabelOf;
 
   const copyAbsoluteLink = async () => {
     const fullUrl = activeUrl.startsWith("http") ? activeUrl : `${window.location.origin}${activeUrl}`;
@@ -138,34 +140,27 @@ export function MediaryPlayerModal({
     setTimeout(() => setCopyState("idle"), 2000);
   };
 
-  const modeLabel = (mode: "redirect" | "proxy") =>
-    mode === "redirect" ? "302 CDN 直连" : "服务器分片代理";
-
-  const toggleDeliveryMode = () => {
-    if (!proxyUrl) return;
-    const next = currentMode === "redirect" ? "proxy" : "redirect";
-    setCurrentMode(next);
-    rememberedModeRef.current = next;
-    setOverrideActive(true);
-    setPreferenceReset(false);
-    setDecisionNote(`用户手动选择：${modeLabel(next)}（已记忆，下次打开保持）`);
-    // 持久化失败（演示站 / 未认证）时本次会话内仍然生效。
-    void savePlayerDeliveryPreferenceAction(next).catch(() => {});
+  const applyDeliveryEvent = (
+    event: Parameters<typeof reduceDeliveryControl>[1],
+  ) => {
+    setDelivery((prev) => {
+      const { state, effect } = reduceDeliveryControl(prev, event, { locked: modeLocked, canToggle: Boolean(proxyUrl) });
+      // 副作用由状态机决定、在此执行：改模式 → 记忆；恢复默认 → 清除记忆。
+      // 持久化失败（演示站 / 未认证）时本次会话内仍然生效。
+      if (effect === "persist-mode") {
+        void savePlayerDeliveryPreferenceAction(state.mode).catch(() => {});
+      } else if (effect === "clear-preference") {
+        void savePlayerDeliveryPreferenceAction("auto").catch(() => {});
+      }
+      return state;
+    });
   };
 
-  const resetDeliveryPreference = () => {
-    rememberedModeRef.current = null;
-    setOverrideActive(false);
-    setPreferenceReset(true);
-    setDecisionNote("已恢复默认：下次打开重新按路径绑定 / 影视库配置解析投送模式");
-    void savePlayerDeliveryPreferenceAction("auto").catch(() => {});
-  };
+  const toggleDeliveryMode = () => applyDeliveryEvent({ type: "TOGGLE" });
+  const resetDeliveryPreference = () => applyDeliveryEvent({ type: "RESET" });
 
   // P2-C：把 hover 里的决策原因提升为常驻说明；没有 reason 的入口给出可读兜底。
-  const decisionText =
-    decisionNote ??
-    deliveryReason ??
-    `${modeLabel(currentMode)} · 来源 ${deliverySource ?? "默认策略"}`;
+  const decisionText = deliveryControlText(delivery, deliveryReason ?? deliverySource);
 
   if (!mounted) return null;
 
@@ -271,9 +266,9 @@ export function MediaryPlayerModal({
                 display: "inline-flex",
                 alignItems: "center",
                 gap: "0.35rem",
-                background: currentMode === "redirect" ? "rgba(34, 197, 94, 0.18)" : "rgba(59, 130, 246, 0.18)",
-                border: currentMode === "redirect" ? "1px solid rgba(34, 197, 94, 0.35)" : "1px solid rgba(59, 130, 246, 0.35)",
-                color: currentMode === "redirect" ? "#4ade80" : "#60a5fa",
+                background: delivery.mode === "redirect" ? "rgba(34, 197, 94, 0.18)" : "rgba(59, 130, 246, 0.18)",
+                border: delivery.mode === "redirect" ? "1px solid rgba(34, 197, 94, 0.35)" : "1px solid rgba(59, 130, 246, 0.35)",
+                color: delivery.mode === "redirect" ? "#4ade80" : "#60a5fa",
               }}
             >
               <span
@@ -281,11 +276,11 @@ export function MediaryPlayerModal({
                   width: "6px",
                   height: "6px",
                   borderRadius: "50%",
-                  background: currentMode === "redirect" ? "#22c55e" : "#3b82f6",
-                  boxShadow: currentMode === "redirect" ? "0 0 6px #22c55e" : "0 0 6px #3b82f6",
+                  background: delivery.mode === "redirect" ? "#22c55e" : "#3b82f6",
+                  boxShadow: delivery.mode === "redirect" ? "0 0 6px #22c55e" : "0 0 6px #3b82f6",
                 }}
               />
-              {currentMode === "redirect" ? "302 CDN 直连" : "服务器分片代理"}
+              {delivery.mode === "redirect" ? "302 CDN 直连" : "服务器分片代理"}
               {deliverySource && (
                 <span
                   title={deliveryReason ?? undefined}
@@ -330,7 +325,7 @@ export function MediaryPlayerModal({
               {HINT_VISIBILITY_LABELS[hintVisibility]}
             </button>
 
-            {proxyUrl && (
+            {switchable.toggle && (
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -350,11 +345,11 @@ export function MediaryPlayerModal({
                 }}
               >
                 <RefreshCw size={13} />
-                切为{currentMode === "redirect" ? "代理模式" : "302直连"}
+                切为{delivery.mode === "redirect" ? "代理模式" : "302直连"}
               </button>
             )}
 
-            {overrideActive && !preferenceReset && (
+            {switchable.reset && (
               <button
                 type="button"
                 className="btn btn-secondary btn-sm"
@@ -380,7 +375,7 @@ export function MediaryPlayerModal({
               className="btn btn-secondary btn-sm"
               onClick={() => void copyAbsoluteLink()}
               title={
-                currentMode === "proxy"
+                delivery.mode === "proxy"
                   ? "复制播放地址（需本系统登录态；外部播放器请先切换为 302 直连）"
                   : "复制播放地址（302 直连，可直接给 PotPlayer / VLC 尝试）"
               }
@@ -585,7 +580,7 @@ export function MediaryPlayerModal({
             title={title}
             subtitles={subtitles}
             poster={poster}
-            deliveryMode={currentMode}
+            deliveryMode={delivery.mode}
             deliverySource={deliverySource}
             onPlayerChange={(art) => {
               playerRef.current = art;

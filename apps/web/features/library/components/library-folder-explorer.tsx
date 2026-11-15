@@ -6,6 +6,8 @@ import type { LibraryPathBinding } from "@media-track/contracts";
 import type { ConnectedStorageView } from "../../../lib/workflow-runtime";
 import type { DriveFileItem, DriveDirectoryListing } from "@media-track/workflow";
 import { MediaryPlayerModal } from "../../player/components/mediary-player-modal";
+import { useAuth } from "../../auth/hooks/use-auth";
+import { resolveDeliveryMode } from "@media-track/workflow";
 import { buildPlayStreamUrls } from "../../player/play-stream-url";
 
 export interface LibraryFolderExplorerProps {
@@ -242,6 +244,7 @@ export function LibraryFolderExplorer({
   storages,
   defaultDeliveryMode = "redirect",
 }: LibraryFolderExplorerProps) {
+  const { can } = useAuth();
   const defaultStorageId = bindings[0]?.storageId || storages[0]?.id || "";
   const defaultFolderId = bindings[0]?.remoteFolderId || "0";
 
@@ -256,6 +259,7 @@ export function LibraryFolderExplorer({
     streamUrl: string;
     proxyUrl: string;
     deliveryMode: "redirect" | "proxy";
+    source: string;
   } | null>(null);
 
   const fetchDirectory = async (storageId: string, dirId: string) => {
@@ -297,13 +301,24 @@ export function LibraryFolderExplorer({
       fileName: file.name,
       pickCode: file.pickCode,
     });
-    // binding 显式配置优先；inherit 时向上继承库默认，不再硬编码 redirect。
+    // 与 /api/library/play 用**同一个责任链**，而不是"binding 否则库默认"的两段式。
+    // 两段式漏掉了驱动物理约束（夸克/UC 必须代理、115 对高危 UA 回退代理）：
+    // 绑定配成 redirect 的夸克盘会在文件夹视图里发起必然失败的直连。
     const binding = bindings.find((b) => b.storageId === selectedStorageId);
-    const deliveryMode: "redirect" | "proxy" =
-      binding && binding.deliveryMode !== "inherit"
-        ? binding.deliveryMode
-        : defaultDeliveryMode;
-    setPlayingFile({ fileName: file.name, streamUrl, proxyUrl, deliveryMode });
+    const provider = storages.find((s) => s.id === selectedStorageId)?.provider ?? null;
+    const decision = resolveDeliveryMode({
+      bindingMode: binding?.deliveryMode ?? null,
+      libraryMode: defaultDeliveryMode,
+      provider,
+      userAgent: typeof navigator === "undefined" ? undefined : navigator.userAgent,
+    });
+    setPlayingFile({
+      fileName: file.name,
+      streamUrl,
+      proxyUrl,
+      deliveryMode: decision.mode,
+      source: decision.source,
+    });
   };
 
   return (
@@ -369,7 +384,8 @@ export function LibraryFolderExplorer({
           streamUrl={playingFile.streamUrl}
           proxyUrl={playingFile.proxyUrl}
           deliveryMode={playingFile.deliveryMode}
-          deliverySource="binding"
+          deliverySource={playingFile.source}
+          modeLocked={!can("storage:browse_any")}
           onClose={() => setPlayingFile(null)}
         />
       )}

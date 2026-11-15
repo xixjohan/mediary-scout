@@ -14,6 +14,7 @@ import {
 import { verifyToken, issueToken } from "@media-track/shared";
 import {
   getWorkflowRepository,
+  getUserManagementService,
   getSessionSecretCache,
   setSessionSecretCache,
   getJwtSecretCache,
@@ -300,6 +301,11 @@ export async function changeOwnPassword(
   const repo = getWorkflowRepository();
   const acct = await repo.getAccountById(accountId);
   const isFirstPassword = Boolean(acct && (!acct.passwordHash || acct.passwordHash.length === 0));
+  // 多用户模式下「首次设密免校验」是提权口子：任何拿到该账号 session 的人都能直接
+  // 覆盖密码。成员账号由站长创建时必带初始密码，因此这条分支只对单用户首次设密有意义。
+  if (isFirstPassword && isMultiUserEnabled()) {
+    return { ok: false, error: "该账号尚未设置密码，请由站长重置后再修改。" };
+  }
   const valid = Boolean(
     acct && (isFirstPassword || (await verifyPassword(currentPassword, acct.passwordHash))),
   );
@@ -307,6 +313,9 @@ export async function changeOwnPassword(
 
   await repo.setAccountPassword(accountId, await hashPassword(newPassword));
   await repo.deleteSessionsForAccount(accountId);
+  // 安全版本号必须一起 bump：API Key 的委派校验只比对 ownerSecurityVersion，
+  // 改密不 bump 会让"改了密码但旧 Key 还能用"——那是一种假安全感。
+  await getUserManagementService().bumpUserSecurityVersion(accountId);
   return { ok: true };
 }
 

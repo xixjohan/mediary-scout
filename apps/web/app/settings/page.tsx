@@ -7,7 +7,7 @@ import { ClientLoginRedirect } from "../../features/auth/components/client-login
 import { driveConnectionBadge } from "../../lib/settings-badge";
 import { maskProviderUid } from "../../lib/mask-provider-uid";
 import { connection } from "next/server";
-import { Bell, Bot, Cable, CalendarClock, Clapperboard, ExternalLink, Gauge, KeyRound, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
+import { Bell, Bot, Cable, CalendarClock, Clapperboard, ExternalLink, Gauge, Languages, Radio, ShieldCheck, Subtitles, TriangleAlert, Users } from "lucide-react";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { AddDriveBrandTabs } from "../../features/storage-drives/components/add-drive-brand-tabs";
 import { TestConnectionButton } from "../../features/settings-system/components/test-connection-button";
@@ -40,7 +40,6 @@ import { DailySweepForm } from "../../features/settings-system/components/daily-
 import { PatrolConcurrencyForm } from "../../features/settings-system/components/patrol-concurrency-form";
 import { PatrolNowButton } from "../../features/settings-system/components/patrol-now-button";
 import { SettingsTabs } from "../../features/settings-system/components/settings-tabs";
-import { PasswordChangeForm } from "../../features/settings-system/components/password-change-form";
 import { AccountManagementSection } from "../../features/settings-system/components/settings/account-management-section";
 import { RoleManagementSection } from "../../features/settings-system/components/settings/role-management-section";
 import { RemoteAccessSection } from "../../features/settings-system/components/settings/remote-access-section";
@@ -225,9 +224,6 @@ function SettingsPageInner({
               account={
                 <>
                   <Suspense fallback={null}>
-                    <PasswordChangeSection />
-                  </Suspense>
-                  <Suspense fallback={null}>
                     <AccountManagementSection />
                   </Suspense>
                   <Suspense fallback={null}>
@@ -292,23 +288,6 @@ async function SettingsAttentionSection({
   await markSettingsAttentionSeen();
   return <SettingsActionInbox items={summary.items} />;
 }
-
-async function PasswordChangeSection() {
-  await connection();
-  return (
-    <section id="password" className="panel" style={{ maxWidth: 720, marginTop: 24 }}>
-      <div className="panel-header">
-        <div>
-          <h2 className="panel-title"><KeyRound size={16} aria-hidden style={{ verticalAlign: "-2px", marginRight: 8 }} />修改密码</h2>
-          <p className="panel-note">修改后所有登录会话失效，需用新密码重新登录</p>
-        </div>
-      </div>
-      <PasswordChangeForm />
-    </section>
-  );
-}
-
-
 
 async function LlmConfigSection() {
   await connection();
