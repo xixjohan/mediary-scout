@@ -89,4 +89,17 @@ export interface StorageExecutor {
     directoryId: string;
     workflowRunId: string;
   }): Promise<TransferAttempt[]>;
+  /** 字幕上传落地（不消耗云下载配额）：本地下载字幕内容，算 SHA1，走
+   *  `/open/upload/init`；秒传命中即完成。任何失败都返回明确的降级信号
+   *  （unavailable / needs_object_storage），调用方回退到 transferSubtitleUrls。
+   *  Optional：只有实现了上传能力的 executor 提供；缺失即整条上传路径不可用。 */
+  uploadSubtitle?(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+  }): Promise<
+    | { outcome: "landed"; fileId?: string }
+    | { outcome: "needs_object_storage" }
+    | { outcome: "unavailable"; reason: string }
+  >;
 }

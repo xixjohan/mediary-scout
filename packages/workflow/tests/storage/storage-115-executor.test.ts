@@ -1561,7 +1561,8 @@ describe("Storage115Executor.transferSubtitleUrls (整包一次:1 校验 + 1 快
     const attempts = await executor.transferSubtitleUrls({ files: subtitleFiles(6), directoryId: "stage", workflowRunId: "run-b" });
 
     expect(submissions).toBe(3);
-    expect(attempts.slice(0, 3).map((a) => a.providerMessage)).toEqual(["云下载配额不足", "云下载配额不足", "云下载配额不足"]);
+    // 配额类拒绝会被 annotateQuotaExhausted 包装成可操作的说明，原始信息保留在末尾。
+    expect(attempts.slice(0, 3).every((a) => a.providerMessage.includes("云下载配额不足"))).toBe(true);
     expect(attempts.slice(3).every((a) => a.status === "failed" && /SUBTITLE_NOT_SUBMITTED.*云下载配额不足/.test(a.providerMessage))).toBe(true);
     expect(api.listOfflineTasksCalls).toBe(0); // nothing was submitted → nothing to cancel
   });

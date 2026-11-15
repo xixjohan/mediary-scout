@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { SUBTITLE_RENEWAL_CHUNK_SIZE, TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
-import { Storage115Simulator, type TransferAttemptResult } from "../../src/acquisition-v2/storage-115-simulator.js";
+import {
+  Storage115Simulator,
+  type SubtitleLandingResult,
+  type TransferAttemptResult,
+} from "../../src/acquisition-v2/storage-115-simulator.js";
 import { Pan115AuthError } from "../../src/storage/pan115-cookie-client.js";
 import type { AssrtCandidate, AssrtSubtitleFile } from "../../src/providers/subtitle-provider.js";
 import { buildSandboxToolSet } from "../../src/acquisition-v2/agent-loop.js";
@@ -721,5 +725,140 @@ describe("renameSubtitle — batch shape (压测发现:77 集逐文件改名导�
   it("empty renames array is rejected loudly (agent must decide pairings first)", async () => {
     const { sandbox } = await createSubtitleSandbox();
     await expect(sandbox.renameSubtitle({ renames: [] })).rejects.toThrow(/empty|至少/i);
+  });
+});
+
+describe("transferSubtitle — 上传优先与静默降级", () => {
+  /** 构造一个带 uploadSubtitle 的 sim storage。 */
+  function storageWithUpload(
+    uploadBehavior: (input: { url: string; filename: string; directoryId: string }) => Promise<
+      | { outcome: "landed"; fileId?: string }
+      | { outcome: "needs_object_storage" }
+      | { outcome: "unavailable"; reason: string }
+    >,
+  ) {
+    const storage = new Storage115Simulator({ packs: {} });
+    const calls: Array<{ url: string; filename: string; directoryId: string }> = [];
+    storage.uploadSubtitle = async (input) => {
+      calls.push(input);
+      return uploadBehavior(input);
+    };
+    return { storage, calls };
+  }
+
+  async function wire(storage: Storage115Simulator, files: AssrtSubtitleFile[]) {
+    const provider = new FakeResourceProviderV2({ results: { title: [] } });
+    const stagingDirectoryId = await storage.createDirectory({ name: "staging", parentId: "root" });
+    const assrt = makeAssrtProvider([{ id: 99, title: "Show", lang: "简" }], {});
+    assrt.detail = async () => files;
+    const sandbox = new TaskSandbox({
+      provider,
+      storage,
+      stagingDirectoryId,
+      targetSeasonDirectoryIds: {},
+      need: [],
+    });
+    await sandbox.primeSubtitleSnapshot("Show", assrt);
+    return sandbox;
+  }
+
+  const twoFiles: AssrtSubtitleFile[] = [
+    { filename: "Show.S01E01.ass", url: "https://assrt.test/1" },
+    { filename: "Show.S01E02.ass", url: "https://assrt.test/2" },
+  ];
+
+  const landedAll = (files: Array<{ filename: string }>): SubtitleLandingResult[] =>
+    files.map((file, index) => ({
+      filename: file.filename,
+      status: "succeeded",
+      materializedFileIds: [`f-${index}`],
+    }));
+
+  it("秒传命中：两个字幕都走上传，完全不碰离线任务", async () => {
+    const { storage, calls } = storageWithUpload(async () => ({ outcome: "landed", fileId: "f1" }));
+    let offlineCalls = 0;
+    storage.transferSubtitleUrls = async () => {
+      offlineCalls += 1;
+      return [];
+    };
+    const sandbox = await wire(storage, twoFiles);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 99 });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.landedFilenames).toEqual(["Show.S01E01.ass", "Show.S01E02.ass"]);
+    expect(calls).toHaveLength(2);
+    expect(offlineCalls).toBe(0); // 关键：一次离线任务都不该发
+  });
+
+  it("混合情形：秒传命中的落地，其余的降级到离线任务", async () => {
+    const { storage, calls } = storageWithUpload(async (input) =>
+      input.filename.endsWith("E01.ass") ? { outcome: "landed" } : { outcome: "needs_object_storage" },
+    );
+    const offlineBatches: Array<Array<{ filename: string; url: string }>> = [];
+    storage.transferSubtitleUrls = async (input) => {
+      offlineBatches.push(input.files);
+      return landedAll(input.files);
+    };
+    const sandbox = await wire(storage, twoFiles);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 99 });
+
+    expect(result.status).toBe("succeeded");
+    expect(result.landedFilenames).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+    expect(offlineBatches).toHaveLength(1);
+    expect(offlineBatches[0]!.map((f) => f.filename)).toEqual(["Show.S01E02.ass"]); // 只降级那个
+  });
+
+  it("上传不可用（本机访问不到 assrt）：全部降级，结果与旧行为一致", async () => {
+    const { storage } = storageWithUpload(async () => ({
+      outcome: "unavailable",
+      reason: "字幕下载失败: connect ETIMEDOUT",
+    }));
+    const offlineBatches: Array<Array<{ filename: string; url: string }>> = [];
+    storage.transferSubtitleUrls = async (input) => {
+      offlineBatches.push(input.files);
+      return landedAll(input.files);
+    };
+    const sandbox = await wire(storage, twoFiles);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 99 });
+
+    expect(result.status).toBe("succeeded");
+    expect(offlineBatches[0]).toHaveLength(2); // 两个字幕都走离线任务
+    expect(JSON.stringify(result)).not.toContain("ETIMEDOUT"); // 降级原因不泄漏给 agent
+  });
+
+  it("storage 没有 uploadSubtitle（其他品牌）：直接走离线任务", async () => {
+    const storage = new Storage115Simulator({ packs: {} });
+    const offlineBatches: Array<Array<{ filename: string }>> = [];
+    storage.transferSubtitleUrls = async (input) => {
+      offlineBatches.push(input.files);
+      return landedAll(input.files);
+    };
+    const sandbox = await wire(storage, twoFiles);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 99 });
+
+    expect(result.status).toBe("succeeded");
+    expect(offlineBatches[0]).toHaveLength(2);
+  });
+
+  it("上传抛错不该炸掉字幕流程（软目标）", async () => {
+    const { storage } = storageWithUpload(async () => {
+      throw new Error("open platform down");
+    });
+    let offlineCount = 0;
+    storage.transferSubtitleUrls = async (input) => {
+      offlineCount += input.files.length;
+      return landedAll(input.files);
+    };
+    const sandbox = await wire(storage, twoFiles);
+
+    const result = await sandbox.transferSubtitle({ candidateId: 99 });
+
+    expect(result.status).toBe("succeeded");
+    expect(offlineCount).toBe(2);
   });
 });

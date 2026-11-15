@@ -1229,6 +1229,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* 下载类计数：有月度限额的那一类，用醒目色把它和无额限的总计区分开。
+   与 status-failed 的 negative 色系同一族，但只做弱强调（不用实心），
+   避免和「失败」徽标抢注意力——它不是错误，是成本。 */
+.agent-timeline-calls-download {
+  color: var(--danger);
+  border-bottom: 1px dashed var(--negative-border);
+}
+
 .agent-timeline-status {
   flex: none;
   font-size: var(--text-2xs);

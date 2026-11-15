@@ -28,6 +28,7 @@ import { userMessageDrive } from "./user-requests.js";
 import { stampReplaceNotification } from "../domain/notification-report.js";
 import { loadSubscriptionPolicyFilter } from "./subscription-policy-filter.js";
 import { inventoryCheckpoint } from "./inventory-checkpoint.js";
+import { driveApiMeter } from "../storage/drive-api-meter.js";
 
 /**
  * Phase 7d — production persist wrappers on the V2 engine. These mirror the old
@@ -259,8 +260,8 @@ function rejectedLookupOption(input: {
 
 /** The run's onProgress: live activity progress (for the activity page) AND the
  *  durable per-step trace (for post-mortem复盘), combined + isolated so one can't
- *  break the other. `apiCallCount` surfaces the 115 budget burn per step (real 115
- *  only; fakes omit it). */
+ *  break the other. `apiCallCount` surfaces the 115 budget burn per step and
+ *  `downloadApiCallCount` the quota-bearing subset (real 115 only; fakes omit both). */
 function progressAndTraceSink(input: {
   repository: WorkflowRepository;
   workflowRunId: string;
@@ -277,6 +278,7 @@ function progressAndTraceSink(input: {
       repository: input.repository,
       workflowRunId: input.workflowRunId,
       apiCallCount: () => input.storage.apiCallCount?.(),
+      downloadApiCallCount: () => driveApiMeter.snapshot().download,
     }),
   );
 }

@@ -624,3 +624,151 @@ describe("Pan115OpenClient", () => {
     expect(removeParams.get("info_hash")).toBe("hash_del_1");
   });
 });
+
+describe("Pan115OpenClient.getQuotaInfo", () => {
+  function clientWith(fetchImpl: any) {
+    return new Pan115OpenClient({
+      credentials: { accessToken: "valid_token", refreshToken: "r", expiresAt: Date.now() + 60 * 60 * 1000 },
+      fetchImpl,
+    });
+  }
+
+  it("parses per-package and total quota", async () => {
+    const urlsCalled: string[] = [];
+    const fetchImpl = vi.fn(async (url: string) => {
+      urlsCalled.push(url);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          state: true,
+          code: 0,
+          data: [
+            { name: "云下载配额", count: 100, used: 30, surplus: 70 },
+            { name: "其他", count: 5, used: 5, surplus: 0 },
+          ],
+          count: 105,
+          used: 35,
+          surplus: 70,
+        }),
+      } as unknown as Response;
+    });
+
+    const quota = await clientWith(fetchImpl).getQuotaInfo();
+    expect(new URL(urlsCalled[0]!).pathname).toBe("/open/offline/get_quota_info");
+    expect(quota.packages).toHaveLength(2);
+    expect(quota.packages[0]).toEqual({ name: "云下载配额", count: 100, used: 30, surplus: 70 });
+    expect(quota.packages[1]!.surplus).toBe(0);
+    expect(quota.total).toEqual({ count: 105, used: 35, surplus: 70 });
+  });
+
+  it("accepts the nested data.package shape", async () => {
+    const fetchImpl = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          state: true,
+          data: { package: [{ name: "云下载配额", count: 10, used: 2, surplus: 8 }] },
+        }),
+      }) as unknown as Response,
+    );
+    const quota = await clientWith(fetchImpl).getQuotaInfo();
+    expect(quota.packages).toEqual([{ name: "云下载配额", count: 10, used: 2, surplus: 8 }]);
+  });
+
+  it("missing fields stay undefined — 0 must not masquerade as 'no balance left'", async () => {
+    const fetchImpl = vi.fn(async () =>
+      ({
+        ok: true,
+        status: 200,
+        json: async () => ({ state: true, data: [{ name: "云下载配额" }] }),
+      }) as unknown as Response,
+    );
+    const quota = await clientWith(fetchImpl).getQuotaInfo();
+    expect(quota.packages[0]!.count).toBeUndefined();
+    expect(quota.packages[0]!.surplus).toBeUndefined();
+    expect(quota.total.count).toBeUndefined();
+  });
+
+  it("empty/garbage payload degrades to an empty package list, never throws", async () => {
+    const fetchImpl = vi.fn(async () =>
+      ({ ok: true, status: 200, json: async () => ({ state: true }) }) as unknown as Response,
+    );
+    const quota = await clientWith(fetchImpl).getQuotaInfo();
+    expect(quota.packages).toEqual([]);
+    expect(quota.total).toEqual({ count: undefined, used: undefined, surplus: undefined });
+  });
+
+  it("propagates the error — the caller decides whether to give up on quota awareness", async () => {
+    const fetchImpl = vi.fn(async () => ({ ok: false, status: 500 }) as unknown as Response);
+    await expect(clientWith(fetchImpl).getQuotaInfo()).rejects.toThrow();
+  });
+});
+
+describe("Pan115OpenClient.initUpload", () => {
+  function clientWith(fetchImpl: any) {
+    return new Pan115OpenClient({
+      credentials: { accessToken: "valid_token", refreshToken: "r", expiresAt: Date.now() + 60 * 60 * 1000 },
+      fetchImpl,
+    });
+  }
+
+  it("posts file_name/file_size/target/fileid/preid to /open/upload/init", async () => {
+    const urlsCalled: string[] = [];
+    const bodiesCalled: string[] = [];
+    const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
+      urlsCalled.push(url);
+      bodiesCalled.push(String(init.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ state: true, data: { status: 2, file_id: "fid_9" } }),
+      } as unknown as Response;
+    });
+
+    const result = await clientWith(fetchImpl).initUpload({
+      fileName: "Show.S01E01.ass",
+      fileSize: 2048,
+      directoryId: "season_1",
+      fileSha1: "abc123",
+      preid: "def456",
+    });
+
+    expect(new URL(urlsCalled[0]!).pathname).toBe("/open/upload/init");
+    const params = new URLSearchParams(bodiesCalled[0]);
+    expect(params.get("file_name")).toBe("Show.S01E01.ass");
+    expect(params.get("file_size")).toBe("2048");
+    expect(params.get("target")).toBe("U_1_season_1");
+    expect(params.get("fileid")).toBe("abc123");
+    expect(params.get("preid")).toBe("def456");
+    expect(result).toEqual({ status: 2, fileId: "fid_9", pickCode: undefined });
+  });
+
+  it("target uses 0 for the root directory", async () => {
+    const bodiesCalled: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      bodiesCalled.push(String(init.body));
+      return { ok: true, status: 200, json: async () => ({ state: true, data: { status: 1 } }) } as unknown as Response;
+    });
+    const result = await clientWith(fetchImpl).initUpload({
+      fileName: "a.ass",
+      fileSize: 10,
+      directoryId: "",
+      fileSha1: "x",
+    });
+    expect(new URLSearchParams(bodiesCalled[0]!).get("target")).toBe("U_1_0");
+    expect(result.status).toBe(1);
+    expect(result.fileId).toBeUndefined();
+  });
+
+  it("omits preid when not supplied", async () => {
+    const bodiesCalled: string[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      bodiesCalled.push(String(init.body));
+      return { ok: true, status: 200, json: async () => ({ state: true, data: { status: 2 } }) } as unknown as Response;
+    });
+    await clientWith(fetchImpl).initUpload({ fileName: "a.ass", fileSize: 1, directoryId: "d", fileSha1: "x" });
+    expect(new URLSearchParams(bodiesCalled[0]!).has("preid")).toBe(false);
+  });
+});

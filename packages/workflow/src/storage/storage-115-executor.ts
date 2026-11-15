@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { LeakyBucketPacer } from "@media-track/shared";
 import type {
   OfflineTaskFacts,
@@ -14,6 +15,8 @@ import { collectLandedVideos, normalizeLandedExtensions } from "./landed-media.j
 import { infoHashFromMagnet, isOfflineTaskCandidate, isOfflineTaskUrl } from "./pan115-offline-task.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import { isSystemicTransferBlockMessage } from "../acquisition-v2/transfer-block.js";
+import { driveApiMeter } from "./drive-api-meter.js";
+import { annotateQuotaExhausted } from "./pan115-quota-exhausted.js";
 import type { StorageExecutor, UnparsedVideoFile } from "../domain/ports.js";
 
 /**
@@ -154,6 +157,16 @@ export interface Pan115StorageApi {
   moveItems(input: { fileIds: string[]; targetDirectoryId: string }): Promise<Pan115ActionResult>;
   deleteItems(input: { fileIds: string[] }): Promise<Pan115ActionResult>;
   renameFile(input: { fileId: string; newName: string }): Promise<Pan115ActionResult>;
+  /** 初始化文件上传（/open/upload/init）。`status === 2` 表示秒传已完成。
+   *  Optional：只有实现了上传能力的 client 提供；缺失时字幕上传路径不可用，
+   *  自动降级回离线任务。 */
+  initUpload?(input: {
+    fileName: string;
+    fileSize: number;
+    directoryId: string;
+    fileSha1: string;
+    preid?: string;
+  }): Promise<{ status: number; fileId?: string; pickCode?: string }>;
 }
 
 export interface Storage115ExecutorOptions {
@@ -185,7 +198,17 @@ export interface Storage115ExecutorOptions {
   subtitleMaterializePollMs?: number;
   /** Injectable sleep (tests pass a fast/no-op). */
   sleep?: (ms: number) => Promise<void>;
+  /** Injectable HTTP fetch for the subtitle-upload path (local download from the
+   *  assrt direct link). Defaults to global fetch. Tests inject a fake. */
+  fetchImpl?: typeof fetch;
+  /** 字幕上传的大小上限（字节）。超过就走离线任务降级——上传链路是为几十 KB
+   *  的字幕文本设计的，不该被异常大的「字幕」文件拖进本地上传带宽。 */
+  maxSubtitleUploadBytes?: number;
 }
+
+/** 字幕文件走上传路径的大小上限默认值。字幕是 .ass/.srt 文本，正常几十 KB；
+ *  5MB 已是极端宽松的上限（足以覆盖带样式的复杂 ASS），再大就该走离线任务。 */
+export const DEFAULT_MAX_SUBTITLE_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 export interface ProtectedStorage115ExecutorOptions {
   api: Pan115StorageApi;
@@ -489,6 +512,8 @@ export class Storage115Executor implements StorageExecutor {
   private readonly subtitleMaterializeAttempts: number;
   private readonly subtitleMaterializePollMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly fetchImpl: typeof fetch;
+  private readonly maxSubtitleUploadBytes: number;
   private nextTransferNumber = 1;
 
   constructor(options: Storage115ExecutorOptions) {
@@ -520,6 +545,8 @@ export class Storage115Executor implements StorageExecutor {
     this.subtitleMaterializeAttempts = options.subtitleMaterializeAttempts ?? 8;
     this.subtitleMaterializePollMs = options.subtitleMaterializePollMs ?? 6000;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.maxSubtitleUploadBytes = options.maxSubtitleUploadBytes ?? DEFAULT_MAX_SUBTITLE_UPLOAD_BYTES;
   }
 
   /** Cumulative 115 API calls so far — surfaced into the agent trace AND used to
@@ -733,6 +760,84 @@ export class Storage115Executor implements StorageExecutor {
     return attempt!;
   }
 
+  /**
+   * 字幕上传落地（不消耗云下载配额）：本地从 assrt 直链下载字幕内容，算 SHA1，
+   * 调 `/open/upload/init`。平台上已有同 SHA1 文件时**秒传成功**（status=2），
+   * 一次调用即完成；否则返回 `needs_object_storage` 让调用方降级到离线任务。
+   *
+   * 为什么值得做：字幕当前的离线任务路径消耗月度云下载配额，且服务端队列延迟
+   * 实测 20–60s；秒传路径既省额度又近即时。
+   *
+   * 降级是**设计的一部分**，不是失败兜底：本机可能访问不到 assrt 直链、平台
+   * 上传服务可能不可用（115 开放平台 2026-08 曾单方面暂停服务）、文件可能超限。
+   * 任何一种都返回明确的降级原因，调用方回退到现有离线任务路径——字幕是软目标，
+   * 它的落地方式变化绝不能影响视频覆盖。
+   *
+   * @returns landed 秒传已完成 / needs_object_storage 需对象存储（未实现，降级）
+   *          / unavailable 本路径不可用（无上传能力／超限／网络失败，降级）
+   */
+  async uploadSubtitle(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+  }): Promise<
+    | { outcome: "landed"; fileId?: string }
+    | { outcome: "needs_object_storage" }
+    | { outcome: "unavailable"; reason: string }
+  > {
+    if (!this.api.initUpload) {
+      return { outcome: "unavailable", reason: "存储驱动未实现上传能力" };
+    }
+
+    let bytes: Buffer;
+    try {
+      const response = await this.fetchImpl(input.url);
+      if (!response.ok) {
+        return { outcome: "unavailable", reason: `字幕下载失败: HTTP ${response.status}` };
+      }
+      const buffer = await response.arrayBuffer();
+      bytes = Buffer.from(buffer);
+    } catch (error) {
+      // 本机访问不到 assrt 直链（部署环境出网白名单）——最常见的降级原因。
+      return { outcome: "unavailable", reason: `字幕下载失败: ${errorMessage(error)}` };
+    }
+
+    if (bytes.length === 0) {
+      return { outcome: "unavailable", reason: "字幕内容为空" };
+    }
+    if (bytes.length > this.maxSubtitleUploadBytes) {
+      return {
+        outcome: "unavailable",
+        reason: `字幕文件超过上传上限(${bytes.length} > ${this.maxSubtitleUploadBytes} 字节)`,
+      };
+    }
+
+    const fileSha1 = createHash("sha1").update(bytes).digest("hex");
+    const preid = createHash("sha1").update(bytes.subarray(0, 128 * 1024)).digest("hex");
+
+    try {
+      const result = await this.callApi(
+        "initUpload",
+        () =>
+          this.api.initUpload!({
+            fileName: input.filename,
+            fileSize: bytes.length,
+            directoryId: input.directoryId,
+            fileSha1,
+            preid,
+          }),
+      );
+      if (result.status === 2) {
+        return { outcome: "landed", ...(result.fileId === undefined ? {} : { fileId: result.fileId }) };
+      }
+      // status=1 需走对象存储 PUT：本仓库未实现（官方指向独立的对象存储 API
+      // 文档，未取得）。明确降级，不把未验证的协议塞进生产路径。
+      return { outcome: "needs_object_storage" };
+    } catch (error) {
+      return { outcome: "unavailable", reason: `上传初始化失败: ${errorMessage(error)}` };
+    }
+  }
+
   /** Subtitle direct-link landing for a WHOLE package: submit every http url as a
    *  115 offline task (lixianssp add_task_url accepts http/https/ftp/magnet/ed2k),
    *  then confirm landings by FILE NAME with one depth-1 listing per poll round for
@@ -859,8 +964,10 @@ export class Storage115Executor implements StorageExecutor {
       }
       let action: Pan115ActionResult;
       try {
-        action = await this.callApi("addOfflineTask", () =>
-          this.api.addOfflineTask({ url: file.url, directoryId: safeDirectoryId }),
+        action = await this.callApi(
+          "addOfflineTask",
+          () => this.api.addOfflineTask({ url: file.url, directoryId: safeDirectoryId }),
+          file.url,
         );
       } catch (error) {
         // A dead cookie is NOT a per-file landing failure: let it out the way
@@ -880,7 +987,7 @@ export class Storage115Executor implements StorageExecutor {
         action = { ok: false, message }; // reported below, same as a returned ok:false
       }
       if (!action.ok) {
-        attempt.providerMessage = action.message;
+        attempt.providerMessage = annotateQuotaExhausted(action.message);
         consecutiveRejections += 1;
         if (consecutiveRejections >= SUBTITLE_MAX_CONSECUTIVE_REJECTIONS) {
           abortReason = `aborted after ${SUBTITLE_MAX_CONSECUTIVE_REJECTIONS} consecutive rejections (last: ${action.message})`;
@@ -1212,7 +1319,7 @@ export class Storage115Executor implements StorageExecutor {
     }
 
     if (isOfflineTaskUrl(url)) {
-      return this.callApi("addOfflineTask", () => this.api.addOfflineTask({ url, directoryId }));
+      return this.callApi("addOfflineTask", () => this.api.addOfflineTask({ url, directoryId }), url);
     }
 
     if (url.startsWith("https://115.com/s/") || url.startsWith("https://115cdn.com/s/")) {
@@ -1411,7 +1518,11 @@ export class Storage115Executor implements StorageExecutor {
     return unparsed;
   }
 
-  private async callApi<T>(operation: Pan115Operation, call: () => Promise<T>): Promise<T> {
+  /** The single exit for every 115 call the executor makes. `url` is ONLY for
+   *  quota classification (a magnet addOfflineTask is a 秒传, an http one is a
+   *  real server-side fetch) — it is never stored, logged or persisted. */
+  private async callApi<T>(operation: Pan115Operation, call: () => Promise<T>, url?: string): Promise<T> {
+    driveApiMeter.record("pan115", operation, url);
     return this.apiGuard.run(operation, call);
   }
 }

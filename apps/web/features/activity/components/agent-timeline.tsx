@@ -32,6 +32,14 @@ export function AgentTimeline({ steps }: { steps: AgentStepView[] }) {
                 网盘 API 累计 {step.apiCalls} 次
               </span>
             )}
+            {step.downloadApiCalls !== undefined && (
+              <span
+                className="agent-timeline-calls agent-timeline-calls-download"
+                title="其中有月度限额的下载类调用（直链解析／http 离线任务／离线任务管理）。平台侧额度未知，此处仅统计本次任务内的调用次数"
+              >
+                下载类 {step.downloadApiCalls} 次
+              </span>
+            )}
             {step.status !== undefined && (
               <span
                 className={`agent-timeline-status agent-timeline-status-${step.status}`}

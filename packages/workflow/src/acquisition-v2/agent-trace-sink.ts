@@ -43,6 +43,9 @@ export function makeAgentTraceSink(input: {
   workflowRunId: string;
   attemptId?: string;
   apiCallCount?: () => number | undefined;
+  /** Cumulative DOWNLOAD-class drive API calls (the monthly-quota class). Omitted
+   *  when no meter is installed — fakes/sims leave the field off entirely. */
+  downloadApiCallCount?: () => number | undefined;
   now?: () => string;
 }): (event: AgentToolEvent) => void {
   const now = input.now ?? (() => new Date().toISOString());
@@ -78,6 +81,7 @@ export function makeAgentTraceSink(input: {
       return;
     }
     const apiCalls = input.apiCallCount?.();
+    const downloadApiCalls = input.downloadApiCallCount?.();
     const at = now();
     const callId = event.callId;
     tail = tail
@@ -91,6 +95,7 @@ export function makeAgentTraceSink(input: {
           phase: event.phase,
           ...(callId === undefined ? {} : { callId }),
           ...(typeof apiCalls === "number" ? { apiCalls } : {}),
+          ...(typeof downloadApiCalls === "number" ? { downloadApiCalls } : {}),
           at,
         };
         return input.repository

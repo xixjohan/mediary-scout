@@ -116,6 +116,24 @@ export interface StorageV2 {
     files: Array<{ url: string; filename: string }>;
     intoDirectoryId: string;
   }): Promise<SubtitleLandingResult[]>;
+  /** Land subtitle files by UPLOAD instead of an offline task — upload does not
+   *  consume the monthly cloud-download quota, and a 秒传 hit is near-instant
+   *  where an offline task waits 20–60s in the provider queue. Optional: brands
+   *  without upload support omit it, and the caller silently falls back to
+   *  `transferSubtitleUrls` (subtitles are a soft goal — a landing-MODE failure
+   *  must never surface as an error or block video coverage).
+   *
+   *  `landed` = the file is in place (秒传). `needs_object_storage` / `unavailable`
+   *  = this path does not apply this time; the caller re-routes those files. */
+  uploadSubtitle?(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+  }): Promise<
+    | { outcome: "landed"; fileId?: string }
+    | { outcome: "needs_object_storage" }
+    | { outcome: "unavailable"; reason: string }
+  >;
 }
 
 export class Storage115Simulator implements StorageV2 {
@@ -211,6 +229,10 @@ export class Storage115Simulator implements StorageV2 {
     }
     return { status: "succeeded", materializedFileIds };
   }
+
+  /** Upload-landing seam. Undefined by default (the sim models the offline-task
+   *  path); tests assign it to script 秒传 hits and降级 signals. */
+  uploadSubtitle?: NonNullable<StorageV2["uploadSubtitle"]>;
 
   /** Single-file landing — the per-file SEAM (kept public so tests can seed staging
    *  and script individual outcomes by overriding it); transferSubtitleUrls below

@@ -305,6 +305,13 @@ export interface AgentStep {
   phase: "search" | "pick" | "transfer" | "verify" | "organize" | "mark" | "finalize";
   /** Cumulative 115 API calls before this step ran (real 115 runs only; omitted otherwise). */
   apiCalls?: number;
+  /** Cumulative DOWNLOAD-class drive API calls before this step ran — the class
+   *  that carries a monthly quota (direct-link resolution / http offline tasks /
+   *  offline-task management). Separate from `apiCalls` (the guard's total, which
+   *  mixes quota-free transfers with quota-bearing calls); the two are never
+   *  added or subtracted, only reported side by side. Omitted when no meter is
+   *  installed (fakes/sims). */
+  downloadApiCalls?: number;
   at: string;
   /** Post-execution outcome (recorded when the tool returns/throws). */
   endedAt?: string;

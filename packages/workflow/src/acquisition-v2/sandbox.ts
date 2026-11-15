@@ -28,6 +28,7 @@ import {
   stripNoticeFor,
   stripQualitySubtitleTokens,
 } from "./snapshot-presentation.js";
+import { landSubtitlesByUpload } from "./subtitle-upload-landing.js";
 import {
   AGENT_MEMORY_LIMITS,
   memoryDriveAllows,
@@ -2502,10 +2503,24 @@ export class TaskSandbox {
 
       // Storage owns brand-specific soft failure, budget, and auth semantics. A
       // throw remains loud; the sandbox only renews links and aggregates results.
-      const results = await this.storage.transferSubtitleUrls({
-        files: selected.map((file) => ({ url: file.url, filename: file.filename })),
-        intoDirectoryId: this.stagingDirectoryId,
-      });
+      //
+      // 上传优先（不消耗云下载配额）：字幕当前的离线任务路径消耗月度额度且服务端
+      // 队列延迟实测 20–60s；秒传路径两者都省。上传不可用时**静默降级**回离线
+      // 任务——字幕是软目标，落地方式的变化不能影响视频覆盖，也不值得为它报错。
+      const uploadOutcomes = await landSubtitlesByUpload(this.storage, selected, this.stagingDirectoryId);
+      const uploadLanded = uploadOutcomes.filter((o) => o.outcome === "landed");
+      const uploadDeferred = uploadOutcomes.filter((o) => o.outcome !== "landed");
+      for (const outcome of uploadLanded) {
+        landedFilenames.push(outcome.filename);
+        pending.delete(outcome.key);
+      }
+      const results =
+        uploadDeferred.length === 0
+          ? []
+          : await this.storage.transferSubtitleUrls({
+              files: uploadDeferred.map((o) => o.file),
+              intoDirectoryId: this.stagingDirectoryId,
+            });
       chunksProcessed += 1;
       let landedInChunk = 0;
       let chunkError: string | undefined = missing.length > 0 ? lastError : undefined;

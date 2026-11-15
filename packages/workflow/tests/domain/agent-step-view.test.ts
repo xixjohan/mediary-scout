@@ -93,6 +93,18 @@ describe("toAgentStepViews — args 脱敏（结果级断言）", () => {
     ]);
     expect(views[0]!.args).toEqual({ keyword: "孤独摇滚", episodes: ["S01E13"], candidateId: "cand-1" });
   });
+
+  it("apiCalls 与 downloadApiCalls 并存且各自透传", () => {
+    const views = toAgentStepViews([step({ apiCalls: 12, downloadApiCalls: 5 })]);
+    expect(views[0]!.apiCalls).toBe(12);
+    expect(views[0]!.downloadApiCalls).toBe(5);
+  });
+
+  it("未上报 downloadApiCalls 时不塞键", () => {
+    const views = toAgentStepViews([step({ apiCalls: 4 })]);
+    expect(views[0]!.apiCalls).toBe(4);
+    expect(views[0]!).not.toHaveProperty("downloadApiCalls");
+  });
 });
 
 describe("tailAgentStepViews — 有界时间线", () => {

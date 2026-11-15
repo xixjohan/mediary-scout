@@ -54,6 +54,49 @@ describe("makeAgentTraceSink", () => {
     expect(() => sink(ev("searchResources", {}))).not.toThrow();
   });
 
+  it("stamps downloadApiCalls beside apiCalls — the quota-bearing subset, reported separately", async () => {
+    const appended: AgentStep[] = [];
+    const sink = makeAgentTraceSink({
+      repository: {
+        appendAgentStep: async (_id, step) => {
+          appended.push(step);
+        },
+        listAgentSteps: async () => [],
+        updateAgentStepEnd: async () => {},
+      },
+      workflowRunId: "run1",
+      apiCallCount: () => (appended.length === 0 ? 10 : 14),
+      downloadApiCallCount: () => (appended.length === 0 ? 2 : 5),
+      now: () => "2026-06-22T00:00:00.000Z",
+    });
+    sink(ev("transferSubtitle", {}));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(appended[0]!.apiCalls).toBe(10);
+    expect(appended[0]!.downloadApiCalls).toBe(2);
+    // 两个计数不相加、不相减：各自独立呈现。
+    expect(appended[0]!.downloadApiCalls).toBeLessThanOrEqual(appended[0]!.apiCalls!);
+  });
+
+  it("omits downloadApiCalls when no download counter is installed (fakes/sims)", async () => {
+    const appended: AgentStep[] = [];
+    const sink = makeAgentTraceSink({
+      repository: {
+        appendAgentStep: async (_id, step) => {
+          appended.push(step);
+        },
+        listAgentSteps: async () => [],
+        updateAgentStepEnd: async () => {},
+      },
+      workflowRunId: "run1",
+      apiCallCount: () => 3,
+      now: () => "2026-06-22T00:00:00.000Z",
+    });
+    sink(ev("searchResources", {}));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(appended[0]!.apiCalls).toBe(3);
+    expect(appended[0]!).not.toHaveProperty("downloadApiCalls");
+  });
+
   it("caps pathologically large args", async () => {
     const appended: AgentStep[] = [];
     const sink = makeAgentTraceSink({

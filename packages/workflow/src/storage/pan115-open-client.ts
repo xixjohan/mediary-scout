@@ -19,6 +19,14 @@ import type {
   Pan115ActionResult,
   Pan115OfflineTask,
 } from "./storage-115-executor.js";
+import {
+  buildUploadInitBody,
+  normalizeQuotaInfo,
+  normalizeUploadInit,
+  type Pan115QuotaInfo,
+  type Pan115UploadInitResult,
+  type QuotaInfoResponse,
+} from "./pan115-open-payloads.js";
 
 /** 115 开放平台鉴权与业务异常 */
 export class Pan115OpenAuthError extends Error {
@@ -136,6 +144,10 @@ export const PAN115_OPEN_ENDPOINTS = {
   OFFLINE_ADD_URLS: "/open/offline/add_task_urls",
   OFFLINE_GET_TASK_LIST: "/open/offline/get_task_list",
   OFFLINE_DEL_TASK: "/open/offline/del_task",
+  OFFLINE_GET_QUOTA_INFO: "/open/offline/get_quota_info",
+
+  // 文件上传
+  UPLOAD_INIT: "/open/upload/init",
 } as const;
 
 /** 断言 115 开放平台 Token 刷新响应正常 */
@@ -731,5 +743,45 @@ export class Pan115OpenClient {
         url: String(t["url"] || ""),
       };
     });
+  }
+
+  /**
+   * 查询云下载配额: 调用 /open/offline/get_quota_info
+   *
+   * 用途是**内部决策**（配额不足时给出准确错误分类、决定字幕走上传还是离线
+   * 任务），**不用于 UI 展示**——用户明确要求只显示任务内调用次数，不显示月限额。
+   *
+   * 查询失败抛错由调用方处理：配额是优化信息，不是业务前置条件，绝不能让它
+   * 阻断一次转存。
+   */
+  async getQuotaInfo(): Promise<Pan115QuotaInfo> {
+    const res = await this.request<QuotaInfoResponse>(PAN115_OPEN_ENDPOINTS.OFFLINE_GET_QUOTA_INFO);
+    return normalizeQuotaInfo(res);
+  }
+
+  /**
+   * 初始化文件上传: 调用 /open/upload/init
+   *
+   * 官方上传流程的第一步，返回的 `status` 决定后续：
+   *   - 2 = **秒传成功**，上传结束（平台上已有同 SHA1 文件）——字幕这类小文件
+   *     的常见路径，一次调用即完成，不消耗云下载配额
+   *   - 1 = 需走对象存储实际上传（本仓库未实现对象存储 PUT，调用方应降级）
+   */
+  async initUpload(input: {
+    fileName: string;
+    fileSize: number;
+    /** 目标目录 ID；`0` 为根目录。 */
+    directoryId: string;
+    /** 整文件 SHA1（秒传判定依据）。 */
+    fileSha1: string;
+    /** 前 128K 的 SHA1（可选，加速秒传判定）。 */
+    preid?: string;
+  }): Promise<Pan115UploadInitResult> {
+    const res = await this.request<{ data?: Record<string, unknown> }>(PAN115_OPEN_ENDPOINTS.UPLOAD_INIT, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: buildUploadInitBody(input),
+    });
+    return normalizeUploadInit(res.data);
   }
 }

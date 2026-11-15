@@ -30,6 +30,9 @@ export interface AgentStepView {
   phase: AgentStep["phase"];
   /** Cumulative drive API calls before this step — the cost the user actually feels. */
   apiCalls?: number;
+  /** Cumulative DOWNLOAD-class drive API calls before this step — the subset that
+   *  carries a monthly quota. Reported beside `apiCalls`, never combined with it. */
+  downloadApiCalls?: number;
   at: string;
   /** Post-execution outcome (absent until the tool returns/throws). */
   endedAt?: string;
@@ -56,6 +59,7 @@ export function toAgentStepViews(steps: readonly AgentStep[]): AgentStepView[] {
     activity: step.activity,
     phase: step.phase,
     ...(typeof step.apiCalls === "number" ? { apiCalls: step.apiCalls } : {}),
+    ...(typeof step.downloadApiCalls === "number" ? { downloadApiCalls: step.downloadApiCalls } : {}),
     at: step.at,
     ...(step.endedAt !== undefined ? { endedAt: step.endedAt } : {}),
     ...(step.status !== undefined ? { status: step.status } : {}),

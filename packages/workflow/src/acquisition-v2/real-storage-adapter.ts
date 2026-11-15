@@ -253,6 +253,23 @@ export class RealStorageV2 implements StorageV2 {
     return this.transferSubtitlePerFile(input);
   }
 
+  /** 字幕上传落地（不消耗云下载配额）。executor 未实现上传能力时整个方法缺席，
+   *  sandbox 于是走离线任务路径——能力探测即降级开关，不需要额外开关。 */
+  async uploadSubtitle(input: {
+    url: string;
+    filename: string;
+    directoryId: string;
+  }): Promise<
+    | { outcome: "landed"; fileId?: string }
+    | { outcome: "needs_object_storage" }
+    | { outcome: "unavailable"; reason: string }
+  > {
+    if (!this.executor.uploadSubtitle) {
+      return { outcome: "unavailable", reason: "存储驱动未实现上传能力" };
+    }
+    return this.executor.uploadSubtitle(input);
+  }
+
   /** Batch-capable executor (115) → ONE call with every file, results in input order. */
   private async transferSubtitleBatch(input: {
     files: Array<{ url: string; filename: string }>;
