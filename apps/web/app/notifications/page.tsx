@@ -25,6 +25,7 @@ import { NotificationsSeenMarker } from "../../components/layout/notifications-s
 import { DemoSessionNotifications } from "../../components/demo/demo-session-notifications";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { resolveNavVisibility } from "../../lib/nav-visibility";
+import { resolveMediaScopeAccountId } from "../../lib/media-scope";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import {
   ensureDemoSeeded,
@@ -92,8 +93,8 @@ function NotificationsShell() {
 
 async function NotificationsSurface({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
   await connection();
-  const accountId = await getCurrentAccountId();
-  if (accountId === UNAUTHENTICATED_ACCOUNT_ID) {
+  const requestAccountId = await getCurrentAccountId();
+  if (requestAccountId === UNAUTHENTICATED_ACCOUNT_ID) {
     return (
       <>
         <ClientLoginRedirect />
@@ -135,7 +136,8 @@ async function NotificationFeed({ connectedStorageId }: { connectedStorageId: st
   // so the PPR shell stays static and this hole streams per request.
   await connection();
   const repository = getWorkflowRepository();
-  const accountId = await getCurrentAccountId();
+  // 通知归属存储范围账号（shared 模式 = 站长）：成员看的是公共盘的通知。
+  const accountId = await resolveMediaScopeAccountId();
   await ensureDemoSeeded(repository);
   const notifications = await repository.listNotifications({
     limit: 100,

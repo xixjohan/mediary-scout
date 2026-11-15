@@ -1,14 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireApiAccount, requirePermission } from "../../../lib/auth-chain";
-import { getWorkflowRepository } from "../../../lib/workflow-runtime";
+import { getWorkflowRepository, resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
 import { isDemoMode } from "../../../lib/demo-mode";
 import type { MediaLibrary, MediaLibraryType, LibraryDeliveryMode } from "@media-track/contracts";
 
 export async function GET(request: NextRequest) {
   const gate = await requireApiAccount(request);
   if (gate instanceof Response) return gate;
-  const accountId = gate;
 
+  // 库归属存储范围账号（shared 模式 = 站长），与 library 页面用同一套解析。
+  const { accountId } = await resolveGlobalWorkspace(undefined);
   const repo = getWorkflowRepository();
   const libraries = repo.mediaLibraryStore.listLibraries(accountId);
 

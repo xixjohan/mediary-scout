@@ -1,14 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requireApiAccount } from "../../../../lib/auth-chain";
 import { getAccountConnectedStorages } from "../../../../lib/workflow-runtime";
+import { resolveMediaScopeAccountId } from "../../../../lib/media-scope";
 
 export async function GET(request: NextRequest) {
   const gate = await requireApiAccount(request);
   if (gate instanceof Response) return gate;
-  const accountId = gate;
-
   try {
-    const drives = await getAccountConnectedStorages(accountId);
+    // shared 模式下盘属于站长，成员必须以站长账号读取才能看到公共盘。
+    const drives = await getAccountConnectedStorages(await resolveMediaScopeAccountId());
     return NextResponse.json(
       { ok: true, drives, connectedStorages: drives },
       {

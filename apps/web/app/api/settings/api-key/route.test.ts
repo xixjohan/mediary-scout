@@ -28,6 +28,28 @@ const state = {
 
 vi.mock("../../../../lib/demo-mode", () => ({ isDemoMode: () => state.demo }));
 
+// 设置域路由现在按权限点（system:settings）开门（此前只有登录链）。
+// 测试账号是站长语义，权限判定放行，其余断言与既有行为一致。
+vi.mock("../../../../lib/auth-chain", () => ({
+  // 权限收敛后设置域按 system:settings 开门。这里必须**先复现"未登录 → 401"**
+  // （多用户 + 无凭据），否则"未登录判定必须在前"这条用例会因 mock 恒放行而失真。
+  requirePermission: async (request: { headers: Headers; cookies: { get(n: string): { value: string } | undefined } }) => {
+    const hasCookie = Boolean(request.cookies.get("mt_session")?.value);
+    const hasBearer = request.headers.get("authorization")?.startsWith("Bearer ");
+    if (state.multiUser && !hasCookie && !hasBearer) {
+      const { NextResponse } = await import("next/server");
+      return NextResponse.json({ error: "未登录，请先登录后再操作。" }, { status: 401 });
+    }
+    return {
+      accountId: "acct_default",
+      isMaster: true,
+      roleId: "role_owner",
+      permissions: new Set(["*"]),
+    };
+  },
+  requireApiAccount: async () => "acct_default",
+}));
+
 vi.mock("../../../../lib/settings-attention-server", () => ({
   resolveCurrentIsOwner: async () => state.owner,
 }));

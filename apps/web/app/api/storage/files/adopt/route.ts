@@ -13,7 +13,8 @@ import {
 } from "@media-track/workflow";
 import { seriesTargetFor } from "../../../../../lib/series-target";
 import { requirePermission } from "../../../../../lib/auth-chain";
-import { getAccountDriveFileManager } from "../../../../../lib/workflow-runtime";
+import { getScopedDriveFileManager } from "../../../../../lib/media-scope";
+import type { DriveFileManager } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../../../../composition/runtime-container";
 import { getAccountScopedSettings } from "../../../../../features/settings-system/application/system-settings-service";
 import { getTmdbAccesses } from "../../../../../lib/runtime/settings-readers";
@@ -175,7 +176,7 @@ async function resolveMetadataForAdoption(params: ResolveAdoptionParams): Promis
 }
 
 async function adoptMovieFolder(params: {
-  fileManager: Awaited<ReturnType<typeof getAccountDriveFileManager>>;
+  fileManager: DriveFileManager;
   repo: ReturnType<typeof getWorkflowRepository>;
   accountId: string;
   storageId?: string | undefined;
@@ -252,7 +253,7 @@ async function resolveTvSeasonMetadata(
 }
 
 async function adoptTvFolder(params: {
-  fileManager: Awaited<ReturnType<typeof getAccountDriveFileManager>>;
+  fileManager: DriveFileManager;
   repo: ReturnType<typeof getWorkflowRepository>;
   accountId: string;
   storageId?: string | undefined;
@@ -326,7 +327,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const fileManager = await getAccountDriveFileManager(accountId, storageId);
+    const fileManager = await getScopedDriveFileManager(storageId);
     if (!fileManager) {
       return NextResponse.json({ error: "未找到连接的网盘" }, { status: 404 });
     }

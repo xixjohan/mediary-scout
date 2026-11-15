@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { requirePermission } from "../../../../../lib/auth-chain";
-import { getAccountDriveFileManager } from "../../../../../lib/workflow-runtime";
+import { getScopedDriveFileManager } from "../../../../../lib/media-scope";
 import { isDemoMode } from "../../../../../lib/demo-mode";
 import {
   guardWriteTarget,
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const fileManager = await getAccountDriveFileManager(accountId, storageId);
+    const fileManager = await getScopedDriveFileManager(storageId);
     if (!fileManager) {
       return NextResponse.json({ error: "未找到连接的网盘" }, { status: 404 });
     }

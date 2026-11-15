@@ -131,6 +131,21 @@ $httpProxy = $envMap["HTTP_PROXY"]
 $httpsProxy = $envMap["HTTPS_PROXY"]
 $noProxy = $envMap["NO_PROXY"]
 
+# 多用户模式开关：**按环境隔离**，避免开发验收把生产切成多用户。
+#   DEV_MULTI_USER / DEV_MULTI_USER_MODE   → 只注入 mediary-dev
+#   PROD_MULTI_USER / PROD_MULTI_USER_MODE → 只注入 mediary
+# 两者都未设置时容器不带该变量 = 单用户，与现状完全一致。
+function Build-MultiUserFlags([string]$prefix) {
+    $flags = ""
+    $mu = $envMap["${prefix}_MULTI_USER"]
+    $mm = $envMap["${prefix}_MULTI_USER_MODE"]
+    if ($mu) { $flags += " -e MEDIA_TRACK_MULTI_USER=$mu" }
+    if ($mm) { $flags += " -e MEDIA_TRACK_MULTI_USER_MODE=$mm" }
+    return $flags
+}
+$devMultiUserFlags = Build-MultiUserFlags "DEV"
+$prodMultiUserFlags = Build-MultiUserFlags "PROD"
+
 # =============================================================================
 # 2. 安全通信适配器 (TransportAdapter - OpenSSH & ACL Protection)
 # =============================================================================
@@ -398,7 +413,7 @@ try {
         if ($httpsProxy) { $proxyFlags += " -e HTTPS_PROXY=$httpsProxy" }
         if ($noProxy) { $proxyFlags += " -e NO_PROXY=$noProxy" }
 
-        $devRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -v ${remoteWorkdir}/apps/web/public:/app/apps/web/public -e TZ=Asia/Shanghai -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DATA_DIR=/app/data -e MEDIA_TRACK_DEMO_SEED=0 -e PAN115_OAUTH_REFRESH_DISABLED=1 -e PANSOU_BASE_URL=$pansouBaseUrl -e APP_BASE_URL=$cleanWebBaseUrl $proxyFlags $dockerImage"
+        $devRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -v ${remoteWorkdir}/apps/web/public:/app/apps/web/public -e TZ=Asia/Shanghai -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DATA_DIR=/app/data -e MEDIA_TRACK_DEMO_SEED=0 -e PAN115_OAUTH_REFRESH_DISABLED=1 -e PANSOU_BASE_URL=$pansouBaseUrl -e APP_BASE_URL=$cleanWebBaseUrl $proxyFlags $devMultiUserFlags $dockerImage"
         Invoke-RemoteSsh $devRunCmd
         Write-Success "Development container launched (Port $targetPort, Isolated volume $dataVolume)!"
 
@@ -473,7 +488,7 @@ try {
         if ($httpsProxy) { $proxyFlags += " -e HTTPS_PROXY=$httpsProxy" }
         if ($noProxy) { $proxyFlags += " -e NO_PROXY=$noProxy" }
 
-        $prodRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -e TZ=Asia/Shanghai -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DATA_DIR=/app/data -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl -e APP_BASE_URL=$cleanWebBaseUrl $proxyFlags $dockerImage"
+        $prodRunCmd = "docker rm -f $containerName 2>/dev/null || true; docker run -d --name $containerName --restart unless-stopped --dns 223.5.5.5 --dns 119.29.29.29 -p ${targetPort}:3000 -v ${dataVolume}:/app/data -e TZ=Asia/Shanghai -e NODE_ENV=production -e PORT=3000 -e HOSTNAME=0.0.0.0 -e MEDIA_TRACK_SEARCH_PROVIDER=tmdb -e MEDIA_TRACK_WORKFLOW_ADAPTER=pansou -e MEDIA_TRACK_STORAGE_ADAPTER=115 -e MEDIA_TRACK_AGENT_ADAPTER=vercel-ai -e MEDIA_TRACK_WORKER_MODE=inprocess -e MEDIA_TRACK_SQLITE_PATH=/app/data/mediary.db -e MEDIA_TRACK_DATA_DIR=/app/data -e MEDIA_TRACK_DEMO_SEED=0 -e PANSOU_BASE_URL=$pansouBaseUrl -e APP_BASE_URL=$cleanWebBaseUrl $proxyFlags $prodMultiUserFlags $dockerImage"
         Invoke-RemoteSsh $prodRunCmd
         Write-Success "Production container recreated!"
 

@@ -15,6 +15,13 @@ vi.mock("../../../../lib/settings-attention-server", () => ({
 
 vi.mock("../../../../lib/auth-chain", () => ({
   requireApiAccount: async () => "acct_boss",
+  // 设置域路由现在按权限点（system:settings）开门；测试里账号是站长语义。
+  requirePermission: async (_req: unknown, _perm: string) => ({
+    accountId: "acct_boss",
+    isMaster: true,
+    roleId: "role_owner",
+    permissions: new Set(["*"]),
+  }),
 }));
 
 const mockListManagedUsers = vi.fn();

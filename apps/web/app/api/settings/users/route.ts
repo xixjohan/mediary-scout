@@ -1,17 +1,17 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { resolveCurrentIsOwner } from "../../../../lib/settings-attention-server";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { getUserManagementService } from "../../../../composition/runtime-container";
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
 
   const isOwner = await resolveCurrentIsOwner();
   const userSvc = getUserManagementService();
-  const callerRole = await userSvc.getUserRole(gate, isOwner);
+  const callerRole = await userSvc.getUserRole(gate.accountId, isOwner);
 
   // 仅 Admin 及以上级别允许查阅系统用户列表 (level <= 20)
   if (!isOwner && callerRole.level > 20) {
@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
 
@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
 
   const userSvc = getUserManagementService();
   try {
-    const created = await userSvc.createManagedUser(gate, {
+    const created = await userSvc.createManagedUser(gate.accountId, {
       username: body.username,
       password: body.password,
       ...(typeof body.roleId === "string" && body.roleId.trim() ? { roleId: body.roleId.trim() } : {}),

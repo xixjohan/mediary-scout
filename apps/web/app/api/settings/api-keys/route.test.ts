@@ -31,6 +31,13 @@ vi.mock("../../../../lib/settings-attention-server", () => ({
 
 vi.mock("../../../../lib/auth-chain", () => ({
   requireApiAccount: async () => state.user,
+  // 设置域路由现在按权限点（system:settings）开门；测试里账号是站长语义。
+  requirePermission: async (_req: unknown, _perm: string) => ({
+    accountId: state.user,
+    isMaster: true,
+    roleId: "role_owner",
+    permissions: new Set(["*"]),
+  }),
 }));
 
 describe("API Keys V2 Management API Routes", () => {

@@ -32,6 +32,15 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
     getAccountDriveFileManagerMock(acct, storageId),
 }));
 
+// 写接口现在经 lib/media-scope 的 getScopedDriveFileManager 取文件管理器
+// （shared 模式下要用站长的盘）。这里转调同一个 mock，保持既有断言不变。
+vi.mock("../../../../lib/media-scope", () => ({
+  getScopedDriveFileManager: (storageId?: string | null) =>
+    getAccountDriveFileManagerMock("acct_test", storageId),
+  resolveMediaScopeAccountId: async () => "acct_test",
+  getScopedStorageCredentials: async () => null,
+}));
+
 vi.mock("../../../../lib/demo-mode", () => ({
   isDemoMode: vi.fn(() => false),
 }));

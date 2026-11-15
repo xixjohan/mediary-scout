@@ -25,6 +25,13 @@ vi.mock("../../../../../lib/workflow-runtime", () => ({
   getAccountDriveFileManager: vi.fn(async () => fakeManager),
 }));
 
+// 采纳接口经 lib/media-scope 取文件管理器（shared 模式下用站长的盘）。
+vi.mock("../../../../../lib/media-scope", () => ({
+  getScopedDriveFileManager: async () => fakeManager,
+  resolveMediaScopeAccountId: async () => "acct_test",
+  getScopedStorageCredentials: async () => null,
+}));
+
 vi.mock("../../../../../composition/runtime-container", () => ({
   getWorkflowRepository: vi.fn(() => mockRepo),
 }));

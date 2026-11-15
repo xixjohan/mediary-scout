@@ -46,10 +46,24 @@ export const ROUTE_PERMISSION_TABLE: Record<string, string> = {
 
   // 播放
   "library/play/[episodeId]": "media:play",
+
+  // 设置域整体关闭（需求 1）
+  "settings/api-key": "system:settings",
+  "settings/api-keys": "system:settings",
+  "settings/api-keys/catalog": "system:settings",
+  "settings/api-keys/available-permissions": "system:settings",
+  "settings/api-keys/[id]": "system:settings",
+  "settings/api-keys/[id]/revoke": "system:settings",
+  "settings/attention": "system:settings",
+  "settings/attention/dismiss": "system:settings",
+  "settings/roles": "system:settings",
+  "settings/roles/[id]": "system:settings",
+  "settings/users": "system:settings",
+  "settings/users/[id]": "system:settings",
 };
 
 /**
  * 已接线端点数。**只增不减**：新增接线要显式改这个数字，从而在评审里被迫看一遍
  * 「新接的这条是不是该给的权限」。这也是本表分批复盘的进度指针。
  */
-export const WIRED_ROUTE_COUNT = 25;
+export const WIRED_ROUTE_COUNT = 37;

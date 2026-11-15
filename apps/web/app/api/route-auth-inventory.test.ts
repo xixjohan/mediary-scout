@@ -237,7 +237,7 @@ describe("细粒度权限清单（权限目录接线门禁）", () => {
   it("已接线的端点数与清单条目一致（新增接线必须显式更新计数）", () => {
     // 这个数字是**评审锚点**：改它的人必须同时说明"为什么这条端点该给这把钥匙"。
     expect(Object.keys(ROUTE_PERMISSION_TABLE)).toHaveLength(WIRED_ROUTE_COUNT);
-    expect(WIRED_ROUTE_COUNT).toBe(25);
+    expect(WIRED_ROUTE_COUNT).toBe(37);
   });
 
   it("清单里的权限点都在权限目录里（防拼错成不存在的权限）", () => {

@@ -1,14 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { resolveCurrentIsOwner } from "../../../../lib/settings-attention-server";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import {
   getApiKeyV2Store,
   getUserManagementService,
 } from "../../../../composition/runtime-container";
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
 
@@ -19,14 +19,14 @@ export async function GET(request: NextRequest) {
   // 若不是站长，仅列出自己创建的 Key；站长可查看所有 Key
   const visibleKeys = isOwner
     ? keys
-    : keys.filter((k) => k.userId === gate);
+    : keys.filter((k) => k.userId === gate.accountId);
 
   const safeList = visibleKeys.map(({ keyHash, ...rest }) => rest);
   return NextResponse.json(safeList);
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
 
@@ -52,8 +52,8 @@ export async function POST(request: NextRequest) {
 
   const isOwner = await resolveCurrentIsOwner();
   const userSvc = getUserManagementService();
-  const creatorPermissions = await userSvc.getUserPermissions(gate, isOwner);
-  const securityVersion = await userSvc.getUserSecurityVersion(gate);
+  const creatorPermissions = await userSvc.getUserPermissions(gate.accountId, isOwner);
+  const securityVersion = await userSvc.getUserSecurityVersion(gate.accountId);
 
   try {
     const store = getApiKeyV2Store();
@@ -64,8 +64,7 @@ export async function POST(request: NextRequest) {
         allowApi: body.allowApi,
         allowMcp: body.allowMcp,
         expiresAt: typeof body.expiresAt === "number" ? body.expiresAt : null,
-        userId: gate,
-        ownerSecurityVersion: securityVersion,
+        userId: gate.accountId, ownerSecurityVersion: securityVersion,
       },
       creatorPermissions,
     );

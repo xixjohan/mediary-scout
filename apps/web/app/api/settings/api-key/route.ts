@@ -1,7 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { resolveCurrentIsOwner } from "../../../../lib/settings-attention-server";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import {
   clearApiKey,
   readApiKeyState,
@@ -24,7 +24,7 @@ import { API_KEY_SETTING_KEY } from "@media-track/shared";
  * 视为「用户清空了」，回落到 env，不会把实例锁死。
  */
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
   // key 是**实例级**凭据（/api/auth/token 用它换 JWT），多用户模式下普通账号
@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
 const TOO_SHORT_MESSAGE = "至少需要 16 个字符";
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
   // key 是**实例级**凭据（/api/auth/token 用它换 JWT），多用户模式下普通账号
@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
   // key 是**实例级**凭据（/api/auth/token 用它换 JWT），多用户模式下普通账号

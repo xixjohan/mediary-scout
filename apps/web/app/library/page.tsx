@@ -58,11 +58,13 @@ async function LibrarySurface({
   }
 
   const { w } = await searchParams;
+  // 工作区已按存储范围策略解析出归属账号（shared 模式下是站长），库必须用同一个
+  // 账号读，否则成员看到的是自己名下那个空库列表。
   const workspace = await resolveGlobalWorkspace(w);
-  const storages = await getAccountConnectedStorages(accountId);
+  const storages = await getAccountConnectedStorages(workspace.accountId);
 
   const repo = getWorkflowRepository();
-  const libraries = repo.mediaLibraryStore.listLibraries(accountId);
+  const libraries = repo.mediaLibraryStore.listLibraries(workspace.accountId);
   const access = await resolvePageAccess();
   const navVisibility = resolveVisibilityFromPermissions(access.permissions);
   // 决策 1：查看影视库允许，管理面（新建/扫描/路径/批量）要 library:manage。

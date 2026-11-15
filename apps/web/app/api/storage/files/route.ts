@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { parseTitleWithChain, type TrackedSeasonState } from "@media-track/workflow";
 import { requirePermission } from "../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../lib/workflow-runtime";
+import { resolveMediaScopeAccountId } from "../../../../lib/media-scope";
 import { getWorkflowRepository } from "../../../../composition/runtime-container";
 import {
   assertListingInScope,
@@ -154,7 +155,8 @@ async function enrichListingWithMediaInfo(
 export async function GET(request: NextRequest) {
   const gate = await requirePermission(request, "storage:list");
   if (gate instanceof Response) return gate;
-  const accountId = gate.accountId;
+  // 读侧账号走存储范围策略：shared 模式下成员看的是站长的公共盘。
+  const accountId = await resolveMediaScopeAccountId();
 
   const { searchParams } = new URL(request.url);
   const storageId = searchParams.get("storageId") || searchParams.get("connectedStorageId") || undefined;

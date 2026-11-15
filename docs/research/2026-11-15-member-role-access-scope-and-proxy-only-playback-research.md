@@ -423,3 +423,33 @@ Dev 部署后（`24328515-dirty-175222`）实测：
 2. 目录范围测试 `apps/web/tests/unit/storage/library-scope-guard.test.ts`（20 用例）——成员写媒体库根外目录抛 `OUTSIDE_LIBRARY_SCOPE`、写根内放行。
 
 要目视验收成员面，需在 Dev 打开 `MEDIA_TRACK_MULTI_USER=1` 并创建一个非站长账号。这是**部署配置变更**（会重启容器），未擅自执行。
+
+### 10.8 Dev 实机验收（成员角色，2026-11-15）
+
+Dev 通过 `env/.envdev` 的 `DEV_MULTI_USER=1` / `DEV_MULTI_USER_MODE=shared` 开启多用户共用资源模式（**仅 Dev**；`deploy-remote.ps1` 现按 `DEV_*` / `PROD_*` 前缀隔离注入，生产不受影响）。用内置浏览器实测：
+
+| 检查项 | 账号 | 实测 |
+| --- | --- | --- |
+| `/settings` 页面 | 成员 | 403 面板「权限不足 / 所需权限：system:settings」 |
+| `/storage`、`/storage/strm` | 成员 | 403 面板「所需权限：storage:browse_any」 |
+| `/library` | 成员 | 正常；**管理按钮全部不渲染**（新建库/立即扫描/库设置/批量管理） |
+| `/notifications`、`/activity`、`/` | 成员 | 正常 |
+| 侧边栏 | 成员 | 只剩 搜索/订阅/影视库/通知/活动（网盘、设置、助理隐藏） |
+| 影视库可见性 | 成员 | 看到站长库的 11 个条目（shared 模式读侧归属站长） |
+| 通知可见性 | 成员 | 看到站长的通知流（38 集 / 30 集入库） |
+| `POST /api/library`、`POST /api/storage/scan` | 成员 | 403 `缺少 [library:manage]` |
+| `POST /api/storage/files/delete`、`rename` | 成员 | 403 `缺少 [storage:delete]` / `[storage:organize]` |
+| `/api/settings/{attention,users,roles,api-keys}` | 成员 | 403 `缺少 [system:settings]` |
+| 目录范围：库内目录 | 成员 | 列表 200；建子目录 200（实际建成后由站长删除） |
+| 目录范围：盘根 `dirId=0` | 成员 | 403 `OUTSIDE_LIBRARY_SCOPE` |
+| 站长回归 | 站长 | `/settings`、`/storage` 正常；删除成员建的 probe 目录 200；库列表 11 条 |
+
+### 10.9 验收期发现并修复的两个缺陷
+
+**缺陷 1：shared 模式下读侧账号用错（会看到空壳）。**
+`resolveGlobalWorkspace` / 页面库列表 / 通知 / 网盘凭据都直接用 `getCurrentAccountId()`，于是成员读的是自己的空账号：盘看不见、影视库空、连「验证目录范围」都因取不到凭据而 fail-closed。修法：新增 [lib/media-scope.ts](../../apps/web/lib/media-scope.ts)，接上早已存在但从未被消费的 `createStorageScopeStrategy()`；读写共用归属账号，**归属只决定"用哪块盘"，能不能做仍由权限与范围裁决**。
+
+**缺陷 2：设置域 API 完全没接权限点。**
+页面已 403，但 `/api/settings/*` 12 个路由仍只走登录链——成员可以直接 curl 改设置。修法：全部接 `requirePermission("system:settings")`，并登记进声明式权限表（25 → 37 端点）。
+
+**验收方法学说明**：`/api/settings/users` 的成员列表在这里被用作"创建测试用户"的手段，但它本身受 `system:settings` 保护——成员拿不到，站长可以。

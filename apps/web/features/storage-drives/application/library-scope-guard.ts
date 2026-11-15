@@ -6,7 +6,7 @@ import {
   type BreadcrumbLike,
   type DriveDirectoryListing,
 } from "@media-track/workflow";
-import { getAccountStorageCredentials } from "./drive-service";
+import { getScopedStorageCredentials } from "../../../lib/media-scope";
 
 /**
  * 网盘目录范围守卫（需求 2）。
@@ -28,7 +28,9 @@ export async function resolveLibraryScopeCids(
   accountId: string,
   storageId: string | null | undefined,
 ): Promise<LibraryScopeCids> {
-  const creds = await getAccountStorageCredentials(accountId, storageId);
+  // 范围以「拥有该盘的账号」为准：shared 模式下调用方传的是成员账号，
+  // 但盘属于站长，直接用成员账号读凭据只会拿到空集 → 合法写入被误拒。
+  const creds = await getScopedStorageCredentials(storageId);
   if (!creds) return { roots: [] };
   return { roots: libraryRootCids(creds) };
 }

@@ -1,18 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../../lib/demo-mode";
 import { resolveCurrentIsOwner } from "../../../../../lib/settings-attention-server";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getUserManagementService } from "../../../../../composition/runtime-container";
 import { PERMISSION_CATALOG } from "@media-track/shared";
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
 
   const isOwner = await resolveCurrentIsOwner();
   const userSvc = getUserManagementService();
-  const userPermissions = await userSvc.getUserPermissions(gate, isOwner);
+  const userPermissions = await userSvc.getUserPermissions(gate.accountId, isOwner);
   const userPermSet = new Set(userPermissions);
   const isSuperUser = isOwner || userPermSet.has("*");
 

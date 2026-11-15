@@ -68,6 +68,18 @@ vi.mock("../../lib/workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 �
 
 vi.mock("../../lib/demo-mode", () => ({ isDemoMode: () => false }));
 
+// 权限收敛后部分路由按权限点开门（settings/attention → system:settings）。
+// 本文件只断言"准入/拒绝"这条链，故安全上下文按站长语义（*）放行；
+// 未登录路径仍由真实 requirePermission 的 401 分支覆盖（见上面的 401 用例）。
+vi.mock("../../composition/runtime-container", () => ({
+  getApiKeyV2Store: () => ({ findKeyByPlainToken: async () => null }),
+  getUserManagementService: () => ({
+    getUserRole: async () => ({ id: "role_owner", permissions: ["*"] }),
+    isUserActive: async () => true,
+    getUserSecurityVersion: async () => 1,
+  }),
+}));
+
 vi.mock("../../lib/activity-view", () => ({ getActivityView: vi.fn(async () => ({ queue: [], running: [], completed: [] })) }));
 
 vi.mock("../../lib/settings-attention-server", () => ({

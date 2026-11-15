@@ -1,13 +1,13 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
 import { loadSettingsAttentionSummary } from "../../../../lib/settings-attention-server";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 /** Lightweight badge/inbox payload. Poll-friendly; never throws to the client.
  *  Badge polls only need count/severity — pass `items=1` for full inbox items. */
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   try {
     await connection();

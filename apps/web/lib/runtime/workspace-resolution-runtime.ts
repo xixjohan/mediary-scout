@@ -5,7 +5,7 @@ import {
   type WorkflowScope,
 } from "@media-track/workflow";
 import { getWorkflowRepository } from "../../composition/runtime-container";
-import { getCurrentAccountId } from "../../platform/next-context/request-account";
+import { resolveMediaScopeAccountId } from "../media-scope";
 
 /**
  * 读取当前请求携带的偏好工作区 Cookie (mediary_active_workspace)
@@ -29,7 +29,9 @@ export type ResolvedWorkspaceScope = WorkflowScope & {
  * 依据路径参数与持久化偏好链解析当前请求的工作区范围 (WorkflowScope)
  */
 export async function getActiveWorkspaceScope(storageId?: string): Promise<ResolvedWorkspaceScope> {
-  const accountId = await getCurrentAccountId();
+  // 读侧账号走存储范围策略：shared 模式下盘与库属于站长，成员读请求者的空账号会
+  // 看到"什么都没绑"——那会把共用资源模式变成一个空壳。
+  const accountId = await resolveMediaScopeAccountId();
   const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter((s) =>
     isRegisteredStorageProvider(s.provider),
   );
@@ -47,7 +49,7 @@ export async function getActiveWorkspaceScope(storageId?: string): Promise<Resol
  * 依据 Query 参数与持久化偏好链解析全局工作区
  */
 export async function resolveGlobalWorkspace(w: string | undefined) {
-  const accountId = await getCurrentAccountId();
+  const accountId = await resolveMediaScopeAccountId();
   const storages = (await getWorkflowRepository().listConnectedStorages(accountId)).filter((s) =>
     isRegisteredStorageProvider(s.provider),
   );
