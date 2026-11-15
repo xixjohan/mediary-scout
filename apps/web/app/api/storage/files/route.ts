@@ -1,8 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { parseTitleWithChain, type TrackedSeasonState } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../lib/workflow-runtime";
 import { getWorkflowRepository } from "../../../../composition/runtime-container";
+import {
+  assertListingInScope,
+  bypassesLibraryScope,
+  libraryScopeErrorStatus,
+  resolveLibraryScopeCids,
+} from "../../../../features/storage-drives/application/library-scope-guard";
 
 const NO_CACHE_HEADERS = {
   "Cache-Control": "private, no-cache, no-store, max-age=0, must-revalidate",
@@ -146,9 +152,9 @@ async function enrichListingWithMediaInfo(
 }
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "storage:list");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const { searchParams } = new URL(request.url);
   const storageId = searchParams.get("storageId") || searchParams.get("connectedStorageId") || undefined;
@@ -164,14 +170,20 @@ export async function GET(request: NextRequest) {
     }
 
     const listing = await fileManager.listDirectory(dirId);
+    // 需求 2：成员只能看媒体库根内的目录。面包屑随列表返回 → 零额外调用。
+    // 持有 storage:browse_any 的账号（站长/管理员/网盘运维）不受此限。
+    if (!bypassesLibraryScope(gate.permissions)) {
+      assertListingInScope(listing, await resolveLibraryScopeCids(accountId, storageId));
+    }
     await enrichListingWithMediaInfo(listing, accountId, storageId);
 
     return NextResponse.json(listing, { headers: NO_CACHE_HEADERS });
   } catch (error) {
     console.error("[storage/files] list directory failed:", error);
+    const message = error instanceof Error ? error.message : "读取网盘文件列表失败";
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "读取网盘文件列表失败" },
-      { status: 500, headers: NO_CACHE_HEADERS },
+      { error: message },
+      { status: libraryScopeErrorStatus(message), headers: NO_CACHE_HEADERS },
     );
   }
 }

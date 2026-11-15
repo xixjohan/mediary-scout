@@ -3,7 +3,7 @@ import {
   runReverseStorageScan,
   createTmdbSearchProvider,
 } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requireApiAccount, requirePermission } from "../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../lib/workflow-runtime";
 import { getWorkflowRepository } from "../../../../composition/runtime-container";
 import { getAccountScopedSettings } from "../../../../features/settings-system/application/system-settings-service";
@@ -15,9 +15,10 @@ const NO_CACHE_HEADERS = {
 };
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  // 反向扫描会把盘上目录纳入媒体库 = 库管理面的写动作。
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   let body: {
     storageId?: string | undefined;

@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
 import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../components/layout/app-sidebar";
+import { resolveNavVisibility } from "../../lib/nav-visibility";
 import { ChatWorkspace } from "../../features/assistant/components/chat-workspace";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import { getCurrentAccountId, resolveGlobalWorkspace, UNAUTHENTICATED_ACCOUNT_ID } from "../../lib/workflow-runtime";
@@ -45,12 +46,14 @@ async function ChatSurface({
   }
   const { w, c } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
+  const navVisibility = await resolveNavVisibility();
   return (
     <div className="app-shell">
       <AppSidebar
         active="chat"
         basePath={workspace.basePath}
         activeStorageId={workspace.activeStorageId}
+        visibility={navVisibility}
       />
       <main className="main product-main product-main-chat">
         <ChatWorkspace

@@ -12,11 +12,15 @@ import {
   type TrackedSeason,
 } from "@media-track/workflow";
 import { seriesTargetFor } from "../../../../../lib/series-target";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../../lib/workflow-runtime";
 import { getWorkflowRepository } from "../../../../../composition/runtime-container";
 import { getAccountScopedSettings } from "../../../../../features/settings-system/application/system-settings-service";
 import { getTmdbAccesses } from "../../../../../lib/runtime/settings-readers";
+import {
+  guardWriteTarget,
+  libraryScopeErrorStatus,
+} from "../../../../../features/storage-drives/application/library-scope-guard";
 
 async function queryTmdbCandidate(
   title: string,
@@ -295,9 +299,10 @@ async function adoptTvFolder(params: {
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  // 把盘上目录纳入影视库 = 库管理面的写动作。
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   let body: {
     storageId?: string | undefined;
@@ -327,6 +332,14 @@ export async function POST(request: NextRequest) {
     }
 
     const listing = await fileManager.listDirectory(folderId).catch(() => null);
+    // 需求 2：只有媒体库根内的目录才能被采纳。
+    await guardWriteTarget({
+      accountId,
+      storageId,
+      directoryId: folderId,
+      permissions: gate.permissions,
+      listDirectory: (dirId) => fileManager.listDirectory(dirId),
+    });
     const items = listing?.items ?? [];
 
     const resolved = await resolveMetadataForAdoption({
@@ -365,9 +378,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("[storage/files/adopt] adoption failed:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "纳入订阅失败" },
-      { status: 500 },
-    );
+    const message = error instanceof Error ? error.message : "纳入订阅失败";
+    return NextResponse.json({ error: message }, { status: libraryScopeErrorStatus(message) });
   }
 }

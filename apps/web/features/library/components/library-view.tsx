@@ -32,6 +32,9 @@ import { AiBatchReportModal } from "./ai-batch-report-modal";
 export interface LibraryViewProps {
   initialLibraries: MediaLibrary[];
   storages: ConnectedStorageView[];
+  /** 影视库管理面（新建/扫描/路径绑定/批量改删）。成员只看内容，不持有它。
+   *  注意：隐藏入口只是体验；真正的关闭点是 API 上的 library:manage 断言。 */
+  canManage?: boolean;
 }
 
 function computeCategories(currentLibrary: MediaLibrary | null, activeLibraryId: string) {
@@ -58,7 +61,7 @@ function computeCategories(currentLibrary: MediaLibrary | null, activeLibraryId:
   ];
 }
 
-export function LibraryView({ initialLibraries, storages }: LibraryViewProps) {
+export function LibraryView({ initialLibraries, storages, canManage = true }: LibraryViewProps) {
   const router = useRouter();
   const [libraries, setLibraries] = useState<MediaLibrary[]>(initialLibraries);
   const [activeLibraryId, setActiveLibraryId] = useState<string>(
@@ -403,6 +406,7 @@ export function LibraryView({ initialLibraries, storages }: LibraryViewProps) {
           setViewCategory("all");
         }}
         onCreateLibrary={() => setShowCreateModal(true)}
+        canManage={canManage}
       />
 
       <LibraryToolbar
@@ -425,6 +429,7 @@ export function LibraryView({ initialLibraries, storages }: LibraryViewProps) {
             setSearchQuery(val);
           });
         }}
+        canManage={canManage}
       />
 
       {isSelecting && viewCategory !== "folder" && (

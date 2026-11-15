@@ -54,7 +54,12 @@ vi.mock("../../lib/workflow-runtime", () => ({  // S5.7：auth-chain 通道 3 �
     }
   },
   getJwtTtlSeconds: async () => 600,
-  getWorkflowRepository: () => state.repository,
+  // 权限收敛后 cookie/bearer 通道要读账号的 is_owner 位（决定角色兜底），
+  // 因此注入 getAccountById。本文件只断言"准入/拒绝"，与角色无关 → 非站长即可。
+  getWorkflowRepository: () => ({
+    ...state.repository,
+    getAccountById: async (id: string) => ({ id, isOwner: false }),
+  }),
   ensureDemoSeeded: async () => {},
   resolveGlobalWorkspace: async () => state.workspace,
   getCurrentAccountId: async () => state.sessionAccount ?? "acct_default",

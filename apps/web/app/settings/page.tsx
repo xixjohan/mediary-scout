@@ -1,5 +1,8 @@
 import { Suspense } from "react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
+import { decidePageAccess, resolvePageAccess } from "../../lib/page-permission-guard";
+import { resolveVisibilityFromPermissions } from "../../features/auth/core/nav-visibility";
+import { PageAccessDenied } from "../../features/auth/components/page-access-denied";
 import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { driveConnectionBadge } from "../../lib/settings-badge";
 import { maskProviderUid } from "../../lib/mask-provider-uid";
@@ -102,15 +105,18 @@ import {
 } from "../../lib/pansou-chain";
 import { brandSupportsProwlarr, DEFAULT_ACCOUNT_ID, brandsSupportingProwlarr, brandsSupportingSubtitleDirectLink, FREE_LLM_PRESET, getStorageBrand, isFreeLlmPreset, isRegisteredStorageProvider } from "@media-track/workflow";
 import { isDemoMode } from "../../lib/demo-mode";
+import type { NavVisibility } from "../../features/auth/core/nav-visibility";
 
 function SettingsPageInner({
   searchParams,
   canViewUpdate,
   canViewRemote,
+  navVisibility,
 }: {
   searchParams: Promise<{ w?: string }>;
   canViewUpdate?: boolean;
   canViewRemote?: boolean;
+  navVisibility?: NavVisibility | undefined;
 }) {
   return (
     <div className="app-shell">
@@ -118,7 +124,7 @@ function SettingsPageInner({
           Suspense so the static shell + per-section streaming stay intact and the
           route still prerenders (cacheComponents). Fallback = primary sidebar. */}
       <Suspense fallback={<AppSidebar active="settings" skeleton />}>
-        <SettingsSidebar searchParams={searchParams} />
+        <SettingsSidebar searchParams={searchParams} navVisibility={navVisibility} />
       </Suspense>
       <main className="main product-main">
         <div className="section-heading library-heading">
@@ -252,10 +258,23 @@ function SettingsPageInner({
   );
 }
 
-async function SettingsSidebar({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
+async function SettingsSidebar({
+  searchParams,
+  navVisibility,
+}: {
+  searchParams: Promise<{ w?: string }>;
+  navVisibility?: NavVisibility | undefined;
+}) {
   await connection();
   const workspace = await resolveGlobalWorkspace((await searchParams).w);
-  return <AppSidebar active="settings" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />;
+  return (
+    <AppSidebar
+      active="settings"
+      basePath={workspace.basePath}
+      activeStorageId={workspace.activeStorageId}
+      {...(navVisibility ? { visibility: navVisibility } : {})}
+    />
+  );
 }
 
 async function SettingsAttentionSection({
@@ -1034,6 +1053,12 @@ async function SettingsSurface(props: { searchParams: Promise<{ w?: string }> })
       </>
     );
   }
+  // 设置页整体关闭（需求 1）：成员无权进入，返回 403 而非 redirect。
+  const access = await resolvePageAccess();
+  const verdict = decidePageAccess(access, "system:settings");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="system:settings" verdict={verdict} />;
+  }
   const isOwner = await resolveCurrentIsOwner();
   const isDesktop = resolveIsDesktop();
   const canViewUpdate = !isDemoMode() && isOwner;
@@ -1043,6 +1068,7 @@ async function SettingsSurface(props: { searchParams: Promise<{ w?: string }> })
       searchParams={props.searchParams}
       canViewUpdate={canViewUpdate}
       canViewRemote={canViewRemote}
+      navVisibility={resolveVisibilityFromPermissions(access.permissions)}
     />
   );
 }

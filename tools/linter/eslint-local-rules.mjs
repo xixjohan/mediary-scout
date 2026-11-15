@@ -36,7 +36,7 @@ const apiAuthRequired = {
     schema: [],
     messages: {
       missingChain:
-        "S5.4 违规：{{path}} 是非白名单 /api 路由，必须调用 requireApiAccount(request) 登录链（session cookie → Bearer JWT → 单用户局域网默认账号）。",
+        "S5.4 违规：{{path}} 是非白名单 /api 路由，必须调用 requireApiAccount(request) 或 requirePermission(request, 权限点) 登录链（session cookie → Bearer JWT → 单用户局域网默认账号）。",
       missingAgentGuard:
         "S5.4 违规：{{path}} 是 agent /api 路由，必须调用 agentApiGuard(request) 独立 token 守卫。",
       missingMcpGuard:
@@ -61,6 +61,10 @@ const apiAuthRequired = {
         const callee = node.callee;
         if (callee?.type !== "Identifier") return;
         if (callee.name === "requireApiAccount") callsChain = true;
+        // requirePermission 是登录链的**严格超集**：它内部先走 resolveSecurityContext
+        // （未认证即 401），再判权限点。接上细粒度权限的端点不再单独调 requireApiAccount，
+        // 否则同一请求要解析两次安全上下文（两次 DB 读）。这里放行它，等同于放行登录链。
+        if (callee.name === "requirePermission") callsChain = true;
         if (callee.name === "agentApiGuard") callsAgentGuard = true;
         if (callee.name === "resolveSecurityContext") callsMcpGuard = true;
         if (callee.name === "verifyStrmPlayToken") callsStrmGuard = true;

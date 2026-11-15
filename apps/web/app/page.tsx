@@ -7,6 +7,7 @@ import { Suspense } from "react";
 import { Library, TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../features/acquisition/components/acquiring-poller";
 import { AppSidebar } from "../components/layout/app-sidebar";
+import { resolveNavVisibility } from "../lib/nav-visibility";
 import { CandidateCard } from "../features/acquisition/components/candidate-card";
 import { DemoSessionLibrary } from "../components/demo/demo-session-library";
 import { LibraryWorkspaceView } from "../features/catalog/components/library-workspace-view";
@@ -179,12 +180,13 @@ async function HomeSurface({
   // (no storageId) posts to "/" as before.
   const basePath = workspaceBasePath(storageId);
   const driveCount = await getRegisteredDriveCount().catch(() => 0);
+  const navVisibility = await resolveNavVisibility();
 
 
   return (
     <div className="app-shell">
       <WorkspaceCookieSync storageId={storageId} />
-      <AppSidebar active={activeTab} searchQuery={query} basePath={basePath} activeStorageId={storageId} />
+      <AppSidebar active={activeTab} searchQuery={query} basePath={basePath} activeStorageId={storageId} visibility={navVisibility} />
 
       <main className="main product-main">
         {activeTab === "search" ? (

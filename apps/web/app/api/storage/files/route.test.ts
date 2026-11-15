@@ -17,10 +17,14 @@ const fakeManager = {
 };
 
 const requireApiAccountMock = vi.fn();
+const requirePermissionMock = vi.fn();
 const getAccountDriveFileManagerMock = vi.fn();
 
 vi.mock("../../../../lib/auth-chain", () => ({
+  // 文件接口现在走细粒度权限（读 storage:list / 写按各自权限点）。
+  // 测试账号是站长语义（*），因此范围校验也会走 bypass 快路径——与生产站长一致。
   requireApiAccount: (req: NextRequest) => requireApiAccountMock(req),
+  requirePermission: (req: NextRequest, permission: string) => requirePermissionMock(req, permission),
 }));
 
 vi.mock("../../../../lib/workflow-runtime", () => ({
@@ -36,12 +40,18 @@ describe("Storage Files API Routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     requireApiAccountMock.mockResolvedValue("acct_test");
+    requirePermissionMock.mockResolvedValue({
+      accountId: "acct_test",
+      isMaster: true,
+      roleId: "role_owner",
+      permissions: new Set(["*"]),
+    });
     getAccountDriveFileManagerMock.mockResolvedValue(fakeManager);
   });
 
   describe("GET /api/storage/files", () => {
     it("returns 401 if unauthenticated", async () => {
-      requireApiAccountMock.mockResolvedValue(
+      requirePermissionMock.mockResolvedValue(
         NextResponse.json({ error: "unauthorized" }, { status: 401 }),
       );
 

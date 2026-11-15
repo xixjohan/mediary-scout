@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requireApiAccount, requirePermission } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 import { isDemoMode } from "../../../../../lib/demo-mode";
 import type { BindingDeliveryMode, LibraryScanMode } from "@media-track/contracts";
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
 
   if (isDemoMode()) {
@@ -63,7 +63,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 }
 
 export async function PUT(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
 
   if (isDemoMode()) {
@@ -104,7 +104,7 @@ export async function PUT(request: NextRequest) {
 }
 
 export async function DELETE(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
 
   if (isDemoMode()) {

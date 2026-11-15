@@ -1,6 +1,8 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
+import { hasPermission, resolvePageAccess } from "../../lib/page-permission-guard";
+import { resolveVisibilityFromPermissions } from "../../features/auth/core/nav-visibility";
 import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
@@ -61,6 +63,11 @@ async function LibrarySurface({
 
   const repo = getWorkflowRepository();
   const libraries = repo.mediaLibraryStore.listLibraries(accountId);
+  const access = await resolvePageAccess();
+  const navVisibility = resolveVisibilityFromPermissions(access.permissions);
+  // 决策 1：查看影视库允许，管理面（新建/扫描/路径/批量）要 library:manage。
+  // 管理动作的入口在这里按权限下发；API 侧另有断言兜底（藏按钮不是关闭）。
+  const canManageLibrary = hasPermission(access, "library:manage");
 
   return (
     <div className="app-shell">
@@ -68,6 +75,7 @@ async function LibrarySurface({
         active="medialib"
         basePath={workspace.basePath}
         activeStorageId={workspace.activeStorageId}
+        visibility={navVisibility}
       />
       <main className="main product-main">
         <div className="section-heading library-heading" style={{ marginBottom: "1rem" }}>
@@ -79,7 +87,7 @@ async function LibrarySurface({
           </div>
         </div>
 
-        <LibraryView initialLibraries={libraries} storages={storages} />
+        <LibraryView initialLibraries={libraries} storages={storages} canManage={canManageLibrary} />
         <GitHubNameplate />
       </main>
     </div>

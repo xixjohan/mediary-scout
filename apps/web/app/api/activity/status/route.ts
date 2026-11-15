@@ -1,6 +1,6 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
 import { getWorkflowRepository, resolveGlobalWorkspace } from "../../../../lib/workflow-runtime";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { isUserVisibleWorkflowKind, tailAgentStepViews } from "@media-track/workflow";
 import { inferActivityText } from "../../../../lib/title-hub";
 import type {
@@ -76,7 +76,7 @@ async function formatMatchedRunResponse(input: FormatRunInput): Promise<NextResp
 }
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "workflow:status");
   if (gate instanceof Response) return gate;
   await connection();
 

@@ -54,8 +54,12 @@ export const BUILTIN_ROLES: Record<BuiltinRoleId, RoleEntity> = {
     permissions: [
       "media:search",
       "media:detail",
+      "media:play",
       "media:subscribe",
+      "library:manage",
+      "notifications:read",
       "storage:list",
+      "storage:browse_any",
       "storage:transfer",
       "storage:organize",
       "workflow:status",
@@ -63,6 +67,7 @@ export const BUILTIN_ROLES: Record<BuiltinRoleId, RoleEntity> = {
       "assistant:chat",
       "assistant:mcp_invoke",
       "system:health",
+      "system:settings",
     ],
     createdAt: 0,
     updatedAt: 0,
@@ -70,17 +75,22 @@ export const BUILTIN_ROLES: Record<BuiltinRoleId, RoleEntity> = {
   role_member: {
     id: "role_member",
     name: "标准成员 (Member)",
-    description: "日常家庭成员，支持影视检索、详情查阅、订阅追剧与离线转存",
+    description: "日常家庭成员：检索、追剧、浏览与播放影视库；不含设置、库管理与任意目录浏览",
     level: ROLE_LEVELS.MEMBER,
     isSystem: true,
+    // 权限面 = 需求 1 的允许列表（搜索 / 订阅 / 查看影视库 / 播放 / 通知 / 活动）
+    // + 用户在 2026-11-15 明确保留的「发起获取」(storage:transfer)。
+    // 刻意不含 library:manage（只禁管理面，不禁查看）、storage:browse_any（目录范围由
+    // Abac 校验兜住）与 system:settings（设置页整体关闭）。
     permissions: [
       "media:search",
       "media:detail",
+      "media:play",
       "media:subscribe",
+      "notifications:read",
       "storage:list",
       "storage:transfer",
       "workflow:status",
-      "assistant:chat",
     ],
     createdAt: 0,
     updatedAt: 0,
@@ -93,7 +103,10 @@ export const BUILTIN_ROLES: Record<BuiltinRoleId, RoleEntity> = {
     isSystem: true,
     permissions: [
       "media:search",
+      "media:detail",
+      "notifications:read",
       "storage:list",
+      "storage:transfer",
       "workflow:status",
       "workflow:trigger",
     ],
@@ -109,6 +122,7 @@ export const BUILTIN_ROLES: Record<BuiltinRoleId, RoleEntity> = {
     permissions: [
       "media:search",
       "media:detail",
+      "notifications:read",
       "system:health",
     ],
     createdAt: 0,

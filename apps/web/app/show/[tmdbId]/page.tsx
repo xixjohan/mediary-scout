@@ -10,6 +10,7 @@ import { isMovieUnreleased, type EpisodeDisplayState } from "@media-track/workfl
 import { AcquiringPoller } from "../../../features/acquisition/components/acquiring-poller";
 import { AcquisitionLockProvider } from "../../../features/acquisition/components/acquisition-lock";
 import { AppSidebar } from "../../../components/layout/app-sidebar";
+import { resolveNavVisibility, type NavVisibility } from "../../../lib/nav-visibility";
 import { GitHubNameplate } from "../../../components/layout/github-nameplate";
 import { BackLink } from "../../../components/layout/back-link";
 import { TitleResourcePanel } from "../../../features/acquisition/components/title-resource-panel";
@@ -64,10 +65,10 @@ function ShowPageInner({
   );
 }
 
-function ShowShell({ active, basePath = "/", activeStorageId, skeleton = false, children }: { active: "search" | "library" | "none"; basePath?: string; activeStorageId?: string | undefined; skeleton?: boolean; children: ReactNode }) {
+function ShowShell({ active, basePath = "/", activeStorageId, skeleton = false, visibility, children }: { active: "search" | "library" | "none"; basePath?: string; activeStorageId?: string | undefined; skeleton?: boolean; visibility?: NavVisibility; children: ReactNode }) {
   return (
     <>
-      <AppSidebar active={active} basePath={basePath} activeStorageId={activeStorageId} skeleton={skeleton} />
+      <AppSidebar active={active} basePath={basePath} activeStorageId={activeStorageId} skeleton={skeleton} {...(visibility ? { visibility } : {})} />
       <main className="main product-main product-main-hub">{children}</main>
     </>
   );
@@ -122,12 +123,14 @@ async function ShowContent({
 
   const summary = await getCurrentAccountSummary();
   const canManageMedia = !isSharedResourceMode() || (summary?.isOwner ?? false);
+  const navVisibility = await resolveNavVisibility();
 
   return (
     <ShowShell
       active={from ?? "none"}
       basePath={workspace.basePath}
       activeStorageId={workspace.activeStorageId}
+      visibility={navVisibility}
     >
       {view ? (
         view.kind === "movie" ? (

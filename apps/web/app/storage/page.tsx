@@ -3,6 +3,12 @@ import { connection } from "next/server";
 import Link from "next/link";
 import { FolderSync } from "lucide-react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
+import {
+  decidePageAccess,
+  resolvePageAccess,
+} from "../../lib/page-permission-guard";
+import { resolveVisibilityFromPermissions } from "../../features/auth/core/nav-visibility";
+import { PageAccessDenied } from "../../features/auth/components/page-access-denied";
 import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../components/layout/app-sidebar";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
@@ -55,9 +61,17 @@ async function StorageSurface({
       </>
     );
   }
+  // 网盘运维页 = 浏览/整理盘上任意目录，需要 storage:browse_any。成员只有媒体库
+  // 浏览权，这里直接 403（不 redirect：他确实登录了，只是这个页面不给）。
+  const access = await resolvePageAccess();
+  const verdict = decidePageAccess(access, "storage:browse_any");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="storage:browse_any" verdict={verdict} />;
+  }
   const { w, dir } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
   const storages = await getAccountConnectedStorages();
+  const navVisibility = resolveVisibilityFromPermissions(access.permissions);
 
   return (
     <div className="app-shell">
@@ -65,6 +79,7 @@ async function StorageSurface({
         active="storage"
         basePath={workspace.basePath}
         activeStorageId={workspace.activeStorageId}
+        visibility={navVisibility}
       />
       <main className="main product-main">
         <div className="section-heading library-heading" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>

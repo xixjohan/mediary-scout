@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../lib/auth-chain";
+import { requireApiAccount, requirePermission } from "../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../lib/workflow-runtime";
 import { isDemoMode } from "../../../lib/demo-mode";
 import type { MediaLibrary, MediaLibraryType, LibraryDeliveryMode } from "@media-track/contracts";
@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   if (isDemoMode()) {
     return NextResponse.json({ error: "演示模式下禁止创建影视库" }, { status: 403 });

@@ -22,6 +22,7 @@ export * from "./storage-auth-error.js";
 export * from "./drive-pacer.js";
 export * from "./brand-pacing.js";
 export * from "./drive-file-manager.js";
+export * from "./library-scope.js";
 export * from "./account-credentials.js";
 export * from "./credential-store.js";
 export * from "./keyed-pool.js";

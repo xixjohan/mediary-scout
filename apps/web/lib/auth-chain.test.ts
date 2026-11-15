@@ -19,6 +19,12 @@ vi.mock("./workflow-runtime", () => ({
   UNAUTHENTICATED_ACCOUNT_ID: "acct_unauthenticated",
   UnauthenticatedAccountError: class UnauthenticatedAccountError extends Error {},
   isMultiUserEnabled: vi.fn(() => false),
+  // 权限收敛后 cookie/bearer 通道会读账号的 is_owner 位来决定角色兜底
+  // （否则单用户+已设密码的站长会被判成 role_member）。本文件断言的是"解析到哪个账号"，
+  // 与角色无关，故给一个恒定的非站长仓库即可。
+  getWorkflowRepository: () => ({
+    getAccountById: async (id: string) => ({ id, isOwner: false }),
+  }),
   isRemoteRequest: vi.fn(() => false),
   hasLoginPassword: vi.fn(async () => false),
   resolveSessionAccountId: vi.fn(async () => null),

@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 import { isDemoMode } from "../../../../../lib/demo-mode";
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
 
   if (isDemoMode()) {

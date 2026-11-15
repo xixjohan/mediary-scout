@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../../lib/auth-chain";
 import { getWorkflowRepository, getTmdbAccesses } from "../../../../../../lib/workflow-runtime";
 import { TmdbSearchProvider } from "@media-track/workflow";
 import { isDemoMode } from "../../../../../../lib/demo-mode";
@@ -9,7 +9,7 @@ interface RouteParams {
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
 
   if (isDemoMode()) {

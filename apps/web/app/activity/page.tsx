@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
 import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../components/layout/app-sidebar";
+import { resolveNavVisibility } from "../../lib/nav-visibility";
 import { ActivityFeed } from "../../features/activity/components/activity-feed";
 import { MediaRequestPanel } from "../../features/acquisition/components/media-request-panel";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
@@ -45,9 +46,10 @@ async function ActivitySurface({ searchParams }: { searchParams: Promise<{ w?: s
   }
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
+  const navVisibility = await resolveNavVisibility();
   return (
     <div className="app-shell">
-      <AppSidebar active="activity" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />
+      <AppSidebar active="activity" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} visibility={navVisibility} />
       <main className="main product-main">
         <div className="section-heading library-heading">
           <div>

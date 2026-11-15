@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentAccountId, getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import { isQueueClaimableKind } from "@media-track/workflow";
 import type { RetryRefusalReason } from "../../../../lib/activity-view";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { triggerManualSubscriptionSearch } from "../../../../features/acquisition/application/manual-subscription-search-service";
 
 /**
@@ -13,7 +13,7 @@ import { triggerManualSubscriptionSearch } from "../../../../features/acquisitio
  * Other queueable kinds keep the repository's same-run retry behavior.
  */
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "storage:transfer");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return Response.json({ error: "演示站只读" }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as { runId?: unknown };

@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../../lib/workflow-runtime";
 import { isDemoMode } from "../../../../../lib/demo-mode";
 
@@ -31,10 +31,12 @@ function parseDeleteItems(
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  // 删除按 item id 操作，没有目标目录可判范围 —— 直接要求 storage:delete
+  // （Dangerous 级，成员/访客本就不持有），比"先查每个文件的父目录"可靠得多。
+  const gate = await requirePermission(request, "storage:delete");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const body = (await request.json().catch(() => ({}))) as {
     storageId?: unknown;

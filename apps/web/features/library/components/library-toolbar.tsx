@@ -16,6 +16,8 @@ export interface LibraryToolbarProps {
   onToggleSelectMode: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  /** 成员无库管理权：不渲染扫描/设置/批量。真关闭点在 API。 */
+  canManage?: boolean;
 }
 
 export function LibraryToolbar({
@@ -31,6 +33,7 @@ export function LibraryToolbar({
   onToggleSelectMode,
   searchQuery,
   onSearchChange,
+  canManage = true,
 }: LibraryToolbarProps) {
   return (
     <div
@@ -44,7 +47,7 @@ export function LibraryToolbar({
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: "0.8rem", flexWrap: "wrap" }}>
-        {currentLibrary && (
+        {currentLibrary && canManage && (
           <>
             <button
               type="button"
@@ -96,7 +99,7 @@ export function LibraryToolbar({
         </div>
 
         {/* 批量多选管理开关按钮 (仅在非文件夹视图下可用) */}
-        {viewCategory !== "folder" && (
+        {canManage && viewCategory !== "folder" && (
           <button
             type="button"
             className={`btn btn-sm ${isSelecting ? "btn-primary" : "btn-secondary"}`}

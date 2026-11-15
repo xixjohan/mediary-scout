@@ -53,6 +53,13 @@ const mockRepo = {
 
 vi.mock("../../../../lib/auth-chain", () => ({
   requireApiAccount: vi.fn(async () => "acct_test"),
+  // POST 反向扫描现在要 library:manage（写库范围）。测试里的账号按站长语义给通配符。
+  requirePermission: vi.fn(async () => ({
+    accountId: "acct_test",
+    isMaster: true,
+    roleId: "role_owner",
+    permissions: new Set(["*"]),
+  })),
 }));
 
 vi.mock("../../../../lib/workflow-runtime", () => ({

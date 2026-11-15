@@ -2,17 +2,43 @@ import { NextResponse, type NextRequest } from "next/server";
 import {
   Pan115CookieClient,
   Pan123Client,
+  createDriveFileManager,
   GuangYaClient,
   QuarkCookieClient,
   TianyiClient,
   isRegisteredStorageProvider,
 } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requireApiAccount, requirePermission } from "../../../../lib/auth-chain";
 import { getAccountStorageCredentials } from "../../../../features/storage-drives/application/drive-service";
 import type { AccountStorageCredentials } from "../../../../features/storage-drives/contracts/storage-types";
 import { isDemoMode } from "../../../../lib/demo-mode";
+import {
+  guardWriteTarget,
+  libraryScopeErrorStatus,
+} from "../../../../features/storage-drives/application/library-scope-guard";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
+
+/**
+ * 只为范围校验取一次目录列表。走 drive-service 的 fileManager 而不是品牌客户端，
+ * 让面包屑解析与浏览页共用同一份实现（115 的 `path`、其它品牌的本地缓存）。
+ */
+async function listDirectoryForScope(
+  creds: AccountStorageCredentials,
+  directoryId: string,
+): Promise<{ breadcrumbs: Array<{ id: string; name: string }> }> {
+  const fileManager = createDriveFileManager({
+    storageId: creds.id,
+    provider: creds.provider,
+    cookie: creds.cookie,
+    credential: creds.credential,
+    rootCid: creds.rootCid,
+    moviesCid: creds.moviesCid,
+    tvCid: creds.tvCid,
+    animeCid: creds.animeCid,
+  });
+  return fileManager.listDirectory(directoryId);
+}
 
 export interface OfflineCapabilities {
   supported: boolean;
@@ -502,10 +528,12 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  // 提交离线/转存 = storage:transfer（成员保留这项，见决策 2）；
+  // 目标目录另有范围校验，防止"能发起"变成"能往任意目录写"。
+  const gate = await requirePermission(request, "storage:transfer");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403, headers: NO_STORE });
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   let parsed: ReturnType<typeof parseOfflineRequestBody>;
   try {
@@ -526,6 +554,16 @@ export async function POST(request: NextRequest) {
   const targetDirId = directoryId || creds.moviesCid || creds.rootCid || "0";
 
   try {
+    // 需求 2 的关键配套：决策 2 保留了成员的「发起获取」，所以转存目标必须落在
+    // 媒体库范围内，否则"能发起"会变成"能往盘上任意目录写文件"。
+    await guardWriteTarget({
+      accountId,
+      storageId,
+      directoryId: targetDirId,
+      permissions: gate.permissions,
+      listDirectory: (dirId) => listDirectoryForScope(creds, dirId),
+    });
+
     const allResults: Array<{ url: string; ok: boolean; message?: string | undefined; taskId?: string | undefined }> = [];
 
     // 1. 若有离线下载链接
@@ -552,9 +590,9 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error("[storage/offline] submit failed:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "提交下载或转存任务失败" },
-      { status: 400, headers: NO_STORE }
-    );
+    const message = error instanceof Error ? error.message : "提交下载或转存任务失败";
+    // 范围校验的失败要给出可区分的状态码：越权 403 / 未配置 409，两者都不是 400。
+    const status = libraryScopeErrorStatus(message) === 500 ? 400 : libraryScopeErrorStatus(message);
+    return NextResponse.json({ error: message }, { status, headers: NO_STORE });
   }
 }

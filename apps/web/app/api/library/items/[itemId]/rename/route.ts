@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../../lib/auth-chain";
 import { getWorkflowRepository, getAccountDriveFileManager } from "../../../../../../lib/workflow-runtime";
 import { isDemoMode } from "../../../../../../lib/demo-mode";
 
@@ -8,9 +8,9 @@ interface RouteParams {
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   if (isDemoMode()) {
     return NextResponse.json({ error: "演示模式下禁止修改网盘文件" }, { status: 403 });

@@ -2,6 +2,11 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { describe, expect, it } from "vitest";
+import { PERMISSION_CATALOG } from "@media-track/shared";
+import {
+  ROUTE_PERMISSION_TABLE,
+  WIRED_ROUTE_COUNT,
+} from "../../platform/next-context/route-permission-table";
 
 /**
  * S5.4 路由鉴权清单门禁（静态层）。
@@ -77,6 +82,31 @@ function usesImportedFunction(source: string, name: string): boolean {
   return importsName(source, name) && callsFunction(source, name);
 }
 
+/**
+ * 是否真的以指定字符串字面量调用了 `name` —— 即 `name(request, "library:manage")`。
+ * 只查「调了 requirePermission」不够：把权限点写错成别的（或写个恒真变量）照样能过，
+ * 门禁必须核对**权限点与清单一致**。
+ */
+function callsFunctionWithLiteral(source: string, name: string, literal: string): boolean {
+  const file = ts.createSourceFile("route.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) return;
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) {
+      const hasLiteral = node.arguments.some(
+        (arg) => ts.isStringLiteral(arg) && arg.text === literal,
+      );
+      if (hasLiteral) {
+        found = true;
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
 const OPEN_ROUTES = new Set([
   "health",
   "auth/bootstrap",
@@ -133,10 +163,12 @@ describe("S5.4 /api 路由鉴权清单", () => {
     expect(guarded.length).toBe(105);
   });
 
-  it("105 个非白名单路由全部引用 requireApiAccount 登录链", () => {
+  it("105 个非白名单路由全部引用登录链（requireApiAccount 或 requirePermission）", () => {
+    // requirePermission 内部先走 resolveSecurityContext（未认证即 401），因此它同样
+    // 是一条登录链——接上细粒度权限的端点不再需要单独调 requireApiAccount。
     const missing = routes
       .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path) && !STRM_PLAY_ROUTES.has(r.path))
-      .filter((r) => !usesImportedFunction(r.source, "requireApiAccount"))
+      .filter((r) => !usesImportedFunction(r.source, "requireApiAccount") && !usesImportedFunction(r.source, "requirePermission"))
       .map((r) => r.path);
     expect(missing).toEqual([]);
   });
@@ -179,6 +211,52 @@ describe("S5.4 /api 路由鉴权清单", () => {
     expect(callsFunction(playSource, "verifyStrmPlayToken"), "strm/play 必须调用 verifyStrmPlayToken").toBe(true);
     const mcpSource = routes.find((r) => r.path === "mcp")?.source ?? "";
     expect(callsFunction(mcpSource, "resolveSecurityContext"), "mcp 必须调用 resolveSecurityContext").toBe(true);
+  });
+});
+
+describe("细粒度权限清单（权限目录接线门禁）", () => {
+  it("清单里的每个端点都真的用声明的权限点调了 requirePermission", () => {
+    const violations: string[] = [];
+    for (const [path, permission] of Object.entries(ROUTE_PERMISSION_TABLE)) {
+      const source = routes.find((r) => r.path === path)?.source;
+      if (!source) {
+        violations.push(`${path}: 清单里的端点不存在（路由被删了却没清清单）`);
+        continue;
+      }
+      if (!usesImportedFunction(source, "requirePermission")) {
+        violations.push(`${path}: 未调用 requirePermission（仅登录，权限不生效）`);
+        continue;
+      }
+      if (!callsFunctionWithLiteral(source, "requirePermission", permission)) {
+        violations.push(`${path}: 权限点与清单不一致（期望 ${permission}）`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("已接线的端点数与清单条目一致（新增接线必须显式更新计数）", () => {
+    // 这个数字是**评审锚点**：改它的人必须同时说明"为什么这条端点该给这把钥匙"。
+    expect(Object.keys(ROUTE_PERMISSION_TABLE)).toHaveLength(WIRED_ROUTE_COUNT);
+    expect(WIRED_ROUTE_COUNT).toBe(25);
+  });
+
+  it("清单里的权限点都在权限目录里（防拼错成不存在的权限）", () => {
+    const catalogIds = new Set(PERMISSION_CATALOG.flatMap((m) => m.leaves.map((l) => l.id)));
+    const unknown = Object.entries(ROUTE_PERMISSION_TABLE)
+      .filter(([, permission]) => !catalogIds.has(permission))
+      .map(([path, permission]) => `${path} → ${permission}`);
+    expect(unknown).toEqual([]);
+  });
+
+  it("callsFunctionWithLiteral 只认权限点字面量——写错权限点必须判红", () => {
+    const wrong = `import { requirePermission } from "../../lib/auth-chain";
+export async function POST(request: NextRequest) {
+  const gate = await requirePermission(request, "storage:list");
+  if (gate instanceof Response) return gate;
+  return Response.json({});
+}`;
+    expect(callsFunctionWithLiteral(wrong, "requirePermission", "library:manage")).toBe(false);
+    expect(callsFunctionWithLiteral(wrong, "requirePermission", "storage:list")).toBe(true);
   });
 });
 

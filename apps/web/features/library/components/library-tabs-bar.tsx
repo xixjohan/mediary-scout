@@ -8,6 +8,8 @@ export interface LibraryTabsBarProps {
   activeLibraryId: string;
   onSelectLibrary: (id: string) => void;
   onCreateLibrary: () => void;
+  /** 成员无库管理权：不渲染「新建库」。真关闭点在 API，这里只是不给无用的按钮。 */
+  canManage?: boolean;
 }
 
 export function LibraryTabsBar({
@@ -15,6 +17,7 @@ export function LibraryTabsBar({
   activeLibraryId,
   onSelectLibrary,
   onCreateLibrary,
+  canManage = true,
 }: LibraryTabsBarProps) {
   return (
     <div
@@ -50,14 +53,16 @@ export function LibraryTabsBar({
         </button>
       ))}
 
-      <button
-        type="button"
-        className="btn btn-secondary btn-sm"
-        onClick={onCreateLibrary}
-        style={{ borderRadius: "20px", padding: "0.35rem 0.85rem", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
-      >
-        <FolderPlus size={14} /> 新建库
-      </button>
+      {canManage ? (
+        <button
+          type="button"
+          className="btn btn-secondary btn-sm"
+          onClick={onCreateLibrary}
+          style={{ borderRadius: "20px", padding: "0.35rem 0.85rem", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
+        >
+          <FolderPlus size={14} /> 新建库
+        </button>
+      ) : null}
     </div>
   );
 }

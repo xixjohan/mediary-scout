@@ -1,7 +1,7 @@
 import { isDemoMode } from "../../../../lib/demo-mode";
 import { NextResponse, type NextRequest } from "next/server";
 import { getCurrentAccountId, getWorkflowRepository } from "../../../../lib/workflow-runtime";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 
 /**
  * Cancel a still-QUEUED run (user action from the activity page). An acquisition goes
@@ -12,7 +12,7 @@ import { requireApiAccount } from "../../../../lib/auth-chain";
  * the worker already claimed it (the UI then refreshes to show it running).
  */
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "workflow:status");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return Response.json({ error: "演示站只读" }, { status: 403 });
   const body = (await request.json().catch(() => ({}))) as {

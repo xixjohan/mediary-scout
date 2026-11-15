@@ -24,6 +24,7 @@ import { landedSize } from "@media-track/workflow";
 import { NotificationsSeenMarker } from "../../components/layout/notifications-seen-marker";
 import { DemoSessionNotifications } from "../../components/demo/demo-session-notifications";
 import { AppSidebar } from "../../components/layout/app-sidebar";
+import { resolveNavVisibility } from "../../lib/nav-visibility";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import {
   ensureDemoSeeded,
@@ -102,9 +103,15 @@ async function NotificationsSurface({ searchParams }: { searchParams: Promise<{ 
   }
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);
+  const navVisibility = await resolveNavVisibility();
   return (
     <div className="app-shell">
-      <AppSidebar active="notifications" basePath={workspace.basePath} activeStorageId={workspace.activeStorageId} />
+      <AppSidebar
+        active="notifications"
+        basePath={workspace.basePath}
+        activeStorageId={workspace.activeStorageId}
+        visibility={navVisibility}
+      />
       <main className="main product-main">
         <NotificationsSeenMarker />
         <div className="section-heading library-heading">

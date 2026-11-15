@@ -51,6 +51,12 @@ describe("local/api-auth-required", () => {
         // 合规：非白名单路由挂了登录链
         { filename: "apps/web/app/api/activity/route.ts", code: GUARDED },
         { filename: "apps/web/app/api/115/qrcode/status/route.ts", code: GUARDED },
+        // 合规：细粒度权限链（requirePermission 是 requireApiAccount 的超集：
+        // 它内部先 resolveSecurityContext 再判权限点，因此不需要再单独调一次）
+        {
+          filename: "apps/web/app/api/library/items/batch-action/route.ts",
+          code: `import { requirePermission } from "../../../../../lib/auth-chain";\nexport async function POST(request) { const gate = await requirePermission(request, "library:manage"); if (gate instanceof Response) return gate; return new Response("ok"); }`,
+        },
         // 顶层 /api/route.ts 也在管辖内（曾是两层门禁的共同盲区）
         {
           filename: "apps/web/app/api/route.ts",

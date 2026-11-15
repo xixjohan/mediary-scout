@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requireApiAccount, requirePermission } from "../../../../../lib/auth-chain";
 import {
   getWorkflowRepository,
   getAccountDriveFileManager,
@@ -155,9 +155,9 @@ async function runScanJob(options: RunScanJobOptions): Promise<void> {
 }
 
 export async function POST(request: NextRequest, { params }: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   if (isDemoMode()) {
     return NextResponse.json({ error: "演示模式下禁止触发扫描" }, { status: 403 });
@@ -308,7 +308,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
 /** 取消扫描：写 aborted 终态 + 中止 AbortSignal（scanner 在检查点停下）。 */
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
 
   const { id } = await params;

@@ -7,6 +7,7 @@ import {
   isRemoteRequest,
   resolveBearerAccountId,
   resolveSessionAccountId,
+  getWorkflowRepository,
 } from "../../lib/workflow-runtime";
 import {
   isForbiddenApiKeyPath,
@@ -110,8 +111,12 @@ async function resolveCookieContext(cookie: string, headers: Headers): Promise<S
       }
     }
     const userSvc = getUserManagementService();
+    // isOwner 必须传进去：`getUserRole()` 的兜底角色在 ownerFallback=false 时是
+    // role_member。单用户 + 已设密码的实例走这条路径，账号是 acct_default(owner)
+    // 却被判成成员——权限收敛上线后，站长会把自己锁在设置页外面。
+    const isAccountOwner = await resolveAccountIsOwner(accountId);
     const [role, isActive] = await Promise.all([
-      userSvc.getUserRole(accountId),
+      userSvc.getUserRole(accountId, isAccountOwner),
       userSvc.isUserActive(accountId),
     ]);
     if (!isActive) return null;
@@ -142,7 +147,7 @@ async function resolveBearerContext(headers: Headers): Promise<SecurityContext |
     }
   }
   const userSvc = getUserManagementService();
-  const role = await userSvc.getUserRole(bearerAccountId);
+  const role = await userSvc.getUserRole(bearerAccountId, await resolveAccountIsOwner(bearerAccountId));
   return {
     accountId: bearerAccountId,
     isMaster: role.id === "role_owner",
@@ -161,6 +166,21 @@ async function resolveLanFallbackContext(headers: Headers): Promise<SecurityCont
     roleId: "role_owner",
     permissions: new Set(["*"]),
   };
+}
+
+/** 账号是否站长（`is_owner` 位）。单用户下没有角色概念，账号即站长。
+ *
+ *  读失败一律降级为 false（= 走 role_member 兜底，与收敛前的行为一致）：本函数只
+ *  决定"角色兜底用哪个内置角色"，不该成为新的故障点——真实仓储不可用时，紧随其后
+ *  的角色/设置读取同样会失败并让整个上下文为 null。 */
+async function resolveAccountIsOwner(accountId: string): Promise<boolean> {
+  if (!isMultiUserEnabled()) return true;
+  try {
+    const account = await getWorkflowRepository().getAccountById?.(accountId);
+    return account?.isOwner ?? false;
+  } catch {
+    return false;
+  }
 }
 
 /**

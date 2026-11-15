@@ -22,6 +22,42 @@ describe("RBAC Matrix & Delegation Security", () => {
     expect(BUILTIN_ROLES.role_bot.level).toBeLessThan(BUILTIN_ROLES.role_guest.level);
   });
 
+  describe("role_member 的访问面边界（2026-11-15 需求）", () => {
+    const memberPerms = new Set(BUILTIN_ROLES.role_member.permissions);
+
+    it("允许：搜索 / 订阅 / 查看影视库 / 播放 / 通知 / 活动", () => {
+      for (const id of [
+        "media:search",
+        "media:detail",
+        "media:subscribe",
+        "media:play",
+        "notifications:read",
+        "storage:list",
+        "workflow:status",
+      ]) {
+        expect(memberPerms.has(id)).toBe(true);
+      }
+    });
+
+    it("保留「发起获取」——用户 2026-11-15 明确要求", () => {
+      expect(memberPerms.has("storage:transfer")).toBe(true);
+    });
+
+    it("禁止：设置页、影视库管理面、任意目录浏览、助理", () => {
+      for (const id of ["system:settings", "library:manage", "storage:browse_any", "assistant:chat"]) {
+        expect(memberPerms.has(id)).toBe(false);
+      }
+    });
+
+    it("管理员保留设置页与库管理，站长持有通配符", () => {
+      const adminPerms = new Set(BUILTIN_ROLES.role_admin.permissions);
+      expect(adminPerms.has("system:settings")).toBe(true);
+      expect(adminPerms.has("library:manage")).toBe(true);
+      expect(adminPerms.has("storage:browse_any")).toBe(true);
+      expect(BUILTIN_ROLES.role_owner.permissions).toContain("*");
+    });
+  });
+
   describe("validateDelegationBoundary (Subset Invariance Theorem)", () => {
     it("allows Owner with wildcard to grant any requested permission", () => {
       const result = validateDelegationBoundary(["*"], ["media:search", "storage:delete"]);

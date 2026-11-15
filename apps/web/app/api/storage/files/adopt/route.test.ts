@@ -12,6 +12,13 @@ const mockRepo = {
 
 vi.mock("../../../../../lib/auth-chain", () => ({
   requireApiAccount: vi.fn(async () => "acct_test"),
+  // 采纳目录现属"库管理面"，测试账号按站长语义（*）走 bypass，与本文件既有断言一致。
+  requirePermission: vi.fn(async () => ({
+    accountId: "acct_test",
+    isMaster: true,
+    roleId: "role_owner",
+    permissions: new Set(["*"]),
+  })),
 }));
 
 vi.mock("../../../../../lib/workflow-runtime", () => ({

@@ -21,6 +21,15 @@ describe("ApiKeyMatrix & Presets", () => {
     expect(uniqueIds.size).toBe(allLeafIds.length);
   });
 
+  it("接线成员角色所需的 5 个权限点都在目录里", () => {
+    // 这 5 个点是 Web 端权限收敛的基础：缺任何一个，对应的断言就会退化成
+    // "永远没有权限"或"永远有权限"，而不是按角色判定。
+    const allLeafIds = new Set(PERMISSION_CATALOG.flatMap((m) => m.leaves.map((l) => l.id)));
+    for (const id of ["media:play", "notifications:read", "system:settings", "library:manage", "storage:browse_any"]) {
+      expect(allLeafIds.has(id)).toBe(true);
+    }
+  });
+
   it("applies FullAccess strategy excluding Dangerous permissions", () => {
     const full = ApiKeyPermissionPreset.applyStrategy("full");
     expect(full).toContain("media:search");

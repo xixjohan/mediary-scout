@@ -1,7 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../../lib/workflow-runtime";
 import { isDemoMode } from "../../../../../lib/demo-mode";
+import {
+  guardWriteTarget,
+  libraryScopeErrorStatus,
+} from "../../../../../features/storage-drives/application/library-scope-guard";
 
 function parseCopyItems(
   rawItems: unknown,
@@ -29,10 +33,10 @@ function parseCopyItems(
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "storage:transfer");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const body = (await request.json().catch(() => ({}))) as {
     storageId?: unknown;
@@ -68,13 +72,18 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "未找到连接的网盘" }, { status: 404 });
     }
 
+    await guardWriteTarget({
+      accountId,
+      storageId,
+      directoryId: targetDirectoryId,
+      permissions: gate.permissions,
+      listDirectory: (dirId) => fileManager.listDirectory(dirId),
+    });
     const result = await fileManager.copyItems({ items, targetDirectoryId });
     return NextResponse.json(result);
   } catch (error) {
     console.error("[storage/files/copy] copy failed:", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "复制失败" },
-      { status: 500 },
-    );
+    const message = error instanceof Error ? error.message : "复制失败";
+    return NextResponse.json({ error: message }, { status: libraryScopeErrorStatus(message) });
   }
 }
