@@ -215,8 +215,8 @@ function QuotaCard({ quota }: { quota: StorageDiagnosticsReport["quota"] }) {
   const fmt = (n: number | undefined) => (n === undefined ? "-" : String(n));
   const totalSurplus = quota.total?.surplus;
   const totalCount = quota.total?.count;
-  // 各配额类型（如「云下载配额」）逐项列出，便于看清是哪一类额度在消耗。
-  const packages = quota.packages ?? [];
+  // 平台会为每个账号返回全部配额桶，未开通的类型是 count=0 的空桶；列出来只是噪声。
+  const packages = (quota.packages ?? []).filter((p) => (p.count ?? 0) > 0);
 
   return (
     <div style={{ padding: 14, background: "rgba(255, 255, 255, 0.03)", borderRadius: 8, border: "1px solid rgba(255, 255, 255, 0.08)" }}>
@@ -231,7 +231,7 @@ function QuotaCard({ quota }: { quota: StorageDiagnosticsReport["quota"] }) {
       </div>
       <div style={{ fontSize: 12, color: "#a1a1aa", lineHeight: 1.7 }}>
         {packages.length === 0 ? (
-          <div>平台未返回分项明细</div>
+          <div>当前账号没有已开通的配额桶</div>
         ) : (
           packages.map((p) => (
             <div key={p.name} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
