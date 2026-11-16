@@ -134,13 +134,16 @@ $noProxy = $envMap["NO_PROXY"]
 # 多用户模式开关：**按环境隔离**，避免开发验收把生产切成多用户。
 #   DEV_MULTI_USER / DEV_MULTI_USER_MODE   → 只注入 mediary-dev
 #   PROD_MULTI_USER / PROD_MULTI_USER_MODE → 只注入 mediary
-# 两者都未设置时容器不带该变量 = 单用户，与现状完全一致。
+#   DEV_ALLOW_REGISTRATION / PROD_ALLOW_REGISTRATION → 自助注册开关（0 = 关闭）
+# 未设置时容器不带该变量 = 单用户 / 注册开放，与现状完全一致。
 function Build-MultiUserFlags([string]$prefix) {
     $flags = ""
     $mu = $envMap["${prefix}_MULTI_USER"]
     $mm = $envMap["${prefix}_MULTI_USER_MODE"]
+    $reg = $envMap["${prefix}_ALLOW_REGISTRATION"]
     if ($mu) { $flags += " -e MEDIA_TRACK_MULTI_USER=$mu" }
     if ($mm) { $flags += " -e MEDIA_TRACK_MULTI_USER_MODE=$mm" }
+    if ($reg) { $flags += " -e MEDIA_TRACK_ALLOW_REGISTRATION=$reg" }
     return $flags
 }
 $devMultiUserFlags = Build-MultiUserFlags "DEV"

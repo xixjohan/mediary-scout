@@ -32,6 +32,7 @@ export default function LoginPage() {
     singleUser?: boolean;
     passwordSet?: boolean;
     remote?: boolean;
+    registrationOpen?: boolean;
   } | null>(null);
 
   // 读完 bootstrap 之前不渲染表单：否则外网访客（以及服务端渲染出的首屏）会先看到一个
@@ -55,7 +56,16 @@ export default function LoginPage() {
   const settingPassword = singleUser && bootstrap?.passwordSet === false;
   // While unclaimed, only registration (→ adopt acct_default) is possible.
   // 单用户永远是登录（只输密码），没有注册这条路。
-  const effectiveMode: "login" | "register" = singleUser ? "login" : claiming ? "register" : mode;
+  // 自助注册被站长关掉后（registrationOpen === false）同样只剩登录；
+  // 缺省 undefined（旧响应/读失败）按**开放**处理，保持既有行为。
+  const registrationOpen = bootstrap?.registrationOpen !== false;
+  const effectiveMode: "login" | "register" = singleUser
+    ? "login"
+    : claiming
+      ? "register"
+      : registrationOpen
+        ? mode
+        : "login";
 
   const getSafeRedirectUrl = () => {
     if (typeof window === "undefined") return "/";
@@ -224,7 +234,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        {!claiming && !singleUser && mode === "register" ? (
+        {!claiming && !singleUser && registrationOpen && mode === "register" ? (
           <div style={{ marginTop: 14 }}>
             <span
               role="note"
@@ -267,8 +277,9 @@ export default function LoginPage() {
         ) : null}
 
         {/* While unclaimed there is nobody to log in as, so hide the toggle.
-            Single-user has exactly one account, so registration is meaningless. */}
-        {!claiming && !singleUser ? (
+            Single-user has exactly one account, so registration is meaningless.
+            站长关掉自助注册后也没有"创建账号"这条路（账号由站长在设置里建）。 */}
+        {!claiming && !singleUser && registrationOpen ? (
           <p className="panel-note" style={{ marginTop: 16 }}>
             {mode === "login" ? "还没有账号？" : "已有账号？"}{" "}
             <button

@@ -5,6 +5,7 @@ import {
   hasLoginPassword,
   isRemoteRequest,
 } from "../../../../lib/workflow-runtime";
+import { resolveRegistrationOpen } from "../../../../features/auth/core/registration-policy";
 
 /** Tells the /login page whether the instance is unclaimed (→ show the context-aware
  *  claim screen) and whether the default account already owns a library (→ "接管"
@@ -25,11 +26,14 @@ import {
 export async function GET(request: NextRequest) {
   await connection();
   const remote = isRemoteRequest(request.headers);
+  // 自助注册开关：登录页据此隐藏「创建账号」，服务端在 register 里另行拒。
+  const registrationOpen = resolveRegistrationOpen(process.env.MEDIA_TRACK_ALLOW_REGISTRATION);
   if (!isMultiUserEnabled()) {
     return NextResponse.json({
       needsClaim: false,
       hasExistingLibrary: false,
       singleUser: true,
+      registrationOpen,
       // "unknown"（DB 读不出来）按**已设密码**上报：服务端远程读路径此时是
       // fail-closed 的，若这里报「无需登录」，用户会被引到一条走不通的路。
       // 宁可显示登录框（顶多多输一次密码），也不要误导。
@@ -37,5 +41,10 @@ export async function GET(request: NextRequest) {
       remote,
     });
   }
-  return NextResponse.json({ ...(await getBootstrapState()), singleUser: false, remote });
+  return NextResponse.json({
+    ...(await getBootstrapState()),
+    singleUser: false,
+    registrationOpen,
+    remote,
+  });
 }
