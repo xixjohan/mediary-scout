@@ -23,6 +23,16 @@ export interface ResourceEmptyDiagnosticProps {
   baseTitle?: string | undefined;
   customKeyword?: string | undefined;
   onResetKeyword?: (() => void) | undefined;
+  /**
+   * 当前账号能否进实例配置面（`/settings`）。
+   *
+   * 空状态卡片里的「前往设置」「前往网盘」两个 CTA 曾是无条件渲染，成员点了
+   * 只会拿到 403 面板——空状态下最需要下一步指引的时刻把人送进死链。
+   * 判据来自 `useAuth().can("system:settings")`，与页面守卫同一把钥匙。
+   */
+  canOpenSettings?: boolean | undefined;
+  /** 当前账号能否进网盘运维页（`storage:browse_any`）。 */
+  canBrowseStorage?: boolean | undefined;
 }
 
 function formatDisplayDate(dateStr: string): string {
@@ -70,7 +80,10 @@ function renderUnreleasedCard(releaseDate: string): ReactNode {
   );
 }
 
-function renderSourceErrorCard(sourceHealth: MergedSourceHealth): ReactNode {
+function renderSourceErrorCard(
+  sourceHealth: MergedSourceHealth,
+  canOpenSettings: boolean,
+): ReactNode {
   const unhealthyNames = sourceHealth.unhealthySources.join("、") || "默认检索源";
   return (
     <div className="title-resources-empty-card" data-diagnostic="source_error">
@@ -83,11 +96,17 @@ function renderSourceErrorCard(sourceHealth: MergedSourceHealth): ReactNode {
           检索源（<strong>{unhealthyNames}</strong>）响应超时或格式异常。这通常是上游公开检索源短暂维护、网络连通性阻断或配置地址变动导致，并非该片不存在。
         </p>
       </div>
-      <div className="title-resources-empty-actions">
-        <a href="/settings" className="title-resources-empty-btn primary">
-          前往设置检查检索源与网盘
-        </a>
-      </div>
+      {canOpenSettings ? (
+        <div className="title-resources-empty-actions">
+          <a href="/settings" className="title-resources-empty-btn primary">
+            前往设置检查检索源与网盘
+          </a>
+        </div>
+      ) : (
+        <div className="title-resources-empty-desc">
+          <p>检索源由站长维护，请稍后重试或联系站长。</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -124,7 +143,10 @@ function renderOverConstrainedCard(
   );
 }
 
-function renderDefaultEmptyCard(): ReactNode {
+function renderDefaultEmptyCard(
+  canOpenSettings: boolean,
+  canBrowseStorage: boolean,
+): ReactNode {
   return (
     <div className="title-resources-empty-card" data-diagnostic="none">
       <div className="title-resources-empty-header">
@@ -135,20 +157,44 @@ function renderDefaultEmptyCard(): ReactNode {
         <p>全网公开网盘索引器暂未命中该片。您可以尝试：</p>
         <ul style={{ paddingLeft: "1.25rem", margin: "0.25rem 0 0" }}>
           <li>精简检索词，去除多余修饰词或压制组名称</li>
-          <li>在顶部导航「网盘」页面，通过离线下载手动粘贴第三方磁力或直链</li>
-          <li>在「设置」中添加更多私有索引器或绑定更多网盘账号</li>
+          {canBrowseStorage ? (
+            <li>在顶部导航「网盘」页面，通过离线下载手动粘贴第三方磁力或直链</li>
+          ) : null}
+          {canOpenSettings ? <li>在「设置」中添加更多私有索引器或绑定更多网盘账号</li> : null}
         </ul>
       </div>
-      <div className="title-resources-empty-actions">
-        <a href="/storage" className="title-resources-empty-btn">
-          前往网盘离线下载
-        </a>
-        <a href="/settings" className="title-resources-empty-btn">
-          配置索引器
-        </a>
-      </div>
+      {canBrowseStorage || canOpenSettings ? (
+        <div className="title-resources-empty-actions">
+          {canBrowseStorage ? (
+            <a href="/storage" className="title-resources-empty-btn">
+              前往网盘离线下载
+            </a>
+          ) : null}
+          {canOpenSettings ? (
+            <a href="/settings" className="title-resources-empty-btn">
+              配置索引器
+            </a>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function isSourceUnhealthy(sourceHealth: MergedSourceHealth | undefined): boolean {
+  if (!sourceHealth) return false;
+  return sourceHealth.status === "unreachable" || sourceHealth.status === "protocol_error";
+}
+
+/** 关键词比片名更长 = 用户自己加了修饰词把结果筛没了；返回该词以便「一键还原」。 */
+function overConstrainedKeyword(
+  customKeyword: string | undefined,
+  baseTitle: string | undefined,
+): string | null {
+  const kw = customKeyword?.trim() ?? "";
+  const title = baseTitle?.trim() ?? "";
+  if (kw === "" || title === "" || kw === title || kw.length <= title.length) return null;
+  return kw;
 }
 
 export function ResourceEmptyDiagnostic({
@@ -157,31 +203,25 @@ export function ResourceEmptyDiagnostic({
   baseTitle,
   customKeyword,
   onResetKeyword,
+  canOpenSettings = true,
+  canBrowseStorage = true,
 }: ResourceEmptyDiagnosticProps): ReactNode {
   if (state.kind === "streaming") {
     return renderStreamingState(state.progress);
   }
 
-  const isUnreleased = releaseDate ? isMovieUnreleased(releaseDate, new Date().toISOString()) : false;
-  if (isUnreleased) {
-    return renderUnreleasedCard(releaseDate!);
+  if (releaseDate && isMovieUnreleased(releaseDate, new Date().toISOString())) {
+    return renderUnreleasedCard(releaseDate);
   }
 
-  const health = state.sourceHealth;
-  if (health && (health.status === "unreachable" || health.status === "protocol_error")) {
-    return renderSourceErrorCard(health);
+  if (isSourceUnhealthy(state.sourceHealth)) {
+    return renderSourceErrorCard(state.sourceHealth!, canOpenSettings);
   }
 
-  const trimmedKw = customKeyword?.trim() ?? "";
-  const trimmedTitle = baseTitle?.trim() ?? "";
-  const isOverConstrained =
-    trimmedKw !== "" &&
-    trimmedTitle !== "" &&
-    trimmedKw !== trimmedTitle &&
-    trimmedKw.length > trimmedTitle.length;
-  if (isOverConstrained) {
-    return renderOverConstrainedCard(trimmedKw, trimmedTitle, onResetKeyword);
+  const constrained = overConstrainedKeyword(customKeyword, baseTitle);
+  if (constrained !== null) {
+    return renderOverConstrainedCard(constrained, baseTitle?.trim() ?? "", onResetKeyword);
   }
 
-  return renderDefaultEmptyCard();
+  return renderDefaultEmptyCard(canOpenSettings, canBrowseStorage);
 }

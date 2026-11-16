@@ -27,8 +27,13 @@ export type ObservedSettingsTabId = (typeof OBSERVED_SETTINGS_TABS)[number];
 /** 受观察 tab 的可见性映射。缺省 = 不可见（fail-closed，与 tablist 保持一致）。 */
 export type SettingsTabVisibility = Partial<Record<ObservedSettingsTabId, boolean>>;
 
-/** legacy 深链锚点（account-identity 菜单）→ 账号 tab。 */
-const ACCOUNT_HASHES = new Set(["#password", "#accounts", "#roles"]);
+/**
+ * legacy 深链锚点 → 账号 tab。
+ *
+ * `#password` 已从集合里移除：改密表单位于独立 `/account`（个人面），
+ * `/settings` 不再有该锚点。继续映射它会把用户送到一个不存在的锚点。
+ */
+const ACCOUNT_HASHES = new Set(["#accounts", "#roles"]);
 
 export function resolveSettingsTab(
   param: string | null | undefined,

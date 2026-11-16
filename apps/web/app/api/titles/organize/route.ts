@@ -1,5 +1,5 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import type { TrackedSeasonState } from "@media-track/workflow";
 import { buildAccountContextResolver, getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import {
@@ -128,8 +128,9 @@ async function resolveOrganizeTarget(input: {
 }
 
 async function resolveOrganizeContext(request: NextRequest) {
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return { errorResponse: accountId };
+  const gate = await requirePermission(request, "storage:organize");
+  if (gate instanceof Response) return { errorResponse: gate };
+  const accountId = gate.accountId;
 
   let parsed: ReturnType<typeof parseOrganizeRequestBody>;
   try {

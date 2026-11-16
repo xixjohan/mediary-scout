@@ -7,6 +7,8 @@ import { resolveNavVisibility } from "../../lib/nav-visibility";
 import { ChatWorkspace } from "../../features/assistant/components/chat-workspace";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import { getCurrentAccountId, resolveGlobalWorkspace, UNAUTHENTICATED_ACCOUNT_ID } from "../../lib/workflow-runtime";
+import { decidePageAccess, resolvePageAccess } from "../../lib/page-permission-guard";
+import { PageAccessDenied } from "../../features/auth/components/page-access-denied";
 
 function ChatPageInner({
   searchParams,
@@ -45,6 +47,12 @@ async function ChatSurface({
     );
   }
   const { w, c } = await searchParams;
+  // 侧边栏已把「助理」入口对成员隐藏，但隐藏不是关闭——手输 /chat 必须同样被挡。
+  // 助理会读网盘与库的上下文，属 `assistant:chat` 能力，成员角色刻意不含该点。
+  const verdict = decidePageAccess(await resolvePageAccess(), "assistant:chat");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="assistant:chat" verdict={verdict} />;
+  }
   const workspace = await resolveGlobalWorkspace(w);
   const navVisibility = await resolveNavVisibility();
   return (

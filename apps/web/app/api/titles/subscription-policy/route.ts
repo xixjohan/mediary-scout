@@ -1,6 +1,6 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
 import { buildTitleId, parseEpisodeFilter, type MediaKind } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import type { SubscriptionPolicyWrite } from "@media-track/workflow";
 import { parseSubscriptionPriorityGroups } from "../../../../lib/subscription-policy-validation";
@@ -150,8 +150,9 @@ function findTrackedTitle(states: Awaited<ReturnType<ReturnType<typeof getWorkfl
 
 export async function GET(request: NextRequest): Promise<Response> {
   await connection();
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:subscribe");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
 
   const tmdbIdParam = new URL(request.url).searchParams.get("tmdbId");
   const kindHint = mediaKind(new URL(request.url).searchParams.get("mediaType"));
@@ -178,8 +179,9 @@ export async function GET(request: NextRequest): Promise<Response> {
 
 export async function PUT(request: NextRequest): Promise<Response> {
   await connection();
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:subscribe");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
 
   let body: unknown;
   try {

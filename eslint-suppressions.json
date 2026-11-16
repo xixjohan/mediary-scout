@@ -39,7 +39,7 @@
   },
   "apps/web/app/show/[tmdbId]/page.tsx": {
     "complexity": {
-      "count": 3
+      "count": 2
     }
   },
   "apps/web/features/acquisition/application/acquisition-service.ts": {

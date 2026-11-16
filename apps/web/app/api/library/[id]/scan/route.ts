@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount, requirePermission } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import {
   getWorkflowRepository,
   getAccountDriveFileManager,
@@ -232,7 +232,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
  *  - 无参数      该库最新作业状态（刷新页面后恢复进度）
  */
 export async function GET(request: NextRequest, { params }: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
 
   const { id } = await params;

@@ -1,7 +1,8 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
-import { hasPermission, resolvePageAccess } from "../../lib/page-permission-guard";
+import { decidePageAccess, hasPermission, resolvePageAccess } from "../../lib/page-permission-guard";
+import { PageAccessDenied } from "../../features/auth/components/page-access-denied";
 import { resolveVisibilityFromPermissions } from "../../features/auth/core/nav-visibility";
 import { ClientLoginRedirect } from "../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../components/layout/app-sidebar";
@@ -58,6 +59,11 @@ async function LibrarySurface({
   }
 
   const { w } = await searchParams;
+  // 决策 1 明确「查看影视库内容允许」：页面本身只要 media:detail（站主通配符放行）。
+  const verdict = decidePageAccess(await resolvePageAccess(), "media:detail");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="media:detail" verdict={verdict} />;
+  }
   // 工作区已按存储范围策略解析出归属账号（shared 模式下是站长），库必须用同一个
   // 账号读，否则成员看到的是自己名下那个空库列表。
   const workspace = await resolveGlobalWorkspace(w);

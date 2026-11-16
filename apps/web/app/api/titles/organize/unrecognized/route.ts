@@ -7,7 +7,7 @@ import {
   type StorageExecutor,
   type UnrecognizedMediaItem,
 } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { buildAccountContextResolver, getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 import { ensureStorageStreamResolver } from "../../../../../composition/runtime-container";
 
@@ -47,8 +47,9 @@ async function resolveOwnedStorage(accountId: string, storageId: string) {
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   await connection();
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId as NextResponse;
+  const gate = await requirePermission(request, "storage:organize");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
 
   const storageId = readString(request.nextUrl.searchParams.get("storageId"));
   const directoryId = readString(request.nextUrl.searchParams.get("directoryId"));
@@ -182,8 +183,9 @@ async function confirmRenames(input: {
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
   await connection();
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId as NextResponse;
+  const gate = await requirePermission(request, "storage:organize");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
 
   let body: RouteBody;
   try {

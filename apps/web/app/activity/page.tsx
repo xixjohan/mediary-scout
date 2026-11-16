@@ -8,6 +8,8 @@ import { ActivityFeed } from "../../features/activity/components/activity-feed";
 import { MediaRequestPanel } from "../../features/acquisition/components/media-request-panel";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
 import { getCurrentAccountId, resolveGlobalWorkspace, UNAUTHENTICATED_ACCOUNT_ID } from "../../lib/workflow-runtime";
+import { decidePageAccess, resolvePageAccess } from "../../lib/page-permission-guard";
+import { PageAccessDenied } from "../../features/auth/components/page-access-denied";
 
 // `searchParams` (the active drive `?w`) is a dynamic input + a DB read. Reading it
 // inside a Suspense boundary lets the static app shell prerender instead of the
@@ -45,6 +47,10 @@ async function ActivitySurface({ searchParams }: { searchParams: Promise<{ w?: s
     );
   }
   const { w } = await searchParams;
+  const verdict = decidePageAccess(await resolvePageAccess(), "workflow:status");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="workflow:status" verdict={verdict} />;
+  }
   const workspace = await resolveGlobalWorkspace(w);
   const navVisibility = await resolveNavVisibility();
   return (

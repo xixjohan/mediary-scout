@@ -3,7 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { QuarkQrLoginClient, QUARK_QR_PROFILE, UC_QR_PROFILE } from "@media-track/workflow";
 import type { CloudDriveQrProfile } from "@media-track/workflow";
 import { isDemoMode } from "../../../lib/demo-mode";
-import { requireApiAccount } from "../../../lib/auth-chain";
+import { requirePermission } from "../../../lib/auth-chain";
 
 /**
  * The four QR routes (token / status / image / confirm) are identical across the
@@ -33,7 +33,7 @@ export function createFamilyQrRoutes(config: FamilyQrRoutesConfig) {
   return {
     /** POST — mint a fresh login session + the content to encode. */
     async token(request: NextRequest): Promise<NextResponse> {
-      const gate = await requireApiAccount(request);
+      const gate = await requirePermission(request, "system:settings");
       if (gate instanceof Response) return gate;
       if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
       try {
@@ -46,7 +46,7 @@ export function createFamilyQrRoutes(config: FamilyQrRoutesConfig) {
 
     /** GET ?token= — one poll tick. `waiting` | `scanned` | `confirmed` | `expired`. */
     async status(request: NextRequest): Promise<NextResponse> {
-      const gate = await requireApiAccount(request);
+      const gate = await requirePermission(request, "system:settings");
       if (gate instanceof Response) return gate;
       const token = request.nextUrl.searchParams.get("token") ?? "";
       if (!token) {
@@ -63,7 +63,7 @@ export function createFamilyQrRoutes(config: FamilyQrRoutesConfig) {
     /** GET ?content= — render the QR server-side so the ephemeral login token
      *  never leaves this host. */
     async image(request: NextRequest): Promise<Response> {
-      const gate = await requireApiAccount(request);
+      const gate = await requirePermission(request, "system:settings");
       if (gate instanceof Response) return gate;
       const content = request.nextUrl.searchParams.get("content") ?? "";
       const tooLong = Buffer.byteLength(content, "utf8") > MAX_URL_CONTENT_LENGTH_BYTES;
@@ -86,7 +86,7 @@ export function createFamilyQrRoutes(config: FamilyQrRoutesConfig) {
     /** POST — redeem the scanned service_ticket and bind the drive.
      *  ⚠️ The ticket is SINGLE-USE: redeeming it twice yields empty cookies. */
     async confirm(request: NextRequest): Promise<NextResponse> {
-      const gate = await requireApiAccount(request);
+      const gate = await requirePermission(request, "system:settings");
       if (gate instanceof Response) return gate;
       if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
       // Parse the body OUTSIDE the business try/catch: invalid/missing JSON is a

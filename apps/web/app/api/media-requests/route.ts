@@ -1,5 +1,5 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../lib/auth-chain";
+import { requirePermission } from "../../../lib/auth-chain";
 import { getWorkflowRepository, getCurrentAccountSummary } from "../../../lib/workflow-runtime";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
@@ -7,9 +7,9 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 export async function GET(request: NextRequest) {
   await connection();
 
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "workflow:status");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const url = new URL(request.url);
   const titleId = url.searchParams.get("titleId") || undefined;
@@ -42,9 +42,9 @@ export async function GET(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   await connection();
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "workflow:status");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const body = (await request.json().catch(() => null)) as {
     id?: unknown;

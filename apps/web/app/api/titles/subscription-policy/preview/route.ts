@@ -6,7 +6,7 @@ import {
   type PolicyResource,
   type SubscriptionPolicy,
 } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getWorkerResourceProvider, getWorkflowRepository, movieTargetFromTmdbId } from "../../../../../lib/workflow-runtime";
 import { seriesTargetFor } from "../../../../../lib/title-hub";
 import { resourceLimiter } from "../../resources/cache";
@@ -195,8 +195,9 @@ export function parsePreviewPolicy(value: unknown): { ok: true; policy: Subscrip
 export async function POST(request: NextRequest): Promise<Response> {
   await connection();
   // 1) Scope, fail-closed. A preview reads search results, so it may not run unauthenticated.
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:subscribe");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
 
   // 2) Body.
   const parsed = parsePreviewBody(await readJson(request));

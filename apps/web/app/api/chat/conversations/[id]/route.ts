@@ -1,5 +1,5 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
@@ -10,9 +10,9 @@ export async function GET(
 ) {
   await connection();
 
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "assistant:chat");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const { id } = await props.params;
   const repo = getWorkflowRepository();
@@ -31,9 +31,9 @@ export async function PATCH(
 ) {
   await connection();
 
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "assistant:chat");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const { id } = await props.params;
   const raw: unknown = await request.json().catch(() => null);
@@ -68,9 +68,9 @@ export async function DELETE(
 ) {
   await connection();
 
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "assistant:chat");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const { id } = await props.params;
   const repo = getWorkflowRepository();

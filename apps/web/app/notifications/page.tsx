@@ -27,6 +27,8 @@ import { AppSidebar } from "../../components/layout/app-sidebar";
 import { resolveNavVisibility } from "../../lib/nav-visibility";
 import { resolveMediaScopeAccountId } from "../../lib/media-scope";
 import { GitHubNameplate } from "../../components/layout/github-nameplate";
+import { decidePageAccess, resolvePageAccess } from "../../lib/page-permission-guard";
+import { PageAccessDenied } from "../../features/auth/components/page-access-denied";
 import {
   ensureDemoSeeded,
   getCurrentAccountId,
@@ -103,6 +105,10 @@ async function NotificationsSurface({ searchParams }: { searchParams: Promise<{ 
     );
   }
   const { w } = await searchParams;
+  const verdict = decidePageAccess(await resolvePageAccess(), "notifications:read");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="notifications:read" verdict={verdict} />;
+  }
   const workspace = await resolveGlobalWorkspace(w);
   const navVisibility = await resolveNavVisibility();
   return (

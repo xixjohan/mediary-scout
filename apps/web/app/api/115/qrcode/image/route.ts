@@ -1,11 +1,11 @@
 import { type NextRequest } from "next/server";
 import QRCode from "qrcode";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 
 // Render the 115 login QR code server-side locally using QRCode (zero network dependency).
 // Falls back to direct generation from uid (https://115.com/scan/dg-${uid}) or content.
 export async function GET(request: NextRequest): Promise<Response> {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
 
   const uid = request.nextUrl.searchParams.get("uid")?.trim() ?? "";

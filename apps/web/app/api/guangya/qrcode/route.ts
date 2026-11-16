@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { GuangYaDeviceLogin } from "@media-track/workflow";
 import { isDemoMode } from "../../../../lib/demo-mode";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 
 /**
  * Mint a 光鸭 login session via device-code flow.
  */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ ok: false, error: "演示站只读" }, { status: 403 });
   try {

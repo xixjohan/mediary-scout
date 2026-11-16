@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X, Shield, HardDrive, Calendar, KeyRound, LogOut, CheckCircle2 } from "lucide-react";
 import { useAuth } from "../hooks/use-auth";
 import { formatAccountDisplayName, formatAccountInitial } from "../core/account-formatter";
+import { accountSelfServiceHref } from "../core/account-links";
 
 export function UserProfileModal({
   isOpen,
@@ -283,7 +284,7 @@ export function UserProfileModal({
           }}
         >
           <a
-            href="/account#password"
+            href={accountSelfServiceHref({ hash: "#password" })}
             className="btn btn-secondary"
             onClick={onClose}
             style={{

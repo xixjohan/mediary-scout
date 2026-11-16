@@ -4,7 +4,7 @@ import {
   resourceSearchRunId,
   type ResourceSnapshot,
 } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { getWorkflowRepository, resolveGlobalWorkspace } from "../../../../lib/workflow-runtime";
 
 /**
@@ -61,8 +61,9 @@ export async function POST(request: NextRequest) {
   await connection();
 
   // 1) Scope, fail-closed.
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "storage:transfer");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
 
   // 2) Body.
   let parsed: ReturnType<typeof parseImportRequestBody>;

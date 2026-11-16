@@ -1,12 +1,12 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { GuangYaDeviceLogin } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 
 /**
  * Poll device code status. Once confirmed, exchanges tokens and binds drive.
  */
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   const deviceCode = request.nextUrl.searchParams.get("device_code") ?? "";
   if (!deviceCode) {

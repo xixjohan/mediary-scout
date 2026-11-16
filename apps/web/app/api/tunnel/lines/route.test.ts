@@ -38,7 +38,7 @@ vi.mock("../../../../lib/settings-attention-server", () => ({
 }));
 
 vi.mock("../../../../lib/auth-chain", () => ({
-  requireApiAccount: async () => state.user,
+  requirePermission: async () => ({ accountId: state.user, isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }),
 }));
 
 describe("Tunnel Lines API Routes", () => {

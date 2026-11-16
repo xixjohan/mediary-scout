@@ -17,6 +17,7 @@ import { connectAccountAction } from "../../../../app/connect-actions";
 import { tunnelIdFromToken } from "../../../../lib/connect-tunnel";
 import { getConnectAccountEmail, getConnectInstanceCredential, getConnectLinkPending, getConnectPendingOrder } from "../../../../lib/connect-link-store";
 import { FrpTunnelManagerView } from "../frp-tunnel-manager-view";
+import { accountAdminHref, accountSelfServiceHref } from "../../../auth/core/account-links";
 
 function LastSeenLine({ label }: { label: string }) {
   return (
@@ -171,7 +172,7 @@ export async function RemoteAccessSection({
         </p>
         <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
           <Link
-            href="/settings?tab=account#accounts"
+            href={accountAdminHref({ w, hash: "#accounts" })}
             className="btn btn-secondary btn-sm"
             style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
           >
@@ -179,7 +180,7 @@ export async function RemoteAccessSection({
             管理系统用户
           </Link>
           <Link
-            href="/account#password"
+            href={accountSelfServiceHref({ w, hash: "#password" })}
             className="btn btn-secondary btn-sm"
             style={{ display: "inline-flex", alignItems: "center", gap: "0.35rem" }}
           >

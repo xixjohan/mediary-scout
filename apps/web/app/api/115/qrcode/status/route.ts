@@ -1,13 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { Pan115QrLoginClient } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { formatNetworkError } from "../../../../../lib/http-proxy";
 
 // One long-poll round per request: the upstream endpoint holds the
 // connection until the status changes or ~30s passes; the browser just
 // re-calls this route until a terminal status arrives.
 export async function GET(request: NextRequest): Promise<NextResponse> {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   const uid = request.nextUrl.searchParams.get("uid") ?? "";
   const time = Number(request.nextUrl.searchParams.get("time") ?? "0");

@@ -3,10 +3,10 @@ import { NextResponse, type NextRequest } from "next/server";
 import { completeTianyiQrLogin, StorageOwnedByOtherAccountError } from "../../../../../lib/workflow-runtime";
 import { validateTianyiQrSession, validateTianyiRedirectUrl } from "../../../../../lib/tianyi-qr-session";
 import type { TianyiQrSession } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
   // Parse the body OUTSIDE the business try/catch: invalid/missing JSON is a

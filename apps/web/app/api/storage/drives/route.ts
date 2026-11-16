@@ -1,10 +1,10 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { getAccountConnectedStorages } from "../../../../lib/workflow-runtime";
 import { resolveMediaScopeAccountId } from "../../../../lib/media-scope";
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "storage:list");
   if (gate instanceof Response) return gate;
   try {
     // shared 模式下盘属于站长，成员必须以站长账号读取才能看到公共盘。

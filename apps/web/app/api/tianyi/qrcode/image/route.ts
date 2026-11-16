@@ -1,6 +1,6 @@
 import { type NextRequest } from "next/server";
 import QRCode from "qrcode";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 
 // Render the 天翼 QR PNG server-side (no third-party; the ephemeral login content
 // never leaves this host). LIVE-VERIFIED against real cloud.189.cn: getUUID.do's
@@ -22,7 +22,7 @@ function isValidQrContent(content: string): boolean {
 }
 
 export async function GET(request: NextRequest): Promise<Response> {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   const content = request.nextUrl.searchParams.get("content") ?? "";
   if (!isValidQrContent(content)) {

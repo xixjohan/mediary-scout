@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../../lib/workflow-runtime";
 
 interface RouteParams {
@@ -7,9 +7,9 @@ interface RouteParams {
 }
 
 export async function GET(request: NextRequest, context: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const { id } = await context.params;
   const repo = getWorkflowRepository();

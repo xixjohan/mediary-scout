@@ -40,6 +40,7 @@ import {
   transitionToThrottled,
 } from "../core/cooldown-model";
 import { useResourceCooldown } from "../hooks/use-resource-cooldown";
+import { useAuth } from "../../auth/hooks/use-auth";
 
 export { appendKeywordChip, resourceTypeLabel, ResourceEmptyDiagnostic };
 export type {
@@ -253,6 +254,11 @@ export function TitleResourcePanel({
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const router = useRouter();
   const { target } = useEpisodeTarget();
+  // 空状态里的「前往设置 / 前往网盘」必须按账号真实可达性渲染：成员没有
+  // system:settings 与 storage:browse_any，给死链等于在最需要指引时坑人。
+  const { can } = useAuth();
+  const canOpenSettings = can("system:settings");
+  const canBrowseStorage = can("storage:browse_any");
 
   useEffect(() => {
     if (target) {
@@ -452,6 +458,8 @@ export function TitleResourcePanel({
           year={year}
           customKeyword={customKeyword}
           onResetKeyword={handleResetKeyword}
+          canOpenSettings={canOpenSettings}
+          canBrowseStorage={canBrowseStorage}
           onCriteriaChange={handleCriteriaChange}
           onResetCriteria={handleResetCriteria}
           onPageChange={setPage}

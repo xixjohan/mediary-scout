@@ -39,6 +39,8 @@ export interface CandidatesListProps {
   year?: number | undefined;
   customKeyword?: string | undefined;
   onResetKeyword?: (() => void) | undefined;
+  canOpenSettings?: boolean | undefined;
+  canBrowseStorage?: boolean | undefined;
   onCriteriaChange: (updater: (prev: ResourceFilterCriteria) => ResourceFilterCriteria) => void;
   onResetCriteria: () => void;
   onPageChange: (page: number) => void;
@@ -69,6 +71,8 @@ export function ResourceCandidatesList({
   year,
   customKeyword,
   onResetKeyword,
+  canOpenSettings,
+  canBrowseStorage,
   onCriteriaChange,
   onResetCriteria,
   onPageChange,
@@ -88,6 +92,8 @@ export function ResourceCandidatesList({
         baseTitle={baseTitle}
         customKeyword={customKeyword}
         onResetKeyword={onResetKeyword}
+        canOpenSettings={canOpenSettings}
+        canBrowseStorage={canBrowseStorage}
       />
     );
   }

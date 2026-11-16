@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../../../lib/demo-mode";
-import { requireApiAccount } from "../../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../../lib/auth-chain";
 import { executeStrmTaskScan } from "../../../../../../features/strm/application/strm-runner-service";
 
 interface RouteParams {
@@ -8,9 +8,9 @@ interface RouteParams {
 }
 
 export async function POST(request: NextRequest, context: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   if (isDemoMode()) {
     return NextResponse.json({ error: "演示站只读" }, { status: 403 });

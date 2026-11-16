@@ -5,7 +5,7 @@ import {
   type ResourceInspectionResult,
   type ResourceSnapshot,
 } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
@@ -31,8 +31,9 @@ export function parseInspectRequestBody(
 export async function POST(request: NextRequest) {
   await connection();
 
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:search");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
 
   let parsed: ReturnType<typeof parseInspectRequestBody>;
   try {

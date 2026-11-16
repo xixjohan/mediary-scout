@@ -12,11 +12,11 @@ let mockCurrentAccountId = "acct_alice";
 let mockIsOwner = false;
 
 vi.mock("../../../lib/auth-chain", () => ({
-  requireApiAccount: vi.fn(async () => {
+  requirePermission: vi.fn(async () => {
     if (mockCurrentAccountId === "unauthorized") {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
-    return mockCurrentAccountId;
+    return { accountId: mockCurrentAccountId, isMaster: mockIsOwner, roleId: "role_owner", permissions: new Set(["*"]) };
   }),
 }));
 

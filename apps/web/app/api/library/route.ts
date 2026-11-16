@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount, requirePermission } from "../../../lib/auth-chain";
+import { requirePermission } from "../../../lib/auth-chain";
 import { getWorkflowRepository, resolveGlobalWorkspace } from "../../../lib/workflow-runtime";
 import { isDemoMode } from "../../../lib/demo-mode";
 import type { MediaLibrary, MediaLibraryType, LibraryDeliveryMode } from "@media-track/contracts";
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "media:detail");
   if (gate instanceof Response) return gate;
 
   // 库归属存储范围账号（shared 模式 = 站长），与 library 页面用同一套解析。

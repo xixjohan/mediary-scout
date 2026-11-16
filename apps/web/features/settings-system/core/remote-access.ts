@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { hostname as containerHostname } from "node:os";
+import { accountSelfServiceHref } from "../../auth/core/account-links";
 import { getConnectBoundEnv, getConnectHostname, getConnectTunnelToken } from "../../../lib/connect-link-store";
 export { remoteFirstSetupNotice, type LoginBootstrap } from "../../../lib/remote-access-copy";
 
@@ -326,14 +327,13 @@ export async function resolveInstanceConnectHostname(): Promise<string | null> {
  *
  * 必须保留 `?w` 工作区深链参数：从非默认工作区进设置页时，硬编码
  * `/settings?tab=account` 会把用户静默踢回默认工作区上下文。
- * （`settings/page.tsx` 已经在 `SettingsSidebar` / `SettingsAttentionSection`
- * 里透传同一个 `w`，这里跟随同一约定。）
+ *
+ * 地址本身由 [account-links.ts](../../auth/core/account-links.ts) 统一构造：
+ * 改密属于**个人面**，必须指向 `/account`。手写拼接正是上一轮把成员引到
+ * `/settings` 403 面板的根因。
  */
 export function accountPasswordHref(w?: string): string {
-  const params = new URLSearchParams();
-  if (w) params.set("w", w);
-  const query = params.toString();
-  return `/account${query ? `?${query}` : ""}#password`;
+  return accountSelfServiceHref({ w, hash: "#password" });
 }
 
 /**

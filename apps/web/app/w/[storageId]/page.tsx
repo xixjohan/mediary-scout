@@ -5,6 +5,8 @@ import { notFound } from "next/navigation";
 import { WorkspaceNotFoundError } from "@media-track/workflow";
 import { HomeView } from "../../page";
 import { getActiveWorkspaceScope } from "../../../lib/workflow-runtime";
+import { decidePageAccess, resolvePageAccess } from "../../../lib/page-permission-guard";
+import { PageAccessDenied } from "../../../features/auth/components/page-access-denied";
 
 /**
  * Tree model: a specific drive's workspace. Same home surface as the root route,
@@ -38,6 +40,11 @@ async function ValidatedWorkspaceHome({
 }) {
   await connection();
   const { storageId } = await params;
+  // 与根首页同一把钥匙：这里只是换了工作区上下文的同一块界面。
+  const verdict = decidePageAccess(await resolvePageAccess(), "media:search");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="media:search" verdict={verdict} />;
+  }
   try {
     // Up-front ownership validation; the data readers re-resolve the same scope.
     await getActiveWorkspaceScope(storageId);

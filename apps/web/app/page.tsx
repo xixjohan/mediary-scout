@@ -8,6 +8,8 @@ import { Library, TriangleAlert } from "lucide-react";
 import { AcquiringPoller } from "../features/acquisition/components/acquiring-poller";
 import { AppSidebar } from "../components/layout/app-sidebar";
 import { resolveNavVisibility } from "../lib/nav-visibility";
+import { decidePageAccess, resolvePageAccess } from "../lib/page-permission-guard";
+import { PageAccessDenied } from "../features/auth/components/page-access-denied";
 import { CandidateCard } from "../features/acquisition/components/candidate-card";
 import { DemoSessionLibrary } from "../components/demo/demo-session-library";
 import { LibraryWorkspaceView } from "../features/catalog/components/library-workspace-view";
@@ -151,6 +153,11 @@ async function HomeSurface({
     );
   }
   const params = (await searchParams) ?? {};
+  // 首页 = 检索 + 订阅墙，门槛与 /api/titles/resources 同一把钥匙（media:search）。
+  const verdict = decidePageAccess(await resolvePageAccess(), "media:search");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="media:search" verdict={verdict} />;
+  }
   const redirectTarget = await resolvePreferredWorkspaceRedirect(accountId, storageId, params);
   if (redirectTarget) {
     return (

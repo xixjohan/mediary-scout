@@ -4,7 +4,7 @@ import type { Dirent } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 import { isDemoMode } from "../../../../lib/demo-mode";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { resolveDataRoot, resolveStrmOutputPath, toStrmOutputConfigPath } from "@media-track/workflow";
 
 /**
@@ -211,7 +211,7 @@ async function readDirectoryResponse(
 }
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
 
   const { searchParams } = new URL(request.url);
@@ -309,7 +309,7 @@ async function createChildDirectoryResponse(parentPath: string, folderName: stri
  * 支持在当前目录下快捷创建新文件夹
  */
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
 
   if (isDemoMode()) {

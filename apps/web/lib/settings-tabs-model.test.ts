@@ -33,10 +33,15 @@ describe("resolveSettingsTab", () => {
   });
 
   it("legacy 锚点 hash 映射到 account（tab 参数缺失时）", () => {
-    expect(resolveSettingsTab(null, false, "#password")).toBe("account");
     expect(resolveSettingsTab(null, false, "#accounts")).toBe("account");
+    expect(resolveSettingsTab(null, false, "#roles")).toBe("account");
     // 显式 tab 参数优先于 hash
-    expect(resolveSettingsTab("patrol", false, "#password")).toBe("patrol");
+    expect(resolveSettingsTab("patrol", false, "#accounts")).toBe("patrol");
+  });
+
+  it("`#password` 不再映射到 account：改密表单已迁到独立 /account 页", () => {
+    // 仍映射会把人送到 /settings 里一个不存在的锚点（403 或静默落空）。
+    expect(resolveSettingsTab(null, false, "#password")).toBe(DEFAULT_SETTINGS_TAB);
   });
 });
 

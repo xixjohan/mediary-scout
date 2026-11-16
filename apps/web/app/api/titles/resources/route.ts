@@ -8,7 +8,7 @@ import {
   type TrackedSeason,
   type TitleResourceResult,
 } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import {
   getAccountScopedSettings,
   getAccountStorageCredentials,
@@ -352,8 +352,9 @@ function isStreamRequested(request: NextRequest): boolean {
 export async function POST(request: NextRequest) {
   await connection();
 
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:search");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
 
   const parsed = await parseRequestBody(request);
   if (parsed instanceof Response) return parsed;

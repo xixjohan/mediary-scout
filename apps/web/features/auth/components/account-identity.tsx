@@ -9,6 +9,7 @@ import {
   formatAccountDisplayName,
   formatAccountInitial,
 } from "../core/account-formatter";
+import { accountAdminHref, accountSelfServiceHref } from "../core/account-links";
 
 export { formatAccountDisplayName, formatAccountInitial };
 
@@ -30,9 +31,11 @@ export function AccountIdentity({
   const displayName = formatAccountDisplayName(user?.username || username);
   const initial = formatAccountInitial(displayName);
 
-  // 通过属性透传活跃网盘 ID，彻底消除在静态外壳中调用 useSearchParams 破坏 Suspense 边界隐患
-  const accountHref = (hash: string) =>
-    `/settings?tab=account${storageId ? `&w=${encodeURIComponent(storageId)}` : ""}${hash}`;
+  // 通过属性透传活跃网盘 ID，彻底消除在静态外壳中调用 useSearchParams 破坏 Suspense 边界隐患。
+  // 两处链接分属两个权限域：改密是个人面（成员可用），账号管理是实例配置面（仅站长）。
+  const workspace = { w: storageId };
+  const selfServiceHref = accountSelfServiceHref({ ...workspace, hash: "#password" });
+  const adminHref = accountAdminHref({ ...workspace, hash: "#accounts" });
 
   return (
     <>
@@ -54,12 +57,12 @@ export function AccountIdentity({
             <User size={14} aria-hidden />
             个人资料与权限
           </button>
-          <Link className="account-identity-item" href={accountHref("#password")}>
+          <Link className="account-identity-item" href={selfServiceHref}>
             <KeyRound size={14} aria-hidden />
             修改密码
           </Link>
           {isOwner ? (
-            <Link className="account-identity-item" href={accountHref("#accounts")}>
+            <Link className="account-identity-item" href={adminHref}>
               <Users size={14} aria-hidden />
               账号管理
             </Link>

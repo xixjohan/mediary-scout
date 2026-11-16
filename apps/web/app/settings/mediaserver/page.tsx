@@ -4,6 +4,8 @@ import { PageLoginGuard } from "../../../lib/page-auth-guard";
 import { ClientLoginRedirect } from "../../../features/auth/components/client-login-redirect";
 import { AppSidebar } from "../../../components/layout/app-sidebar";
 import { getCurrentAccountId, resolveGlobalWorkspace, UNAUTHENTICATED_ACCOUNT_ID } from "../../../lib/workflow-runtime";
+import { decidePageAccess, resolvePageAccess } from "../../../lib/page-permission-guard";
+import { PageAccessDenied } from "../../../features/auth/components/page-access-denied";
 import { MediaServerConfigView } from "../../../features/mediaserver/components/mediaserver-config-view";
 
 export default function MediaServerSettingsPage({
@@ -46,6 +48,11 @@ async function MediaServerSettingsSurface({
         <MediaServerSettingsShell />
       </>
     );
+  }
+  // 媒体服务器配置属于实例配置面：与 /settings 同一把钥匙，成员 403。
+  const verdict = decidePageAccess(await resolvePageAccess(), "system:settings");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="system:settings" verdict={verdict} />;
   }
   const { w } = await searchParams;
   const workspace = await resolveGlobalWorkspace(w);

@@ -2,13 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { InMemoryWorkflowRepository } from "@media-track/workflow";
 import { DELETE, GET, POST, PUT } from "./route";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 
 vi.mock("next/server", async () => {
   const actual = await vi.importActual<typeof import("next/server")>("next/server");
   return { ...actual, connection: vi.fn().mockResolvedValue(undefined) };
 });
-vi.mock("../../../../../lib/auth-chain", () => ({ requireApiAccount: vi.fn() }));
+vi.mock("../../../../../lib/auth-chain", () => ({ requirePermission: vi.fn() }));
 vi.mock("../../../../../lib/workflow-runtime", () => ({ getWorkflowRepository: () => repo }));
 
 const repo = new InMemoryWorkflowRepository();
@@ -21,7 +21,7 @@ const request = (method: string, body?: unknown) => new NextRequest("http://loca
   ...(body === undefined ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
 });
 
-beforeEach(() => { vi.mocked(requireApiAccount).mockResolvedValue("acct_templates" as never); });
+beforeEach(() => { vi.mocked(requirePermission).mockResolvedValue({ accountId: "acct_templates", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) } as never); });
 afterEach(() => vi.clearAllMocks());
 
 describe("subscription policy template API", () => {
@@ -47,7 +47,7 @@ describe("subscription policy template API", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).template).toMatchObject({ name: "更新模板", policy: { mustContain: ["2160p"] } });
 
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_other" as never);
+    vi.mocked(requirePermission).mockResolvedValue({ accountId: "acct_other", isMaster: false, roleId: "role_member", permissions: new Set(["media:subscribe"]) } as never);
     expect((await PUT(request("PUT", { id: created.template.id, name: "越权", policy }) as never)).status).toBe(404);
   });
 });

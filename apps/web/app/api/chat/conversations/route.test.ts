@@ -10,7 +10,13 @@ vi.mock("next/server", async () => {
 const mockRepo = new InMemoryWorkflowRepository();
 
 vi.mock("../../../../lib/auth-chain", () => ({
-  requireApiAccount: vi.fn().mockResolvedValue("acct_test"),
+  // 助理路由已在 2026-11-16 收口到 `assistant:chat`（此前只要求登录）：守卫返回
+  // SecurityContext 而不是裸 accountId，故这里 mock 出同形状的对象。
+  requirePermission: vi.fn().mockResolvedValue({
+    accountId: "acct_test",
+    isMaster: false,
+    permissions: new Set(["assistant:chat"]),
+  }),
 }));
 
 vi.mock("../../../../lib/workflow-runtime", () => ({

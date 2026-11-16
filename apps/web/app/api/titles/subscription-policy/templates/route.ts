@@ -1,5 +1,5 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 import { parseSubscriptionPolicyWrite } from "../route";
 
@@ -7,16 +7,18 @@ const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 export async function GET(request: NextRequest): Promise<Response> {
   await connection();
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:subscribe");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
   const templates = await getWorkflowRepository().listSubscriptionPolicyTemplates(accountId);
   return NextResponse.json({ templates }, { headers: NO_STORE });
 }
 
 export async function POST(request: NextRequest): Promise<Response> {
   await connection();
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:subscribe");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
   let raw: unknown;
   try { raw = await request.json(); } catch { return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400, headers: NO_STORE }); }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return NextResponse.json({ error: "请求体格式错误" }, { status: 400, headers: NO_STORE });
@@ -37,8 +39,9 @@ export async function POST(request: NextRequest): Promise<Response> {
 
 export async function PUT(request: NextRequest): Promise<Response> {
   await connection();
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:subscribe");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
   let raw: unknown;
   try { raw = await request.json(); } catch { return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400, headers: NO_STORE }); }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return NextResponse.json({ error: "请求体格式错误" }, { status: 400, headers: NO_STORE });
@@ -59,8 +62,9 @@ export async function PUT(request: NextRequest): Promise<Response> {
 
 export async function DELETE(request: NextRequest): Promise<Response> {
   await connection();
-  const accountId = await requireApiAccount(request);
-  if (accountId instanceof Response) return accountId;
+  const gate = await requirePermission(request, "media:subscribe");
+  if (gate instanceof Response) return gate;
+  const accountId = gate.accountId;
   let raw: unknown;
   try { raw = await request.json(); } catch { return NextResponse.json({ error: "请求体不是 JSON" }, { status: 400, headers: NO_STORE }); }
   const id = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>)["id"] : null;

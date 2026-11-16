@@ -1,12 +1,12 @@
 import { type NextRequest } from "next/server";
 import QRCode from "qrcode";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 
 const MAX_URL_CONTENT_LENGTH_BYTES = 2048;
 const ALLOWED_PREFIX = "https://account.guangyapan.com/";
 
 export async function GET(request: NextRequest): Promise<Response> {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   const content = request.nextUrl.searchParams.get("content") ?? "";
   const tooLong = Buffer.byteLength(content, "utf8") > MAX_URL_CONTENT_LENGTH_BYTES;

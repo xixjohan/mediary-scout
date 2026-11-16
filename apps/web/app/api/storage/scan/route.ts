@@ -3,7 +3,7 @@ import {
   runReverseStorageScan,
   createTmdbSearchProvider,
 } from "@media-track/workflow";
-import { requireApiAccount, requirePermission } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../lib/workflow-runtime";
 import { getWorkflowRepository } from "../../../../composition/runtime-container";
 import { getAccountScopedSettings } from "../../../../features/settings-system/application/system-settings-service";
@@ -91,9 +91,9 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const { searchParams } = new URL(request.url);
   const jobId = searchParams.get("jobId");

@@ -22,7 +22,7 @@ vi.mock("next/server", async () => {
 });
 
 vi.mock("../../../../lib/auth-chain", () => ({
-  requireApiAccount: vi.fn(),
+  requirePermission: vi.fn(),
 }));
 
 vi.mock("../../../../lib/workflow-runtime", () => ({
@@ -132,8 +132,8 @@ async function seedSearch(
 let POST: (request: NextRequest) => Promise<Response>;
 
 beforeEach(async () => {
-  const { requireApiAccount } = await import("../../../../lib/auth-chain");
-  vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+  const { requirePermission } = await import("../../../../lib/auth-chain");
+  vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
   POST = (await import("./route")).POST;
 });
 
@@ -229,8 +229,8 @@ describe("POST /api/titles/import — 快照取回（fail-closed）", () => {
   it("snapshotId 属于别的账号 ⇒ 404（不确认它存在）", async () => {
     const { snapshotId, tmdbId } = await seedSearch(new Date().toISOString(), ["c1"]);
     // 改成别的账号所有
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_other");
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_other", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
     const res = await POST(request({ tmdbId, snapshotId, candidateId: "c1" }));
     expect(res.status).toBe(404);
   });

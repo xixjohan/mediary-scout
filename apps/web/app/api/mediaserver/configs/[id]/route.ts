@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isDemoMode } from "../../../../../lib/demo-mode";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../../lib/workflow-runtime";
 import type { CreateMediaServerConfigInput, UpdateMediaServerConfigInput } from "@media-track/workflow";
 
@@ -9,9 +9,9 @@ interface RouteParams {
 }
 
 export async function GET(request: NextRequest, context: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const { id } = await context.params;
   const repo = getWorkflowRepository();
@@ -41,9 +41,9 @@ function buildUpdateInput(
 }
 
 export async function PUT(request: NextRequest, context: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   if (isDemoMode()) {
     return NextResponse.json({ error: "演示站只读" }, { status: 403 });
@@ -73,9 +73,9 @@ export async function PUT(request: NextRequest, context: RouteParams) {
 }
 
 export async function DELETE(request: NextRequest, context: RouteParams) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   if (isDemoMode()) {
     return NextResponse.json({ error: "演示站只读" }, { status: 403 });

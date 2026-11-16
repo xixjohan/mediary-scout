@@ -8,7 +8,7 @@ import {
   type TrackedSeason,
   type ExistingEpisodeItem,
 } from "@media-track/workflow";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { getAccountDriveFileManager } from "../../../../../lib/workflow-runtime";
 import { getWorkflowRepository } from "../../../../../composition/runtime-container";
 import { seriesTargetFor } from "../../../../../lib/series-target";
@@ -168,9 +168,9 @@ async function handleReviewAccept(params: ReviewItemParams): Promise<NextRespons
 }
 
 export async function POST(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   let body: {
     jobId: string;

@@ -133,6 +133,12 @@ const SELF_GUARDED_ROUTES = new Set([
 const MCP_ROUTES = new Set(["mcp"]);
 const STRM_PLAY_ROUTES = new Set(["strm/play/[taskId]/[fileId]"]);
 
+/**
+ * 会话自省端点：它回答的就是「我是谁」，因此只可能要求登录，不可能要求权限点
+ * （对未登录访客返回 401、对任何已登录账号返回自身资料，这是该端点的语义）。
+ */
+const IDENTITY_ROUTES = new Set(["auth/me"]);
+
 function routeFiles(dir: string = API_ROOT): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = `${dir}/${entry}`;
@@ -217,7 +223,7 @@ describe("S5.4 /api 路由鉴权清单", () => {
 describe("细粒度权限清单（权限目录接线门禁）", () => {
   it("清单里的每个端点都真的用声明的权限点调了 requirePermission", () => {
     const violations: string[] = [];
-    for (const [path, permission] of Object.entries(ROUTE_PERMISSION_TABLE)) {
+    for (const [path, declared] of Object.entries(ROUTE_PERMISSION_TABLE)) {
       const source = routes.find((r) => r.path === path)?.source;
       if (!source) {
         violations.push(`${path}: 清单里的端点不存在（路由被删了却没清清单）`);
@@ -227,8 +233,12 @@ describe("细粒度权限清单（权限目录接线门禁）", () => {
         violations.push(`${path}: 未调用 requirePermission（仅登录，权限不生效）`);
         continue;
       }
-      if (!callsFunctionWithLiteral(source, "requirePermission", permission)) {
-        violations.push(`${path}: 权限点与清单不一致（期望 ${permission}）`);
+      // 数组 = 同一文件里读/写用不同钥匙；每个声明点都必须真的被调用过。
+      const expected = Array.isArray(declared) ? declared : [declared];
+      for (const permission of expected) {
+        if (!callsFunctionWithLiteral(source, "requirePermission", permission)) {
+          violations.push(`${path}: 权限点与清单不一致（期望 ${permission}）`);
+        }
       }
     }
     expect(violations).toEqual([]);
@@ -237,15 +247,41 @@ describe("细粒度权限清单（权限目录接线门禁）", () => {
   it("已接线的端点数与清单条目一致（新增接线必须显式更新计数）", () => {
     // 这个数字是**评审锚点**：改它的人必须同时说明"为什么这条端点该给这把钥匙"。
     expect(Object.keys(ROUTE_PERMISSION_TABLE)).toHaveLength(WIRED_ROUTE_COUNT);
-    expect(WIRED_ROUTE_COUNT).toBe(37);
+    expect(WIRED_ROUTE_COUNT).toBe(104);
   });
 
   it("清单里的权限点都在权限目录里（防拼错成不存在的权限）", () => {
     const catalogIds = new Set(PERMISSION_CATALOG.flatMap((m) => m.leaves.map((l) => l.id)));
-    const unknown = Object.entries(ROUTE_PERMISSION_TABLE)
-      .filter(([, permission]) => !catalogIds.has(permission))
-      .map(([path, permission]) => `${path} → ${permission}`);
+    const unknown: string[] = [];
+    for (const [path, declared] of Object.entries(ROUTE_PERMISSION_TABLE)) {
+      const expected = Array.isArray(declared) ? declared : [declared];
+      for (const permission of expected) {
+        if (!catalogIds.has(permission)) unknown.push(`${path} → ${permission}`);
+      }
+    }
     expect(unknown).toEqual([]);
+  });
+
+  /**
+   * deny-by-default：非白名单路由**必须**在清单里。
+   *
+   * 上一条只校验「清单里写了的都对」——漏写一条不会红。这条反过来钉死覆盖面：
+   * 白名单与独立协议路由之外的每一条都必须出现，于是「新增端点只加登录链、
+   * 配了权限却从不执行」的历史缺陷在最早期就被拦下。
+   */
+  it("非白名单路由全部在清单里（新增端点必须显式归类）", () => {
+    const exempt = new Set([
+      ...OPEN_ROUTES,
+      ...SELF_GUARDED_ROUTES,
+      ...MCP_ROUTES,
+      ...STRM_PLAY_ROUTES,
+      ...IDENTITY_ROUTES,
+    ]);
+    const missing = routes
+      .filter((r) => !exempt.has(r.path))
+      .filter((r) => !(r.path in ROUTE_PERMISSION_TABLE))
+      .map((r) => r.path);
+    expect(missing).toEqual([]);
   });
 
   it("callsFunctionWithLiteral 只认权限点字面量——写错权限点必须判红", () => {

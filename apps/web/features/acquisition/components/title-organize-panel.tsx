@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useAuth } from "../../auth/hooks/use-auth";
 
 /**
  * Batch 4: the 自动整理 panel (plan §3.4, L1/L2).
@@ -105,6 +106,10 @@ export interface OrganizePanelProps {
 export function OrganizePanel({ tmdbId, seasonNumber }: OrganizePanelProps) {
   const [state, setState] = useState<OrganizePanelState>({ kind: "idle" });
   const router = useRouter();
+  // 整理会读写盘上目录 = storage:organize。成员角色不含该点，渲染出来只会让
+  // 他点了吃 403——与页面守卫、/api/titles/organize 的同一把钥匙。
+  const { can } = useAuth();
+  const allowed = can("storage:organize");
 
   const organize = useCallback(async () => {
     setState({ kind: "submitting" });
@@ -125,6 +130,8 @@ export function OrganizePanel({ tmdbId, seasonNumber }: OrganizePanelProps) {
       setState({ kind: "stopped", copy: "网络错误，整理未执行", status: 0 });
     }
   }, [router, seasonNumber, tmdbId]);
+
+  if (!allowed) return null;
 
   return (
     <section className="hub-panel title-organize" aria-label="自动整理">

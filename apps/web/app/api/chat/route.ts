@@ -1,5 +1,5 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
-import { requireApiAccount } from "../../../lib/auth-chain";
+import { requirePermission } from "../../../lib/auth-chain";
 import { handleChatTurn } from "../../../lib/chat-agent-service";
 import { getWorkflowRepository } from "../../../lib/workflow-runtime";
 import { heuristicConversationTitle } from "@media-track/workflow";
@@ -43,9 +43,9 @@ function parseChatBody(val: unknown): ChatRequestBody | null {
 export async function POST(request: NextRequest) {
   await connection();
 
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "assistant:chat");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const rawJson: unknown = await request.json().catch(() => null);
   const parsed = parseChatBody(rawJson);

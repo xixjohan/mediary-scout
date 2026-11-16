@@ -8,6 +8,8 @@ import { AppSidebar } from "../../../components/layout/app-sidebar";
 import { GitHubNameplate } from "../../../components/layout/github-nameplate";
 import { ForeignWorkImportForm } from "../../../features/acquisition/components/foreign-work-import-form";
 import { getCurrentAccountId, getForeignWorkReview, UNAUTHENTICATED_ACCOUNT_ID } from "../../../lib/workflow-runtime";
+import { decidePageAccess, resolvePageAccess } from "../../../lib/page-permission-guard";
+import { PageAccessDenied } from "../../../features/auth/components/page-access-denied";
 
 function ForeignWorkPageInner({
   params,
@@ -42,6 +44,11 @@ async function ForeignWorkReview({ params }: { params: Promise<{ workflowRunId: 
     return <ClientLoginRedirect />;
   }
   const { workflowRunId } = await params;
+  // 该页读取详情与人工确认项，门槛与 /api/library/[id]/items 一致（media:detail）。
+  const verdict = decidePageAccess(await resolvePageAccess(), "media:detail");
+  if (verdict !== "allow") {
+    return <PageAccessDenied required="media:detail" verdict={verdict} />;
+  }
   const review = await getForeignWorkReview(decodeURIComponent(workflowRunId));
 
   if (!review || review.findings.length === 0) {

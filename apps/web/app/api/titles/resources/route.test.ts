@@ -28,7 +28,7 @@ vi.mock("next/server", async () => {
 });
 
 vi.mock("../../../../lib/auth-chain", () => ({
-  requireApiAccount: vi.fn(),
+  requirePermission: vi.fn(),
 }));
 
 vi.mock("../../../../lib/workflow-runtime", () => ({
@@ -116,8 +116,8 @@ afterEach(() => {
 
 describe("POST /api/titles/resources — 请求体校验", () => {
   it("tmdbId 非正整数 ⇒ 400", async () => {
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
 
     for (const bad of [{ tmdbId: 0 }, { tmdbId: -1 }, { tmdbId: "1" }, {}, { tmdbId: 1.5 }]) {
       const res = await POST(request(bad));
@@ -126,8 +126,8 @@ describe("POST /api/titles/resources — 请求体校验", () => {
   });
 
   it("非法 JSON ⇒ 400", async () => {
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
     const res = await POST(
       new NextRequest("http://localhost/api/titles/resources", {
         method: "POST",
@@ -141,8 +141,8 @@ describe("POST /api/titles/resources — 请求体校验", () => {
 
 describe("POST /api/titles/resources — scope fail-closed", () => {
   it("无账号 ⇒ 401，且不触碰仓储", async () => {
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue(
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(
       NextResponse.json({ error: "unauthorized" }, { status: 401 }),
     );
 
@@ -155,8 +155,8 @@ describe("POST /api/titles/resources — scope fail-closed", () => {
 
 describe("POST /api/titles/resources — 标题 scope 判定", () => {
   it("账号没追踪这部片 ⇒ 404（不可见，不可探测）", async () => {
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
     repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle(999)]); // 只追踪了别的片
 
     const res = await POST(request({ tmdbId: 283428 }));
@@ -166,8 +166,8 @@ describe("POST /api/titles/resources — 标题 scope 判定", () => {
   });
 
   it("按账号作用域查询（不裸查全库）", async () => {
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
     repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle()]);
     provider.search.mockResolvedValue(snapshot([]));
 
@@ -178,8 +178,8 @@ describe("POST /api/titles/resources — 标题 scope 判定", () => {
 
 describe("POST /api/titles/resources — payload 绝不下前端", () => {
   it("响应体不含 URL 形态，也不含提取码", async () => {
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
     repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle()]);
     provider.search.mockResolvedValue(
       snapshot([
@@ -220,8 +220,8 @@ describe("POST /api/titles/resources — payload 绝不下前端", () => {
   });
 
   it("不缓存（no-store）——候选集合随时可能因重新搜索而变", async () => {
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
     repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle()]);
     provider.search.mockResolvedValue(snapshot([]));
 
@@ -232,8 +232,8 @@ describe("POST /api/titles/resources — payload 绝不下前端", () => {
 
 describe("POST /api/titles/resources — 上游失败", () => {
   it("provider 抛错 ⇒ 502（不是 500：错在上游）", async () => {
-    const { requireApiAccount } = await import("../../../../lib/auth-chain");
-    vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+    const { requirePermission } = await import("../../../../lib/auth-chain");
+    vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
     repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle()]);
     provider.search.mockRejectedValue(new Error("indexer down"));
 
@@ -245,8 +245,8 @@ describe("POST /api/titles/resources — 上游失败", () => {
   describe("POST /api/titles/resources — 快照落库（批次 3）", () => {
     /** 让 provider 对每个关键词都回同一份快照。 */
     async function stubSearch() {
-      const { requireApiAccount } = await import("../../../../lib/auth-chain");
-      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      const { requirePermission } = await import("../../../../lib/auth-chain");
+      vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
       repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle()]);
       provider.search.mockImplementation(async () =>
         snapshot([{ id: "c1", url: "https://115.com/s/x", password: "p", datetime: "2024-01-01" }]),
@@ -297,8 +297,8 @@ describe("POST /api/titles/resources — 上游失败", () => {
     });
 
     it("未追踪的标题 ⇒ 404，且不落库", async () => {
-      const { requireApiAccount } = await import("../../../../lib/auth-chain");
-      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      const { requirePermission } = await import("../../../../lib/auth-chain");
+      vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
       repo.listTrackedSeasonStates.mockResolvedValue([]);
       const res = await POST(request({ tmdbId: 283428 }));
       expect(res.status).toBe(404);
@@ -306,8 +306,8 @@ describe("POST /api/titles/resources — 上游失败", () => {
     });
 
     it("从搜索页进入的未追踪标题可通过 TMDB 元数据搜索资源并落库快照", async () => {
-      const { requireApiAccount } = await import("../../../../lib/auth-chain");
-      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      const { requirePermission } = await import("../../../../lib/auth-chain");
+      vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
       repo.listTrackedSeasonStates.mockResolvedValue([]);
       movieTargetFromTmdbId.mockResolvedValue({
         title: {
@@ -331,8 +331,8 @@ describe("POST /api/titles/resources — 上游失败", () => {
     });
 
     it("支持自定义搜索关键词，并将自定义关键词排在第一位", async () => {
-      const { requireApiAccount } = await import("../../../../lib/auth-chain");
-      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      const { requirePermission } = await import("../../../../lib/auth-chain");
+      vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
       repo.listTrackedSeasonStates.mockResolvedValue([trackedTitle()]);
       provider.search.mockResolvedValue(
         snapshot([{ id: "c_custom", url: "https://115.com/s/custom", password: "c", datetime: "2024-01-01" }]),
@@ -344,9 +344,9 @@ describe("POST /api/titles/resources — 上游失败", () => {
     });
 
     it("透传存储驱动品牌到 getWorkerResourceProvider，消除硬编码 115", async () => {
-      const { requireApiAccount } = await import("../../../../lib/auth-chain");
+      const { requirePermission } = await import("../../../../lib/auth-chain");
       const { getWorkerResourceProvider, getAccountStorageCredentials } = await import("../../../../lib/workflow-runtime");
-      vi.mocked(requireApiAccount).mockResolvedValue("acct_default");
+      vi.mocked(requirePermission).mockResolvedValue(({ accountId: "acct_default", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) }));
       repo.listTrackedSeasonStates.mockResolvedValue([{
         ...trackedTitle(),
         connectedStorageId: "cs_quark_1",

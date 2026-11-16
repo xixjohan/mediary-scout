@@ -30,7 +30,10 @@ import { UserMessageThread } from "../../../features/acquisition/components/user
 import { isDemoMode } from "../../../lib/demo-mode";
 import type { DemoAcquisitionEntry } from "../../../lib/demo-session";
 import { getDetailView, type MovieHubView, type TitleHubSeason, type TitleHubView } from "../../../lib/title-hub";
+import { decidePageAccess, resolvePageAccess } from "../../../lib/page-permission-guard";
+import { PageAccessDenied } from "../../../features/auth/components/page-access-denied";
 import { nextPatrolLabel, readTitleMessages } from "../../../lib/user-message-server";
+import { resolveShowPageParams } from "../../../features/catalog/core/show-page-params";
 import { showsMessageCard } from "../../../lib/user-message-state";
 import {
   beijingDateTime, getActiveWorkspaceScope, getCurrentAccountId, getDailySweepTimes,
@@ -94,23 +97,16 @@ async function ShowContent({
   // 搜索是搜索，订阅是订阅: the title page belongs to whichever surface the
   // user came FROM. Entry links carry ?from=search|library; back keeps the
   // previous list state (history.back preserves the search query).
+  // 详情页承载 TMDB 元数据与季集信息 = media:detail。
+  const verdict = decidePageAccess(await resolvePageAccess(), "media:detail");
+  if (verdict !== "allow") return <PageAccessDenied required="media:detail" verdict={verdict} />;
   const params0 = (await searchParams) ?? {};
-  const fromParam = params0["from"];
-  const from = fromParam === "library" ? "library" : fromParam === "search" ? "search" : null;
-  // The title page is a global route (/show/<id>); it must resolve against the
-  // drive the user came FROM (?w), NOT the primary drive — otherwise a non-primary
-  // title isn't found in the (wrong) scope and falls back to a TMDB lookup of the
-  // same numeric id in the OTHER namespace (movie 278 ≠ tv 278 = unrelated show).
-  const wParam = params0["w"];
-  const w = Array.isArray(wParam) ? wParam[0] : wParam;
+  // 全局路由必须按「用户来的那块盘」(?w) 解析 —— 否则非主盘的作品查不到，
+  // 会退化成用同一个数字 id 去 TMDB 查另一个命名空间（movie 278 ≠ tv 278）。
+  // `t` 提示 TMDB 的 movie/tv 命名空间，未追踪作品缺它就会串。
+  const { from, activeStorageParam: w, searchQuery, mediaTypeHint: typeHint } =
+    resolveShowPageParams(params0);
   const workspace = await resolveGlobalWorkspace(w);
-  const qParam = params0["q"];
-  const searchQuery = Array.isArray(qParam) ? qParam[0] : qParam;
-  // `t` (the card's media type) disambiguates TMDB's movie/tv id namespaces for an
-  // untracked title — without it a movie id can resolve to an unrelated tv show.
-  const tParam = params0["t"];
-  const tRaw = Array.isArray(tParam) ? tParam[0] : tParam;
-  const typeHint = tRaw === "movie" || tRaw === "tv" || tRaw === "anime" ? tRaw : undefined;
   const { tmdbId: tmdbIdParam } = await params;
   const tmdbId = Number(tmdbIdParam);
   const view = Number.isInteger(tmdbId)
@@ -121,6 +117,9 @@ async function ShowContent({
   const backHref =
     from === "library" ? `${workspace.basePath}?tab=library` : `${workspace.basePath}?tab=search`;
 
+  // 内容归属（共用资源模式下只有站长能改共享内容）与能力点（整理会读写盘上目录）
+  // 是两个正交的门。能力点那侧由 OrganizePanel 自己按 useAuth().can() 判定——
+  // 放在这里会把一个纯客户端判断变成服务端 prop，且页面已顶满 600 行。
   const summary = await getCurrentAccountSummary();
   const canManageMedia = !isSharedResourceMode() || (summary?.isOwner ?? false);
   const navVisibility = await resolveNavVisibility();

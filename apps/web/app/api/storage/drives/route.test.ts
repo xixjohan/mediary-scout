@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import { GET as getDrives } from "./route";
 
-const requireApiAccountMock = vi.fn();
+const requirePermissionMock = vi.fn();
 const getAccountConnectedStoragesMock = vi.fn();
 
 vi.mock("../../../../lib/auth-chain", () => ({
-  requireApiAccount: (req: NextRequest) => requireApiAccountMock(req),
+  requirePermission: (req: NextRequest) => requirePermissionMock(req),
 }));
 
 vi.mock("../../../../lib/workflow-runtime", () => ({
@@ -16,7 +16,7 @@ vi.mock("../../../../lib/workflow-runtime", () => ({
 describe("Storage Drives API Route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    requireApiAccountMock.mockResolvedValue("acct_test");
+    requirePermissionMock.mockResolvedValue("acct_test");
     getAccountConnectedStoragesMock.mockResolvedValue([
       { id: "cs_1", provider: "115", status: "active", label: "我的115网盘" },
     ]);
@@ -24,7 +24,7 @@ describe("Storage Drives API Route", () => {
 
   describe("GET /api/storage/drives", () => {
     it("returns 401 if unauthenticated", async () => {
-      requireApiAccountMock.mockResolvedValue(
+      requirePermissionMock.mockResolvedValue(
         NextResponse.json({ error: "unauthorized" }, { status: 401 }),
       );
 

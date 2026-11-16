@@ -112,4 +112,56 @@ describe("ResourceEmptyDiagnostic 智能空状态与诊断组件", () => {
     expect(html).toContain("2 / 5");
     expect(html).toContain("龙珠超");
   });
+
+  /**
+   * 成员可达性：空状态是用户最需要「下一步去哪儿」的时刻，把没有该页面权限的角色
+   * 引向 /settings 或 /storage 只会落到 403 面板。判据与页面守卫同一把钥匙
+   * （system:settings / storage:browse_any）。
+   */
+  it("无设置权限（成员）：不渲染 /settings 死链，改为提示由站长维护", () => {
+    const html = renderToStaticMarkup(
+      createElement(ResourceEmptyDiagnostic, {
+        state: {
+          kind: "ready",
+          candidates: [],
+          cached: false,
+          snapshotId: null,
+          sourceHealth: { status: "unreachable", unhealthySources: ["pansou"] },
+        },
+        releaseDate: "2020-01-01",
+        canOpenSettings: false,
+      }),
+    );
+    expect(html).toContain("检索源服务响应异常");
+    expect(html).not.toContain('href="/settings"');
+    expect(html).toContain("联系站长");
+  });
+
+  it("成员在普通无结果卡片里也拿不到 /settings 与 /storage 入口", () => {
+    const html = renderToStaticMarkup(
+      createElement(ResourceEmptyDiagnostic, {
+        state: { kind: "ready", candidates: [], cached: false, snapshotId: null },
+        releaseDate: "2020-01-01",
+        baseTitle: "冷门纪录片",
+        canOpenSettings: false,
+        canBrowseStorage: false,
+      }),
+    );
+    expect(html).not.toContain('href="/settings"');
+    expect(html).not.toContain('href="/storage"');
+    expect(html).toContain("没有找到可获取的资源");
+  });
+
+  it("站长（显式传 true）仍保留完整指引入口，行为不回归", () => {
+    const html = renderToStaticMarkup(
+      createElement(ResourceEmptyDiagnostic, {
+        state: { kind: "ready", candidates: [], cached: false, snapshotId: null },
+        releaseDate: "2020-01-01",
+        canOpenSettings: true,
+        canBrowseStorage: true,
+      }),
+    );
+    expect(html).toContain('href="/settings"');
+    expect(html).toContain('href="/storage"');
+  });
 });

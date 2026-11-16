@@ -1,12 +1,12 @@
 import { isDemoMode } from "../../../../../lib/demo-mode";
 import { NextResponse, type NextRequest } from "next/server";
 import { completePan115QrLogin, StorageOwnedByOtherAccountError } from "../../../../../lib/workflow-runtime";
-import { requireApiAccount } from "../../../../../lib/auth-chain";
+import { requirePermission } from "../../../../../lib/auth-chain";
 import { formatNetworkError } from "../../../../../lib/http-proxy";
 import { isPan115QrExchangeError } from "@media-track/workflow";
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "system:settings");
   if (gate instanceof Response) return gate;
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403 });
   // Parse the body OUTSIDE the business try/catch: invalid/missing JSON is a

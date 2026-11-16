@@ -23,7 +23,7 @@ vi.mock("next/server", async () => {
 });
 
 vi.mock("../../../../lib/auth-chain", () => ({
-  requireApiAccount: vi.fn(),
+  requirePermission: vi.fn(),
 }));
 
 vi.mock("../../../../lib/workflow-runtime", () => ({
@@ -132,10 +132,10 @@ function get(tmdbId: number, mediaType?: "movie" | "tv"): NextRequest {
   });
 }
 
-const { requireApiAccount } = await import("../../../../lib/auth-chain");
+const { requirePermission } = await import("../../../../lib/auth-chain");
 
 beforeEach(async () => {
-  vi.mocked(requireApiAccount).mockResolvedValue("acct_default" as never);
+  vi.mocked(requirePermission).mockResolvedValue("acct_default" as never);
 });
 
 afterEach(() => {
@@ -172,7 +172,7 @@ describe("PUT /api/titles/subscription-policy", () => {
   });
 
   it("未认证 ⇒ 401", async () => {
-    vi.mocked(requireApiAccount).mockResolvedValue(
+    vi.mocked(requirePermission).mockResolvedValue(
       new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }) as never,
     );
     expect((await PUT(put({ tmdbId: freshTmdbId(), policy: POLICY }))).status).toBe(401);
@@ -264,7 +264,7 @@ describe("GET /api/titles/subscription-policy", () => {
   });
 
   it("未认证 ⇒ 401", async () => {
-    vi.mocked(requireApiAccount).mockResolvedValue(
+    vi.mocked(requirePermission).mockResolvedValue(
       new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }) as never,
     );
     expect((await GET(get(freshTmdbId()))).status).toBe(401);

@@ -22,7 +22,7 @@ vi.mock("next/server", async () => {
 });
 
 vi.mock("../../../../../lib/auth-chain", () => ({
-  requireApiAccount: vi.fn(),
+  requirePermission: vi.fn(),
 }));
 
 vi.mock("../../../../../lib/workflow-runtime", () => ({
@@ -138,10 +138,10 @@ function request(body: unknown, account = "acct_default"): NextRequest {
   });
 }
 
-const { requireApiAccount } = await import("../../../../../lib/auth-chain");
+const { requirePermission } = await import("../../../../../lib/auth-chain");
 
 beforeEach(async () => {
-  vi.mocked(requireApiAccount).mockResolvedValue("acct_default" as never);
+  vi.mocked(requirePermission).mockResolvedValue("acct_default" as never);
   searchCalls = 0;
   searchShouldFail = false;
 });
@@ -197,7 +197,7 @@ describe("POST /api/titles/subscription-policy/preview", () => {
   });
 
   it("未认证 ⇒ 401", async () => {
-    vi.mocked(requireApiAccount).mockResolvedValue(
+    vi.mocked(requirePermission).mockResolvedValue(
       new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 }) as never,
     );
     const res = await POST(request({ tmdbId: freshTmdbId(), policy: {} }));

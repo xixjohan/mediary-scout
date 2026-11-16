@@ -5,7 +5,7 @@ import { GET, parseOfflineRequestBody, POST } from "./route";
 const getAccountStorageCredentialsMock = vi.fn();
 
 vi.mock("../../../../../lib/auth-chain", () => ({
-  requireApiAccount: vi.fn(async () => "account_1"),
+  requirePermission: vi.fn(async () => ({ accountId: "account_1", isMaster: true, roleId: "role_owner", permissions: new Set(["*"]) })),
 }));
 
 vi.mock("../../../../../lib/demo-mode", () => ({

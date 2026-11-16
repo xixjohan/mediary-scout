@@ -8,7 +8,7 @@ import {
   TianyiClient,
   isRegisteredStorageProvider,
 } from "@media-track/workflow";
-import { requireApiAccount, requirePermission } from "../../../../lib/auth-chain";
+import { requirePermission } from "../../../../lib/auth-chain";
 import { getScopedStorageCredentials } from "../../../../lib/media-scope";
 import type { AccountStorageCredentials } from "../../../../features/storage-drives/contracts/storage-types";
 import { isDemoMode } from "../../../../lib/demo-mode";
@@ -420,9 +420,9 @@ async function executeBrandShareTransferTask(
 }
 
 export async function GET(request: NextRequest) {
-  const gate = await requireApiAccount(request);
+  const gate = await requirePermission(request, "storage:list");
   if (gate instanceof Response) return gate;
-  const accountId = gate;
+  const accountId = gate.accountId;
 
   const storageId = request.nextUrl.searchParams.get("storageId") || undefined;
   const creds = await getScopedStorageCredentials(storageId);
