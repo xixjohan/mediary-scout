@@ -1,11 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import {
-  Pan115CookieClient,
-  Pan123Client,
   createDriveFileManager,
-  GuangYaClient,
-  QuarkCookieClient,
-  TianyiClient,
+  ingestCapabilityForBrand,
   isRegisteredStorageProvider,
 } from "@media-track/workflow";
 import { requirePermission } from "../../../../lib/auth-chain";
@@ -16,8 +12,28 @@ import {
   guardWriteTarget,
   libraryScopeErrorStatus,
 } from "../../../../features/storage-drives/application/library-scope-guard";
+import {
+  executeIngestTasks,
+  ingestCapabilitiesView,
+  type IngestCapabilitiesView,
+  type ShareTaskPayloadItem,
+} from "../../../../features/storage-drives/application/brand-ingest-executors";
+
+/**
+ * 离线下载 / 分享转存的提交端点。
+ *
+ * 能力与分发都来自 `STORAGE_BRANDS.ingest`（见 brand-ingest-executors.ts）：
+ * 本文件只负责 HTTP ——解析请求、鉴权、目录范围校验、把结果拼成响应。
+ * 曾经的 5 条 `if (provider === …)` 品牌分支与手写能力表已经移除，那个缺陷是
+ * 「注册表登记了 UC 盘，但这条链永远说不支持」。
+ */
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
+
+/** GET 的响应体。保留 `OfflineCapabilities` 这个名字，前端既有 import 不变。 */
+export type OfflineCapabilities = IngestCapabilitiesView;
+
+export type { ShareTaskPayloadItem };
 
 /**
  * 只为范围校验取一次目录列表。走 drive-service 的 fileManager 而不是品牌客户端，
@@ -38,25 +54,6 @@ async function listDirectoryForScope(
     animeCid: creds.animeCid,
   });
   return fileManager.listDirectory(directoryId);
-}
-
-export interface OfflineCapabilities {
-  supported: boolean;
-  provider: string;
-  schemes: string[];
-  supportsTorrent: boolean;
-  supportsOffline: boolean;
-  supportsShareTransfer: boolean;
-  supportedShareBrands: string[];
-  message?: string | undefined;
-  tasks?: unknown[] | undefined;
-}
-
-export interface ShareTaskPayloadItem {
-  url: string;
-  shareCode?: string | undefined;
-  passcode?: string | undefined;
-  brand?: string | undefined;
 }
 
 function parseUrlsArray(body: Record<string, unknown>): string[] {
@@ -128,301 +125,9 @@ export function parseOfflineRequestBody(value: unknown):
   };
 }
 
-async function execute115Offline(
-  client: Pan115CookieClient,
-  urls: string[],
-  targetDirId: string,
-) {
-  return Promise.all(
-    urls.map(async (url) => {
-      try {
-        const res = await client.addOfflineTask({ url, directoryId: targetDirId });
-        return { url, ok: res.ok, message: res.message || "已添加" };
-      } catch (e) {
-        return { url, ok: false, message: e instanceof Error ? e.message : String(e) };
-      }
-    })
-  );
-}
-
-async function execute123Offline(
-  client: Pan123Client,
-  urls: string[],
-  targetDirId: string,
-) {
-  return Promise.all(
-    urls.map(async (url) => {
-      try {
-        const resolved = await client.resolveOffline(url);
-        const taskId = await client.submitOffline({
-          resourceId: resolved.resourceId,
-          fileIds: resolved.fileIds,
-          uploadDirId: targetDirId,
-        });
-        return { url, ok: true, taskId };
-      } catch (e) {
-        return { url, ok: false, message: e instanceof Error ? e.message : String(e) };
-      }
-    })
-  );
-}
-
-async function executeGuangYaOffline(
-  client: GuangYaClient,
-  urls: string[],
-  targetDirId: string,
-) {
-  return Promise.all(
-    urls.map(async (url) => {
-      try {
-        const resolved = await client.resolveRes(url);
-        const newName = resolved.btResInfo?.fileName || "offline-download";
-        const taskId = await client.createTask({
-          url,
-          parentId: targetDirId,
-          newName,
-        });
-        return { url, ok: true, taskId };
-      } catch (e) {
-        return { url, ok: false, message: e instanceof Error ? e.message : String(e) };
-      }
-    })
-  );
-}
-
-function createPan115Client(creds: AccountStorageCredentials): Pan115CookieClient {
-  if (!creds.cookie) {
-    throw new Error("115网盘凭证无效");
-  }
-  return new Pan115CookieClient({ cookie: creds.cookie });
-}
-
-function createPan123Client(creds: AccountStorageCredentials): Pan123Client {
-  const token = typeof creds.credential?.["token"] === "string"
-    ? (creds.credential["token"] as string)
-    : (creds.cookie ?? "");
-  if (!token) {
-    throw new Error("123云盘凭证无效");
-  }
-  return new Pan123Client({ token });
-}
-
-function createGuangYaClient(creds: AccountStorageCredentials): GuangYaClient {
-  const accessToken = typeof creds.credential?.["accessToken"] === "string"
-    ? (creds.credential["accessToken"] as string)
-    : "";
-  const refreshToken = typeof creds.credential?.["refreshToken"] === "string"
-    ? (creds.credential["refreshToken"] as string)
-    : "";
-  const deviceId = typeof creds.credential?.["deviceId"] === "string"
-    ? (creds.credential["deviceId"] as string)
-    : "";
-  return new GuangYaClient({
-    accessToken,
-    refreshToken,
-    ...(deviceId ? { deviceId } : {}),
-  });
-}
-
-function createQuarkClient(creds: AccountStorageCredentials): QuarkCookieClient {
-  if (!creds.cookie) {
-    throw new Error("夸克网盘 Cookie 凭据无效");
-  }
-  return new QuarkCookieClient({ cookie: creds.cookie });
-}
-
-function createTianyiClient(creds: AccountStorageCredentials): TianyiClient {
-  const c = (creds.credential ?? {}) as Record<string, string>;
-  const sessionKey = c["sessionKey"] || "";
-  const accessToken = c["accessToken"] || "";
-  const refreshToken = c["refreshToken"] || "";
-  const familySessionKey = c["familySessionKey"] || undefined;
-  if (!sessionKey || !accessToken) {
-    throw new Error("天翼云盘凭据无效");
-  }
-  return new TianyiClient({
-    sessionKey,
-    accessToken,
-    refreshToken,
-    ...(familySessionKey ? { familySessionKey } : {}),
-  });
-}
-
-async function execute115ShareTransfer(
-  client: Pan115CookieClient,
-  tasks: ShareTaskPayloadItem[],
-  targetDirId: string
-) {
-  const results = [];
-  for (const t of tasks) {
-    try {
-      const shareCode = t.shareCode || "";
-      const receiveCode = t.passcode || "";
-      const res = await client.receiveShare({
-        shareCode,
-        receiveCode,
-        directoryId: targetDirId,
-      });
-      results.push({
-        url: t.url,
-        ok: res.ok,
-        message: res.ok ? "转存成功" : (res.message || "转存失败"),
-      });
-    } catch (e) {
-      results.push({
-        url: t.url,
-        ok: false,
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-    // 串行限流防触发风控
-    await new Promise((r) => setTimeout(r, 600));
-  }
-  return results;
-}
-
-async function executeQuarkShareTransfer(
-  client: QuarkCookieClient,
-  tasks: ShareTaskPayloadItem[],
-  targetDirId: string
-) {
-  const results = [];
-  for (const t of tasks) {
-    try {
-      const pwdId = t.shareCode || "";
-      const passcode = t.passcode || "";
-      const stoken = await client.getShareToken({ pwd_id: pwdId, passcode });
-      const shareItems = await client.listShareDetail({ pwd_id: pwdId, stoken, pdirFid: "0" });
-      const fidList = shareItems.map((i) => (i.fid ? String(i.fid) : "")).filter(Boolean);
-      const fidTokenList = shareItems.map((i) => (i.share_fid_token ? String(i.share_fid_token) : "")).filter(Boolean);
-      if (fidList.length === 0) {
-        results.push({ url: t.url, ok: false, message: "分享链接中无可用文件" });
-        continue;
-      }
-      const taskId = await client.saveShare({
-        fid_list: fidList,
-        fid_token_list: fidTokenList,
-        to_pdir_fid: targetDirId,
-        pwd_id: pwdId,
-        stoken,
-      });
-      results.push({ url: t.url, ok: true, taskId, message: "夸克转存任务已提交" });
-    } catch (e) {
-      results.push({
-        url: t.url,
-        ok: false,
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-    await new Promise((r) => setTimeout(r, 600));
-  }
-  return results;
-}
-
-async function execute123ShareTransfer(
-  client: Pan123Client,
-  tasks: ShareTaskPayloadItem[],
-  targetDirId: string
-) {
-  const results = [];
-  for (const t of tasks) {
-    try {
-      const shareKey = t.shareCode || "";
-      const sharePwd = t.passcode || "";
-      const res = await client.saveShare({
-        shareKey,
-        sharePwd,
-        targetParentId: targetDirId,
-      });
-      results.push({ url: t.url, ok: res.ok, message: res.message || "转存成功" });
-    } catch (e) {
-      results.push({
-        url: t.url,
-        ok: false,
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-    await new Promise((r) => setTimeout(r, 600));
-  }
-  return results;
-}
-
-async function executeTianyiShareTransfer(
-  client: TianyiClient,
-  tasks: ShareTaskPayloadItem[],
-  targetDirId: string
-) {
-  const results = [];
-  for (const t of tasks) {
-    try {
-      const shareCode = t.shareCode || "";
-      const accessCode = t.passcode || "";
-      const res = await client.saveShare({
-        shareCode,
-        accessCode,
-        targetFolderId: targetDirId,
-      });
-      results.push({ url: t.url, ok: res.ok, message: res.message || "转存成功" });
-    } catch (e) {
-      results.push({
-        url: t.url,
-        ok: false,
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-    await new Promise((r) => setTimeout(r, 600));
-  }
-  return results;
-}
-
-async function executeBrandOfflineTask(
-  creds: AccountStorageCredentials,
-  urls: string[],
-  targetDirId: string
-) {
-  if (creds.provider === "pan115") {
-    return execute115Offline(createPan115Client(creds), urls, targetDirId);
-  }
-
-  if (creds.provider === "pan123") {
-    return execute123Offline(createPan123Client(creds), urls, targetDirId);
-  }
-
-  if (creds.provider === "guangya") {
-    return executeGuangYaOffline(createGuangYaClient(creds), urls, targetDirId);
-  }
-
-  throw new Error(`网盘【${creds.provider}】暂不支持离线下载功能，请使用 115网盘 或 123云盘`);
-}
-
-async function executeBrandShareTransferTask(
-  creds: AccountStorageCredentials,
-  tasks: ShareTaskPayloadItem[],
-  targetDirId: string
-) {
-  if (creds.provider === "pan115") {
-    return execute115ShareTransfer(createPan115Client(creds), tasks, targetDirId);
-  }
-
-  if (creds.provider === "quark") {
-    return executeQuarkShareTransfer(createQuarkClient(creds), tasks, targetDirId);
-  }
-
-  if (creds.provider === "pan123") {
-    return execute123ShareTransfer(createPan123Client(creds), tasks, targetDirId);
-  }
-
-  if (creds.provider === "tianyi") {
-    return executeTianyiShareTransfer(createTianyiClient(creds), tasks, targetDirId);
-  }
-
-  throw new Error(`网盘【${creds.provider}】暂不支持分享转存功能`);
-}
-
 export async function GET(request: NextRequest) {
   const gate = await requirePermission(request, "storage:list");
   if (gate instanceof Response) return gate;
-  const accountId = gate.accountId;
 
   const storageId = request.nextUrl.searchParams.get("storageId") || undefined;
   const creds = await getScopedStorageCredentials(storageId);
@@ -430,101 +135,40 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "未找到连接的网盘账户" }, { status: 404, headers: NO_STORE });
   }
 
-  const { provider } = creds;
+  // 能力只来自注册表；这里不再有第二份 provider 分支，也不发起任何网盘 API
+  // 调用——能力查询不该依赖上游可达性（此前 GET 会顺带拉 115 离线任务列表，
+  // 上游超时就拖慢整个弹窗，而那份 `tasks` 字段前端从未渲染）。
+  return NextResponse.json(ingestCapabilitiesView(creds.provider), { headers: NO_STORE });
+}
 
-  if (provider === "pan115") {
-    let tasks: unknown[] = [];
-    try {
-      if (creds.cookie) {
-        const client = new Pan115CookieClient({ cookie: creds.cookie });
-        tasks = await client.listOfflineTasks();
-      }
-    } catch (err) {
-      console.warn("[storage/offline] 115 listOfflineTasks failed:", err);
-    }
-    const cap: OfflineCapabilities = {
-      supported: true,
-      provider,
-      supportsOffline: true,
-      supportsTorrent: true,
-      supportsShareTransfer: true,
-      supportedShareBrands: ["pan115"],
-      schemes: ["magnet", "http", "https", "ftp", "ed2k"],
-      tasks,
-    };
-    return NextResponse.json(cap, { headers: NO_STORE });
+type ParsedOffline = Extract<ReturnType<typeof parseOfflineRequestBody>, { ok: true }>;
+
+/** 解析请求体 + 定位网盘 + 种子上传能力门。返回 Response 表示应直接结束请求。 */
+async function resolveSubmitContext(
+  request: NextRequest,
+): Promise<{ parsed: ParsedOffline; creds: AccountStorageCredentials } | NextResponse> {
+  let parsed: ReturnType<typeof parseOfflineRequestBody>;
+  try {
+    parsed = parseOfflineRequestBody(await request.json());
+  } catch {
+    return NextResponse.json({ error: "invalid body" }, { status: 400, headers: NO_STORE });
+  }
+  if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400, headers: NO_STORE });
+
+  const creds = await getScopedStorageCredentials(parsed.storageId);
+  if (!creds || !isRegisteredStorageProvider(creds.provider)) {
+    return NextResponse.json({ error: "未找到连接的网盘账户" }, { status: 404, headers: NO_STORE });
   }
 
-  if (provider === "quark") {
-    const cap: OfflineCapabilities = {
-      supported: true,
-      provider,
-      supportsOffline: false,
-      supportsTorrent: false,
-      supportsShareTransfer: true,
-      supportedShareBrands: ["quark"],
-      schemes: [],
-      tasks: [],
-      message: "夸克网盘支持分享链接转存（秒级落盘）",
-    };
-    return NextResponse.json(cap, { headers: NO_STORE });
+  // 种子上传没有任何品牌实现消费路径（注册表 `supportsTorrentFile` 全为 false）。
+  // 与其静默忽略，不如显式拒绝——「点了提交却提示『请提供链接』」是更难解释的失败。
+  if (parsed.torrentBase64 && !ingestCapabilitiesView(creds.provider).supportsTorrentFile) {
+    return NextResponse.json(
+      { error: `【${ingestCapabilityForBrand(creds.provider).label}】暂不支持 BT 种子上传，请改用磁力链接或分享链接。` },
+      { status: 400, headers: NO_STORE },
+    );
   }
-
-  if (provider === "pan123") {
-    const cap: OfflineCapabilities = {
-      supported: true,
-      provider,
-      supportsOffline: true,
-      supportsTorrent: true,
-      supportsShareTransfer: true,
-      supportedShareBrands: ["pan123"],
-      schemes: ["magnet", "ed2k", "http", "https"],
-      tasks: [],
-    };
-    return NextResponse.json(cap, { headers: NO_STORE });
-  }
-
-  if (provider === "tianyi") {
-    const cap: OfflineCapabilities = {
-      supported: true,
-      provider,
-      supportsOffline: false,
-      supportsTorrent: false,
-      supportsShareTransfer: true,
-      supportedShareBrands: ["tianyi"],
-      schemes: [],
-      tasks: [],
-      message: "天翼云盘支持分享链接转存",
-    };
-    return NextResponse.json(cap, { headers: NO_STORE });
-  }
-
-  if (provider === "guangya") {
-    const cap: OfflineCapabilities = {
-      supported: true,
-      provider,
-      supportsOffline: true,
-      supportsTorrent: false,
-      supportsShareTransfer: true,
-      supportedShareBrands: ["guangya"],
-      schemes: ["magnet", "ed2k"],
-      tasks: [],
-    };
-    return NextResponse.json(cap, { headers: NO_STORE });
-  }
-
-  const cap: OfflineCapabilities = {
-    supported: false,
-    provider,
-    supportsOffline: false,
-    supportsTorrent: false,
-    supportsShareTransfer: false,
-    supportedShareBrands: [],
-    schemes: [],
-    tasks: [],
-    message: `${provider} 暂不支持离线下载或转存功能`,
-  };
-  return NextResponse.json(cap, { headers: NO_STORE });
+  return { parsed, creds };
 }
 
 export async function POST(request: NextRequest) {
@@ -535,22 +179,10 @@ export async function POST(request: NextRequest) {
   if (isDemoMode()) return NextResponse.json({ error: "演示站只读" }, { status: 403, headers: NO_STORE });
   const accountId = gate.accountId;
 
-  let parsed: ReturnType<typeof parseOfflineRequestBody>;
-  try {
-    parsed = parseOfflineRequestBody(await request.json());
-  } catch {
-    return NextResponse.json({ error: "invalid body" }, { status: 400, headers: NO_STORE });
-  }
-  if (!parsed.ok) {
-    return NextResponse.json({ error: parsed.error }, { status: 400, headers: NO_STORE });
-  }
-
+  const context = await resolveSubmitContext(request);
+  if (context instanceof NextResponse) return context;
+  const { parsed, creds } = context;
   const { storageId, urls, shareTasks, directoryId } = parsed;
-  const creds = await getScopedStorageCredentials(storageId);
-  if (!creds || !isRegisteredStorageProvider(creds.provider)) {
-    return NextResponse.json({ error: "未找到连接的网盘账户" }, { status: 404, headers: NO_STORE });
-  }
-
   const targetDirId = directoryId || creds.moviesCid || creds.rootCid || "0";
 
   try {
@@ -564,29 +196,31 @@ export async function POST(request: NextRequest) {
       listDirectory: (dirId) => listDirectoryForScope(creds, dirId),
     });
 
-    const allResults: Array<{ url: string; ok: boolean; message?: string | undefined; taskId?: string | undefined }> = [];
+    // 每一条都由注册表能力先行判定：不支持的协议/品牌在这一步就被拒，
+    // 不会交给品牌分支碰运气。返回的 ok 只代表「平台已受理」。
+    const allResults = await executeIngestTasks({
+      creds,
+      offlineUrls: urls,
+      shareTasks,
+      targetDirId,
+    });
 
-    // 1. 若有离线下载链接
-    if (urls.length > 0) {
-      const offlineRes = await executeBrandOfflineTask(creds, urls, targetDirId);
-      allResults.push(...offlineRes);
+    // 全部条目都在预检阶段被拒（零 API 调用）= 请求本身不可执行 → 400，
+    // 与原「该盘不支持离线」的对外契约一致；只要有一条真的提交了就回 200。
+    if (allResults.length > 0 && allResults.every((r) => r.preflight === true)) {
+      return NextResponse.json({ error: allResults[0]!.message ?? "没有可提交的任务" }, { status: 400, headers: NO_STORE });
     }
 
-    // 2. 若有网盘分享转存任务
-    if (shareTasks.length > 0) {
-      const shareRes = await executeBrandShareTransferTask(creds, shareTasks, targetDirId);
-      allResults.push(...shareRes);
-    }
-
-    const successCount = allResults.filter((r) => r.ok).length;
     return NextResponse.json(
       {
         ok: true,
         submitted: allResults.length,
-        succeeded: successCount,
+        succeeded: allResults.filter((r) => r.ok).length,
+        // 「已受理」不是「已落盘」。入库确认必须走 StorageExecutor.transfer。
+        accepted: true,
         results: allResults,
       },
-      { headers: NO_STORE }
+      { headers: NO_STORE },
     );
   } catch (error) {
     console.error("[storage/offline] submit failed:", error);

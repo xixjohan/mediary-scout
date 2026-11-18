@@ -120,6 +120,7 @@ describe("subscriptionPolicyToColumns", () => {
       custom_keywords: "[]",
       priority_groups: "[]",
       season_episode_ranges: "[]",
+      subtitle_preference: '{"terms":[],"require":false}',
     });
   });
 

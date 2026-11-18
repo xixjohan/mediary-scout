@@ -114,8 +114,60 @@ describe("loadSubscriptionPolicyFilter", () => {
       }) },
       accountId: "acct_a", titleKey: "tmdb_tv_42",
     });
+    // 配置优先级组、未配置字幕偏好：排序键就是组序（字幕不参与）。
     expect(option.policyFilter?.rank({ name: "Show.REMUX.1080p.mkv" })).toBe(0);
     expect(option.policyFilter?.rank({ name: "Show.1080p.mkv" })).toBe(1);
     expect(option.policyFileValidator?.({ name: "renamed-video.mkv" })).toBe(null);
+  });
+
+  it("配置了字幕偏好时，同组内带中字的候选排在前面", async () => {
+    const option = await loadSubscriptionPolicyFilter({
+      repository: { getSubscriptionPolicy: async () => ({
+        accountId: "acct_a", titleKey: "tmdb_tv_42", mustContain: [], mustNotContain: [],
+        episodeFilter: "", useRegex: false, cooldownDays: 0, customKeywords: [], lastTakenAt: null,
+        createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+        priorityGroups: [{ id: "only", name: "唯一组", mustContain: ["1080p"], mustNotContain: [] }],
+        subtitlePreference: { terms: ["简中", "CHS", "中字"], require: false },
+      }) },
+      accountId: "acct_a", titleKey: "tmdb_tv_42",
+    });
+    const withSubs = option.policyFilter?.rank({ name: "Show.1080p.简中.mkv" });
+    const withoutSubs = option.policyFilter?.rank({ name: "Show.1080p.mkv" });
+    expect(withSubs).toBe(0);
+    expect(withoutSubs).toBe(1);
+    // 软偏好不拒绝无字幕候选（这是与「必须带中字」的关键区别）。
+    expect(option.policyFilter?.accept({ name: "Show.1080p.mkv" })).toBe(true);
+  });
+
+
+  it("**给了 identity 时，别的作品的资源被拒**（G13：巡检与预览同一道闸门）", async () => {
+    const option = await loadSubscriptionPolicyFilter({
+      repository: { getSubscriptionPolicy: async () => ({
+        accountId: "acct_a", titleKey: "tmdb_tv_42", mustContain: [],
+        mustNotContain: [], episodeFilter: "", useRegex: false, cooldownDays: 0,
+        customKeywords: [], lastTakenAt: null,
+        createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+      }) },
+      accountId: "acct_a",
+      titleKey: "tmdb_tv_42",
+      identity: { tmdbId: 42, year: 2026, title: "12 12 12", originalTitle: "12 12 12", aliases: [] },
+    });
+    expect(option.policyFilter?.accept({ name: "12 12 12 S01E12 1080p" })).toBe(true);
+    expect(option.policyFilter?.accept({ name: "汪汪队立大功.2013 - S12E12 - 1080p.mkv" })).toBe(false);
+    expect(option.policyFilter?.rejectReason({ name: "汪汪队立大功.2013 - S12E12 - 1080p.mkv" })).toBe("wrong_title");
+  });
+
+  it("**不给 identity 时行为不变**（纯逻辑单测与历史调用不受影响）", async () => {
+    const option = await loadSubscriptionPolicyFilter({
+      repository: { getSubscriptionPolicy: async () => ({
+        accountId: "acct_a", titleKey: "tmdb_tv_42", mustContain: [],
+        mustNotContain: [], episodeFilter: "", useRegex: false, cooldownDays: 0,
+        customKeywords: [], lastTakenAt: null,
+        createdAt: "2026-01-01T00:00:00Z", updatedAt: "2026-01-01T00:00:00Z",
+      }) },
+      accountId: "acct_a",
+      titleKey: "tmdb_tv_42",
+    });
+    expect(option.policyFilter?.accept({ name: "汪汪队立大功.2013 - S12E12 - 1080p.mkv" })).toBe(true);
   });
 });

@@ -506,8 +506,15 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
         });
       }
 
-      const landingProvider = () =>
-        new FakeResourceProvider({ keywordResults: { "Show show": [{ title: "Show S01 2160p WEB-DL" }] } });
+      /**
+       * 资源标题必须带被测作品的片名。
+       *
+       * 原来写的是泛化的 "Show S01 2160p"，而被追踪作品叫 "Show show" —— 身份闸门
+       * 上线后这类「片名对不上」的候选会被正确地判成 wrong_title，于是这条测的就不再
+       * 是水位线，而是身份判定。夹具改成用 title.title，保持测试原意。
+       */
+      const landingProvider = (titleForRun: MediaTitle) =>
+        new FakeResourceProvider({ keywordResults: { "Show show": [{ title: `${titleForRun.title} S01 2160p WEB-DL` }] } });
 
       it("**真采纳了资源 => 水位线前进**", async () => {
         const inner = new InMemoryWorkflowRepository();
@@ -520,7 +527,7 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
 
         const outcomes = await runScheduledType3Monitoring({
           repository,
-          resourceProvider: landingProvider(),
+          resourceProvider: landingProvider(title),
           storage,
           model: landingModel("S01E01", 1),
           storageParentDirectoryId: "library_root",
@@ -570,7 +577,7 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
 
         await runScheduledType3Monitoring({
           repository,
-          resourceProvider: landingProvider(),
+          resourceProvider: landingProvider(title),
           storage,
           model: landingModel("S01E01", 1),
           storageParentDirectoryId: "library_root",

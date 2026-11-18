@@ -17,6 +17,7 @@ export * from "./pan123-client.js";
 export * from "./pan123-qrcode-login.js";
 export * from "./pan123-storage-executor.js";
 export * from "./storage-brands.js";
+export * from "./ingest-capabilities.js";
 export * from "./storage-executor-factory.js";
 export * from "./storage-auth-error.js";
 export * from "./drive-pacer.js";

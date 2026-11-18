@@ -28,6 +28,7 @@
 
 import {
   EMPTY_POLICY,
+  type SubtitlePreference,
   type SubscriptionPriorityGroup,
   type SubscriptionPolicy,
   type SeasonEpisodeRange,
@@ -66,6 +67,7 @@ export interface SubscriptionPolicyRow {
   custom_keywords?: string | null;
   priority_groups?: string | null;
   season_episode_ranges?: string | null;
+  subtitle_preference?: string | null;
 }
 
 /**
@@ -103,6 +105,7 @@ export function parseTermList(raw: string, column: string): string[] {
 
 /** A DB row → the domain policy. Throws on a corrupt row (see the header). */
 export function subscriptionPolicyFromRow(row: SubscriptionPolicyRow): StoredSubscriptionPolicy {
+  const subtitlePreference = parseSubtitlePreference(row.subtitle_preference);
   return {
     accountId: row.account_id,
     titleKey: row.title_key,
@@ -117,6 +120,7 @@ export function subscriptionPolicyFromRow(row: SubscriptionPolicyRow): StoredSub
     customKeywords: row.custom_keywords ? parseTermList(row.custom_keywords, "custom_keywords") : [],
     priorityGroups: parsePriorityGroups(row.priority_groups),
     seasonEpisodeRanges: parseSeasonEpisodeRanges(row.season_episode_ranges),
+    ...(subtitlePreference ? { subtitlePreference } : {}),
   };
 }
 
@@ -130,6 +134,7 @@ export interface SubscriptionPolicyWrite {
   customKeywords?: readonly string[];
   priorityGroups?: readonly SubscriptionPriorityGroup[];
   seasonEpisodeRanges?: readonly SeasonEpisodeRange[];
+  subtitlePreference?: SubtitlePreference;
 }
 
 export interface StoredSubscriptionPolicyTemplate {
@@ -181,6 +186,25 @@ function parseSeasonEpisodeRanges(raw: string | null | undefined): SeasonEpisode
   return parsed;
 }
 
+function parseSubtitlePreference(raw: string | null | undefined): SubtitlePreference | undefined {
+  if (!raw) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error(`subscription_policies.subtitle_preference is not valid JSON: ${raw.slice(0, 120)}`);
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("subscription_policies.subtitle_preference has invalid shape");
+  }
+  const item = parsed as Record<string, unknown>;
+  const terms = item["terms"];
+  if (!Array.isArray(terms) || terms.some((term) => typeof term !== "string")) {
+    throw new Error("subscription_policies.subtitle_preference terms must be strings");
+  }
+  return { terms: terms as string[], require: item["require"] === true };
+}
+
 /** The write input → the row's column values. */
 export function subscriptionPolicyToColumns(policy: SubscriptionPolicyWrite): {
   must_contain: string;
@@ -191,6 +215,7 @@ export function subscriptionPolicyToColumns(policy: SubscriptionPolicyWrite): {
   custom_keywords: string;
   priority_groups: string;
   season_episode_ranges: string;
+  subtitle_preference: string;
 } {
   return {
     must_contain: serializeTermList(policy.mustContain),
@@ -201,6 +226,7 @@ export function subscriptionPolicyToColumns(policy: SubscriptionPolicyWrite): {
     custom_keywords: serializeTermList(policy.customKeywords ?? []),
     priority_groups: JSON.stringify(policy.priorityGroups ?? []),
     season_episode_ranges: JSON.stringify(policy.seasonEpisodeRanges ?? []),
+    subtitle_preference: JSON.stringify(policy.subtitlePreference ?? { terms: [], require: false }),
   };
 }
 
@@ -223,6 +249,9 @@ export function emptyStoredPolicy(input: { accountId: string; titleKey: string; 
  */
 export function roundTripPolicy(policy: SubscriptionPolicyWrite): SubscriptionPolicyWrite {
   const columns = subscriptionPolicyToColumns(policy);
+  const subtitlePreference = policy.subtitlePreference !== undefined
+    ? parseSubtitlePreference(columns.subtitle_preference)
+    : undefined;
   return {
     mustContain: parseTermList(columns.must_contain, "must_contain"),
     mustNotContain: parseTermList(columns.must_not_contain, "must_not_contain"),
@@ -234,5 +263,6 @@ export function roundTripPolicy(policy: SubscriptionPolicyWrite): SubscriptionPo
       : {}),
     priorityGroups: parsePriorityGroups(columns.priority_groups),
     seasonEpisodeRanges: parseSeasonEpisodeRanges(columns.season_episode_ranges),
+    ...(subtitlePreference ? { subtitlePreference } : {}),
   };
 }

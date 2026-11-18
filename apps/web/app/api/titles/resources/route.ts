@@ -406,6 +406,8 @@ export async function POST(request: NextRequest) {
     limiter: resourceLimiter,
     loadCachedCandidates: async () => [],
     ...(cacheKeySuffix ? { cacheKeySuffix } : {}),
+    // 流式与非流式必须看到同一份列表：不传它，非流式路径就绕过了排毒过滤。
+    filterPreferences,
   });
 
   return handleResourceResult(result, {

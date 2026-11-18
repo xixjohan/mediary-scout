@@ -1,9 +1,15 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { HardDrive, Layers, Sliders, Eye } from "lucide-react";
-import { createPolicyPriorityGroupDraft, mapSavedPolicy, type PolicyDraft, type PreviewOutcome, type SeasonEpisodeRangeDraft } from "./subscription-policy-panel-model";
-import { ruleExcludesEverything } from "./subscription-policy-panel-model";
+import {
+  PRESETS,
+  makePriorityGroup,
+  type PolicyDraft,
+  type PresetKind,
+  type SeasonEpisodeRangeDraft,
+} from "../core/policy-draft";
+import { diagnoseEmptyPreview, type PreviewOutcome, type PreviewProgress } from "../core/policy-preview";
+import { PolicyTemplateTools } from "./policy-template-tools";
 
 export interface ConnectedDriveSummary {
   id: string;
@@ -18,7 +24,7 @@ export interface SubscriptionSeasonItem {
   name?: string;
 }
 
-const CONTAIN_CHIPS = ["2160p", "1080p", "简日内嵌", "简中字幕", "Remux", "HDR"] as const;
+const CONTAIN_CHIPS = ["2160p", "1080p", "简日内嵌", "Remux", "HDR"] as const;
 const EXCLUDE_CHIPS = ["CAM/枪版", "预告片", "国语配音", "先行版"] as const;
 
 export function StorageSelectorSection({
@@ -158,59 +164,33 @@ export function PolicyFilterSection({
   activePreset,
   draft,
   preview,
-  previewLoading,
+  previewProgress,
+  previewError,
   onApplyPreset,
   onToggleChip,
   onDraftChange,
   onMustContainChange,
   onMustNotContainChange,
+  onSaveAsTemplate,
   seasonNumbers,
 }: {
-  activePreset: "4k" | "1080p" | "anime" | "custom";
+  activePreset: PresetKind;
   draft: PolicyDraft;
   preview: PreviewOutcome | null;
-  previewLoading: boolean;
-  onApplyPreset: (preset: "4k" | "1080p" | "anime" | "custom") => void;
+  previewProgress: PreviewProgress | null;
+  previewError: string | null;
+  onApplyPreset: (preset: PresetKind) => void;
   onToggleChip: (field: "mustContain" | "mustNotContain", chip: string) => void;
   onDraftChange: (patch: Partial<PolicyDraft>) => void;
   onMustContainChange: (value: string) => void;
   onMustNotContainChange: (value: string) => void;
+  onSaveAsTemplate: (draft: PolicyDraft) => unknown;
   seasonNumbers?: number[];
 }) {
-  const isExcludedAll = isPreviewExcludesEverything(preview);
-  const [templates, setTemplates] = useState<Array<{ id: string; name: string; policy: unknown }>>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState("");
-  const [templateMessage, setTemplateMessage] = useState("");
-  useEffect(() => {
-    let alive = true;
-    fetch("/api/titles/subscription-policy/templates")
-      .then((response) => response.json())
-      .then((body: unknown) => {
-        if (!alive || typeof body !== "object" || body === null || !Array.isArray((body as Record<string, unknown>)["templates"])) return;
-        setTemplates((body as { templates: Array<{ id: string; name: string; policy: unknown }> }).templates);
-      })
-      .catch(() => { if (alive) setTemplateMessage("模板列表暂时不可用"); });
-    return () => { alive = false; };
-  }, []);
-  const applyTemplate = () => {
-    const resolved = resolveSelectedPolicyTemplate(templates, selectedTemplateId);
-    if (!resolved) {
-      setTemplateMessage("模板内容无法读取");
-      return;
-    }
-    onDraftChange(resolved.policy);
-    setTemplateMessage(`已套用「${resolved.name}」，确认订阅后生效`);
-  };
-  const priorityGroups = draft.priorityGroups ?? [];
-  const updatePriorityGroup = (index: number, patch: Partial<(typeof priorityGroups)[number]>) =>
-    onDraftChange({ priorityGroups: priorityGroups.map((group, i) => i === index ? { ...group, ...patch } : group) });
-  const movePriorityGroup = (index: number, delta: -1 | 1) => {
-    const next = [...priorityGroups];
-    const target = index + delta;
-    if (target < 0 || target >= next.length) return;
-    [next[index], next[target]] = [next[target]!, next[index]!];
-    onDraftChange({ priorityGroups: next });
-  };
+  const diagnosis = preview
+    ? diagnoseEmptyPreview({ outcome: preview, hasPriorityGroups: (draft.priorityGroups ?? []).length > 0 })
+    : null;
+  const isExcludedAll = diagnosis === "rule_excludes_all";
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <label style={{ fontSize: 13, fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
@@ -218,148 +198,48 @@ export function PolicyFilterSection({
         画质与资源偏好：
       </label>
 
-      {/* 预设方案切换 */}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-        <button
-          type="button"
-          className={`filter-chip ${activePreset === "1080p" ? "is-active" : ""}`}
-          onClick={() => onApplyPreset("1080p")}
-          aria-pressed={activePreset === "1080p"}
-          style={{ padding: "3px 8px", fontSize: 12, borderRadius: 6 }}
-        >
-          1080p 极速内嵌 (推荐)
-        </button>
-        <button
-          type="button"
-          className={`filter-chip ${activePreset === "4k" ? "is-active" : ""}`}
-          onClick={() => onApplyPreset("4k")}
-          aria-pressed={activePreset === "4k"}
-          style={{ padding: "3px 8px", fontSize: 12, borderRadius: 6 }}
-        >
-          4K Remux 原盘
-        </button>
-        <button
-          type="button"
-          className={`filter-chip ${activePreset === "anime" ? "is-active" : ""}`}
-          onClick={() => onApplyPreset("anime")}
-          aria-pressed={activePreset === "anime"}
-          style={{ padding: "3px 8px", fontSize: 12, borderRadius: 6 }}
-        >
-          动漫压制标准
-        </button>
-        <button
-          type="button"
-          className={`filter-chip ${activePreset === "custom" ? "is-active" : ""}`}
-          onClick={() => onApplyPreset("custom")}
-          aria-pressed={activePreset === "custom"}
-          style={{ padding: "3px 8px", fontSize: 12, borderRadius: 6 }}
-        >
-          自定义微调
-        </button>
+        {(Object.keys(PRESETS) as PresetKind[]).map((kind) => (
+          <button
+            key={kind}
+            type="button"
+            className={`filter-chip ${activePreset === kind ? "is-active" : ""}`}
+            onClick={() => onApplyPreset(kind)}
+            aria-pressed={activePreset === kind}
+            title={PRESETS[kind].description}
+            style={{ padding: "3px 8px", fontSize: 12, borderRadius: 6 }}
+          >
+            {PRESETS[kind].label}
+          </button>
+        ))}
       </div>
 
-      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <label htmlFor="subscription-policy-template" style={{ fontSize: 12, color: "var(--text-secondary)" }}>规则模板：</label>
-        <select
-          id="subscription-policy-template"
-          value={selectedTemplateId}
-          onChange={(event) => { setSelectedTemplateId(event.target.value); setTemplateMessage(""); }}
-          style={{ minWidth: 180, maxWidth: "100%" }}
-        >
-          <option value="">选择已保存模板</option>
-          {templates.map((template) => <option key={template.id} value={template.id}>{template.name}</option>)}
-        </select>
-        <button type="button" disabled={!selectedTemplateId} onClick={applyTemplate}>应用模板</button>
-        {templateMessage ? <span role="status" style={{ fontSize: 12, color: "var(--text-muted)" }}>{templateMessage}</span> : null}
-      </div>
+      <PolicyTemplateTools draft={draft} onApply={(loaded) => onDraftChange(loaded)} toPolicy={onSaveAsTemplate} />
 
-      {/* 必须包含 */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>必须包含词：</span>
-          <div style={{ display: "flex", gap: 4 }}>
-            {CONTAIN_CHIPS.map((chip) => (
-              <button
-                type="button"
-                key={chip}
-                aria-pressed={draft.mustContain.toLowerCase().includes(chip.toLowerCase())}
-                onClick={() => onToggleChip("mustContain", chip)}
-                style={{
-                  fontSize: 11,
-                  cursor: "pointer",
-                  padding: "1px 5px",
-                  borderRadius: 3,
-                  background: draft.mustContain.includes(chip) ? "rgba(99,102,241,0.25)" : "rgba(255,255,255,0.05)",
-                  color: draft.mustContain.includes(chip) ? "#818cf8" : "var(--text-muted)",
-                  border: 0,
-                  font: "inherit",
-                }}
-              >
-                +{chip}
-              </button>
-            ))}
-          </div>
-        </div>
-        <input
-          type="text"
-          value={draft.mustContain}
-          onChange={(e) => onMustContainChange(e.target.value)}
-          placeholder="例如：2160p, 简中字幕（英文逗号隔开）"
-          style={{
-            width: "100%",
-            padding: "6px 10px",
-            fontSize: 12,
-            borderRadius: 6,
-            border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(0,0,0,0.2)",
-            color: "var(--text-primary)",
-          }}
-        />
-      </div>
+      <ChipTermField
+        label="必须包含词："
+        field="mustContain"
+        value={draft.mustContain}
+        useRegex={draft.useRegex}
+        chips={CONTAIN_CHIPS}
+        placeholder="例如：2160p, 1080p（逗号、顿号、空格均可分隔）"
+        onToggleChip={onToggleChip}
+        onChange={onMustContainChange}
+      />
 
-      {/* 必须排除 */}
-      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>必须排除词：</span>
-          <div style={{ display: "flex", gap: 4 }}>
-            {EXCLUDE_CHIPS.map((chip) => (
-              <button
-                type="button"
-                key={chip}
-                aria-pressed={draft.mustNotContain.toLowerCase().includes(chip.toLowerCase())}
-                onClick={() => onToggleChip("mustNotContain", chip)}
-                style={{
-                  fontSize: 11,
-                  cursor: "pointer",
-                  padding: "1px 5px",
-                  borderRadius: 3,
-                  background: draft.mustNotContain.includes(chip) ? "rgba(244,63,94,0.2)" : "rgba(255,255,255,0.05)",
-                  color: draft.mustNotContain.includes(chip) ? "#fb7185" : "var(--text-muted)",
-                  border: 0,
-                  font: "inherit",
-                }}
-              >
-                +{chip}
-              </button>
-            ))}
-          </div>
-        </div>
-        <input
-          type="text"
-          value={draft.mustNotContain}
-          onChange={(e) => onMustNotContainChange(e.target.value)}
-          placeholder="例如：CAM/枪版, 预告片（英文逗号隔开）"
-          style={{
-            width: "100%",
-            padding: "6px 10px",
-            fontSize: 12,
-            borderRadius: 6,
-            border: "1px solid rgba(255,255,255,0.1)",
-            background: "rgba(0,0,0,0.2)",
-            color: "var(--text-primary)",
-          }}
-        />
-      </div>
+      <SubtitlePreferenceField draft={draft} onDraftChange={onDraftChange} />
+
+      <ChipTermField
+        label="必须排除词："
+        field="mustNotContain"
+        value={draft.mustNotContain}
+        useRegex={draft.useRegex}
+        chips={EXCLUDE_CHIPS}
+        placeholder="例如：CAM/枪版, 预告片"
+        tone="danger"
+        onToggleChip={onToggleChip}
+        onChange={onMustNotContainChange}
+      />
 
       <SeasonEpisodeRangesSection
         seasonNumbers={seasonNumbers ?? []}
@@ -367,110 +247,63 @@ export function PolicyFilterSection({
         onChange={(seasonEpisodeRanges) => onDraftChange({ seasonEpisodeRanges })}
       />
 
-      <details className="subscription-policy-advanced">
-        <summary>集数、搜索词与巡检设置</summary>
-        <div className="subscription-policy-advanced-fields">
-          <label>
-            集数范围
-            <input
-              type="text"
-              value={draft.episodeFilter}
-              onChange={(event) => onDraftChange({ episodeFilter: event.target.value })}
-              placeholder="例如 S01-S03;E01-E10"
-            />
-          </label>
-          <label>
-            自定义搜索词
-            <input
-              type="text"
-              value={draft.customKeywords}
-              onChange={(event) => onDraftChange({ customKeywords: event.target.value })}
-              placeholder="多个词用逗号分隔"
-            />
-          </label>
-          <label>
-            巡检冷却天数
-            <input
-              type="number"
-              min={0}
-              max={365}
-              value={draft.cooldownDays}
-              onChange={(event) => onDraftChange({ cooldownDays: Math.min(365, Math.max(0, Number(event.target.value) || 0)) })}
-            />
-          </label>
-          <label className="subscription-policy-regex">
-            <input
-              type="checkbox"
-              checked={draft.useRegex}
-              onChange={(event) => onDraftChange({ useRegex: event.target.checked })}
-            />
-            使用正则匹配包含词和排除词
-          </label>
-        </div>
-        <p className="subscription-policy-help">冷却天数影响自动巡检。搜索词用于扩展资源查询。</p>
-      </details>
-
-      <section aria-label="优先级组" className="sub-policy-priority-groups">
-        <div className="sub-policy-priority-heading">
-          <strong>优先级组</strong>
-          <span>从上到下匹配；空白组会跳过，配置优先级组后，未命中候选会被过滤。</span>
-        </div>
-        {priorityGroups.map((group, index) => (
-          <fieldset key={group.id} className="sub-policy-priority-group">
-            <legend>第 {index + 1} 组</legend>
-            <label>组名<input value={group.name} maxLength={40} onChange={(event) => updatePriorityGroup(index, { name: event.target.value })} /></label>
-            <label>必须包含<input value={group.mustContain} placeholder="REMUX, 2160p" onChange={(event) => updatePriorityGroup(index, { mustContain: event.target.value })} /></label>
-            <label>组内排除<input value={group.mustNotContain} placeholder="杜比视界" onChange={(event) => updatePriorityGroup(index, { mustNotContain: event.target.value })} /></label>
-            <div className="sub-policy-priority-actions">
-              <button type="button" disabled={index === 0} onClick={() => movePriorityGroup(index, -1)}>上移</button>
-              <button type="button" disabled={index === priorityGroups.length - 1} onClick={() => movePriorityGroup(index, 1)}>下移</button>
-              <button type="button" onClick={() => onDraftChange({ priorityGroups: priorityGroups.filter((_, i) => i !== index) })}>删除</button>
-            </div>
-          </fieldset>
-        ))}
-        <button type="button" disabled={priorityGroups.length >= 8} onClick={() => onDraftChange({ priorityGroups: [...priorityGroups, createPolicyPriorityGroupDraft()] })}>添加优先级组</button>
-      </section>
-
-      {/* 实时规则预览 */}
-      {previewLoading || preview ? (
-        <div
-          style={{
-            padding: "6px 10px",
-            borderRadius: 6,
-            fontSize: 12,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            background: isExcludedAll ? "rgba(244,63,94,0.1)" : "rgba(99,102,241,0.08)",
-            border: "1px solid",
-            borderColor: isExcludedAll ? "rgba(244,63,94,0.2)" : "rgba(99,102,241,0.15)",
-          }}
-        >
-          <Eye size={14} aria-hidden />
-          {previewLoading ? (
-            <span>正在检验规则过滤效果...</span>
-          ) : preview ? (
-            <span>
-              预计命中 <strong>{preview.matchedCount}</strong> 个资源（共检索 {preview.total} 个，已过滤 {preview.excludedCount} 个）
-            </span>
-          ) : null}
-        </div>
-      ) : null}
+      <AdvancedPolicyFields draft={draft} onDraftChange={onDraftChange} />
+      <PriorityGroupsSection draft={draft} onDraftChange={onDraftChange} />
+      <PreviewStatusCard
+        preview={preview}
+        previewProgress={previewProgress}
+        previewError={previewError}
+        diagnosis={diagnosis}
+        isExcludedAll={isExcludedAll}
+      />
     </div>
   );
 }
 
-function resolveSelectedPolicyTemplate(
-  templates: Array<{ id: string; name: string; policy: unknown }>,
-  selectedId: string,
-): { name: string; policy: PolicyDraft } | null {
-  const template = templates.find((item) => item.id === selectedId);
-  const policy = template ? mapSavedPolicy(template.policy) : null;
-  return template && policy ? { name: template.name, policy } : null;
+function EmptyDiagnosisHint({ diagnosis }: { diagnosis: NonNullable<ReturnType<typeof diagnoseEmptyPreview>> }) {
+  const copy: Record<typeof diagnosis, string> = {
+    source_error: "检索源响应异常，这次「0 命中」不代表没有资源；请稍后重试或让站长检查检索源。",
+    unreleased: "该作品尚未上线数字版，公开源通常还没有可转存的高清资源。",
+    no_candidates: "本次检索没有拿到任何候选，可以精简搜索词后重试。",
+    priority_unmatched: "所有候选都没命中优先级组，被优先级组整体过滤了。",
+    wrong_title: "搜到的大多是别的作品，不是这部——换个更完整的片名、加年份或改用原名重搜。",
+    rule_excludes_all: "这条规则排除了全部候选——检查一下是不是写得过严。",
+  };
+  return <span style={{ color: "var(--text-muted)" }}>{copy[diagnosis]}</span>;
 }
 
-function isPreviewExcludesEverything(preview: PreviewOutcome | null): boolean {
-  return preview !== null && ruleExcludesEverything(preview);
+function chipStyle(active: boolean, activeColor: string, activeBg = "rgba(99,102,241,0.25)"): React.CSSProperties {
+  return {
+    fontSize: 11,
+    cursor: "pointer",
+    padding: "1px 5px",
+    borderRadius: 3,
+    background: active ? activeBg : "rgba(255,255,255,0.05)",
+    color: active ? activeColor : "var(--text-muted)",
+    border: 0,
+    font: "inherit",
+  };
+}
+
+function splitChipState(value: string, chip: string, useRegex: boolean): boolean {
+  const terms = useRegex
+    ? value.split(/\r?\n/).map((term) => term.trim())
+    : value.split(/[,，、;；\s]+/).map((term) => term.trim());
+  return terms.some((term) => term.toLowerCase() === chip.toLowerCase());
+}
+
+const inputStyle: React.CSSProperties = {
+  width: "100%",
+  padding: "6px 10px",
+  fontSize: 12,
+  borderRadius: 6,
+  border: "1px solid rgba(255,255,255,0.1)",
+  background: "rgba(0,0,0,0.2)",
+  color: "var(--text-primary)",
+};
+
+function createGroup() {
+  return makePriorityGroup();
 }
 
 export function SeasonEpisodeRangesSection({
@@ -533,5 +366,249 @@ export function SeasonEpisodeRangesSection({
         );
       })}
     </fieldset>
+  );
+}
+
+/**
+ * 一组「必须包含 / 必须排除」词输入 + 快捷药丸。
+ *
+ * 两侧共用同一个组件是因为它们的行为必须一致：药丸的选中态与输入框里的词
+ * 用同一套切分规则（`splitChipState`），否则全角逗号输入会让药丸显示为未选中。
+ */
+function ChipTermField({
+  label,
+  field,
+  value,
+  useRegex,
+  chips,
+  placeholder,
+  tone = "accent",
+  onToggleChip,
+  onChange,
+}: {
+  label: string;
+  field: "mustContain" | "mustNotContain";
+  value: string;
+  useRegex: boolean;
+  chips: readonly string[];
+  placeholder: string;
+  tone?: "accent" | "danger";
+  onToggleChip: (field: "mustContain" | "mustNotContain", chip: string) => void;
+  onChange: (value: string) => void;
+}) {
+  const activeColor = tone === "danger" ? "#fb7185" : "#818cf8";
+  const activeBg = tone === "danger" ? "rgba(244,63,94,0.2)" : undefined;
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 4 }}>
+        <span style={{ fontSize: 12, color: "var(--text-secondary)" }}>{label}</span>
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+          {chips.map((chip) => {
+            const active = splitChipState(value, chip, useRegex);
+            return (
+              <button
+                key={chip}
+                type="button"
+                aria-pressed={active}
+                onClick={() => onToggleChip(field, chip)}
+                style={chipStyle(active, activeColor, activeBg)}
+              >
+                +{chip}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <input type="text" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} style={inputStyle} />
+    </div>
+  );
+}
+
+/** 字幕偏好：OR 词表 + 「必须带中字」开关（默认软偏好，不排斥无字幕版本）。 */
+function SubtitlePreferenceField({
+  draft,
+  onDraftChange,
+}: {
+  draft: PolicyDraft;
+  onDraftChange: (patch: Partial<PolicyDraft>) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, flexWrap: "wrap" }}>
+        <span style={{ color: "var(--text-secondary)" }}>中文字幕：</span>
+        <label style={{ display: "flex", alignItems: "center", gap: 4, color: "var(--text-muted)" }}>
+          <input type="checkbox" checked={draft.subtitleRequire} onChange={(event) => onDraftChange({ subtitleRequire: event.target.checked })} />
+          必须带中字
+        </label>
+        <span style={{ color: "var(--text-muted)" }}>
+          {draft.subtitleRequire ? "没有字幕标记的候选会被拒绝" : "带字幕的候选优先，但不排除无字幕版本"}
+        </span>
+      </div>
+      <input
+        type="text"
+        value={draft.subtitleTerms}
+        onChange={(event) => onDraftChange({ subtitleTerms: event.target.value })}
+        placeholder="简中, CHS, 简繁, 双语, 中字, 内嵌"
+        style={inputStyle}
+      />
+    </div>
+  );
+}
+
+/** 集数、搜索词、冷却与正则开关（默认折叠）。 */
+function AdvancedPolicyFields({
+  draft,
+  onDraftChange,
+}: {
+  draft: PolicyDraft;
+  onDraftChange: (patch: Partial<PolicyDraft>) => void;
+}) {
+  return (
+    <details className="subscription-policy-advanced">
+      <summary>集数、搜索词与巡检设置</summary>
+      <div className="subscription-policy-advanced-fields">
+        <label>
+          集数范围
+          <input
+            type="text"
+            value={draft.episodeFilter}
+            onChange={(event) => onDraftChange({ episodeFilter: event.target.value })}
+            placeholder="例如 S01-S03;E01-E10"
+          />
+        </label>
+        <label>
+          自定义搜索词
+          <input
+            type="text"
+            value={draft.customKeywords ?? ""}
+            onChange={(event) => onDraftChange({ customKeywords: event.target.value })}
+            placeholder="多个词用逗号分隔"
+          />
+        </label>
+        <label>
+          巡检冷却天数
+          <input
+            type="number"
+            min={0}
+            max={365}
+            value={draft.cooldownDays}
+            onChange={(event) => onDraftChange({ cooldownDays: Math.min(365, Math.max(0, Number(event.target.value) || 0)) })}
+          />
+        </label>
+        <label className="subscription-policy-regex">
+          <input
+            type="checkbox"
+            checked={draft.useRegex}
+            onChange={(event) => onDraftChange({ useRegex: event.target.checked })}
+          />
+          使用正则匹配包含词和排除词（每行一个表达式）
+        </label>
+      </div>
+      <p className="subscription-policy-help">冷却天数 = 命中一次后 N 天内不再获取新版本（不是失败重试间隔）。</p>
+    </details>
+  );
+}
+
+/** 有序优先级组：从上到下首个命中的组生效；全空组会被跳过。 */
+function PriorityGroupsSection({
+  draft,
+  onDraftChange,
+}: {
+  draft: PolicyDraft;
+  onDraftChange: (patch: Partial<PolicyDraft>) => void;
+}) {
+  const priorityGroups = draft.priorityGroups ?? [];
+  const updateGroup = (index: number, patch: Partial<(typeof priorityGroups)[number]>) =>
+    onDraftChange({ priorityGroups: priorityGroups.map((group, i) => (i === index ? { ...group, ...patch } : group)) });
+  const move = (index: number, delta: -1 | 1) => {
+    const next = [...priorityGroups];
+    const target = index + delta;
+    if (target < 0 || target >= next.length) return;
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    onDraftChange({ priorityGroups: next });
+  };
+  return (
+    <section aria-label="优先级组" className="sub-policy-priority-groups">
+      <div className="sub-policy-priority-heading">
+        <strong>优先级组</strong>
+        <span>从上到下匹配；空白组会跳过，配置优先级组后，未命中任何组的候选会被过滤。</span>
+      </div>
+      {priorityGroups.map((group, index) => {
+        const empty = group.mustContain.trim() === "" && group.mustNotContain.trim() === "";
+        return (
+          <fieldset key={group.id} className="sub-policy-priority-group">
+            <legend>第 {index + 1} 组</legend>
+            <label>组名<input value={group.name} maxLength={40} onChange={(event) => updateGroup(index, { name: event.target.value })} /></label>
+            <label>必须包含<input value={group.mustContain} placeholder="REMUX, 2160p" onChange={(event) => updateGroup(index, { mustContain: event.target.value })} /></label>
+            <label>组内排除<input value={group.mustNotContain} placeholder="杜比视界" onChange={(event) => updateGroup(index, { mustNotContain: event.target.value })} /></label>
+            <div className="sub-policy-priority-actions">
+              <button type="button" disabled={index === 0} onClick={() => move(index, -1)}>上移</button>
+              <button type="button" disabled={index === priorityGroups.length - 1} onClick={() => move(index, 1)}>下移</button>
+              <button type="button" onClick={() => onDraftChange({ priorityGroups: priorityGroups.filter((_, i) => i !== index) })}>删除</button>
+            </div>
+            {empty ? <p style={{ fontSize: 11, color: "var(--text-muted)" }}>空白组会被跳过，不参与匹配</p> : null}
+          </fieldset>
+        );
+      })}
+      <button
+        type="button"
+        disabled={priorityGroups.length >= 8}
+        onClick={() => onDraftChange({ priorityGroups: [...priorityGroups, makePriorityGroup()] })}
+      >
+        添加优先级组
+      </button>
+    </section>
+  );
+}
+
+/** 进度 / 结果 / 0 命中诊断（诊断顺序由 core/policy-preview 决定）。 */
+function PreviewStatusCard({
+  preview,
+  previewProgress,
+  previewError,
+  diagnosis,
+  isExcludedAll,
+}: {
+  preview: PreviewOutcome | null;
+  previewProgress: PreviewProgress | null;
+  previewError: string | null;
+  diagnosis: ReturnType<typeof diagnoseEmptyPreview>;
+  isExcludedAll: boolean;
+}) {
+  if (previewProgress === null && preview === null && previewError === null) return null;
+  return (
+    <div
+      style={{
+        padding: "6px 10px",
+        borderRadius: 6,
+        fontSize: 12,
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+        background: isExcludedAll ? "rgba(244,63,94,0.1)" : "rgba(99,102,241,0.08)",
+        border: "1px solid",
+        borderColor: isExcludedAll ? "rgba(244,63,94,0.2)" : "rgba(99,102,241,0.15)",
+      }}
+      role="status"
+      aria-live="polite"
+    >
+      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Eye size={14} aria-hidden />
+        {previewProgress !== null ? (
+          <span>
+            正在检索 {previewProgress.done} / {previewProgress.total || "?"} 个关键词
+            {previewProgress.currentKeyword ? `（当前：${previewProgress.currentKeyword}）` : ""}
+          </span>
+        ) : preview !== null && previewError === null ? (
+          <span>
+            预计命中 <strong>{preview.matchedCount}</strong> 个资源（共检索 {preview.total} 个，已过滤 {preview.excludedCount} 个
+            {preview.matchedWithSubtitleCount > 0 ? `，其中 ${preview.matchedWithSubtitleCount} 个带中文字幕` : ""}
+            {preview.cached ? "，缓存结果" : ""}）
+          </span>
+        ) : null}
+      </span>
+      {previewError !== null ? <span style={{ color: "var(--text-muted)" }}>{previewError}</span> : null}
+      {diagnosis !== null ? <EmptyDiagnosisHint diagnosis={diagnosis} /> : null}
+    </div>
   );
 }

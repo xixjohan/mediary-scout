@@ -7,6 +7,7 @@ import {
   ROUTE_PERMISSION_TABLE,
   WIRED_ROUTE_COUNT,
 } from "../../platform/next-context/route-permission-table";
+import { SELF_GUARDED_API_PREFIXES } from "../../platform/next-context/self-guarded-routes";
 
 /**
  * S5.4 路由鉴权清单门禁（静态层）。
@@ -130,6 +131,22 @@ const SELF_GUARDED_ROUTES = new Set([
   "agent/patrol",
 ]);
 
+/**
+ * 站长专属路由：鉴权机制是 `requireOwner`（不是权限点）。
+ *
+ * 为什么单独归类而不是塞进权限清单：`requirePermission` 问的是「角色有没有这把
+ * 钥匙」，而站长专属语义是「你是不是 is_owner」——成员本来就有
+ * `storage:transfer`，用权限点根本表达不出「只允许站长」。所以这三条端点必须
+ * 显式列出，并由下面的用例断言源码里**真的**调用了 requireOwner（AST 字面量，
+ * 注释与字符串不算）。
+ */
+const OWNER_ROUTES = new Set([
+  "owner/ingest/search",
+  "owner/ingest/submit",
+  "owner/ingest/status",
+  "owner/ingest/inspect",
+]);
+
 const MCP_ROUTES = new Set(["mcp"]);
 const STRM_PLAY_ROUTES = new Set(["strm/play/[taskId]/[fileId]"]);
 
@@ -154,12 +171,17 @@ const routes = routeFiles().map((full) => ({
 
 describe("S5.4 /api 路由鉴权清单", () => {
   it("枚举到的路由数量与分类稳定（新增路由必须显式归类）", () => {
-    expect(routes.length).toBe(124);
+    expect(routes.length).toBe(128);
     const open = routes.filter((r) => OPEN_ROUTES.has(r.path));
     const selfGuarded = routes.filter((r) => SELF_GUARDED_ROUTES.has(r.path));
     const mcpGuarded = routes.filter((r) => MCP_ROUTES.has(r.path));
     const guarded = routes.filter(
-      (r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path) && !STRM_PLAY_ROUTES.has(r.path),
+      (r) =>
+        !OPEN_ROUTES.has(r.path) &&
+        !SELF_GUARDED_ROUTES.has(r.path) &&
+        !OWNER_ROUTES.has(r.path) &&
+        !MCP_ROUTES.has(r.path) &&
+        !STRM_PLAY_ROUTES.has(r.path),
     );
     expect(open.length).toBe(OPEN_ROUTES.size);
     expect(selfGuarded.length).toBe(SELF_GUARDED_ROUTES.size);
@@ -173,7 +195,14 @@ describe("S5.4 /api 路由鉴权清单", () => {
     // requirePermission 内部先走 resolveSecurityContext（未认证即 401），因此它同样
     // 是一条登录链——接上细粒度权限的端点不再需要单独调 requireApiAccount。
     const missing = routes
-      .filter((r) => !OPEN_ROUTES.has(r.path) && !SELF_GUARDED_ROUTES.has(r.path) && !MCP_ROUTES.has(r.path) && !STRM_PLAY_ROUTES.has(r.path))
+      .filter(
+        (r) =>
+          !OPEN_ROUTES.has(r.path) &&
+          !SELF_GUARDED_ROUTES.has(r.path) &&
+          !OWNER_ROUTES.has(r.path) &&
+          !MCP_ROUTES.has(r.path) &&
+          !STRM_PLAY_ROUTES.has(r.path),
+      )
       .filter((r) => !usesImportedFunction(r.source, "requireApiAccount") && !usesImportedFunction(r.source, "requirePermission"))
       .map((r) => r.path);
     expect(missing).toEqual([]);
@@ -202,6 +231,43 @@ describe("S5.4 /api 路由鉴权清单", () => {
     ];
     for (const [path, fn] of mechanisms) {
       expect(callsFunction(byPath.get(path) ?? "", fn), `${path} 必须真的调用 ${fn}`).toBe(true);
+    }
+  });
+
+  /**
+   * 同类门禁：**「清单说它自守」必须与 proxy 的放行清单一致**。
+   *
+   * 缺陷原型（2026-11-17 实测）：`strm/play` 在本文件里被归为「自鉴权」类
+   * （`STRM_PLAY_ROUTES`），但 `proxy.ts` 的放行前缀里没有它。多用户模式下
+   * `/api/strm/play/...` 被 307 到 /login，Emby/Infuse/Plex 读 .strm 后取流
+   * 全军覆没——签名再正确也到不了路由。两套判定各说各话，正是这类缺陷的形态。
+   *
+   * 反向也要成立：proxy 放行的每个 /api 前缀都必须是「真的自己会鉴权」的端点，
+   * 否则就是匿名放行。
+   */
+  it("proxy 的自守放行清单覆盖所有自鉴权端点（STRM 播放 / MCP）", () => {
+    const violations: string[] = [];
+    for (const path of [...STRM_PLAY_ROUTES, ...MCP_ROUTES]) {
+      // 用路径前缀语义判定（/api/strm/play/ → strm/play/ 覆盖 strm/play/[taskId]/…）
+      const coveredStrict = SELF_GUARDED_API_PREFIXES.some((prefix) => {
+        const rel = prefix.replace(/^\/api\//, "").replace(/^\//, "");
+        const normalized = rel.endsWith("/") ? rel.slice(0, -1) : rel;
+        return path === normalized || path.startsWith(normalized + "/");
+      });
+      if (!coveredStrict) violations.push(`${path}: 前缀匹配不严格（${SELF_GUARDED_API_PREFIXES.join(", ")}）`);
+    }
+    expect(violations).toEqual([]);
+  });
+
+  it("owner/* 路由全部用 requireOwner（站长专属，不是权限点）", () => {
+    for (const path of OWNER_ROUTES) {
+      const source = routes.find((r) => r.path === path)?.source ?? "";
+      expect(usesImportedFunction(source, "requireOwner"), `${path} 必须 import 并调用 requireOwner`).toBe(true);
+      // 反向：站长专属端点**不得**用权限点冒充（成员有 storage:transfer）。
+      expect(
+        usesImportedFunction(source, "requirePermission"),
+        `${path} 不得用 requirePermission 替代站长判定`,
+      ).toBe(false);
     }
   });
 
@@ -273,6 +339,7 @@ describe("细粒度权限清单（权限目录接线门禁）", () => {
     const exempt = new Set([
       ...OPEN_ROUTES,
       ...SELF_GUARDED_ROUTES,
+      ...OWNER_ROUTES,
       ...MCP_ROUTES,
       ...STRM_PLAY_ROUTES,
       ...IDENTITY_ROUTES,

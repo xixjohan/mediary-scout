@@ -56,9 +56,9 @@ export function ResourcePaginationBar({
 
   return (
     <div className="resource-pagination-container">
-      {/* 计数指示 */}
+      {/* 计数指示：startIndex/endIndex 是 0 基偏移，展示给用户必须是「第几项」 */}
       <div className="resource-pagination-info">
-        显示第 <strong>{startIndex}</strong> - <strong>{endIndex}</strong> 项，共 <strong>{totalItems}</strong> 项
+        显示第 <strong>{startIndex + 1}</strong> - <strong>{endIndex}</strong> 项，共 <strong>{totalItems}</strong> 项
       </div>
 
       {/* 控制器 */}

@@ -8,6 +8,7 @@
  *   · /api/agent/*                                      —— 独立 Bearer token（agentApiGuard）
  *   · /api/mcp                                          —— MCP 独立安全凭据（resolveSecurityContext）
  *   · /api/strm/play/[taskId]/[fileId]                  —— 播放令牌（verifyStrmPlayToken）
+ *   · /api/owner/*                                      —— 站长专属（requireOwner，is_owner 位）
  * 其余 apps/web/app/api 下的 route.ts（含顶层 /api/route.ts）必须引用
  * requireApiAccount 登录链；
  * agent/* 必须引用 agentApiGuard。新增路由忘记挂鉴权 → lint 直接红。
@@ -24,6 +25,8 @@ const AGENT_PATTERN = /\/app\/api\/agent\/[^/]+\/route\.ts$/;
 const MCP_PATTERN = /\/app\/api\/mcp\/route\.ts$/;
 const STRM_PLAY_PATTERN = /\/app\/api\/strm\/play\/\[taskId\]\/\[fileId\]\/route\.ts$/;
 const API_ROUTE_PATTERN = /\/app\/api\/(?:.+?\/)?route\.ts$/;
+/** 站长专属端点（is_owner 位判定，不是权限点）。 */
+const OWNER_PATTERN = /\/app\/api\/owner\/[^/]+(?:\/[^/]+)?\/route\.ts$/;
 
 /** @type {import("eslint").Rule.RuleModule} */
 const apiAuthRequired = {
@@ -43,6 +46,8 @@ const apiAuthRequired = {
         "S5.4 违规：{{path}} 是 MCP /api 路由，必须调用 resolveSecurityContext(request) 协议鉴权。",
       missingStrmGuard:
         "S5.4 违规：{{path}} 是 STRM 播放路由，必须调用 verifyStrmPlayToken(...) 进行令牌鉴权。",
+      missingOwnerGuard:
+        "S5.4 违规：{{path}} 是站长专属 /api 路由，必须调用 requireOwner(request)（is_owner 位，不是权限点）。",
     },
   },
   create(context) {
@@ -56,6 +61,7 @@ const apiAuthRequired = {
     let callsAgentGuard = false;
     let callsMcpGuard = false;
     let callsStrmGuard = false;
+    let callsOwnerGuard = false;
     return {
       CallExpression(node) {
         const callee = node.callee;
@@ -68,6 +74,9 @@ const apiAuthRequired = {
         if (callee.name === "agentApiGuard") callsAgentGuard = true;
         if (callee.name === "resolveSecurityContext") callsMcpGuard = true;
         if (callee.name === "verifyStrmPlayToken") callsStrmGuard = true;
+        // 站长专属端点：判定是 is_owner 位，不是权限点（成员本来就有
+        // storage:transfer，用权限点表达不出「只允许站长」）。
+        if (callee.name === "requireOwner") callsOwnerGuard = true;
       },
       "Program:exit"(node) {
         if (OPEN_PATTERN.test(filename)) return;
@@ -86,6 +95,17 @@ const apiAuthRequired = {
         if (STRM_PLAY_PATTERN.test(filename)) {
           if (!callsStrmGuard) {
             context.report({ node, messageId: "missingStrmGuard", data: { path: filename } });
+          }
+          return;
+        }
+        // owner 路由两条放行通道：
+        //  · 调了 requireOwner → 站长专属判定（is_owner 位）；
+        //  · 只调 requirePermission → 那条规则对应的是普通权限点端点。
+        //  同时要求：owner 路由一旦漏掉 requireOwner，即便有 requirePermission 也不放行
+        // ——那正是「用权限点冒充站长」的缺陷形态。
+        if (OWNER_PATTERN.test(filename)) {
+          if (!callsOwnerGuard) {
+            context.report({ node, messageId: "missingOwnerGuard", data: { path: filename } });
           }
           return;
         }

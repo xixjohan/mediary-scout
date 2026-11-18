@@ -1,56 +1,69 @@
 import { connection, NextResponse, type NextRequest } from "next/server";
 import {
   buildTitleSearchKeywords,
+  parseEpisodeFilter,
   previewPolicy,
+  resolveTitleResources,
   type MediaTitle,
+  titleIdentityFrom,
   type PolicyResource,
   type SubscriptionPolicy,
 } from "@media-track/workflow";
 import { requirePermission } from "../../../../../lib/auth-chain";
-import { getWorkerResourceProvider, getWorkflowRepository, movieTargetFromTmdbId } from "../../../../../lib/workflow-runtime";
+import {
+  getAccountScopedSettings,
+  getAcquisitionFilterPreferences,
+  getWorkerResourceProvider,
+  getWorkflowRepository,
+  movieTargetFromTmdbId,
+} from "../../../../../lib/workflow-runtime";
 import { seriesTargetFor } from "../../../../../lib/title-hub";
-import { resourceLimiter } from "../../resources/cache";
-import { parseSubscriptionPriorityGroups } from "../../../../../lib/subscription-policy-validation";
+import { parseSeasonEpisodeRangesBody } from "../../../../../lib/subscription-policy-season-ranges";
+import { parseSubtitlePreference, parseSubscriptionPriorityGroups } from "../../../../../lib/subscription-policy-validation";
+import { resourceCache, resourceLimiter } from "../../resources/cache";
+import { resolvePreviewDriveProvider } from "./drive-provider";
 
 /**
- * POST /api/titles/subscription-policy/preview — 规则预览 (batch 5, plan §4.1).
+ * POST /api/titles/subscription-policy/preview — 规则预览 (batch 5, plan §4.1)。
  *
- * The plan asks for exactly this, and calls it "low cost, high value": before saving a
- * rule, run it against the CURRENT search results and tell the user "this rule hits 3,
- * excludes 7". A rule whose effect is invisible until the next patrol is a rule the user
- * cannot tune.
+ * 不变的核心承诺：预览与巡检跑**同一个** `matchPolicy`，所以「命中 N 个」是承诺
+ * 而不是估算。
  *
- * ## The one invariant that makes the preview honest
+ * 这次改造解决的是另外三件事，全部复用资源搜索已有的实现：
  *
- * The preview calls the SAME `matchPolicy` the patrol's candidate filter calls (see
- * acquisition-v2/real-provider-adapter.ts). Not a reimplementation, not an approximation
- * — the same function on the same names. That is why the numbers are a promise rather
- * than an estimate, and why the pure test asserts `preview.matchedCount ===
- * resources.filter(matchPolicy).length` instead of a hard-coded number.
+ *  1. **不再串行逐关键词搜索**。以前这里是手写 `for … await provider.search`，
+ *     而资源面板走 `resolveTitleResources` 的 `Promise.all` —— 同一检索在两个入口
+ *     差一个数量级。现在两边共用同一条取数路径（并发 + 去重 + 排毒）。
+ *  2. **不再绕过缓存**。预览此前只借限流器、不读 30 分钟 TTL 缓存，于是刚在详情页
+ *     搜过的片，预览还要重付一次全量搜索。现在与资源路由同一语义：缓存命中直接
+ *     复用，且**不扣冷却**。
+ *  3. **预览的承诺补齐**。`seasonEpisodeRanges` / `customKeywords` / `subtitlePreference`
+ *     此前根本没被解析，预览对它们的承诺是空的；现在它们进入同一个匹配器。
  *
- * ## Why this searches live instead of reading stored results
- *
- * A preview over stale results is a preview of the past. So it searches now, reusing the
- * resources route's cache + cooldown (the same singletons, so a preview right after a
- * search costs nothing) and reporting how many keywords it ran over: a preview over 1
- * keyword is a weaker statement than one over 5, and the user is entitled to know which
- * they got.
- *
- * What it does NOT do: it saves nothing. A preview is a read; saving is
- * `PUT /api/titles/subscription-policy`. Keeping them separate is what makes "preview"
- * safe to call while the user is still typing.
+ * `?stream=1` 时按 NDJSON 逐关键词推进度；无 stream 时仍一次性返回 JSON。
  */
 
 const NO_STORE = { "Cache-Control": "no-store" } as const;
+
+/** 一次预览的硬上限：再慢也不让请求挂在那里。 */
+const PREVIEW_TIMEOUT_MS = 45_000;
 
 type PreviewRequest = {
   tmdbId: number;
   seasonNumbers: number[];
   mediaType: "movie" | "tv" | "anime" | undefined;
   policy: SubscriptionPolicy;
+  refresh: boolean;
 };
 
 type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+type PreviewRunOutcome =
+  | { kind: "ok"; cached: boolean; sourceHealth?: unknown; preview: ReturnType<typeof previewPolicy> }
+  | { kind: "throttled"; retryAfterMs: number }
+  | { kind: "error"; message: string };
+
+type ProgressEvent = { done: number; total: number; currentKeyword: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -106,6 +119,30 @@ function previewKeywords(title: MediaTitle, request: PreviewRequest): string[] {
   return [...new Set(options.map((entry) => entry.keyword))];
 }
 
+/**
+ * 标题里能读出的集号。
+ *
+ * 归档时 `PolicyResource.episodeCode` 由适配器传入；预览只有标题，所以这里按同一
+ * 形状解析一次，让 `seasonEpisodeRanges` 在预览与执行中得到同一个答案。
+ */
+/** 目标作品 → 身份闸门输入（片名 / 原名 / 别名 / 年份 / tmdb id）。 */
+export function identityOf(title: MediaTitle) {
+  return titleIdentityFrom({
+    tmdbId: title.tmdbId,
+    year: title.year,
+    title: title.title,
+    originalTitle: title.originalTitle,
+    aliases: title.aliases,
+  });
+}
+
+export function policyResourceFromTitle(name: string): PolicyResource {
+  const match = /[Ss](\d{1,2})[Ee](\d{1,4})/.exec(name);
+  return match?.[1] && match[2]
+    ? { name, episodeCode: `S${match[1].padStart(2, "0")}E${match[2].padStart(2, "0")}` }
+    : { name };
+}
+
 /** Read the body without throwing — a non-JSON body is a 400, not a 500. */
 async function readJson(request: NextRequest): Promise<unknown> {
   try {
@@ -116,9 +153,8 @@ async function readJson(request: NextRequest): Promise<unknown> {
 }
 
 /**
- * Validate the whole body at once. Split out of POST for the complexity budget, and
- * because "which field was wrong" is one question the caller should not have to
- * re-derive from three separate checks.
+ * Validate the whole body at once: "which field was wrong" is one question the caller
+ * should not have to re-derive from separate checks.
  */
 export function parsePreviewBody(value: unknown):
   | ({ ok: true } & PreviewRequest)
@@ -137,13 +173,14 @@ export function parsePreviewBody(value: unknown):
   if (!seasons.ok) return seasons;
   const policy = parsePreviewPolicy(body["policy"]);
   if (!policy.ok) return { ok: false, error: policy.error };
-  const request: PreviewRequest = {
+  return {
+    ok: true,
     tmdbId,
     seasonNumbers: seasons.value,
     mediaType: mediaType.value,
     policy: policy.policy,
+    refresh: body["refresh"] === true,
   };
-  return { ok: true, ...request };
 }
 
 /** The policy fields a browser may send. Anything else is a 400, not a guess. */
@@ -152,7 +189,56 @@ export function parsePreviewPolicy(value: unknown): { ok: true; policy: Subscrip
     return { ok: false, error: "policy 缺失或类型不对" };
   }
   const raw = value as Record<string, unknown>;
-  const terms = (key: string): string[] => {
+  const episode = parsePreviewEpisodeFilter(raw["episodeFilter"]);
+  if (!episode.ok) return episode;
+  const cooldown = parsePreviewCooldown(raw["cooldownDays"]);
+  if (!cooldown.ok) return cooldown;
+  const groupsResult = parseSubscriptionPriorityGroups(raw["priorityGroups"]);
+  if (!groupsResult.ok) return groupsResult;
+  const rangesResult = parseSeasonEpisodeRangesBody(raw["seasonEpisodeRanges"]);
+  if (!rangesResult.ok) return rangesResult;
+  const subtitleResult = parseSubtitlePreference(raw["subtitlePreference"]);
+  if (!subtitleResult.ok) return subtitleResult;
+  const termLists = parsePreviewTermLists(raw);
+  if (!termLists.ok) return termLists;
+  return {
+    ok: true,
+    policy: {
+      mustContain: termLists.mustContain,
+      mustNotContain: termLists.mustNotContain,
+      customKeywords: termLists.customKeywords,
+      episodeFilter: episode.value,
+      useRegex: raw["useRegex"] === true,
+      cooldownDays: cooldown.value,
+      priorityGroups: groupsResult.priorityGroups,
+      seasonEpisodeRanges: rangesResult.ranges,
+      ...(subtitleResult.subtitlePreference ? { subtitlePreference: subtitleResult.subtitlePreference } : {}),
+    },
+  };
+}
+
+/** 看不懂的 filter 会排除一切，所以预览也拒绝它（与保存路径同一条规则）。 */
+function parsePreviewEpisodeFilter(value: unknown): { ok: true; value: string } | { ok: false; error: string } {
+  if (value !== undefined && typeof value !== "string") return { ok: false, error: "episodeFilter 必须是字符串" };
+  const filter = (value as string | undefined) ?? "";
+  if (parseEpisodeFilter(filter) === null) {
+    return { ok: false, error: "episodeFilter 看不懂：形如 S01-S03、E01-E10、S02E05，用分号隔开" };
+  }
+  return { ok: true, value: filter };
+}
+
+function parsePreviewCooldown(value: unknown): { ok: true; value: number } | { ok: false; error: string } {
+  if (value === undefined) return { ok: true, value: 0 };
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return { ok: false, error: "cooldownDays 必须是非负整数" };
+  }
+  return { ok: true, value };
+}
+
+function parsePreviewTermLists(raw: Record<string, unknown>):
+  | { ok: true; mustContain: string[]; mustNotContain: string[]; customKeywords: string[] }
+  | { ok: false; error: string } {
+  const read = (key: string): string[] => {
     const list = raw[key];
     if (list === undefined || list === null) return [];
     if (!Array.isArray(list)) throw new Error(`${key} 必须是数组`);
@@ -161,32 +247,8 @@ export function parsePreviewPolicy(value: unknown): { ok: true; policy: Subscrip
     }
     return list as string[];
   };
-  const episodeFilter = raw["episodeFilter"];
-  if (episodeFilter !== undefined && typeof episodeFilter !== "string") {
-    return { ok: false, error: "episodeFilter 必须是字符串" };
-  }
-  const cooldownDays = raw["cooldownDays"];
-  if (
-    cooldownDays !== undefined &&
-    (typeof cooldownDays !== "number" || !Number.isInteger(cooldownDays) || cooldownDays < 0)
-  ) {
-    return { ok: false, error: "cooldownDays 必须是非负整数" };
-  }
-  const groupsResult = parseSubscriptionPriorityGroups(raw["priorityGroups"]);
-  if (!groupsResult.ok) return groupsResult;
   try {
-    return {
-      ok: true,
-      policy: {
-        mustContain: terms("mustContain"),
-        mustNotContain: terms("mustNotContain"),
-        customKeywords: terms("customKeywords"),
-        episodeFilter: episodeFilter ?? "",
-        useRegex: raw["useRegex"] === true,
-        cooldownDays: cooldownDays ?? 0,
-        priorityGroups: groupsResult.priorityGroups,
-      },
-    };
+    return { ok: true, mustContain: read("mustContain"), mustNotContain: read("mustNotContain"), customKeywords: read("customKeywords") };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "policy 无法解析" };
   }
@@ -211,54 +273,164 @@ export async function POST(request: NextRequest): Promise<Response> {
     return NextResponse.json({ error: "title not tracked" }, { status: 404, headers: NO_STORE });
   }
 
-  // 4) Search live, reusing the resources route's cache + cooldown singletons so a preview
-  //    right after a search costs nothing (and is rate-limited the same way).
+  // 4) Fetch through the SAME path as /api/titles/resources (parallel + cache + cooldown + filter).
   const keywords = previewKeywords(title, parsed);
-  // Same cooldown as the resources route: a preview right after a search should hit the
-  // cache, and a preview fired repeatedly must not walk around the limiter the user's
-  // own search just paid. Keyed by account + title, so previewing one title never throttles another.
-  const cooldownKey = `preview:${accountId}:title:${parsed.tmdbId}`;
-  if (!resourceLimiter.tryAcquire(cooldownKey)) {
-    return NextResponse.json({ error: "too many requests" }, { status: 429, headers: NO_STORE });
-  }
-  const provider = await getWorkerResourceProvider();
-  // Deduped by name: the same resource found under three keywords is still ONE resource.
-  // Counting it three times would tell the user "this rule hits 6" when it hits 2 — the
-  // exact preview lie this route exists to prevent.
-  const byName = new Map<string, PolicyResource>();
-  try {
-    for (const keyword of keywords) {
-      const snapshot = await provider.search({ keyword });
-      for (const candidate of snapshot.candidates) {
-        byName.set(candidate.title, { name: candidate.title });
-      }
+  const settings = getAccountScopedSettings(accountId);
+  const filterPreferences = await getAcquisitionFilterPreferences(settings);
+  const provider = await getWorkerResourceProvider(settings, await resolvePreviewDriveProvider(accountId), accountId);
+
+  const runPreview = async (onProgress?: (event: ProgressEvent) => void): Promise<PreviewRunOutcome> => {
+    const result = await withTimeout(
+      resolveTitleResources({
+        accountId,
+        titleId: String(parsed.tmdbId),
+        keywords,
+        search: ({ keyword }) => provider.search({ keyword }),
+        cache: resourceCache,
+        limiter: resourceLimiter,
+        loadCachedCandidates: async () => [],
+        filterPreferences,
+        // 「重新搜索」是一次显式刷新：用独立缓存键，仍然受同一个限流器约束。
+        ...(parsed.refresh ? { cacheKeySuffix: `refresh:${Math.floor(Date.now() / 60_000)}` } : {}),
+        ...(onProgress ? { onChunk: (event) => onProgress(event.progress) } : {}),
+      }),
+      PREVIEW_TIMEOUT_MS,
+    );
+    if (result.kind === "throttled") return { kind: "throttled", retryAfterMs: result.retryAfterMs };
+    if (result.kind === "unauthorized") return { kind: "error", message: "unauthorized" };
+    if (result.kind === "error") return { kind: "error", message: result.message };
+    // 按展示名去重：资源取数按 candidateId 去重，而同一份资源换了关键词就可能拿到
+    // 不同的 id。预览数的是「用户眼里的资源」，同名只算一个——否则「命中 24 个」里
+    // 一半是重复名字，数字就不再是承诺。
+    const resources: PolicyResource[] = [];
+    const seen = new Set<string>();
+    for (const candidate of result.candidates) {
+      const key = candidate.title.trim().toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      resources.push(policyResourceFromTitle(candidate.title));
     }
+    return {
+      kind: "ok",
+      cached: result.cached,
+      ...(result.sourceHealth ? { sourceHealth: result.sourceHealth } : {}),
+      // 身份闸门：预览的「命中」必须只算这部作品的资源。title 早在 resolvePreviewTitle
+      // 就拿到了，之前只把名字喂给匹配器 —— 于是只写 `1080p` 的规则会把别家的 1080p
+      // 全算成命中（2026-11-17 事故）。
+      preview: previewPolicy(parsed.policy, resources, { identity: identityOf(title) }),
+    };
+  };
+
+  if (isStreamRequested(request)) {
+    return createPreviewNdjsonStream(runPreview, { title, keywords: keywords.length, parsed });
+  }
+
+  let outcome: PreviewRunOutcome;
+  try {
+    outcome = await runPreview();
   } catch (error) {
     // 502, not an empty preview: "0 matched" read as "your rule matches nothing" when the
     // truth is "we could not look" sends the user off to loosen a rule that was fine.
-    resourceLimiter.reset(cooldownKey);
+    const timeout = isTimeout(error);
     return NextResponse.json(
-      { error: "搜索失败，无法预览", detail: error instanceof Error ? error.message : String(error) },
-      { status: 502, headers: NO_STORE },
+      { error: timeout ? "检索超时，规则本身未保存" : "搜索失败，无法预览", detail: error instanceof Error ? error.message : String(error) },
+      { status: timeout ? 504 : 502, headers: NO_STORE },
     );
   }
+  if (outcome.kind === "throttled") {
+    return NextResponse.json(
+      { error: "预览太频繁，稍后再试", retryAfterMs: outcome.retryAfterMs },
+      { status: 429, headers: { ...NO_STORE, "Retry-After": String(Math.ceil(outcome.retryAfterMs / 1000)) } },
+    );
+  }
+  if (outcome.kind === "error") {
+    return NextResponse.json({ error: "搜索失败，无法预览", detail: outcome.message }, { status: 502, headers: NO_STORE });
+  }
+  return NextResponse.json(buildPreviewPayload(outcome, { title, keywords: keywords.length, parsed }), { status: 200, headers: NO_STORE });
+}
 
-  // 5) Preview — the same matcher the patrol uses.
-  const resources = [...byName.values()];
-  const preview = previewPolicy(parsed.policy, resources);
+/** 预览响应体：只回名字，不回直链 —— 浏览器没理由持有它没要过的链接。 */
+export function buildPreviewPayload(
+  outcome: Extract<PreviewRunOutcome, { kind: "ok" }>,
+  context: { title: MediaTitle; keywords: number; parsed: PreviewRequest },
+) {
+  return {
+    ok: true,
+    searchedKeywords: context.keywords,
+    total: outcome.preview.matched.length + outcome.preview.excluded.length,
+    matchedCount: outcome.preview.matchedCount,
+    excludedCount: outcome.preview.excludedCount,
+    matchedWithSubtitleCount: outcome.preview.matchedWithSubtitleCount,
+    matchedPackCount: outcome.preview.matchedPackCount,
+    excludedByReason: outcome.preview.excludedByReason,
+    cached: outcome.cached,
+    matched: outcome.preview.matched.map((entry) => entry.name),
+    excluded: outcome.preview.excluded.map((entry) => ({ name: entry.resource.name, reason: entry.reason })),
+    ...(outcome.sourceHealth ? { sourceHealth: outcome.sourceHealth } : {}),
+    ...(context.title.type === "movie" && context.title.releaseDate ? { releaseDate: context.title.releaseDate } : {}),
+    ...(context.parsed.seasonNumbers.length > 0 ? { seasonNumbers: context.parsed.seasonNumbers } : {}),
+  };
+}
 
-  return NextResponse.json(
-    {
-      ok: true,
-      searchedKeywords: keywords.length,
-      total: resources.length,
-      matchedCount: preview.matchedCount,
-      excludedCount: preview.excludedCount,
-      // The names, not the URLs: a preview must show WHICH resources a rule touches, and a
-      // browser has no business holding a drive link it did not ask for.
-      matched: preview.matched.map((entry) => entry.name),
-      excluded: preview.excluded.map((entry) => ({ name: entry.resource.name, reason: entry.reason })),
+function createPreviewNdjsonStream(
+  runPreview: (onProgress: (event: ProgressEvent) => void) => Promise<PreviewRunOutcome>,
+  context: { title: MediaTitle; keywords: number; parsed: PreviewRequest },
+): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    async start(controller) {
+      const send = (payload: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(payload)}\n`));
+      try {
+        const outcome = await runPreview((progress) => send({ type: "progress", progress }));
+        if (outcome.kind === "ok") {
+          send({ type: "done", ...buildPreviewPayload(outcome, context) });
+        } else if (outcome.kind === "throttled") {
+          send({ type: "throttled", retryAfterMs: outcome.retryAfterMs });
+        } else {
+          send({ type: "error", message: outcome.message });
+        }
+      } catch (error) {
+        send({ type: "error", message: isTimeout(error) ? "检索超时，规则本身未保存" : "搜索失败，无法预览" });
+      } finally {
+        controller.close();
+      }
     },
-    { status: 200, headers: NO_STORE },
-  );
+  });
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/x-ndjson; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+function isStreamRequested(request: NextRequest): boolean {
+  if (request.nextUrl.searchParams.get("stream") === "1") return true;
+  const accept = request.headers.get("accept");
+  return Boolean(accept && accept.includes("application/x-ndjson"));
+}
+
+class PreviewTimeoutError extends Error {
+  constructor() {
+    super("检索超时，规则本身未保存");
+    this.name = "PreviewTimeoutError";
+  }
+}
+
+function isTimeout(error: unknown): boolean {
+  return error instanceof PreviewTimeoutError;
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new PreviewTimeoutError()), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }

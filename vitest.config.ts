@@ -59,6 +59,10 @@ export default defineConfig({
     environment: "node",
     env: {
       MEDIA_TRACK_SQLITE_PATH: ":memory:",
+      // 测试专用的 STRM 签名密钥：`packages/workflow` 的 strm-writer 不再有硬编码
+      // 回退（那是任何人都能伪造播放令牌的漏洞），进程内必须显式给一个。
+      // 生产路径的值来自「启动期预热 = 实例 JWT secret」，见 signing-secret.ts。
+      STRM_SECRET: "test-only-strm-signing-secret-32b!",
     },
     passWithNoTests: false,
   },

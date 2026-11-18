@@ -22,16 +22,11 @@ import { PAGE_GUARD_COOKIE } from "./lib/page-auth-guard";
  * invalid/expired cookie, so reads fail closed even if a stale cookie slips past.
  */
 const SESSION_COOKIE_NAME = "mt_session";
-// /api/update/busy and /api/update/hold are called by the updater. It has no session
-// cookie; those routes check the updater token themselves. Redirecting them to /login
-// would break the busy wait and the hold before a swap.
-const HANDLER_GUARDED_API_PREFIXES = [
-  "/api/health",
-  "/api/workflows/",
-  "/api/agent/",
-  "/api/update/busy",
-  "/api/update/hold",
-];
+// 自守端点清单已抽到 platform/next-context/self-guarded-routes.ts：
+// proxy（粗筛放行）与路由清单门禁（分类断言）必须读**同一份**，
+// 否则就会出现「清单说它自守、proxy 却把它重定向到 /login」的分裂
+// ——/api/strm/play 在 2026-11-17 正是这么塌的（Emby/Infuse 没有 session）。
+import { isSelfGuardedApiPath } from "./platform/next-context/self-guarded-routes";
 
 /** 经隧道的远程请求判定。与 workflow-runtime.isRemoteRequest() 保持一致：
  *  用 cf-ray/cdn-loop 而非仅 cf-connecting-ip（后者可被 zone 规则删除 → fail-open）。 */
@@ -80,7 +75,7 @@ export function proxy(request: NextRequest): NextResponse {
   if (!gated) {
     return passThrough();
   }
-  if (HANDLER_GUARDED_API_PREFIXES.some((prefix) => request.nextUrl.pathname.startsWith(prefix))) {
+  if (isSelfGuardedApiPath(request.nextUrl.pathname)) {
     return passThrough();
   }
   const hasSession = Boolean(request.cookies.get(SESSION_COOKIE_NAME)?.value);

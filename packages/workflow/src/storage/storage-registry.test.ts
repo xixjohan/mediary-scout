@@ -14,6 +14,11 @@ import {
   type StorageBrand,
   type StorageDriverCreateInput,
   type StorageProvider,
+  INGEST_CAPABILITIES,
+  brandsSupportingTorrentFile,
+  ingestCapabilityForBrand,
+  isOfflineSchemeAllowed,
+  isRegisteredStorageProvider,
 } from "../index.js";
 
 /**
@@ -304,5 +309,83 @@ describe("STORAGE_BRANDS 的 supportsOpenOAuth（双轨驱动能力门）", () =
     expect(brandSupportsOpenOAuth("quark")).toBe(false);
     expect(brandSupportsOpenOAuth("nope")).toBe(false);
     expect(brandSupportsOpenOAuth(undefined)).toBe(false);
+  });
+});
+
+/**
+ * ingest 能力（离线 / 分享转存 / 种子上传）的单一真相门禁。
+ *
+ * 缺陷原型：服务端 `/api/storage/offline` 用 5 条 `if (provider === …)` 分发，
+ * 前端 `ingest-protocol-router.ts` 又手写了第二份 `DRIVE_INGEST_CAPABILITIES`。
+ * 两者没有一致性断言，UC 盘因此掉进裂缝：注册表认它，两份能力表都不认它。
+ *
+ * 现在声明只有一处（`brand.ingest`），下面几条把「声明 ↔ 数据 ↔ 查询函数」
+ * 钉在一起，漏一份就是红色。
+ */
+describe("STORAGE_BRANDS 的 ingest 能力声明", () => {
+  it("每个品牌都带 ingest 能力（漏声明 = 前端把它当未知网盘）", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(brand.ingest, `${brand.provider} 没有 ingest 声明`).toBeTruthy();
+      expect(brand.ingest.provider, `${brand.provider} 的 ingest.provider 与条目不一致`).toBe(brand.provider);
+    }
+  });
+
+  it("能力表的键与注册表一一对应（不多不少）", () => {
+    const registered = STORAGE_BRANDS.map((b) => b.provider).sort();
+    const declared = Object.keys(INGEST_CAPABILITIES).sort();
+    expect(declared).toEqual(registered);
+  });
+
+  it("声明了「支持离线」就必须有离线协议，反之亦然", () => {
+    for (const brand of STORAGE_BRANDS) {
+      const cap = brand.ingest;
+      expect(
+        cap.offlineSchemes.length > 0,
+        `${brand.provider}: supportsOffline=${String(cap.supportsOffline)} 但 offlineSchemes=[${cap.offlineSchemes.join(",")}]`,
+      ).toBe(cap.supportsOffline);
+    }
+  });
+
+  it("声明了「支持分享转存」就必须列出可接收的分享品牌", () => {
+    for (const brand of STORAGE_BRANDS) {
+      const cap = brand.ingest;
+      expect(
+        cap.supportedShareBrands.length > 0,
+        `${brand.provider}: supportsShareTransfer=${String(cap.supportsShareTransfer)} 但 supportedShareBrands=[]`,
+      ).toBe(cap.supportsShareTransfer);
+    }
+  });
+
+  it("可接收的分享品牌都是已登记的网盘（拼错品牌名会让转存永远不匹配）", () => {
+    for (const brand of STORAGE_BRANDS) {
+      for (const shareBrand of brand.ingest.supportedShareBrands) {
+        expect(
+          isRegisteredStorageProvider(shareBrand),
+          `${brand.provider} 声明可接收「${shareBrand}」，但它不是已登记品牌`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("ingestCapabilityForBrand 与条目一致，且未登记品牌降级为「全不支持」而不抛错", () => {
+    for (const brand of STORAGE_BRANDS) {
+      expect(ingestCapabilityForBrand(brand.provider)).toBe(brand.ingest);
+    }
+    expect(ingestCapabilityForBrand("nope").supportsOffline).toBe(false);
+    expect(ingestCapabilityForBrand(undefined).supportsOffline).toBe(false);
+  });
+
+  it("**没有任何品牌声明 supportsTorrentFile**——本仓没有消费 torrentBase64 的路径", () => {
+    // 声明 true 而没有实现 = 前端 tab 可点、提交必失败的假功能。要有实现才能改这里。
+    expect(brandsSupportingTorrentFile()).toEqual([]);
+  });
+
+  it("isOfflineSchemeAllowed 与服务端的协议分发同源", () => {
+    expect(isOfflineSchemeAllowed("pan115", "magnet:?xt=urn:btih:abc")).toBe(true);
+    expect(isOfflineSchemeAllowed("pan115", "https://example.com/a.mp4")).toBe(true);
+    expect(isOfflineSchemeAllowed("quark", "magnet:?xt=urn:btih:abc")).toBe(false);
+    expect(isOfflineSchemeAllowed("pan123", "https://example.com/a.mp4")).toBe(false);
+    expect(isOfflineSchemeAllowed("guangya", "ed2k://|file|x|1|y|/")).toBe(true);
+    expect(isOfflineSchemeAllowed("tianyi", "magnet:?xt=urn:btih:abc")).toBe(false);
   });
 });

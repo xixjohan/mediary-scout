@@ -302,16 +302,19 @@ try {
             Write-Step "1/5 [Dev - Direct Sync] Packaging live working tree via native tar (decoupled from Git)..."
             $localBundle = "dev-bundle-$([DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()).tar.gz"
             try {
-                # 排除规则：严格排除跨平台原生二进制、依赖与本地状态，确保 Linux 纯净性
+                # 排除规则：严格排除跨平台原生二进制、依赖与本地状态，确保 Linux 纯净性。
+                # ⚠ 只有本地状态目录必须**锚定到包根**（前导 `/`）：bsdtar 的
+                # `--exclude=run` 会匹配任意层级的同名目录——`apps/web/app/api/strm/tasks/[id]/run/`
+                # 就是被它整条剔掉的，远端因此一直跑 11-13 的旧路由（排查了一整轮）。
+                # node_modules / .next 恰恰相反：apps/web 下也有，必须按任意层级排除。
                 $tarArgs = @(
                     "-czf", $localBundle,
                     "--exclude=.git",
                     "--exclude=node_modules",
                     "--exclude=.next",
-                    "--exclude=apps/web/.next",
-                    "--exclude=run",
-                    "--exclude=data",
-                    "--exclude=env",
+                    "--exclude=/run",
+                    "--exclude=/data",
+                    "--exclude=/env",
                     "--exclude=*.tmp",
                     "--exclude=*.tar.gz",
                     "--exclude=*.log",

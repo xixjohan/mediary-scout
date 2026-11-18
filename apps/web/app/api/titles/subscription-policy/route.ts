@@ -3,7 +3,8 @@ import { buildTitleId, parseEpisodeFilter, type MediaKind } from "@media-track/w
 import { requirePermission } from "../../../../lib/auth-chain";
 import { getWorkflowRepository } from "../../../../lib/workflow-runtime";
 import type { SubscriptionPolicyWrite } from "@media-track/workflow";
-import { parseSubscriptionPriorityGroups } from "../../../../lib/subscription-policy-validation";
+import { parseSubscriptionPolicyRangeParts } from "../../../../lib/subscription-policy-season-ranges";
+import { parseSubscriptionPriorityGroups, parseSubtitlePreference } from "../../../../lib/subscription-policy-validation";
 
 /**
  * GET/PUT /api/titles/subscription-policy — the strategy table's read + write (batch 5).
@@ -54,33 +55,7 @@ function parsePolicyTerms(raw: Record<string, unknown>): { ok: true; mustContain
 }
 
 function parseSeasonEpisodeRanges(value: unknown): { ok: true; ranges: Array<{ seasonNumber: number; startEpisode: number; endEpisode: number | null }> } | { ok: false; error: string } {
-  const rawRanges = value ?? [];
-  if (!Array.isArray(rawRanges) || rawRanges.length > 100) {
-    return { ok: false, error: "seasonEpisodeRanges 必须是最多 100 项的数组" };
-  }
-  const ranges: Array<{ seasonNumber: number; startEpisode: number; endEpisode: number | null }> = [];
-  const seenSeasons = new Set<number>();
-  for (const item of rawRanges) {
-    const range = parseSeasonEpisodeRange(item);
-    if (!range) return { ok: false, error: "季数或集数范围无效；起始集至少为 1，结束集须大于等于起始集" };
-    if (seenSeasons.has(range.seasonNumber)) return { ok: false, error: "同一季不能配置多个范围" };
-    seenSeasons.add(range.seasonNumber);
-    ranges.push(range);
-  }
-  return { ok: true, ranges };
-}
-
-function parseSeasonEpisodeRange(value: unknown): { seasonNumber: number; startEpisode: number; endEpisode: number | null } | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  const range = value as Record<string, unknown>;
-  const seasonNumber = range["seasonNumber"];
-  const startEpisode = range["startEpisode"];
-  const endEpisode = range["endEpisode"];
-  const validSeason = Number.isInteger(seasonNumber) && (seasonNumber as number) >= 0 && (seasonNumber as number) <= 99;
-  const validStart = Number.isInteger(startEpisode) && (startEpisode as number) >= 1;
-  const validEnd = endEpisode === null || (Number.isInteger(endEpisode) && (endEpisode as number) >= (startEpisode as number));
-  if (!validSeason || !validStart || !validEnd) return null;
-  return { seasonNumber: seasonNumber as number, startEpisode: startEpisode as number, endEpisode: endEpisode as number | null };
+  return parseSubscriptionPolicyRangeParts(value);
 }
 
 /** Validate a write. Returns the normalized policy, or the field that was wrong. */
@@ -104,6 +79,8 @@ export function parseSubscriptionPolicyWrite(
   if (!groupsResult.ok) return groupsResult;
   const rangesResult = parseSeasonEpisodeRanges(raw["seasonEpisodeRanges"]);
   if (!rangesResult.ok) return rangesResult;
+  const subtitleResult = parseSubtitlePreference(raw["subtitlePreference"]);
+  if (!subtitleResult.ok) return subtitleResult;
   const termsResult = parsePolicyTerms(raw);
   if (!termsResult.ok) return termsResult;
   const filter = episodeFilter ?? "";
@@ -122,6 +99,7 @@ export function parseSubscriptionPolicyWrite(
       customKeywords: termsResult.customKeywords,
       priorityGroups: groupsResult.priorityGroups,
       seasonEpisodeRanges: rangesResult.ranges,
+      ...(subtitleResult.subtitlePreference ? { subtitlePreference: subtitleResult.subtitlePreference } : {}),
     },
   };
 }

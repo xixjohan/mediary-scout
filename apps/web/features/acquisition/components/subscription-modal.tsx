@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { buildMovieCandidateId } from "@media-track/workflow";
 import {
@@ -8,12 +8,22 @@ import {
   requestSelectedSeasonsAction,
 } from "../../../app/actions/acquisition-actions";
 import {
+  PRESETS,
+  createBlankDraft,
   draftToPolicy,
-  mapSavedPolicy,
-  mapPreviewResponse,
+  mapPolicyLoadResponse,
+  toggleTerm,
+  validateDraft,
   type PolicyDraft,
+  type PresetKind,
+} from "../core/policy-draft";
+import {
+  mapPreviewResponse,
   type PreviewOutcome,
-} from "./subscription-policy-panel-model";
+  type PreviewProgress,
+} from "../core/policy-preview";
+import { consumePreviewStream } from "../core/preview-stream";
+import { useResourceCooldown } from "../hooks/use-resource-cooldown";
 import { savePolicyBeforeAcquisition } from "./subscription-modal-flow";
 import {
   type ConnectedDriveSummary,
@@ -70,26 +80,6 @@ export async function dispatchImmediateAcquisition({
   });
 }
 
-function createPresetDraft(preset: "4k" | "1080p" | "anime" | "custom", draft: PolicyDraft): PolicyDraft {
-  if (preset === "4k") {
-    return { ...draft, mustContain: "2160p, Remux", mustNotContain: "CAM/枪版, 预告片, 国语配音" };
-  }
-  if (preset === "1080p") {
-    return { ...draft, mustContain: "1080p, 简中字幕", mustNotContain: "CAM/枪版, 预告片" };
-  }
-  if (preset === "anime") {
-    return { ...draft, mustContain: "1080p, 简日内嵌", mustNotContain: "先行版, 枪版" };
-  }
-  return draft;
-}
-
-function toggleChipString(raw: string, chip: string): string {
-  const tokens = raw.split(/[,，\s]+/).map((t) => t.trim()).filter(Boolean);
-  const exists = tokens.some((t) => t.toLowerCase() === chip.toLowerCase());
-  const nextTokens = exists ? tokens.filter((t) => t.toLowerCase() !== chip.toLowerCase()) : [...tokens, chip];
-  return nextTokens.join(", ");
-}
-
 function resolveNormalizedSeasons(
   seasonsProp?: SubscriptionSeasonItem[] | undefined,
   seasonNumbersProp?: number[] | undefined,
@@ -101,14 +91,26 @@ function resolveNormalizedSeasons(
   return [{ seasonNumber: 1 }];
 }
 
-function mergeLoadedPolicy(prev: PolicyDraft, policy: Record<string, unknown>): PolicyDraft {
-  const loaded = mapSavedPolicy(policy);
-  if (!loaded) return prev;
-  return {
-    ...prev,
-    ...loaded,
-    customKeywords: loaded.customKeywords ?? "",
-  };
+/** 非流式预览（服务端没按 NDJSON 返回时）：与流式各自的 done 事件同一映射。 */
+async function readJsonPreview(response: Response): Promise<PrefetchResult> {
+  const body: unknown = await response.json().catch(() => null);
+  const mapped = mapPreviewResponse(response.status, body);
+  return mapped.ok
+    ? { outcome: mapped.outcome, failure: null, retryAfterMs: 0 }
+    : { outcome: null, failure: mapped.copy, retryAfterMs: mapped.retryAfterMs ?? 0 };
+}
+
+export interface PrefetchResult {
+  outcome: PreviewOutcome | null;
+  failure: string | null;
+  /** 429 时服务端给出的剩余冷却毫秒数；0 = 不是限流。 */
+  retryAfterMs: number;
+}
+
+/** 从已存策略读出草稿：失败/没配过都保持默认草稿（默认草稿本身是合法规则）。 */
+function mergeLoadedPolicy(prev: PolicyDraft, policy: unknown): PolicyDraft {
+  const loaded = mapPolicyLoadResponse(200, { policy });
+  return loaded ? { ...prev, ...loaded } : prev;
 }
 
 export function SubscriptionModal({
@@ -128,11 +130,9 @@ export function SubscriptionModal({
   const router = useRouter();
   const [mounted, setMounted] = useState(false);
 
-  // 1. 目标网盘
   const [drives, setDrives] = useState<ConnectedDriveSummary[]>([]);
   const [selectedStorageId, setSelectedStorageId] = useState<string>(initialStorageId ?? "");
 
-  // 2. 季集选择 (TV/Anime)
   const isTv = mediaType !== "movie";
   const shouldQueueAcquisition = !initialTracked || isTv;
   const normalizedSeasons = resolveNormalizedSeasons(seasonsProp, seasonNumbersProp);
@@ -142,34 +142,38 @@ export function SubscriptionModal({
   );
   const [excludeSpecial, setExcludeSpecial] = useState(true);
 
-  // 3. 画质过滤与偏好
-  const [activePreset, setActivePreset] = useState<"4k" | "1080p" | "anime" | "custom">("1080p");
-  const [draft, setDraft] = useState<PolicyDraft>({
-    mustContain: "1080p, 简中字幕",
-    mustNotContain: "CAM/枪版, 预告片",
-    episodeFilter: "",
-    useRegex: false,
-    cooldownDays: 0,
-    customKeywords: "",
-    seasonEpisodeRanges: [],
-  });
+  const [activePreset, setActivePreset] = useState<PresetKind>("1080p");
+  const [draft, setDraft] = useState<PolicyDraft>(() => PRESETS["1080p"].build(createBlankDraft()));
 
-  // 4. 预览与提交状态
   const [preview, setPreview] = useState<PreviewOutcome | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewProgress, setPreviewProgress] = useState<PreviewProgress | null>(null);
+  const latestRequestRef = useRef(0);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [throttleMs, setThrottleMs] = useState(0);
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const validationIssues = useMemo(() => validateDraft(draft), [draft]);
+  const isDirty = useMemo(() => step === 1 || step === 2 || activePreset === "custom", [step, activePreset]);
+
+  // 429 的倒计时：用服务端给的剩余毫秒驱动「预览效果」按钮，不靠猜。
+  const previewCooldown = useResourceCooldown({
+    retryAfterMs: throttleMs > 0 ? throttleMs : undefined,
+    isThrottled: throttleMs > 0,
+    busy: previewProgress !== null,
+    defaultButtonLabel: "预览效果",
+    onRecover: () => setThrottleMs(0),
+  });
+  /** 只有用户点过一次「继续/预览」之后才显示校验错误，避免打字途中满屏飘红。 */
+  const [validationRequested, setValidationRequested] = useState(false);
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // 挂载时拉取可用网盘列表与已存策略
   useEffect(() => {
     if (!isOpen) return;
-
     fetch("/api/storage/drives")
       .then((res) => (res.ok ? res.json() : null))
       .then((data: { drives?: ConnectedDriveSummary[] } | null) => {
@@ -185,23 +189,36 @@ export function SubscriptionModal({
     if (!isOpen) return;
     let alive = true;
     fetch(`/api/titles/subscription-policy?tmdbId=${tmdbId}&mediaType=${mediaType}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data: { policy?: Record<string, unknown> } | null) => {
-        if (!alive || !data?.policy) return;
-        setDraft((prev) => mergeLoadedPolicy(prev, data.policy as Record<string, unknown>));
+      .then(async (res) => {
+        const body: unknown = await res.json().catch(() => null);
+        return mapPolicyLoadResponse(res.status, body);
+      })
+      .then((loaded) => {
+        if (!alive || loaded === null) return;
+        setDraft((prev) => mergeLoadedPolicy(prev, loaded));
         setActivePreset("custom");
       })
       .catch(() => {});
     return () => { alive = false; };
   }, [isOpen, tmdbId, mediaType]);
 
-  const runPreview = async (): Promise<boolean> => {
-    setPreviewLoading(true);
+  const invalidatePreview = () => {
+    setPreview(null);
+    setPreviewProgress(null);
     setPreviewError(null);
+    latestRequestRef.current += 1;
+  };
+
+  const runPreview = async (): Promise<boolean> => {
+    latestRequestRef.current += 1;
+    const requestId = latestRequestRef.current;
+    setPreview(null);
+    setPreviewError(null);
+    setPreviewProgress({ done: 0, total: 0 });
     try {
-      const res = await fetch("/api/titles/subscription-policy/preview", {
+      const response = await fetch("/api/titles/subscription-policy/preview?stream=1", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", accept: "application/x-ndjson, application/json" },
         body: JSON.stringify({
           tmdbId,
           mediaType,
@@ -209,48 +226,68 @@ export function SubscriptionModal({
           policy: draftToPolicy(draft),
         }),
       });
-      const body: unknown = await res.json().catch(() => null);
-      const mapped = mapPreviewResponse(res.status, body);
-      if (mapped.kind === "previewed") {
-        setPreview(mapped.outcome);
+
+      const contentType = response.headers.get("content-type") ?? "";
+      const streamed = contentType.includes("application/x-ndjson") && response.body !== null;
+      const result = streamed
+        ? await consumePreviewStream(response.body!, { onProgress: setPreviewProgress })
+        : await readJsonPreview(response);
+      setPreviewProgress(null);
+      if (result.outcome !== null) {
+        // 迟到的旧请求不许把结果贴到新表单下面（requestId 已经变化就作废）。
+        if (requestId !== latestRequestRef.current) return false;
+        setPreview(result.outcome);
+        setThrottleMs(0);
         return true;
       }
-      setPreviewError(mapped.kind === "failed" || mapped.kind === "rejected" ? mapped.copy : "预览失败，请重试");
+      // 429 是「等一下」，不是「规则错了」：把倒计时窗口记下来，按钮在该窗口内禁用。
+      if (result.retryAfterMs > 0) setThrottleMs(result.retryAfterMs);
+      if (result.retryAfterMs > 0) setThrottleMs(result.retryAfterMs);
+      setPreviewError(result.failure ?? "预览失败，请重试");
       return false;
     } catch {
+      setPreviewProgress(null);
       setPreviewError("网络错误，预览未执行");
       return false;
-    } finally {
-      setPreviewLoading(false);
     }
   };
 
   const continueToReview = async () => {
+    setValidationRequested(true);
+    if (validationIssues.length > 0) return;
     if (await runPreview()) setStep(2);
   };
 
-  const applyPreset = (preset: "4k" | "1080p" | "anime" | "custom") => {
+  const applyPreset = (preset: PresetKind) => {
     setActivePreset(preset);
-    const next = createPresetDraft(preset, draft);
-    setDraft(next);
-    setPreview(null);
+    setDraft((current) => PRESETS[preset].build(current));
+    invalidatePreview();
   };
 
   const toggleChip = (field: "mustContain" | "mustNotContain", chip: string) => {
-    const nextDraft = { ...draft, [field]: toggleChipString(draft[field], chip) };
-    setDraft(nextDraft);
+    setDraft((current) => ({ ...current, [field]: toggleTerm(current[field], chip, current.useRegex) }));
     setActivePreset("custom");
-    setPreview(null);
+    invalidatePreview();
   };
 
   const handleToggleSeason = (seasonNumber: number) => {
-    const next = new Set(selectedSeasons);
-    if (next.has(seasonNumber)) {
-      if (next.size > 1) next.delete(seasonNumber);
-    } else {
-      next.add(seasonNumber);
-    }
-    setSelectedSeasons(next);
+    setSelectedSeasons((current) => {
+      const next = new Set(current);
+      if (next.has(seasonNumber)) {
+        if (next.size > 1) next.delete(seasonNumber);
+      } else {
+        next.add(seasonNumber);
+      }
+      return next;
+    });
+    // 取消的季度不应把它的起止集留在策略里：不可见的规则比没有规则更危险。
+    setDraft((current) => {
+      const willRemove = selectedSeasons.has(seasonNumber);
+      if (!willRemove) return current;
+      const ranges = (current.seasonEpisodeRanges ?? []).filter((range) => range.seasonNumber !== seasonNumber);
+      return { ...current, seasonEpisodeRanges: ranges };
+    });
+    invalidatePreview();
   };
 
   const handleToggleExcludeSpecial = (exclude: boolean) => {
@@ -261,6 +298,10 @@ export function SubscriptionModal({
       else if (allSeasonNums.includes(0)) next.add(0);
       return next;
     });
+    if (exclude) {
+      setDraft((current) => ({ ...current, seasonEpisodeRanges: (current.seasonEpisodeRanges ?? []).filter((range) => range.seasonNumber !== 0) }));
+    }
+    invalidatePreview();
   };
 
   const selectAllSeasons = () => setSelectedSeasons(new Set(allSeasonNums.filter((number) => !excludeSpecial || number !== 0)));
@@ -269,43 +310,26 @@ export function SubscriptionModal({
     if (available.length > 0) setSelectedSeasons(new Set([available[available.length - 1]!]));
   };
 
-  // 提交并启动订阅/获取工作流
   const handleSubmit = async () => {
     setIsSubmitting(true);
     setErrorMsg(null);
-
     try {
       const policyPayload = draftToPolicy(draft);
-
       const savePolicy = async () => {
         const response = await fetch("/api/titles/subscription-policy", {
           method: "PUT",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            tmdbId,
-            mediaType,
-            policy: policyPayload,
-          }),
+          body: JSON.stringify({ tmdbId, mediaType, policy: policyPayload }),
         });
         const body: unknown = await response.json().catch(() => null);
         const payload = typeof body === "object" && body !== null ? body as Record<string, unknown> : {};
-        return {
-          ok: response.ok,
-          ...(typeof payload["error"] === "string" ? { error: payload["error"] } : {}),
-        };
+        return { ok: response.ok, ...(typeof payload["error"] === "string" ? { error: payload["error"] } : {}) };
       };
 
       const actionResult = shouldQueueAcquisition
         ? await savePolicyBeforeAcquisition(savePolicy, async () => {
-            const result = await dispatchImmediateAcquisition({
-              tmdbId,
-              isTv,
-              selectedStorageId,
-              selectedSeasons,
-            });
-            if (result.status === "unsupported" || result.status === "llm_not_configured") {
-              throw new Error(result.message);
-            }
+            const result = await dispatchImmediateAcquisition({ tmdbId, isTv, selectedStorageId, selectedSeasons });
+            if (result.status === "unsupported" || result.status === "llm_not_configured") throw new Error(result.message);
             return result;
           })
         : await savePolicyBeforeAcquisition(savePolicy, async () => ({
@@ -326,7 +350,7 @@ export function SubscriptionModal({
   const handleBack = () => {
     if (step === 0) onClose();
     else {
-      setPreview(null);
+      invalidatePreview();
       setStep(step === 2 ? 1 : 0);
     }
   };
@@ -340,11 +364,12 @@ export function SubscriptionModal({
   const handleDraftChange = (patch: Partial<PolicyDraft>) => {
     setDraft((previous) => ({ ...previous, ...patch }));
     setActivePreset("custom");
-    setPreview(null);
+    invalidatePreview();
   };
 
   const handleMustContainChange = (value: string) => handleDraftChange({ mustContain: value });
   const handleMustNotContainChange = (value: string) => handleDraftChange({ mustNotContain: value });
+
   return (
     <SubscriptionModalView
       isOpen={isOpen}
@@ -372,13 +397,18 @@ export function SubscriptionModal({
       activePreset={activePreset}
       draft={draft}
       preview={preview}
-      previewLoading={previewLoading}
+      previewProgress={previewProgress}
       previewError={previewError}
+      previewThrottleSeconds={previewCooldown.isCooldownActive ? previewCooldown.remainingSeconds : 0}
+      validationIssues={validationIssues}
+      isDirty={isDirty}
+      validationRequested={validationRequested}
       onApplyPreset={applyPreset}
       onToggleChip={toggleChip}
       onDraftChange={handleDraftChange}
       onMustContainChange={handleMustContainChange}
       onMustNotContainChange={handleMustNotContainChange}
+      onSaveAsTemplate={(current) => draftToPolicy(current)}
       runPreview={runPreview}
       errorMsg={errorMsg}
       isSubmitting={isSubmitting}

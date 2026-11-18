@@ -11,3 +11,5 @@ export * from "./strm-delivery.js";
 export * from "./delivery-mode-resolver.js";
 export * from "./player-delivery-preference.js";
 export * from "./link-expiry.js";
+export * from "./signing-secret.js";
+export * from "./strm-token-heal.js";

@@ -26,6 +26,8 @@ const TITLE_BLOCK_KINDS: Record<WorkflowKind, true> = {
   // An organize rewrites the library directories it lists, so the janitor waits.
   title_organize: true,
   manual_import: true,
+  // 投放同样会写盘上的目标目录，janitor 必须等它跑完。
+  owner_ingest: true,
 };
 
 /** A failed run is requeued on the same id within 15 minutes. Don't touch its staging until that window is long gone. */

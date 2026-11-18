@@ -51,10 +51,15 @@ describe("ingest-protocol-router", () => {
         shareCode: "60e73719ddb8",
         matchedBrand: "quark",
       });
+    });
+
+    it("detects UC share links as UC, not quark", () => {
+      // 同族协议但品牌不同：夸克的 shareHostPattern 只认 pan.quark.cn，把
+      // drive.uc.cn 认成夸克会让夸克盘接受一条它解析不了的链接。
       expect(detectProtocol("https://drive.uc.cn/s/abcdef123")).toEqual({
-        protocol: "quark_share",
+        protocol: "uc_share",
         shareCode: "abcdef123",
-        matchedBrand: "quark",
+        matchedBrand: "uc",
       });
     });
 
@@ -138,6 +143,43 @@ describe("ingest-protocol-router", () => {
       expect(pan115.supportsOffline).toBe(true);
       expect(pan115.supportsShareTransfer).toBe(true);
       expect(pan115.supportsTorrent).toBe(true);
+    });
+
+    it("UC 盘从注册表取到自身能力（不再是未知网盘）", () => {
+      const uc = getDriveCapability("uc");
+      expect(uc.provider).toBe("uc");
+      expect(uc.label).toBe("UC网盘");
+      expect(uc.supportsOffline).toBe(false);
+      expect(uc.supportsShareTransfer).toBe(true);
+      expect(uc.supportedShareBrands).toEqual(["uc"]);
+
+      // UC 分享链在 UC 盘上是可提交的转存。
+      const item = evaluateIngestItem("https://drive.uc.cn/s/abcdef123", "uc", 0);
+      expect(item.isValid).toBe(true);
+      expect(item.action).toBe("share_transfer");
+      expect(item.matchedBrand).toBe("uc");
+    });
+
+    it("UC 分享链在夸克盘上被拒（同族但不同品牌）", () => {
+      const item = evaluateIngestItem("https://drive.uc.cn/s/abcdef123", "quark", 0);
+      expect(item.isValid).toBe(false);
+      expect(item.action).toBe("unsupported_brand");
+      expect(item.reason).toContain("UC网盘");
+    });
+
+    it("123 盘不接受裸 https 离线（会偷走分享链）", () => {
+      const item = evaluateIngestItem("https://example.com/movie.mp4", "pan123", 0);
+      expect(item.isValid).toBe(false);
+      expect(item.action).toBe("unsupported_scheme");
+      expect(item.reason).toContain("HTTP 直链");
+    });
+
+    it("光鸭不接受 http(s) 离线，但接受磁力", () => {
+      const magnet = evaluateIngestItem("magnet:?xt=urn:btih:0123456789abcdef", "guangya", 0);
+      expect(magnet.isValid).toBe(true);
+      const https = evaluateIngestItem("https://example.com/movie.mp4", "guangya", 0);
+      expect(https.isValid).toBe(false);
+      expect(https.action).toBe("unsupported_scheme");
     });
   });
 });

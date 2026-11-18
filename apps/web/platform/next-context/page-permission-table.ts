@@ -20,6 +20,12 @@ export interface PagePermissionEntry {
   permission: string | null;
   /** 为什么是这个权限点（评审时看的理由，不是运行时数据）。 */
   rationale: string;
+  /**
+   * 站长专属页：判定用 `OwnerPageGuard`（`is_owner` 位），不用权限点。
+   * 声明为 true 的页面，门禁要求源码 import 并渲染 `OwnerPageGuard`，且
+   * **不得**同时声明权限点——两者混用会让「谁该通过」出现两个答案。
+   */
+  ownerOnly?: boolean;
 }
 
 export const PAGE_PERMISSION_TABLE: Record<string, PagePermissionEntry> = {
@@ -44,6 +50,13 @@ export const PAGE_PERMISSION_TABLE: Record<string, PagePermissionEntry> = {
   // ── 网盘运维面 ────────────────────────────────────────────
   storage: { permission: "storage:browse_any", rationale: "浏览/整理盘上任意目录" },
   "storage/strm": { permission: "storage:browse_any", rationale: "STRM 任务会写盘上虚拟文件" },
+
+  // ── 站长专属面（is_owner 位，不是权限点）──────────────────────────
+  "storage/owner-ingest": {
+    permission: null,
+    ownerOnly: true,
+    rationale: "关键字投放 = 任意读源 + 任意目录写入，只有站长可用；成员不参与公共盘的投放决策",
+  },
 
   // ── 实例配置面（整棵子树同一把钥匙）───────────────────────────
   settings: { permission: "system:settings", rationale: "实例配置总入口" },

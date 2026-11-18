@@ -247,7 +247,7 @@ export function titleBlockFilter(
 /** Whether a reservation or a save refuses a (season, drive) that is no longer
  *  tracked: asked for directly, or implied by keepCurrentEpisodes (nothing to keep). */
 export function reservationRequiresTrackedSeason(input: Pick<ReserveWorkflowRunInput, "requireTrackedSeason" | "keepCurrentEpisodes"> & { workflowRun?: Pick<WorkflowRun, "kind"> }): boolean {
-  return input.workflowRun?.kind === "manual_import" || input.workflowRun?.kind === "resource_search" ? false : input.requireTrackedSeason === true || input.keepCurrentEpisodes === true;
+  return input.workflowRun?.kind === "manual_import" || input.workflowRun?.kind === "resource_search" || input.workflowRun?.kind === "owner_ingest" ? false : input.requireTrackedSeason === true || input.keepCurrentEpisodes === true;
 }
 
 export interface PersistWorkflowRunSnapshotInput {
@@ -685,6 +685,7 @@ function capturePolicySnapshot(
     customKeywords: [...(stored.customKeywords ?? [])],
     priorityGroups: cloneWorkflowValue(stored.priorityGroups ?? []),
     seasonEpisodeRanges: cloneWorkflowValue(stored.seasonEpisodeRanges ?? []),
+    subtitlePreference: cloneWorkflowValue(stored.subtitlePreference ?? { terms: [], require: false }),
   } : null;
   snapshot.workflowRun.subscriptionPolicySnapshot = {
     schemaVersion: 1,
@@ -1379,6 +1380,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       customKeywords: input.policy.customKeywords ? [...input.policy.customKeywords] : [],
       priorityGroups: input.policy.priorityGroups ? cloneWorkflowValue([...input.policy.priorityGroups]) : [],
       seasonEpisodeRanges: (input.policy.seasonEpisodeRanges ?? []).map((range) => ({ ...range })),
+      subtitlePreference: cloneWorkflowValue(input.policy.subtitlePreference ?? { terms: [], require: false }),
       accountId: input.accountId,
       titleKey: input.titleKey,
       // created_at 只在首次写入时定；之后的保存只动 updated_at。
@@ -1412,6 +1414,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
         customKeywords: [...(input.policy.customKeywords ?? [])],
         priorityGroups: cloneWorkflowValue(input.policy.priorityGroups ?? []),
         seasonEpisodeRanges: (input.policy.seasonEpisodeRanges ?? []).map((range) => ({ ...range })),
+        subtitlePreference: cloneWorkflowValue(input.policy.subtitlePreference ?? { terms: [], require: false }),
       }),
       createdAt: input.now,
       updatedAt: input.now,
@@ -1427,7 +1430,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     const updated: StoredSubscriptionPolicyTemplate = {
       ...existing,
       name: input.name,
-      policy: cloneWorkflowValue({ ...input.policy, mustContain: [...input.policy.mustContain], mustNotContain: [...input.policy.mustNotContain], customKeywords: [...(input.policy.customKeywords ?? [])], priorityGroups: cloneWorkflowValue(input.policy.priorityGroups ?? []), seasonEpisodeRanges: (input.policy.seasonEpisodeRanges ?? []).map((range) => ({ ...range })) }),
+      policy: cloneWorkflowValue({ ...input.policy, mustContain: [...input.policy.mustContain], mustNotContain: [...input.policy.mustNotContain], customKeywords: [...(input.policy.customKeywords ?? [])], priorityGroups: cloneWorkflowValue(input.policy.priorityGroups ?? []), seasonEpisodeRanges: (input.policy.seasonEpisodeRanges ?? []).map((range) => ({ ...range })), subtitlePreference: cloneWorkflowValue(input.policy.subtitlePreference ?? { terms: [], require: false }) }),
       updatedAt: input.now,
     };
     this.subscriptionPolicyTemplates.set(key, updated);
@@ -2947,6 +2950,8 @@ const KIND_HAS_QUEUE_CLAIMER: Record<WorkflowKind, boolean> = {
   // manual_import IS queued: the import endpoint enqueues it into sys_queue_jobs.
   resource_search: false,
   manual_import: true,
+  // 站长关键字投放：worker 认领它（转存慢，不能留在 HTTP 里）。
+  owner_ingest: true,
   // An organize rewrites the title's own library directories, so a worker picks it
   // up — but it is not a "job" in the dead-queue sense (see manual-import-command.ts).
   title_organize: true,
@@ -2967,6 +2972,8 @@ const KIND_OWNS_TRACKING: Record<WorkflowKind, boolean> = {
   // tear down the user's tracking.
   resource_search: false,
   manual_import: false,
+  // 投放从不拥有 season：取消一次投放不能拆掉任何追踪。
+  owner_ingest: false,
   // Organizing never owns a season: cancelling one must not tear down tracking.
   title_organize: false,
 };

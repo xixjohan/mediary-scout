@@ -196,6 +196,9 @@ export const SQLITE_SCHEMA = `
     custom_keywords text NOT NULL DEFAULT '[]',
     priority_groups text NOT NULL DEFAULT '[]',
     season_episode_ranges text NOT NULL DEFAULT '[]',
+    -- 字幕偏好（软偏好：OR 词表 + require 开关）。与 must_contain 分开存，因为
+    -- 字幕写法有 CHS/简繁/双语/中字/内嵌 等多种，做成 AND 子串会恒 false。
+    subtitle_preference text NOT NULL DEFAULT '{"terms":[],"require":false}',
     PRIMARY KEY (account_id, title_key)
   );
   CREATE TABLE IF NOT EXISTS subscription_policy_templates (

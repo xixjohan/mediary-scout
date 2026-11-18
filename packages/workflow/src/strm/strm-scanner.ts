@@ -5,6 +5,7 @@ import type { PackageTreeFile, VerifiedFile } from "../domain/domain.js";
 import type { StrmTask } from "./strm-types.js";
 import { resolveStrmOutputPath } from "./output-path.js";
 import { buildPlayUrl, safeDirSegments, safeStem, writeStrmFile, removeStrmFile } from "./strm-writer.js";
+import { judgeStrmContent } from "./strm-token-heal.js";
 import { cleanMediaTitle, episodeCodeFromFileName } from "../domain/episode-code.js";
 
 export interface StrmScanResult {
@@ -203,6 +204,37 @@ export class StrmScanner {
         }
       } catch {
         // non-blocking
+      }
+    } else {
+      /**
+       * `incremental_missing`（默认模式）**曾经只生成缺失文件、从不检查已存在的**。
+       * 签名 secret 轮换后（2026-11-17 从硬编码常量改为实例 JWT secret），磁盘上
+       * 已有的 `.strm` 全部带着旧 token 永久 401，而这条路径永远不会重写它们——
+       * 用户看到的就是「.strm 忽然播不了、重新扫描也没用」。
+       *
+       * 稳态下仍然「不碰没坏的文件」（内容相同 → 零动作、零额外网盘调用）；
+       * 只有**内容本身判为失效**时才重写。判定是纯 CPU（正则 + HMAC 验签），
+       * 每个已存在文件一次 `readFileSync`。
+       */
+      try {
+        const currentContent = fs.readFileSync(targetFullPath, "utf8");
+        const verdict = judgeStrmContent({
+          content: currentContent,
+          taskId: task.id,
+          fileId: rf.id,
+          expectedPlayUrl: playUrl,
+        });
+        if (verdict.kind === "rewrite") {
+          await writeStrmFile({ targetFilePath: targetFullPath, playUrl });
+          // 计入 updatedCount 而不是 generated：文件本来就在，只是内容失效被自愈。
+          result.updatedCount++;
+          result.generatedPaths.push(targetFullPath);
+          console.log(
+            `[strm-scanner] healed stale .strm (${verdict.reason}): ${targetFullPath}`,
+          );
+        }
+      } catch {
+        // non-blocking：读失败/写失败不阻断整轮扫描（与上面两条分支一致）。
       }
     }
     return relStrmPath;

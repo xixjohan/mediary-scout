@@ -145,6 +145,153 @@ function checkStrmPlaybackRoute() {
   }
 }
 
+/**
+ * 4. 【代理层放行门禁 (Proxy Exemption Guard)】——2026-11-17 事故的同类门禁。
+ *
+ * 缺陷原型：`route-auth-inventory` 把 `strm/play` 归为「自鉴权」类，但
+ * `apps/web/proxy.ts` 的放行前缀里没有它。多用户模式（生产就是这样）下
+ * `/api/strm/play/...` 被 **307 重定向到 /login**——Emby / Infuse / Plex /
+ * PotPlayer 读 `.strm` 后是**无会话 HTTP 客户端**，它们永远拿不到 `mt_session`。
+ * 实测：`.strm` 里签名完全正确的 URL 在容器内请求只得到 `307 /login`。
+ *
+ * 断言：`self-guarded-routes.ts` 必须包含 `/api/strm/play/`，且 proxy 必须
+ * 消费这份共享清单（而不是自己再维护一份前缀数组——两份就是分裂的土壤）。
+ */
+function checkProxyExemption() {
+  const listPath = path.join(repoRoot, "apps/web/platform/next-context/self-guarded-routes.ts");
+  if (!fs.existsSync(listPath)) {
+    reportViolation(listPath, 1, "self-guarded-routes.ts 不存在：proxy 与路由清单必须读同一份自守端点列表！");
+    return;
+  }
+  const listContent = fs.readFileSync(listPath, "utf8");
+  if (!listContent.includes('"/api/strm/play/"')) {
+    reportViolation(
+      listPath,
+      1,
+      "自守端点清单缺少 /api/strm/play/：多用户模式下播放请求会被 proxy 重定向到 /login，外部播放器（无 session）全部播不了！",
+    );
+  }
+
+  const proxyPath = path.join(repoRoot, "apps/web/proxy.ts");
+  if (!fs.existsSync(proxyPath)) {
+    reportViolation(proxyPath, 1, "proxy.ts 不存在！");
+    return;
+  }
+  const proxyContent = fs.readFileSync(proxyPath, "utf8");
+  if (!proxyContent.includes("isSelfGuardedApiPath")) {
+    reportViolation(
+      proxyPath,
+      1,
+      "proxy.ts 未消费 isSelfGuardedApiPath()：自守端点清单与代理放行判定会再次分裂（/api/strm/play 会被拦）。",
+    );
+  }
+}
+
+/**
+ * 5. 【签名密钥不可伪造门禁 (Signing Secret Guard)】——同一事故链的第二段。
+ *
+ * 缺陷原型：`resolveStrmSigningSecret()` 在无 env 时回退到常量
+ * `"mediary-scout-strm-signing-secret"`。任何人读源码即可离线伪造播放令牌
+ * （实测 dev 实例返回 200 并开始推流），而 `.strm` 默认 TTL 是 365 天。
+ */
+function checkSigningSecret() {
+  const writerPath = path.join(repoRoot, "packages/workflow/src/strm/strm-writer.ts");
+  const secretPath = path.join(repoRoot, "packages/workflow/src/strm/signing-secret.ts");
+  for (const file of [writerPath, secretPath]) {
+    if (!fs.existsSync(file)) {
+      reportViolation(file, 1, "STRM 签名密钥模块缺失！");
+      return;
+    }
+  }
+  // 去掉注释再扫：注释里提到旧常量是允许的（它是缺陷记录），代码里出现才是漏洞。
+  const strip = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  for (const file of [writerPath, secretPath]) {
+    const code = strip(fs.readFileSync(file, "utf8"));
+    if (code.includes('"mediary-scout-strm-signing-secret"')) {
+      reportViolation(
+        file,
+        1,
+        "仍存在硬编码签名密钥回退：任何人可离线伪造 STRM 播放令牌（且 .strm 默认有效期 365 天）。" +
+          "签名 secret 必须来自 env 或启动期预热（实例 JWT secret），缺失时抛错。",
+      );
+    }
+  }
+}
+
+/**
+ * 6. 【扫描基址单一事实源门禁 (Manual Scan Base URL SSOT Guard)】——2026-11-17 事故的第三段。
+ *
+ * 缺陷原型：`/api/strm/tasks/[id]/run` 把 `request.nextUrl.origin` 当作显式 baseUrl
+ * 传给扫描器。容器里这个 origin 永远是回环地址（`http://localhost:3000`），而显式
+ * 参数在 `resolveEffectiveStrmBaseUrl` 里**优先级最高**——DB 设置与 `APP_BASE_URL`
+ * 都被它盖掉。实测：一次「立即扫描」把 178 个本来正确的 `.strm` 全改写成
+ * `http://localhost:3000`，外部播放器（Emby/Infuse/电视）随即全部播不了。
+ *
+ * 断言：手动扫描路由不得消费 `nextUrl.origin` / `request.url` 的 host 作为播放基址；
+ * 基址只能来自 SSOT（DB `strm_base_url` → `APP_BASE_URL`/`MEDIARY_URL` → 回环兜底）。
+ */
+function checkManualScanBaseUrlSso() {
+  const runRoutePath = path.join(repoRoot, "apps/web/app/api/strm/tasks/[id]/run/route.ts");
+  if (!fs.existsSync(runRoutePath)) {
+    reportViolation(runRoutePath, 1, "手动扫描路由 [id]/run/route.ts 不存在！");
+    return;
+  }
+  const strip = (text) => text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const code = strip(fs.readFileSync(runRoutePath, "utf8"));
+  if (code.includes("nextUrl.origin")) {
+    reportViolation(
+      runRoutePath,
+      1,
+      "手动扫描路由把请求 origin 当作播放基址：容器内 origin 是回环地址，会覆盖 DB/APP_BASE_URL，" +
+        "把所有 .strm 改写成 http://localhost:3000（外部播放器全部失效）。基址必须走 resolveEffectiveStrmBaseUrl SSOT。",
+    );
+  }
+  if (/baseUrl\s*:\s*origin/.test(code)) {
+    reportViolation(
+      runRoutePath,
+      1,
+      "手动扫描路由以 `baseUrl: origin` 显式覆盖扫描基址——显式参数优先级最高，等于绕过 SSOT。",
+    );
+  }
+}
+
+/**
+ * 7. 【Dev 直推包排除规则门禁 (Dev Sync Exclude Guard)】——同一轮排查发现的第二处缺陷。
+ *
+ * 缺陷原型：`deploy-remote.ps1` 的 Direct 同步用 `--exclude=run` / `--exclude=data` /
+ * `--exclude=env`。bsdtar 的排除模式默认匹配**任意层级**同名目录，于是
+ * `apps/web/app/api/strm/tasks/[id]/run/` 整条被剔出 bundle——远端容器里那份路由
+ * 停在 11-13 的旧版本，本地怎么改都不生效（「部署成功但行为没变」）。
+ *
+ * 断言：这三个本地状态目录的排除必须锚定到仓库根（`/run`、`/data`、`/env`）；
+ * 同时 `node_modules` / `.next` 必须保持任意层级排除（apps/web 下也有）。
+ */
+function checkDevSyncExcludes() {
+  const scriptPath = path.join(repoRoot, "scripts/deploy-remote.ps1");
+  if (!fs.existsSync(scriptPath)) return;
+  const content = fs.readFileSync(scriptPath, "utf8");
+  for (const unanchored of ['"--exclude=run"', '"--exclude=data"', '"--exclude=env"']) {
+    if (content.includes(unanchored)) {
+      reportViolation(
+        scriptPath,
+        1,
+        `${unanchored} 未锚定到仓库根：bsdtar 会剔掉任意层级的同名目录（内含 apps/web/app/api/strm/tasks/[id]/run），` +
+          "导致远端一直运行旧路由。应改为对应的 /run、/data、/env。",
+      );
+    }
+  }
+  for (const anchored of ['"--exclude=/run"', '"--exclude=/data"', '"--exclude=/env"']) {
+    if (!content.includes(anchored)) {
+      reportViolation(scriptPath, 1, `Direct 同步缺少锚定排除 ${anchored}：本地状态目录会被打进开发镜像。`);
+    }
+  }
+  for (const recursive of ['"--exclude=node_modules"', '"--exclude=.next"']) {
+    if (!content.includes(recursive)) {
+      reportViolation(scriptPath, 1, `Direct 同步缺少 ${recursive}：apps/web 下的依赖/构建产物会被打进镜像。`);
+    }
+  }
+}
+
 export function runStrmPlaybackGate() {
   violations = 0;
   console.log(`${c.cyan}${c.bold}▶ 正在执行巡影 · Mediary Scout STRM 播放直链与流媒体中继质量门禁...${c.reset}`);
@@ -152,6 +299,10 @@ export function runStrmPlaybackGate() {
   checkStreamResolverArchitecture();
   checkPan115DownUrlProtocol();
   checkStrmPlaybackRoute();
+  checkProxyExemption();
+  checkSigningSecret();
+  checkManualScanBaseUrlSso();
+  checkDevSyncExcludes();
 
   if (violations > 0) {
     console.error(`\n${c.red}${c.bold}✖ STRM 播放直链质量门禁未通过，发现 ${violations} 处不合规！${c.reset}\n`);

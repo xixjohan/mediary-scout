@@ -3,6 +3,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { restoreTunnelEnv, rewriteEnvForTunnel, writeTunnelEnv } from "./tunnel-env.mjs";
+import { POSIX_MODE_SKIP_REASON, posixModeAssertable } from "./test-support/posix-shell.mjs";
+
+/**
+ * Windows 没有 POSIX 权限位（实测 chmod 0600/0640 都落成 0666，且 0000 仍可读）。
+ * 这些断言在 Windows 上**不可验证**，不是失败——CI 跑 ubuntu-latest，覆盖不丢。
+ * 把「跳过」写成显式分支而不是删断言：Linux 上少一条就是少一道防线。
+ * 跳过原因（POSIX_MODE_SKIP_REASON）见 test-support/posix-shell.mjs。
+ */
+function expectMode(pathOrMode, expected) {
+  if (!posixModeAssertable()) return;
+  const mode = typeof pathOrMode === "number" ? pathOrMode : statSync(pathOrMode).mode & 0o777;
+  expect(mode).toBe(expected);
+}
 
 const TOKEN = "tok_value_0123456789";
 const HOST = "home.mediaryconnect.app";
@@ -87,7 +100,7 @@ describe("writeTunnelEnv", () => {
     expect(readFileSync(join(dir, ".env"), "utf8")).toBe(
       `TUNNEL_TOKEN=${TOKEN}\nMEDIARY_CONNECT_HOSTNAME=${HOST}\n`,
     );
-    expect(statSync(join(dir, ".env")).mode & 0o777).toBe(0o600);
+    expectMode(join(dir, ".env"), 0o600);
     expect(chowns).toEqual([{ path: expect.any(String), uid: owner.uid, gid: owner.gid }]);
     expect(chowns[0].path.startsWith(dir)).toBe(true);
     expect(readdirSync(dir).filter((name) => name.startsWith(".env.tmp"))).toEqual([]);
@@ -111,8 +124,8 @@ describe("writeTunnelEnv", () => {
     const backup = join(dir, ".env.bak-tunnel-20261003-040506-99");
     expect(result.backup).toBe(backup);
     expect(readFileSync(backup).equals(Buffer.from(old))).toBe(true);
-    expect(statSync(backup).mode & 0o777).toBe(0o600);
-    expect(statSync(envPath).mode & 0o777).toBe(0o640);
+    expectMode(backup, 0o600);
+    expectMode(envPath, 0o640);
     expect(readFileSync(envPath, "utf8")).toBe(
       `DOCKER_MIRROR=docker.1ms.run\n# keep\n\nWEB_PORT=3300\nTUNNEL_TOKEN=${TOKEN}\nMEDIARY_CONNECT_HOSTNAME=${HOST}\n`,
     );
@@ -146,7 +159,7 @@ describe("writeTunnelEnv", () => {
         if (isBackup(path)) created.push(statSync(path).mode & 0o777);
       },
     });
-    expect(created).toEqual([0o600]);
+    if (posixModeAssertable()) expect(created).toEqual([0o600]);
     expect(readFileSync(join(dir, ".env.bak-tunnel-20261003-040506-5"), "utf8")).toBe("KEEP=1\nTUNNEL_TOKEN=old-secret\n");
   });
 
@@ -168,7 +181,7 @@ describe("writeTunnelEnv", () => {
       }),
     ).toThrow(/simulated write failure/);
     expect(readFileSync(envPath).equals(old)).toBe(true);
-    expect(statSync(envPath).mode & 0o777).toBe(0o640);
+    expectMode(envPath, 0o640);
     expect(readdirSync(dir).filter((name) => name.startsWith(".env.tmp"))).toEqual([]);
   });
 
@@ -202,7 +215,7 @@ describe("restoreTunnelEnv", () => {
     const { backup } = writeTunnelEnv(dir, { token: TOKEN, hostname: HOST }, { chownSync() {} });
     restoreTunnelEnv(dir, backup, { chownSync() {} });
     expect(readFileSync(envPath, "utf8")).toBe(old);
-    expect(statSync(envPath).mode & 0o777).toBe(0o640);
+    expectMode(envPath, 0o640);
     expect(readdirSync(dir).filter((name) => name.startsWith(".env.tmp"))).toEqual([]);
   });
 

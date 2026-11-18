@@ -82,9 +82,9 @@ describe("S5.7 页面登录守卫清单（app/**/page.tsx）", () => {
   const pages = collectPages(APP_ROOT);
 
   it("扫描到的页面入口数量符合预期（新增页面必须显式表态，别让清单悄悄变空）", () => {
-    // 11 个受管页面（含 /library 与 /account）+ 3 个系统页面 + login（豁免）。
+    // 受管页面（含 /library、/account、/storage/owner-ingest）+ 系统页面 + login（豁免）。
     // 数量变化 = 有人加了/删了页面，必须回来看一眼（新增页是否也包了登录守卫）。
-    expect(pages.length).toBe(15);
+    expect(pages.length).toBe(16);
   });
 
   it("除 /login 外每个页面入口都 import 并在 <Suspense> 内渲染 PageLoginGuard", () => {
@@ -147,6 +147,31 @@ describe("S5.7 页面登录守卫清单（app/**/page.tsx）", () => {
     expect(Object.keys(PAGE_PERMISSION_TABLE)).toHaveLength(GUARDED_PAGE_COUNT);
   });
 
+  it("站长专属页必须渲染 OwnerPageGuard，且不得同时声明权限点", () => {
+    // 站长专属语义是 is_owner 位，不是权限点。两个判据同时出现 = 「谁能进」
+    // 有两个答案，这正是权限收敛最忌讳的形态。
+    const violations: string[] = [];
+    for (const [key, entry] of Object.entries(PAGE_PERMISSION_TABLE)) {
+      if (entry.ownerOnly !== true) continue;
+      if (entry.permission !== null) violations.push(`${key}: ownerOnly 页不得声明权限点`);
+      const path = pages.find((p) => pageKey(p) === key);
+      if (!path) {
+        violations.push(`${key}: 清单声明了站长专属页，但页面不存在`);
+        continue;
+      }
+      const source = readFileSync(path, "utf8");
+      if (!/import[^;]*OwnerPageGuard/.test(source)) {
+        violations.push(`${key}: 未 import OwnerPageGuard`);
+      }
+      // 包裹式（<OwnerPageGuard>…</OwnerPageGuard>）与自闭合式都接受：关键是它
+      // 真的作为 JSX 元素出现在页面里。
+      if (!/<OwnerPageGuard[\s>]/.test(source)) {
+        violations.push(`${key}: 未渲染 <OwnerPageGuard />`);
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
   it("表里声明的权限点都在权限目录里（防拼错成不存在的权限）", () => {
     const catalogIds = new Set(PERMISSION_CATALOG.flatMap((m) => m.leaves.map((l) => l.id)));
     const unknown = Object.entries(PAGE_PERMISSION_TABLE)
@@ -163,6 +188,7 @@ describe("S5.7 页面登录守卫清单（app/**/page.tsx）", () => {
       const entry = PAGE_PERMISSION_TABLE[key];
       if (!entry) continue; // 由上一条用例报缺失
       const source = readFileSync(path, "utf8");
+      if (entry.ownerOnly === true) continue; // 由下面「站长专属页」用例负责
       if (entry.permission === null) {
         // 登录即可的页面（如 /account）：一旦有人给它加权限判定，成员就会被
         // 再次挡在门外——这正是上一轮的缺陷原型，故反向断言。

@@ -146,6 +146,14 @@ export class GuangYaStorageExecutor implements StorageExecutor {
     this.subtitleTaskPollIntervalMs = options.subtitleTaskPollIntervalMs ?? 3000;
   }
 
+  /** Exact-directory authorization for the owner-directed ingest path. 光鸭's
+   *  root is the empty string — with a configured scope that is still never a
+   *  legitimate write target, so normalization failures are surfaced, not hidden. */
+  authorizeWriteTarget(directoryId: string): void {
+    if (this.writeScopeDirectoryIds.size === 0) return;
+    this.writeScopeDirectoryIds.add(normalizeId(directoryId));
+  }
+
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     const safeParentId = this.assertWithinWriteScope(input.parentId, "create directory");
     // Find-or-create: seasons of one title initialize at different times and must

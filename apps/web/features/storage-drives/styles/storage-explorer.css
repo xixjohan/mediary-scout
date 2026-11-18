@@ -1463,3 +1463,185 @@
 }
 
 
+
+/* ==========================================================================
+   站长「关键字投放」控制台 (Owner Ingest Console)
+   ========================================================================== */
+
+.owner-ingest-search-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.owner-ingest-search-row .storage-offline-select,
+.owner-ingest-filter-row .storage-offline-select {
+  background: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.85rem;
+}
+
+.owner-ingest-search-row .storage-offline-input {
+  flex: 1 1 240px;
+  /* 180px 的硬下限在 320px 视口会把检索行顶宽（主区仅 ~232px）。 */
+  min-width: 0;
+  background: var(--bg-surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.9rem;
+}
+
+.owner-ingest-candidates {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.6rem;
+  background: var(--bg-surface);
+  /* 候选标题是 nowrap（靠 ellipsis 截断），其 max-content 可达 800px+。
+     面板是 grid，隐式轨道会被 max-content 撑宽 → 整个页面横向溢出。
+     显式把这一层的最小宽度归零，宽度只由容器决定。 */
+  min-width: 0;
+}
+
+.owner-ingest-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.owner-ingest-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 42vh;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.owner-ingest-candidate {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  background: var(--bg-elevated);
+  min-width: 0;
+}
+
+.owner-ingest-candidate.is-checked {
+  border-color: var(--accent);
+  background: var(--bg-active);
+}
+
+.owner-ingest-candidate-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.owner-ingest-candidate-title {
+  font-size: 0.88rem;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owner-ingest-candidate-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.owner-ingest-target-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.owner-ingest-target-path {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: var(--accent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45ch;
+  min-width: 0;
+  flex: 1 1 120px;
+}
+
+.owner-ingest-submissions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+
+.owner-ingest-submission {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: var(--bg-surface);
+}
+
+.owner-ingest-submission-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.owner-ingest-phase {
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.owner-ingest-phase.is-success {
+  color: var(--color-success);
+}
+
+.owner-ingest-phase.is-error {
+  color: var(--color-danger);
+}
+
+.owner-ingest-phase.is-pending {
+  color: var(--color-warning);
+}
+
+.owner-ingest-phase.is-muted {
+  color: var(--text-muted);
+}
+
+.owner-ingest-submission-msg {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.owner-ingest-submission-icon {
+  flex-shrink: 0;
+  color: var(--color-danger);
+}

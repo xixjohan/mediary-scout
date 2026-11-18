@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  allowedResourceTypesForKinds,
-  brandSupportsProwlarr,
-  getStorageBrand,
-} from "./storage-brands.js";
+import { brandSupportsProwlarr, getStorageBrand } from "./storage-brands.js";
+import { allowedResourceTypesForKinds } from "./ingest-capabilities.js";
 
 describe("allowedResourceTypesForKinds", () => {
   it("maps a quark brand's kinds to quark-only links", () => {

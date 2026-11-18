@@ -251,21 +251,10 @@ export function userMessageDrive(connectedStorageId: string | null | undefined):
   return connectedStorageId ?? "";
 }
 
-const RELEASE_NOISE =
-  /\b(?:2160p|1080p|720p|480p|4k|uhd|hdr10?\+?|dv|dovi|web-?dl|webrip|bluray|blu-ray|bdrip|remux|hevc|avc|x26[45]|h\.?26[45]|aac|ddp?5\.1|atmos|flac|10bit|8bit|mkv|mp4|ts)\b/gi;
-
-/** Title normalization for the fingerprint: bracket groups, sizes, release words and
- *  punctuation removed, lowercased. Deliberately aggressive — it only ever combines
- *  with an exact-ish size match, never decides alone. */
-export function normalizeResourceLabel(label: string): string {
-  return label
-    .replace(/[【\[(（][^】\])）]*[】\])）]/g, " ")
-    .replace(/\d+(?:\.\d+)?\s*(?:gb?|mb?|tb?)\b/gi, " ")
-    .replace(/\.[a-z0-9]{2,4}$/i, " ")
-    .replace(RELEASE_NOISE, " ")
-    .replace(/[\s._\-·:：,，、。!！?？'"]+/g, "")
-    .toLowerCase();
-}
+// normalizeResourceLabel 是「无属主」的纯归一化，放在 domain 层——身份闸门
+// （title-identity）也要用它，留在这里会经 subscription-policy-store 形成依赖环。
+export { normalizeResourceLabel } from "../domain/resource-label.js";
+import { normalizeResourceLabel } from "../domain/resource-label.js";
 
 /** A size PanSou-style titles often carry ("[2.2G]", "850MB"). Null when absent. */
 export function parseSizeFromTitle(title: string): number | null {

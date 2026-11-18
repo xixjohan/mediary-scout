@@ -37,6 +37,24 @@ export async function registerNodeInstrumentation(): Promise<void> {
   const { runStartupMigrations, recoverOrphanedRuns } = await import("./lib/workflow-runtime");
   await runStartupMigrations();
 
+  // STRM 播放签名密钥的启动期预热。实现搬到 lib/strm-signing-prime.ts：
+  // 这里若再写一条 `await import("@media-track/workflow")` 的**解构**导入，
+  // Turbopack 会与上面 validateRuntimeConfig 那条的模块句柄命名冲突，
+  // 运行时抛 `__TURBOPACK__imported__module__… is not defined`（真机实测）。
+  try {
+    const { primeStrmSigningFromInstance } = await import("./lib/strm-signing-prime");
+    const primed = await primeStrmSigningFromInstance();
+    if (primed.source === "instance-jwt") {
+      console.log("[instrumentation] STRM signing secret primed from the instance JWT secret");
+    } else if (!primed.primed) {
+      console.error("[instrumentation] STRM signing secret unavailable; .strm playback signing will fail loudly");
+    }
+  } catch (error) {
+    console.error(
+      `[instrumentation] STRM signing prime failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+
   // P1 解药（任务单 S2.2）：常驻 drain 循环默认不再住在 Next 服务进程里。
   //   MEDIA_TRACK_WORKER_MODE=external   → 循环交给独立宿主 apps/host-worker（compose 部署）
   //   MEDIA_TRACK_INPROCESS_WORKER=0     → 旧开关，等价 external（兼容老部署）

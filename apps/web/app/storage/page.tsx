@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { connection } from "next/server";
 import Link from "next/link";
-import { FolderSync } from "lucide-react";
+import { Download, FolderSync } from "lucide-react";
 import { PageLoginGuard } from "../../lib/page-auth-guard";
 import {
   decidePageAccess,
@@ -87,13 +87,27 @@ async function StorageSurface({
             <h1>网盘管理</h1>
             <p>直接浏览、整理和管理已绑定的云网盘文件与目录</p>
           </div>
-          <Link
-            href="/storage/strm"
-            className="btn btn-secondary"
-            style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
-          >
-            <FolderSync size={16} /> STRM 任务计划
-          </Link>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <Link
+              href="/storage/strm"
+              className="btn btn-secondary"
+              style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+            >
+              <FolderSync size={16} /> STRM 任务计划
+            </Link>
+            {/* 入口可见性只是体验：真正的边界是 /api/owner/ingest/* 的 requireOwner
+                与 /storage/owner-ingest 的 OwnerPageGuard。判据用 isOwner 位，
+                与 API 侧同一个来源（管理员有 storage:browse_any 但不是站长）。 */}
+            {access.isOwner ? (
+              <Link
+                href="/storage/owner-ingest"
+                className="btn btn-secondary"
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem" }}
+              >
+                <Download size={16} /> 关键字投放
+              </Link>
+            ) : null}
+          </div>
         </div>
         <StorageManagerView
           storages={storages}

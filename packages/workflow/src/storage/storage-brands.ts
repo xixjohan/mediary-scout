@@ -36,6 +36,7 @@ import {
   TRANSFER_MODEL_NOTE_TIANYI,
   TRANSFER_MODEL_NOTE_UC,
 } from "../acquisition-v2/transfer-model-notes.js";
+import { INGEST_CAPABILITIES, type IngestCapability } from "./ingest-capabilities.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import {
   createBootstrapPan115CookieStorageExecutor,
@@ -209,6 +210,16 @@ export interface StorageBrand {
   supportsSubtitleDirectLink: boolean;
   /** 是否支持官方开放平台 Open OAuth 授权（双轨融合能力门）。 */
   supportsOpenOAuth: boolean;
+  /**
+   * 离线下载 / 分享转存能力（ingest）。**必填**，数据源是 ingest-capabilities.ts
+   * —— 服务端 `/api/storage/offline` 的分发与前端能力展示都读这一处。
+   *
+   * 为什么必填：此前服务端有一份 `if (provider === …)` 分发链、前端有另一份手写的
+   * `DRIVE_INGEST_CAPABILITIES`，没有任何一致性断言。UC 盘因此掉进了裂缝：注册表
+   * 认它、两边能力表都不认它。声明进注册表后，「加一家网盘」再一次是加一个条目，
+   * 而漏声明是编译错误而不是运行时的一次静默少功能。
+   */
+  ingest: IngestCapability;
 }
 
 /** Input to a brand's `createBootstrap`. Cookie brands read `cookie`, token brands
@@ -241,6 +252,7 @@ export const STORAGE_BRANDS = [
   // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
     supportsSubtitleDirectLink: true,
     supportsOpenOAuth: true,
+    ingest: INGEST_CAPABILITIES.pan115,
     createBootstrap: ({ cookie, env }) =>
           createBootstrapPan115CookieStorageExecutor({ cookie, ...(env === undefined ? {} : { env }) }),
     create: (input) => {
@@ -287,6 +299,7 @@ export const STORAGE_BRANDS = [
   // W5 能力声明：executor 没有 transferSubtitleUrl（无外链离线接口）。声明不支持让设置页判失真，否则用户会以为配了 token 就能落字幕。
     supportsSubtitleDirectLink: false,
     supportsOpenOAuth: false,
+    ingest: INGEST_CAPABILITIES.quark,
     createBootstrap: ({ cookie }) =>
           new QuarkStorageExecutor({ client: new QuarkCookieClient({ cookie }), writeScopeDirectoryIds: [] }),
     create: (input) => {
@@ -316,6 +329,7 @@ export const STORAGE_BRANDS = [
     transferModelNote: TRANSFER_MODEL_NOTE_UC,
     supportsSubtitleDirectLink: false,
     supportsOpenOAuth: false,
+    ingest: INGEST_CAPABILITIES.uc,
     createBootstrap: ({ cookie }) =>
       new QuarkStorageExecutor({
         client: new QuarkCookieClient({ cookie, profile: UC_PROFILE }),
@@ -355,6 +369,7 @@ export const STORAGE_BRANDS = [
   // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
     supportsSubtitleDirectLink: true,
     supportsOpenOAuth: false,
+    ingest: INGEST_CAPABILITIES.guangya,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as { accessToken?: string; refreshToken?: string; deviceId?: string };
           const clientOptions: GuangYaClientOptions = {
@@ -408,6 +423,7 @@ export const STORAGE_BRANDS = [
   // W5 能力声明：executor 没有 transferSubtitleUrl（无外链离线接口）。声明不支持让设置页判失真，否则用户会以为配了 token 就能落字幕。
     supportsSubtitleDirectLink: false,
     supportsOpenOAuth: false,
+    ingest: INGEST_CAPABILITIES.tianyi,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as Partial<TianyiCredential>;
           const clientOptions: TianyiClientOptions = {
@@ -460,6 +476,7 @@ export const STORAGE_BRANDS = [
   // W5 能力声明：executor 实现了 transferSubtitleUrl（外链离线落盘）。与orchestrator 的字幕门与设置页的哪些盘能用，都读这一处。
     supportsSubtitleDirectLink: true,
     supportsOpenOAuth: false,
+    ingest: INGEST_CAPABILITIES.pan123,
     createBootstrap: ({ credential }) => {
           const c = (credential ?? {}) as Partial<Pan123Credential>;
           return new Pan123StorageExecutor({ client: new Pan123Client({ token: c.token ?? "" }), writeScopeDirectoryIds: [] });
@@ -475,40 +492,6 @@ export const STORAGE_BRANDS = [
     },
   },
 ] satisfies readonly StorageBrand[];
-
-/**
- * Map a brand's resource-provider kinds to the PanSou link types its acquisitions
- * may transfer. A 夸克 drive can only save 夸克 share links; 光鸭 / 123 / 115 take
- * their OWN share links plus magnets (光鸭: restore_share + offline download).
- * Pure + brand-table-driven so the resource assembly stays testable.
- */
-export function allowedResourceTypesForKinds(kinds: readonly string[]): ResourceType[] {
-  if (kinds.includes("pansou-quark")) {
-    return ["quark"];
-  }
-  if (kinds.includes("pansou-uc")) {
-    return ["uc"];
-  }
-  if (kinds.includes("pansou-tianyi")) {
-    return ["tianyi"];
-  }
-  // 123 share + magnet when prowlarr/pansou-magnet is also listed (dual-path brand).
-  if (kinds.includes("pansou-123")) {
-    return kinds.includes("prowlarr") || kinds.includes("pansou-magnet")
-      ? ["123", "magnet"]
-      : ["123"];
-  }
-  // 光鸭 share + magnet when a magnet source is also listed (dual-path brand).
-  if (kinds.includes("pansou-guangya")) {
-    return kinds.includes("prowlarr") || kinds.includes("pansou-magnet")
-      ? ["guangya", "magnet"]
-      : ["guangya"];
-  }
-  if (kinds.includes("pansou-magnet")) {
-    return ["magnet"];
-  }
-  return ["115", "magnet"];
-}
 
 export function getStorageBrand(provider: string): StorageBrand {
   const brand = STORAGE_BRANDS.find((b) => b.provider === provider);
@@ -615,3 +598,4 @@ export function brandSupportsOpenOAuth(provider: string | undefined): boolean {
   if (provider === undefined || !isRegisteredStorageProvider(provider)) return false;
   return getStorageBrand(provider).supportsOpenOAuth;
 }
+

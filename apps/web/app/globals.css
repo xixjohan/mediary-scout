@@ -124,18 +124,20 @@
 }
 
 /*
- * 网页全屏修正。
+ * 全屏铺满修正（网页全屏 + 原生全屏共用一套类名）。
  *
- * ArtPlayer 的 .art-fullscreen-web 是 position:fixed + width:100%，而 fixed 的
- * 包含块是「初始包含块」；存在经典滚动条时其宽度 = 视口宽 - 滚动条宽，
- * 于是右侧会露出约 15px 的页面底色（观感即黑边）。
- * 进入网页全屏时隐藏根滚动条，并用视口单位兜底，保证铺满。
+ * 两个坑同源：reset.css 的 `scrollbar-gutter: stable` 即使没有滚动条也常驻
+ * 预留一条槽位，而全屏元素的 `width:100%`（原生全屏）与 `100vw`（viewport
+ * 单位同样被 gutter 扣减）都按「视口宽 - 槽宽」解析，于是右侧露出 15px
+ * 页面底色（观感即黑边）。`overflow:hidden` 只是不再画滚动条，仍然预留槽位，
+ * 所以必须同时把 `scrollbar-gutter` 复位为 auto，才能把槽位宽度还给全屏视口。
  */
-html.mediary-web-fullscreen {
+html.mediary-fullscreen {
   overflow: hidden;
+  scrollbar-gutter: auto;
 }
 
-html.mediary-web-fullscreen .art-video-player.art-fullscreen-web {
+html.mediary-fullscreen .art-video-player.art-fullscreen-web {
   width: 100vw !important;
   height: 100vh !important;
 }

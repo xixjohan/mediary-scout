@@ -125,6 +125,7 @@ export function MediaryPlayerCore({
     let art: ArtplayerType | null = null;
     let isDisposed = false;
     const firstFrameTimer = startPlaybackTimer();
+    let fullscreenChangeHandler: (() => void) | null = null;
     layoutPhaseRef.current = "pending";
     setLayoutPhase("pending");
     // 换流 / 重建播放器时同步清掉上一次的适配标记，避免新实例尚未 init
@@ -393,11 +394,19 @@ export function MediaryPlayerCore({
         currentSubtitleLabel: () => subtitleController.current()?.label ?? null,
       });
 
-      // 网页全屏修正：ArtPlayer 用 width:100% 相对「扣掉滚动条」的初始包含块，
-      // 右侧会露出约 15px 底色（看起来就是黑边）。挂到 html 上做视口级修正。
-      art.on("fullscreenWeb", (on: boolean) => {
-        document.documentElement.classList.toggle("mediary-web-fullscreen", on);
-      });
+      // 全屏铺满修正：ArtPlayer 网页全屏用 width:100%，原生全屏元素的 100%
+      // 同样按「视口宽 - scrollbar-gutter 槽位」解析，右侧都会露出约 15px
+      // 底色（看起来就是黑边）。两种模式共用 html.mediary-fullscreen，
+      // 由 globals.css 复位 gutter 并隐藏根滚动条。
+      const syncFullscreenClass = (on: boolean) => {
+        document.documentElement.classList.toggle("mediary-fullscreen", on);
+      };
+      art.on("fullscreenWeb", syncFullscreenClass);
+      // 原生全屏没有 ArtPlayer 事件，只有 document 级 fullscreenchange；
+      // 用户用系统手势 / F11 退出也必须走同一个清理路径。
+      const onFullscreenChange = () => syncFullscreenClass(Boolean(document.fullscreenElement));
+      fullscreenChangeHandler = onFullscreenChange;
+      document.addEventListener("fullscreenchange", onFullscreenChange);
 
       // 适配器式修补：ArtPlayer 内部在 autoplay / switchUrl 时直接调用
       // video.play() 且不 catch AbortError，快速切换流会产生未捕获拒绝。
@@ -503,6 +512,10 @@ export function MediaryPlayerCore({
       window.clearTimeout(metadataTimeout);
       resizeObserver?.disconnect();
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
+      if (fullscreenChangeHandler) {
+        document.removeEventListener("fullscreenchange", fullscreenChangeHandler);
+        fullscreenChangeHandler = null;
+      }
       onPlayerChangeRef.current?.(null);
       gainPipelineRef.current?.detach();
       gainPipelineRef.current = null;
@@ -514,7 +527,7 @@ export function MediaryPlayerCore({
         playerRef.current = null;
       }
       // 退出时清掉全屏修正类，避免影响其它页面。
-      document.documentElement.classList.remove("mediary-web-fullscreen");
+      document.documentElement.classList.remove("mediary-fullscreen");
     };
   }, [currentUrl, title, poster, autoPlay]);
 

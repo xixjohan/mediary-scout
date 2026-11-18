@@ -339,6 +339,9 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     if (!cols.some((c) => c.name === "season_episode_ranges")) {
       this.db.exec("ALTER TABLE subscription_policies ADD COLUMN season_episode_ranges text NOT NULL DEFAULT '[]'");
     }
+    if (!cols.some((c) => c.name === "subtitle_preference")) {
+      this.db.exec("ALTER TABLE subscription_policies ADD COLUMN subtitle_preference text NOT NULL DEFAULT '{\"terms\":[],\"require\":false}'");
+    }
   }
 
   private upgradeStrmTasksShape(): void {
@@ -527,6 +530,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         episodeFilter: stored.episodeFilter, useRegex: stored.useRegex, cooldownDays: stored.cooldownDays,
         customKeywords: [...(stored.customKeywords ?? [])], priorityGroups: stored.priorityGroups ?? [],
         seasonEpisodeRanges: stored.seasonEpisodeRanges ?? [],
+        subtitlePreference: stored.subtitlePreference ?? { terms: [], require: false },
       } : null,
     };
   }
@@ -2314,13 +2318,14 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // created_at 用 ON CONFLICT 时**不**覆盖：一次保存只该动 updated_at。
     this.db
       .prepare(
-        "INSERT INTO subscription_policies (account_id, title_key, must_contain, must_not_contain, episode_filter, use_regex, cooldown_days, created_at, updated_at, custom_keywords, priority_groups, season_episode_ranges) " +
-          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+        "INSERT INTO subscription_policies (account_id, title_key, must_contain, must_not_contain, episode_filter, use_regex, cooldown_days, created_at, updated_at, custom_keywords, priority_groups, season_episode_ranges, subtitle_preference) " +
+          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
           "ON CONFLICT (account_id, title_key) DO UPDATE SET " +
           "must_contain = excluded.must_contain, must_not_contain = excluded.must_not_contain, " +
           "episode_filter = excluded.episode_filter, use_regex = excluded.use_regex, " +
           "cooldown_days = excluded.cooldown_days, updated_at = excluded.updated_at, " +
-          "custom_keywords = excluded.custom_keywords, priority_groups = excluded.priority_groups, season_episode_ranges = excluded.season_episode_ranges",
+          "custom_keywords = excluded.custom_keywords, priority_groups = excluded.priority_groups, season_episode_ranges = excluded.season_episode_ranges, " +
+          "subtitle_preference = excluded.subtitle_preference",
       )
       .run(
         input.accountId,
@@ -2335,6 +2340,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
         columns.custom_keywords,
         columns.priority_groups,
         columns.season_episode_ranges,
+        columns.subtitle_preference,
       );
     const stored = await this.getSubscriptionPolicy({ accountId: input.accountId, titleKey: input.titleKey });
     // 写完读不回来是仓库的 bug，不是「策略没了」——宁可炸也别返回一个假策略。

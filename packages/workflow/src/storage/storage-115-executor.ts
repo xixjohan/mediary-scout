@@ -583,6 +583,15 @@ export class Storage115Executor implements StorageExecutor {
     return this.apiGuard.transferCallBudget();
   }
 
+  /** Exact-directory authorization for the owner-directed ingest path. No-op
+   *  when no scope is configured (that mode already allows everything — adding
+   *  one id would narrow it). Does NOT propagate to children: a nested folder
+   *  the user creates later still has to be derived from an in-scope parent. */
+  authorizeWriteTarget(directoryId: string): void {
+    if (this.writeScopeDirectoryIds.size === 0) return;
+    this.writeScopeDirectoryIds.add(normalizeDirectoryId(directoryId));
+  }
+
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     const safeParentId = await this.assertWithinWriteScope(input.parentId, "create directory");
     // Find-or-create: seasons of one title initialize at different times and

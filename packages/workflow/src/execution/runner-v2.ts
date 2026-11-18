@@ -79,12 +79,18 @@ interface TvV2Common {
   now?: () => string;
 }
 
+/** 身份闸门输入：巡检手上已有完整 MediaTitle，直接映射成身份（确认「是不是这部作品」早于版本词）。 */
+function identityOfTitle(title: MediaTitle) {
+  return { tmdbId: title.tmdbId, year: title.year, title: title.title, originalTitle: title.originalTitle, aliases: title.aliases };
+}
+
 async function subscriptionPolicyFilterOption(input: Pick<TvV2Common, "repository" | "accountId" | "title" | "workflowRun">) {
   return loadSubscriptionPolicyFilter({
     repository: input.repository,
     accountId: input.accountId ?? DEFAULT_ACCOUNT_ID,
     titleKey: input.title.id,
     workflowRunId: input.workflowRun.id,
+    identity: identityOfTitle(input.title),
   });
 }
 

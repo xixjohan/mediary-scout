@@ -37,6 +37,10 @@ export type WorkflowKind =
   | "resource_search"
   /** Batch 3: a manual import the user triggered from the detail page's 资源 panel. */
   | "manual_import"
+  /** 站长「关键字投放」：无作品身份、显式目标目录的一次入库。与 manual_import
+   *  的区别只在「目标目录由用户选」与「作品身份可缺省」——两点都足以让它
+   *  成为独立 kind（混在一个 kind 里会让两种语义互相误伤标题级互斥）。 */
+  | "owner_ingest"
   /** Batch 4: an 自动整理 of a title's directory. User-visible on purpose — its most
    *  interesting outcome is `manual_review`, and a review the user cannot see is a
    *  review that never happens. */
@@ -48,7 +52,13 @@ export function isUserVisibleWorkflowKind(kind: WorkflowKind): boolean {
   // every search the user ever ran, which reads as "the system is doing something".
   // manual_import IS user-visible — it is the user's own import, and its progress is
   // what the detail page's button reports.
-  return kind !== "staging_recovery" && kind !== "resource_search";
+  //
+  // owner_ingest 隐藏（2026-11-17 验收实测）：它的目标目录是**用户指定的任意目录**，
+  // 而活动流/通知的行都链到 `showHref(title.tmdbId, …)`——合成标题的 tmdbId 是
+  // 哨兵 0，于是「黄泉」一行指向 `/show/0`（404）。投放本来也没有作品身份，
+  // 把它们塞进「获取中/已完成」会被读成「系统在追这部片」，是错的事实。
+  // 两次投放的账号内追溯由 `/api/owner/ingest/status` + run 记录本身承担。
+  return kind !== "staging_recovery" && kind !== "resource_search" && kind !== "owner_ingest";
 }
 
 /**
@@ -60,7 +70,7 @@ export function isUserVisibleWorkflowKind(kind: WorkflowKind): boolean {
  * do not perform acquisitions.
  */
 export function isEpisodePreservingWorkflowKind(kind: WorkflowKind): boolean {
-  return kind === "resource_search" || kind === "title_organize" || kind === "manual_import";
+  return kind === "resource_search" || kind === "title_organize" || kind === "manual_import" || kind === "owner_ingest";
 }
 
 /** Notice kinds a user must never see. Applied inside the notification queries,

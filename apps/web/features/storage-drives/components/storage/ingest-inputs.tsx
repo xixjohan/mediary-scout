@@ -51,7 +51,7 @@ export function IngestCapabilityBar({
         {supportsShare && " 网盘分享秒级转存"}
         {supportsShare && supportsOffline && " 及 "}
         {supportsOffline && `云端离线（${capability.schemes.map((s) => s.toUpperCase()).join(" / ")}）`}
-        {capability.supportsTorrent ? " 及 BT 种子" : ""}
+        {capability.supportsTorrentFile ? " 及 BT 种子" : ""}
       </span>
     </div>
   );

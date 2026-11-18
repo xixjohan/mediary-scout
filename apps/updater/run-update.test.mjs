@@ -1,4 +1,13 @@
 import { spawn, spawnSync } from "node:child_process";
+import {
+  ARGV_NEWLINE_SKIP_REASON,
+  SHELL_SUITE_TIMEOUT_MS,
+  SH_BIN,
+  argvCarriesNewlines,
+  pathWithStubs,
+  posixModeAssertable,
+  POSIX_MODE_SKIP_REASON,
+} from "./test-support/posix-shell.mjs";
 import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -258,7 +267,9 @@ function setup() {
   installStubs(bin);
   const env = {
     ...process.env,
-    PATH: `${bin}:${process.env.PATH ?? ""}`,
+    // 桩目录必须走 POSIX 形态，否则 Git-Bash 的 sh 按 ':' 切分会把它切碎，
+    // 打桩的测试实际会跑宿主机真 docker/git（随机退出码的根源）。
+    PATH: pathWithStubs(bin),
     UPDATER_REPO_DIR: repo,
     UPDATER_STATE_DIR: state,
     UPDATER_WEB_BASE: "http://web.test:3000",
@@ -278,7 +289,7 @@ function run(env, tag = TAG) {
 
 function runArgs(env, args) {
   return new Promise((resolve) => {
-    const child = spawn("sh", [SCRIPT, ...args], { env });
+    const child = spawn(SH_BIN, [SCRIPT, ...args], { env });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -323,7 +334,7 @@ function gitShas(stubDir) {
   return readFileSync(file, "utf8").trim().split("\n").filter(Boolean);
 }
 
-describe("run-update.sh", { timeout: 60_000 }, () => {
+describe("run-update.sh", { timeout: SHELL_SUITE_TIMEOUT_MS }, () => {
   it("updates, backing up before pulling the image and swapping web+worker", async () => {
     const { repo, stubDir, log, env } = setup();
     const result = await run(env);
@@ -478,6 +489,10 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
       expect({ tag, code: result.code }).toEqual({ tag, code: 0 });
     }
     for (const tag of rejected) {
+      // Windows argv 在换行符处被截断，构造不出「带换行的 tag」这种输入。
+      // 脚本的换行拒绝分支（case 里匹配换行）由 CI（ubuntu）的枚举覆盖；
+      // 这里只跳过构造不出来的枚举项，不跳过任何断言语义。
+      if (tag.includes("\n") && !argvCarriesNewlines()) continue;
       const { log, env } = setup();
       const result = await run(env, tag);
       expect({ tag, code: result.code }).toEqual({ tag, code: 2 });
@@ -1079,7 +1094,12 @@ describe("run-update.sh", { timeout: 60_000 }, () => {
     const gz = backups.find((name) => name.endsWith(".db.gz"));
     expect(gz).toBeDefined();
     // No group or other permission bits: the dump holds the 115 cookie and LLM keys.
-    expect(statSync(join(repo, "backups", gz)).mode & 0o077).toBe(0);
+    // Windows 没有 POSIX 位可断言（见 test-support/posix-shell.mjs）。
+    if (posixModeAssertable()) {
+      expect(statSync(join(repo, "backups", gz)).mode & 0o077).toBe(0);
+    } else {
+      expect(statSync(join(repo, "backups", gz)).size).toBeGreaterThan(0);
+    }
   });
 
   it("treats an image pull that hangs as a failed pull in update mode, and does not swap", async () => {
@@ -1179,7 +1199,8 @@ describe("run-update.sh — 更新源与镜像基址同源（H1）", () => {
     const probe = join(dir, "probe.sh");
     writeFileSync(probe, snippet);
     chmodSync(probe, 0o755);
-    const out = spawnSync(probe, [], { env: { PATH: process.env.PATH, ...env }, encoding: "utf8" });
+    // 直接执行 .sh 在 Windows 会 EFTYPE；始终经 sh 启动（Linux/CI 等价）。
+    const out = spawnSync(SH_BIN, [probe], { env: { PATH: process.env.PATH, ...env }, encoding: "utf8" });
     const printed = out.stdout.trim().split("\n");
     return { updateRepo: printed[0], imageBase: printed[1], status: out.status };
   }

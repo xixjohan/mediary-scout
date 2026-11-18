@@ -7,7 +7,7 @@ import type { ConnectedStorageView } from "../../../../lib/workflow-runtime";
 import type { OfflineCapabilities } from "../../../../app/api/storage/offline/route";
 import { formatProviderLabel } from "./storage-top-bar";
 import { RemoteFolderPickerModal } from "./remote-folder-picker-modal";
-import { parseBatchIngestInput, type BatchIngestResult } from "../../core/ingest-protocol-router";
+import { parseBatchIngestInput, capabilityFromServer, type BatchIngestResult } from "../../core/ingest-protocol-router";
 import { IngestDestinationPicker } from "./ingest-destination-picker";
 import {
   IngestCapabilityBar,
@@ -72,6 +72,7 @@ function useDriveCapability(isOpen: boolean, storageId: string, provider: string
             provider,
             schemes: [],
             supportsTorrent: false,
+            supportsTorrentFile: false,
             supportsOffline: false,
             supportsShareTransfer: false,
             supportedShareBrands: [],
@@ -125,7 +126,8 @@ async function postIngestTask(params: IngestSubmitParams): Promise<string> {
 
   const submitted = (data["submitted"] as number) || 1;
   const succeeded = (data["succeeded"] as number) || submitted;
-  return `成功提交 ${submitted} 个入库任务（${succeeded} 个已完成）！网盘将在云端完成落盘。`;
+  // 「提交成功」= 平台已受理，不等于已经落盘（磁力真下载可能要几十分钟）。
+  return `已提交 ${submitted} 个任务（${succeeded} 个已被网盘受理）。网盘将在云端完成拉取与落盘，可在「活动」中查看后续结果。`;
 }
 
 function IngestModalTabs({
@@ -192,8 +194,14 @@ function StorageOfflineModalContent({
   const { capability, capLoading } = useDriveCapability(true, storageId, provider);
 
   const parsedBatch = useMemo(
-    () => parseBatchIngestInput(linksText, provider),
-    [linksText, provider]
+    // 能力来自服务端响应（同一份注册表），客户端不再自己声明「哪些协议可用」。
+    () =>
+      parseBatchIngestInput(
+        linksText,
+        provider,
+        capability ? capabilityFromServer(capability) : undefined,
+      ),
+    [linksText, provider, capability]
   );
 
   useEffect(() => {
@@ -249,7 +257,10 @@ function StorageOfflineModalContent({
   };
 
   const isSupported = capability?.supported ?? false;
-  const supportsTorrent = capability?.supportsTorrent ?? false;
+  // 种子上传只有在品牌真的实现了消费路径时才可用（注册表 supportsTorrentFile）。
+  // 此前「supportsTorrent」（平台有轮询接口）被当成「能传种子」，于是这个 tab
+  // 可点但任何品牌都消费不了 torrentBase64——提交必失败的假功能。
+  const supportsTorrent = capability?.supportsTorrentFile ?? false;
   const submitBtnText = resolveSubmitButtonText(submitting, activeTab, parsedBatch);
   const submitDisabled = !isSupported || submitting || (activeTab === "links" && parsedBatch.validCount === 0 && !torrentFile);
 

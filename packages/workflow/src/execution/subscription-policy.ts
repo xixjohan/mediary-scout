@@ -19,6 +19,8 @@
  * promises is what the run will do.
  */
 
+import { matchIdentityByName, type TitleIdentity } from "./title-identity.js";
+
 /** A resource a policy is asked about. Only what matching needs — no drive URLs. */
 export interface PolicyResource {
   /** The resource's display name, as the search returned it. */
@@ -52,11 +54,50 @@ export interface SubscriptionPolicy {
   priorityGroups?: SubscriptionPriorityGroup[];
   /** Optional per-season inclusive episode ranges; an absent season has no extra bound. */
   seasonEpisodeRanges?: SeasonEpisodeRange[];
+  /** 字幕偏好：软偏好（加分/标注），`require` 时才作为准入硬条件。 */
+  subtitlePreference?: SubtitlePreference;
   /** 画质截止线 (Quality Cutoff)，达到此档位后不再触发升级搜索与下载，默认不设限 */
   qualityCutoff?: QualityCutoffTier;
   /** 是否允许洗版升级 (默认 false，不开启则已有文件绝不再替换) */
   allowUpgrade?: boolean;
 }
+
+/**
+ * 字幕偏好。
+ *
+ * 与 `mustContain` 分开建模，是因为真实标题里「有中文字幕」的写法不止一种：
+ * `CHS`、`CHS-ENG`、`中英双字`、`简繁`、`双语`、`中字`、`内嵌`。把它做成
+ * `mustContain: ["简中字幕"]` 那样的 AND 子串，等于要求标题出现「简中字幕」四个字
+ * 连写——实测多数资源不这么写，规则恒 false。
+ *
+ * 因此这里是 OR 词表（任一词命中即有字幕），且默认 `require: false`：有字幕的候选
+ * 排在无字幕的前面，但不把无字幕的整个排除。用户显式勾「必须有中文字幕」才变成硬条件。
+ */
+export interface SubtitlePreference {
+  /** 任一词命中即视为有字幕（OR，不区分大小写；useRegex 时按正则）。 */
+  terms: string[];
+  /** true = 无字幕候选在准入阶段被拒（reason: subtitle_missing）。 */
+  require: boolean;
+}
+
+/** 默认字幕词表：覆盖本仓实测过的主流写法（见 modules 注释）。 */
+export const DEFAULT_SUBTITLE_TERMS: readonly string[] = [
+  "简中",
+  "简日",
+  "CHS",
+  "简繁",
+  "双语",
+  "中英",
+  "中字",
+  "内嵌",
+  "字幕",
+];
+
+export const DEFAULT_SUBTITLE_PREFERENCE: SubtitlePreference = {
+  require: false,
+  terms: [...DEFAULT_SUBTITLE_TERMS],
+};
+
 
 export interface SeasonEpisodeRange {
   seasonNumber: number;
@@ -263,6 +304,19 @@ function resourceEpisodes(resource: PolicyResource): { season: string | null; ep
   return { season, episode };
 }
 
+/**
+ * 整季/全集包：`全N集`、`第N季`（不带具体集号）、`SxxEyy-zz` 区间。
+ *
+ * 与 `describesEpisodePack` 的区别：后者只认集号区间（用于「先别把季包按单集范围
+ * 拒掉」），这里还要认中文 `全12集` —— 计数语义需要它来区分「一条 = 一季」与
+ * 「一条 = 一集」。
+ */
+export function isSeasonPackName(name: string): boolean {
+  if (/全\s*\d{1,4}\s*集/.test(name)) return true;
+  if (/第\s*\d{1,2}\s*季/.test(name) && !/[Ss]\d{1,2}[Ee]\d{1,4}/.test(name)) return true;
+  return describesEpisodePack(name);
+}
+
 /** A release title can describe a whole episode interval; defer its range decision
  * until the archive is inspected file by file. This avoids dropping a season pack
  * because its title starts before the user's requested episode. */
@@ -270,7 +324,7 @@ function describesEpisodePack(name: string): boolean {
   return /[Ss]\d{1,2}[Ee]\d{1,4}\s*(?:-|~|至)\s*[Ee]?\d{1,4}/i.test(name);
 }
 
-export type PolicyVerdict = { matched: true; priorityGroupId?: string; priorityGroupName?: string } | { matched: false; reason: PolicyRejectReason };
+export type PolicyVerdict = { matched: true; priorityGroupId?: string; priorityGroupName?: string; hasSubtitle?: boolean } | { matched: false; reason: PolicyRejectReason };
 
 export type PolicyRejectReason =
   /** A `mustNotContain` term hit. */
@@ -279,11 +333,21 @@ export type PolicyRejectReason =
   | "missing_term"
   /** The episode filter does not admit this episode. */
   | "episode_filtered"
+  /** 必须中文字幕，但标题里没有任何字幕标记。 */
+  | "subtitle_missing"
+  /** 这条资源根本不是这部作品（不同 tmdb id / 相差多年的年份 / 片名对不上）。 */
+  | "wrong_title"
   | "priority_unmatched";
 
 export interface MatchPolicyOptions {
   /** File validation runs after unpacking and must reject video files without usable season/episode metadata. */
   requireSeasonEpisodeForRange?: boolean;
+  /**
+   * 作品身份。提供时，身份闸门作为**第一步**执行——先确认「这是不是这部作品」，
+   * 再套任何版本词。缺省（不提供）时行为与引入身份闸门之前完全一致，既有纯单测
+   * 无需改动。
+   */
+  identity?: TitleIdentity;
 }
 
 function matchPriorityGroup(policy: SubscriptionPolicy, name: string): PolicyVerdict {
@@ -334,19 +398,46 @@ function matchEpisodeFilter(policy: SubscriptionPolicy, resource: PolicyResource
 }
 
 /**
+ * 字幕偏好的判定：返回「有字幕吗」+ 是否需要因缺字幕而拒绝。
+ *
+ * 这是 OR 词表 —— 任一词命中即算有字幕。空词表等价「不关心」，不拒绝任何东西。
+ * `require: false`（默认）只在结果里附带 `hasSubtitle` 供排序与预览标注，不参与准入。
+ */
+function matchSubtitlePreference(policy: SubscriptionPolicy, name: string): { hasSubtitle: boolean; verdict: PolicyVerdict | null } {
+  const preference = policy.subtitlePreference;
+  if (!preference) return { hasSubtitle: false, verdict: null };
+  const terms = preference.terms.filter((term) => term.trim().length > 0);
+  if (terms.length === 0) return { hasSubtitle: false, verdict: null };
+  const hasSubtitle = terms.some((term) => termMatches(term.trim(), name, policy.useRegex));
+  if (!hasSubtitle && preference.require) {
+    return { hasSubtitle: false, verdict: { matched: false, reason: "subtitle_missing" } };
+  }
+  return { hasSubtitle, verdict: null };
+}
+
+/**
  * Whether a resource satisfies a policy. Pure, and the single implementation both the
  * patrol and 规则预览 call — that shared core is the whole point: a preview that
  * promises what the run will not do is worse than no preview.
  */
 export function matchPolicy(policy: SubscriptionPolicy, resource: PolicyResource, options: MatchPolicyOptions = {}): PolicyVerdict {
   const name = resource.name;
+  // 身份闸门必须最先跑：没确认是同一部作品之前，版本词再漂亮也没有意义。
+  if (options.identity !== undefined) {
+    const identity = matchIdentityByName(options.identity, name);
+    if (!identity.matched) return { matched: false, reason: "wrong_title" };
+  }
   const terms = matchPolicyTerms(policy, name);
   if (!terms.matched) return terms;
   const seasonRange = matchSeasonEpisodeRanges(policy, resource, options);
   if (!seasonRange.matched) return seasonRange;
   const episodeFilter = matchEpisodeFilter(policy, resource);
   if (!episodeFilter.matched) return episodeFilter;
-  return matchPriorityGroup(policy, name);
+  const subtitle = matchSubtitlePreference(policy, name);
+  if (subtitle.verdict !== null && !subtitle.verdict.matched) return subtitle.verdict;
+  const priority = matchPriorityGroup(policy, name);
+  if (!priority.matched) return priority;
+  return { ...priority, hasSubtitle: subtitle.hasSubtitle };
 }
 
 export interface PolicyPreview {
@@ -356,6 +447,12 @@ export interface PolicyPreview {
   excluded: { resource: PolicyResource; reason: PolicyRejectReason }[];
   matchedCount: number;
   excludedCount: number;
+  /** 命中且带中文字幕标记的条数（软偏好默认不拒，只用于展示与排序）。 */
+  matchedWithSubtitleCount: number;
+  /** 命中里整季包（`全N集` / 季包标题）的条数：与单集候选不是同一单位。 */
+  matchedPackCount: number;
+  /** 按 reason 分组的排除计数（含 wrong_title），供诊断与审计。 */
+  excludedByReason: Partial<Record<PolicyRejectReason, number>>;
 }
 
 /**
@@ -369,18 +466,33 @@ export interface PolicyPreview {
 export function previewPolicy(
   policy: SubscriptionPolicy,
   resources: readonly PolicyResource[],
+  options: MatchPolicyOptions = {},
 ): PolicyPreview {
   const matched: PolicyResource[] = [];
   const excluded: { resource: PolicyResource; reason: PolicyRejectReason }[] = [];
+  let matchedWithSubtitleCount = 0;
+  let matchedPackCount = 0;
+  const excludedByReason: Partial<Record<PolicyRejectReason, number>> = {};
   for (const resource of resources) {
-    const verdict = matchPolicy(policy, resource);
+    const verdict = matchPolicy(policy, resource, options);
     if (verdict.matched) {
       matched.push(resource);
+      if (verdict.hasSubtitle) matchedWithSubtitleCount += 1;
+      if (isSeasonPackName(resource.name)) matchedPackCount += 1;
     } else {
       excluded.push({ resource, reason: verdict.reason });
+      excludedByReason[verdict.reason] = (excludedByReason[verdict.reason] ?? 0) + 1;
     }
   }
-  return { matched, excluded, matchedCount: matched.length, excludedCount: excluded.length };
+  return {
+    matched,
+    excluded,
+    matchedCount: matched.length,
+    excludedCount: excluded.length,
+    matchedWithSubtitleCount,
+    matchedPackCount,
+    excludedByReason,
+  };
 }
 
 /**

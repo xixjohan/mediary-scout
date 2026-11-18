@@ -200,6 +200,65 @@ describe("proxy gate — Bearer JWT（S5.4 自审）", () => {
 });
 
 /**
+ * STRM 播放路由必须放行（2026-11-17 事故的回归用例）。
+ *
+ * 实测缺陷：`MEDIA_TRACK_MULTI_USER=1` 时 `/api/strm/play/...` 返回 `307 /login`。
+ * `.strm` 文件里的签名再正确也没用——请求到不了播放路由。Emby / Infuse /
+ * Plex / PotPlayer 读 `.strm` 后是**无会话 HTTP 客户端**，它们永远拿不到
+ * `mt_session`。这不是「会员/游客」问题，是「外部播放器不存在会话概念」。
+ *
+ * 同一个端点被 `route-auth-inventory.test.ts` 归在「自鉴权（STRM_PLAY_ROUTES）」，
+ * proxy 却把它当普通 API 拦下——两套判定分裂。现在两边读同一份清单
+ * （`platform/next-context/self-guarded-routes.ts`），下面这组用例钉住合并后的行为。
+ */
+describe("proxy gate — 自守端点清单（STRM 播放 / MCP）", () => {
+  it("多用户 + 无 session：/api/strm/play/* 不得重定向（外部播放器没有会话）", () => {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    try {
+      const path = "/api/strm/play/strm_task_1/3559788339508807222";
+      expect(redirectsToLogin(makeRequest({ path }))).toBe(false);
+      expect(redirectsToLogin(makeRequest({ cf: true, path }))).toBe(false);
+      // 带查询参数也一样（签名在 query 里，不改变「谁能到达这个路由」）。
+      expect(redirectsToLogin(makeRequest({ path: `${path}?token=x&exp=1` }))).toBe(false);
+    } finally {
+      delete process.env.MEDIA_TRACK_MULTI_USER;
+    }
+  });
+
+  it("多用户 + 无 session：/api/mcp 不得重定向（协议端自守）", () => {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    try {
+      expect(redirectsToLogin(makeRequest({ path: "/api/mcp" }))).toBe(false);
+    } finally {
+      delete process.env.MEDIA_TRACK_MULTI_USER;
+    }
+  });
+
+  it("放行只限「自守清单」：同样的多用户场景下普通 API 仍重定向（不是放宽全局）", () => {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    try {
+      for (const path of ["/api/activity", "/api/library", "/api/settings/api-keys"]) {
+        expect(redirectsToLogin(makeRequest({ path }))).toBe(true);
+      }
+      // 前缀必须整段匹配：/api/strm/tasks 是管理面，不是播放面，仍要登录。
+      expect(redirectsToLogin(makeRequest({ path: "/api/strm/tasks" }))).toBe(true);
+      expect(redirectsToLogin(makeRequest({ path: "/api/strm/replace-base-url" }))).toBe(true);
+    } finally {
+      delete process.env.MEDIA_TRACK_MULTI_USER;
+    }
+  });
+
+  it("页面路径不受影响：/strm 页面仍要登录（放行只针对自守 API 前缀）", () => {
+    process.env.MEDIA_TRACK_MULTI_USER = "1";
+    try {
+      expect(redirectsToLogin(makeRequest({ path: "/storage/strm" }))).toBe(true);
+    } finally {
+      delete process.env.MEDIA_TRACK_MULTI_USER;
+    }
+  });
+});
+
+/**
  * S5.7：proxy 给页面请求写一个「归页面守卫管」的 cookie，供根 layout 读取。
  *
  * 为什么绕这一圈：页面（/、/settings、…）不经过 requireApiAccount()，「设了密码

@@ -28,7 +28,13 @@ vi.mock("../../../../../lib/auth-chain", () => ({
 vi.mock("../../../../../lib/workflow-runtime", () => ({
   getWorkflowRepository: () => repo,
   getWorkerResourceProvider: async () => provider,
+  getAccountScopedSettings: () => ({ getSetting: async () => null }),
+  getAcquisitionFilterPreferences: async () => undefined,
   movieTargetFromTmdbId: async () => null,
+}));
+
+vi.mock("../drive-provider", () => ({
+  resolvePreviewDriveProvider: async () => "pan115",
 }));
 
 vi.mock("../../../../../lib/title-hub", () => ({
@@ -71,13 +77,18 @@ const provider = {
   },
 };
 
+/**
+ * 目标作品的身份必须与下面的资源同名：预览现在带身份闸门（2026-11-17 假阳性事故），
+ * 只写 `1080p` 的规则不再把「别的作品」算成命中。夹具里的资源都叫 `Show`，
+ * 所以作品也叫 Show —— 否则这些用例测的就是「别的作品被正确拒绝」，不是原意。
+ */
 const TITLE: MediaTitle = {
   id: "t_policy",
   tmdbId: 1396,
   type: "tv",
-  title: "孤独摇滚",
-  originalTitle: "Bocchi the Rock!",
-  year: 2022,
+  title: "Show",
+  originalTitle: "Show",
+  year: 2024,
   aliases: [],
 };
 
@@ -141,7 +152,14 @@ function request(body: unknown, account = "acct_default"): NextRequest {
 const { requirePermission } = await import("../../../../../lib/auth-chain");
 
 beforeEach(async () => {
-  vi.mocked(requirePermission).mockResolvedValue("acct_default" as never);
+  // 返回真实的 SecurityContext 形状（不是裸字符串）：路由现在把 accountId 传给
+  // resolveTitleResources，它的 fail-closed 检查读的是 `accountId.length`。
+  vi.mocked(requirePermission).mockResolvedValue({
+    accountId: "acct_default",
+    isMaster: false,
+    roleId: "role_owner",
+    permissions: new Set<string>(),
+  } as never);
   searchCalls = 0;
   searchShouldFail = false;
 });
@@ -231,14 +249,30 @@ describe("POST /api/titles/subscription-policy/preview", () => {
     expect(text).not.toMatch(/magnet:|https?:\/\//i);
   });
 
-  it("**同一标题紧接着第二次预览 ⇒ 429**（与 resources 路由共用限速）", async () => {
-    // 预览复用 resources 路由的 cooldown 单例：预览不能绕过用户自己的搜索刚付过的限速。
+  it("**同一标题紧接着第二次预览命中缓存 ⇒ 200 + cached**（缓存不消耗冷却）", async () => {
+    // 与 resources 路由同一语义：缓存命中不扣冷却，否则用户改一次规则就会被自己的
+    // 上一次预览拖进 60 秒 429。第二次必须是缓存结果，且不再花钱检索。
     const tmdbId = freshTmdbId();
     await trackTitle(tmdbId);
     const first = await POST(request({ tmdbId, policy: {} }));
     expect(first.status).toBe(200);
+    expect((await first.json()).cached).toBe(false);
+    const callsAfterFirst = searchCalls;
     const second = await POST(request({ tmdbId, policy: {} }));
-    expect(second.status).toBe(429);
+    expect(second.status).toBe(200);
+    const secondBody = await second.json();
+    expect(secondBody.cached).toBe(true);
+    expect(searchCalls).toBe(callsAfterFirst);
+  });
+
+  it("**显式 refresh 绕过缓存，但仍受 60 秒限速**（防上游被打穿）", async () => {
+    const tmdbId = freshTmdbId();
+    await trackTitle(tmdbId);
+    expect((await POST(request({ tmdbId, policy: {} }))).status).toBe(200);
+    const refreshed = await POST(request({ tmdbId, policy: {}, refresh: true }));
+    expect(refreshed.status).toBe(429);
+    const body = await refreshed.json();
+    expect(body.retryAfterMs).toBeGreaterThan(0);
   });
 
   it("**换一个标题不受上一个的限速影响**（按标题限速，不是全局）", async () => {
@@ -348,5 +382,26 @@ describe("parsePreviewBody", () => {
     for (const bad of [null, [], "x", 5]) {
       expect(parsePreviewBody(bad).ok).toBe(false);
     }
+  });
+
+  it("**同名候选只算一个**（预览数的是用户眼里的资源，不是内部 id）", async () => {
+    const tmdbId = freshTmdbId();
+    await trackTitle(tmdbId);
+    const res = await POST(request({ tmdbId, policy: {} }));
+    const body = await res.json();
+    expect(body.total).toBe(RESOURCES.length);
+    const names: string[] = body.matched;
+    expect(new Set(names.map((name) => name.trim().toLowerCase())).size).toBe(names.length);
+  });
+
+  it("**别的作品的资源不计入命中**（身份闸门：2026-11-17 假阳性事故）", async () => {
+    const tmdbId = freshTmdbId();
+    await trackTitle(tmdbId);
+    const res = await POST(request({ tmdbId, policy: { mustContain: ["1080p"] } }));
+    const body = await res.json();
+    // 夹具里的三条资源都叫 Show；作品也叫 Show，所以全部通过身份闸门，
+    // 而 2160p 那条因缺少 1080p 被规则排除 —— 命中数仍由匹配器决定。
+    expect(body.matched.every((name: string) => name.toLowerCase().includes("show"))).toBe(true);
+    expect(body.excludedByReason).toBeDefined();
   });
 });

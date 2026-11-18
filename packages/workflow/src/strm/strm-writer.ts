@@ -2,15 +2,15 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const DEFAULT_STRM_TTL_SECONDS = 365 * 24 * 3600; // 默认 1 年有效时间
 
-export function resolveStrmSigningSecret(): string {
-  return (
-    process.env.STRM_SECRET ||
-    process.env.APP_SECRET ||
-    process.env.JWT_SECRET ||
-    process.env.MEDIA_TRACK_CREDENTIAL_KEY ||
-    "mediary-scout-strm-signing-secret"
-  );
-}
+/**
+ * 签名 secret 的解析已抽到 `signing-secret.ts`：**移除硬编码回退**。
+ *
+ * 原来的 `"mediary-scout-strm-signing-secret"` 回退让任何读过本仓库的人都能
+ * 离线伪造 `.strm` 播放令牌（实测在 dev 实例上拿到 200 并开始推流）。现在
+ * 顺序是：env（STRM_SECRET / APP_SECRET） → 启动期预热值（实例 JWT secret）
+ * → 抛错。缺 secret 时**签名失败**才是安全的行为。
+ */
+export { resolveStrmSigningSecret } from "./signing-secret.js";
 
 export function signStrmPlayUrl(
   taskId: string,
@@ -60,6 +60,7 @@ export interface PlayUrlOptions {
   secret?: string;
 }
 import { nativeFs as fs, nativePath as path } from "../domain/native-require.js";
+import { resolveStrmSigningSecret } from "./signing-secret.js";
 import type { StrmDeliveryMode } from "./strm-types.js";
 
 /**

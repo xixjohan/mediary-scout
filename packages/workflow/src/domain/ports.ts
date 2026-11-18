@@ -53,6 +53,16 @@ export interface StorageExecutor {
   listChildDirectories(directoryId: string): Promise<Array<{ id: string; name: string }>>;
   /** Move files (by provider file id) into a target directory inside the write scope. */
   moveFiles(input: { fileIds: string[]; targetDirectoryId: string }): Promise<{ moved: string[] }>;
+  /** Authorize ONE exact directory as a write target for THIS executor instance.
+   *
+   *  Only the owner-directed ingest path calls it: the operator picked the
+   *  directory explicitly, and it may legitimately sit outside the media library
+   *  (e.g. a temporary holding folder). Two deliberate limits: the id is exact
+   *  (it does not widen to children or siblings), and it is a no-op when the
+   *  executor has no configured scope (that mode already allows everything, so
+   *  adding one id would NARROW it to a single directory). Executors that do not
+   *  distinguish write scope omit the method. */
+  authorizeWriteTarget?(directoryId: string): void;
   /** Cumulative 115 API calls made so far — feeds the per-step trace AND the agent
    *  loop's budget soft-warning. Optional: only the real 115 executor implements it;
    *  fakes/sims omit it. */

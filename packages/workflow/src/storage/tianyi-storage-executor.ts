@@ -97,6 +97,13 @@ export class TianyiStorageExecutor implements StorageExecutor {
     );
   }
 
+  /** Exact-directory authorization for the owner-directed ingest path (no-op
+   *  without a configured scope; never widens to children). */
+  authorizeWriteTarget(directoryId: string): void {
+    if (this.writeScopeDirectoryIds.size === 0) return;
+    this.writeScopeDirectoryIds.add(normalizeId(directoryId));
+  }
+
   async createDirectory(input: { name: string; parentId: string }): Promise<string> {
     const safeParentId = this.assertWithinWriteScope(input.parentId, "create directory");
     // Find-or-create: seasons of one title initialize at different times and must

@@ -752,6 +752,56 @@ describe("Storage115Executor", () => {
     expect(api.receivedShares).toEqual([]);
   });
 
+  it("authorizeWriteTarget admits exactly the picked directory (owner-directed ingest) and only that one", async () => {
+    const api = new FakePan115Api({
+      shareFiles: {
+        abc123: [{ fid: "file_1", n: "Show.S01E01.mkv", s: "1000000000" }],
+      },
+      directoryInfo: {
+        picked: { state: true, path: [{ cid: "0", name: "root" }, { cid: "picked", name: "picked" }] },
+        other_pick: { state: true, path: [{ cid: "0", name: "root" }, { cid: "other_pick", name: "other" }] },
+      },
+    });
+    const executor = new Storage115Executor({ api, writeScopeDirectoryIds: ["test_root"] });
+    const candidate = candidateFixture({
+      type: "115",
+      providerPayload: { url: "https://115.com/s/abc123?password=pw", rawType: "115" },
+    });
+
+    // 授权前：影视库外的目录一律拒绝。
+    await expect(executor.transfer({ workflowRunId: "run_1", directoryId: "picked", candidate })).rejects.toThrow(
+      "WRITE_SCOPE_VIOLATION",
+    );
+
+    executor.authorizeWriteTarget("picked");
+    const attempt = await executor.transfer({ workflowRunId: "run_1", directoryId: "picked", candidate });
+    expect(attempt.status).toBe("succeeded");
+
+    // 授权只覆盖这一个 id：同类但未授权的目录仍然拒绝（不传播给兄弟目录）。
+    await expect(executor.transfer({ workflowRunId: "run_2", directoryId: "other_pick", candidate })).rejects.toThrow(
+      "WRITE_SCOPE_VIOLATION",
+    );
+  });
+
+  it("authorizeWriteTarget is a no-op when the executor has no scope (dev mode stays permissive)", async () => {
+    const api = new FakePan115Api({
+      shareFiles: { abc123: [{ fid: "file_1", n: "Show.S01E01.mkv", s: "1000000000" }] },
+      directoryInfo: { picked: { state: true, path: [{ cid: "0", name: "root" }, { cid: "picked", name: "picked" }] } },
+    });
+    const executor = new Storage115Executor({ api });
+    // 无 scope 的 executor 本就全放行；授权不得把它收窄成「只允许 picked」。
+    executor.authorizeWriteTarget("picked");
+    const attempt = await executor.transfer({
+      workflowRunId: "run_1",
+      directoryId: "picked",
+      candidate: candidateFixture({
+        type: "115",
+        providerPayload: { url: "https://115.com/s/abc123?password=pw", rawType: "115" },
+      }),
+    });
+    expect(attempt.status).toBe("succeeded");
+  });
+
   it("rejects delete operations outside the configured write scope", async () => {
     const api = new FakePan115Api({
       directoryInfo: {

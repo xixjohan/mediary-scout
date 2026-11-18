@@ -11,6 +11,9 @@
   border-radius: var(--radius-lg);
   padding: 12px 14px;
   margin-bottom: 12px;
+  /* 作为 grid/flex 子项时必须允许收缩：内部最长的不换行节点是 min-content
+     祖先之一，默认 `min-width:auto` 会把父轨道顶到 max-content。 */
+  min-width: 0;
 }
 
 .resource-filter-top-row {
@@ -19,14 +22,17 @@
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .resource-filter-search-box {
   position: relative;
   display: flex;
   align-items: center;
-  flex: 1;
-  min-width: 240px;
+  flex: 1 1 240px;
+  /* 原来写死 min-width: 240px：320px 视口下主区只有 ~232px，这一条就把
+     filter 容器顶出 40+ px。改成基准宽度 + 允许收缩。 */
+  min-width: 0;
 }
 
 .resource-filter-search-input {
@@ -159,6 +165,11 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
+  /* 窄屏整行换行：标签不换行、chip 组自身 flex-wrap，行高才不会被 4 个
+     分组硬撑成一条横向长条（130px min-content 在 320px 视口下仍溢出）。 */
+  flex-wrap: wrap;
+  min-width: 0;
+  row-gap: 6px;
 }
 
 .resource-filter-facet-label {
@@ -260,6 +271,10 @@
   flex-wrap: wrap;
   font-size: 12px;
   color: var(--text-muted);
+  /* 页码按钮组是 nowrap 长条（228px min-content）；窄屏必须让两段都换行，
+     否则容器被撑出 11px。滚动仍留在页面外（不产生横向条）。 */
+  min-width: 0;
+  row-gap: 8px;
 }
 
 .resource-pagination-info strong {
@@ -271,12 +286,14 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .resource-pagination-size-select {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .resource-pagination-size-select select {
@@ -295,6 +312,8 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
 .resource-pagination-nav-btn,

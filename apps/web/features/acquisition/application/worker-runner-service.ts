@@ -25,8 +25,10 @@ import {
   getStorageBrand,
   isRegisteredStorageProvider,
   allowedResourceTypesForKinds,
+  type SearchBackend,
   type ResourceType,
   runQueuedManualImport,
+  runQueuedOwnerIngest,
   runQueuedMovieAcquisition,
   runQueuedReplaceRequest,
   runQueuedStagingRecovery,
@@ -49,6 +51,9 @@ import {
   createTmdbMetadataProvider,
   resolveEffectiveStrmBaseUrl,
 } from "@media-track/workflow";
+import {
+  makeBackendSelector,
+} from "./search-backend-selector";
 import {
   getCurrentAccountId,
   getWorkflowRepository,
@@ -409,6 +414,18 @@ async function runNextQueuedWorkflowNow(claim: QueueClaimOptions | undefined) {
   });
   if (manualImport.status !== "idle") {
     return manualImport;
+  }
+  // 站长关键字投放：用户显式指定目标目录，不需要 category parents。排在手动入库
+  // 之后、staging recovery 之前——它同样持有标题锁且用户在等结果。
+  const ownerIngest = await runQueuedOwnerIngest({
+    repository,
+    storage,
+    resolveAccountContext,
+    onAuthErrorFreeze,
+    ...claimOption,
+  });
+  if (ownerIngest.status !== "idle") {
+    return ownerIngest;
   }
   // Leftover staging heals itself. No notification and no push — llmConfig is
   // still passed so a free-preset 429/5xx transient error triggers auto-requeue
@@ -792,6 +809,7 @@ export async function getWorkerResourceProvider(
   settings?: { getSetting(key: string): Promise<string | null> },
   provider: string = "pan115",
   accountId?: string,
+  options?: { backends?: readonly SearchBackend[] | undefined },
 ): Promise<ResourceProvider> {
   const effectiveAccountId = accountId ?? (await getCurrentAccountId());
   const effectiveSettings = settings ?? getAccountScopedSettings(effectiveAccountId);
@@ -807,23 +825,29 @@ export async function getWorkerResourceProvider(
       strategy: "parallel",
       extensionManager: getExtensionManager(),
     });
+    // 后端选择（可选）：`backends` 缺失或为空 = 沿用账号已配置的全部后端。
+    // 选择的语义是「本次检索用哪几个源」，不是「把没选的源关掉」——配置仍归设置页。
+    // 品牌约束仍优先：选了 Prowlarr，但目标盘产不出磁力（夸克/天翼），直接跳过。
+    const wants = makeBackendSelector(options?.backends);
 
-    registry.registerProvider({
-      id: "pansou",
-      name: "pansou",
-      provider: buildPanSouProviderChain({
-        userBaseURL: resolveUserPanSouBaseUrl(
-          await effectiveSettings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
-        ),
-        allowedTypes,
-        auth: await getPanSouAuth(effectiveSettings),
-        onSourceHealth: (healthy) => {
-          void recordPanSouHealth(healthy, effectiveAccountId);
-        },
-      }),
-    });
+    if (wants("pansou")) {
+      registry.registerProvider({
+        id: "pansou",
+        name: "pansou",
+        provider: buildPanSouProviderChain({
+          userBaseURL: resolveUserPanSouBaseUrl(
+            await effectiveSettings.getSetting(PANSOU_BASE_URL_SETTING_KEY),
+          ),
+          allowedTypes,
+          auth: await getPanSouAuth(effectiveSettings),
+          onSourceHealth: (healthy) => {
+            void recordPanSouHealth(healthy, effectiveAccountId);
+          },
+        }),
+      });
+    }
 
-    if (kinds.includes("prowlarr")) {
+    if (kinds.includes("prowlarr") && wants("prowlarr")) {
       const prowlarr = await getProwlarrConfig(effectiveSettings);
       if (prowlarr.baseURL && prowlarr.apiKey) {
         registry.registerProvider({
@@ -833,13 +857,15 @@ export async function getWorkerResourceProvider(
         });
       }
     }
-    const haisouApiKey = await getHaisouApiKey(effectiveSettings);
-    if (haisouApiKey) {
-      registry.registerProvider({
-        id: "haisou",
-        name: "haisou",
-        provider: new HaisouResourceProvider({ apiKey: haisouApiKey, allowedTypes }),
-      });
+    if (wants("haisou")) {
+      const haisouApiKey = await getHaisouApiKey(effectiveSettings);
+      if (haisouApiKey) {
+        registry.registerProvider({
+          id: "haisou",
+          name: "haisou",
+          provider: new HaisouResourceProvider({ apiKey: haisouApiKey, allowedTypes }),
+        });
+      }
     }
 
     await registry.syncExtensions();

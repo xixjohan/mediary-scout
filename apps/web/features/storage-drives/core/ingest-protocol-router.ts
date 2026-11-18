@@ -5,12 +5,19 @@
  * 1. 云端离线下载：MAGNET、HTTP、HTTPS、FTP、ED2K
  * 2. 多网盘秒级转存：115分享、夸克/UC分享、123云盘、天翼云盘、光鸭云盘
  * 3. 自然语言与提取码智能抽取（例如：`链接: https://... 提取码: abcd`）
+ *
+ * **能力不在这里声明**：支持哪些协议/品牌由 `STORAGE_BRANDS.ingest`
+ * （packages/workflow/src/storage/ingest-capabilities.ts）决定，服务端提交也读
+ * 同一份。本模块只做「给定能力，判定这一行能不能提交」的纯函数路由——它曾经
+ * 手写过第二份能力表，结果 UC 盘在注册表里存在、在这里被当成未知网盘。
  */
+import { getIngestCapability, type IngestCapability } from "@media-track/workflow";
 
 export type IngestProtocolType =
   | "offline"
   | "pan115_share"
   | "quark_share"
+  | "uc_share"
   | "pan123_share"
   | "tianyi_share"
   | "guangya_share"
@@ -36,87 +43,34 @@ export interface IngestParsedItem {
   isValid: boolean;
 }
 
+/** 前端展示用：由注册表派生的能力视图（与服务端 GET 响应同形）。 */
 export interface DriveIngestCapability {
   provider: string;
   label: string;
   supportsOffline: boolean;
   supportsTorrent: boolean;
+  supportsTorrentFile: boolean;
   supportsShareTransfer: boolean;
   supportedShareBrands: string[];
   offlineSchemes: string[];
 }
 
-export const DRIVE_INGEST_CAPABILITIES: Record<string, DriveIngestCapability> = {
-  pan115: {
-    provider: "pan115",
-    label: "115网盘",
-    supportsOffline: true,
-    supportsTorrent: true,
-    supportsShareTransfer: true,
-    supportedShareBrands: ["pan115"],
-    offlineSchemes: ["magnet", "http", "https", "ftp", "ed2k"],
-  },
-  quark: {
-    provider: "quark",
-    label: "夸克网盘",
-    supportsOffline: false,
-    supportsTorrent: false,
-    supportsShareTransfer: true,
-    supportedShareBrands: ["quark"],
-    offlineSchemes: [],
-  },
-  pan123: {
-    provider: "pan123",
-    label: "123云盘",
-    supportsOffline: true,
-    supportsTorrent: true,
-    supportsShareTransfer: true,
-    supportedShareBrands: ["pan123"],
-    offlineSchemes: ["magnet", "http", "https", "ed2k"],
-  },
-  tianyi: {
-    provider: "tianyi",
-    label: "天翼云盘",
-    supportsOffline: false,
-    supportsTorrent: false,
-    supportsShareTransfer: true,
-    supportedShareBrands: ["tianyi"],
-    offlineSchemes: [],
-  },
-  guangya: {
-    provider: "guangya",
-    label: "光鸭云盘",
-    supportsOffline: true,
-    supportsTorrent: false,
-    supportsShareTransfer: true,
-    supportedShareBrands: ["guangya"],
-    offlineSchemes: ["magnet", "ed2k"],
-  },
-};
+function toDriveCapability(capability: IngestCapability): DriveIngestCapability {
+  return {
+    provider: capability.provider,
+    label: capability.label,
+    supportsOffline: capability.supportsOffline,
+    supportsTorrent: capability.supportsTorrent,
+    supportsTorrentFile: capability.supportsTorrentFile,
+    supportsShareTransfer: capability.supportsShareTransfer,
+    supportedShareBrands: [...capability.supportedShareBrands],
+    offlineSchemes: [...capability.offlineSchemes],
+  };
+}
 
+/** 该盘的能力。数据源是注册表，不再是手写字面量表。 */
 export function getDriveCapability(provider: string | undefined): DriveIngestCapability {
-  if (!provider) {
-    return {
-      provider: "unknown",
-      label: "未知网盘",
-      supportsOffline: false,
-      supportsTorrent: false,
-      supportsShareTransfer: false,
-      supportedShareBrands: [],
-      offlineSchemes: [],
-    };
-  }
-  return (
-    DRIVE_INGEST_CAPABILITIES[provider] || {
-      provider,
-      label: provider,
-      supportsOffline: false,
-      supportsTorrent: false,
-      supportsShareTransfer: false,
-      supportedShareBrands: [],
-      offlineSchemes: [],
-    }
-  );
+  return toDriveCapability(getIngestCapability(provider));
 }
 
 function extractRawUri(trimmed: string): string {
@@ -176,11 +130,20 @@ interface ShareMatcher {
   extractCode: (match: RegExpExecArray) => string | undefined;
 }
 
+/** 分享链品牌识别。UC 与夸克同族但**不是同一个品牌**：把 drive.uc.cn 认成
+ *  quark 会让夸克盘接受一条它解析不了的链接（parseCloudFamilyShareUrl 的
+ *  shareHostPattern 是 profile 级的，夸克 profile 只认 pan.quark.cn）。 */
 const SHARE_MATCHERS: readonly ShareMatcher[] = [
   {
     protocol: "quark_share",
     brand: "quark",
-    pattern: /(?:pan\.quark\.cn|drive\.uc\.cn)\/s\/([0-9a-zA-Z]+)/i,
+    pattern: /pan\.quark\.cn\/s\/([0-9a-zA-Z]+)/i,
+    extractCode: (m) => m[1],
+  },
+  {
+    protocol: "uc_share",
+    brand: "uc",
+    pattern: /drive\.uc\.cn\/s\/([0-9a-zA-Z]+)/i,
     extractCode: (m) => m[1],
   },
   {
@@ -244,16 +207,26 @@ export function detectProtocol(url: string): {
   return { protocol: "unknown" };
 }
 
+function schemeOf(url: string): string {
+  const at = url.indexOf(":");
+  return at > 0 ? url.slice(0, at).toLowerCase() : "";
+}
+
 /**
- * 路由策略评估单条输入
+ * 路由策略评估单条输入。
+ *
+ * `capability` 由调用方传入（服务端 = 注册表；前端 = GET 响应的能力视图），
+ * 因此「哪些能提交」只有一个来源。
  */
 export function evaluateIngestItem(
   rawLine: string,
   currentProvider: string,
-  index: number
+  index: number,
+  capability?: DriveIngestCapability,
 ): IngestParsedItem {
   const { url, passcode } = extractUrlAndPasscode(rawLine);
   const id = `item_${index}_${Math.random().toString(36).slice(2, 7)}`;
+  const cap = capability ?? getDriveCapability(currentProvider);
 
   if (!url) {
     return {
@@ -268,11 +241,10 @@ export function evaluateIngestItem(
   }
 
   const { protocol, shareCode, matchedBrand } = detectProtocol(url);
-  const driveCap = getDriveCapability(currentProvider);
 
   // 1. 如果是网盘分享链接
   if (protocol !== "offline" && protocol !== "unknown") {
-    if (driveCap.supportedShareBrands.includes(matchedBrand || "")) {
+    if (cap.supportsShareTransfer && cap.supportedShareBrands.includes(matchedBrand || "")) {
       return {
         id,
         rawLine,
@@ -282,7 +254,7 @@ export function evaluateIngestItem(
         passcode,
         action: "share_transfer",
         matchedBrand,
-        reason: `${driveCap.label}分享链接秒级转存`,
+        reason: `${cap.label}分享链接秒级转存`,
         isValid: true,
       };
     }
@@ -296,31 +268,35 @@ export function evaluateIngestItem(
       passcode,
       action: "unsupported_brand",
       matchedBrand,
-      reason: `该链接属于【${otherLabel}】，当前选择的网盘是【${driveCap.label}】，请切换网盘后再转存`,
+      reason: `该链接属于【${otherLabel}】，当前选择的网盘是【${cap.label}】，请切换网盘后再转存`,
       isValid: false,
     };
   }
 
   // 2. 如果是离线下载协议 (magnet/http/ed2k 等)
   if (protocol === "offline") {
-    if (driveCap.supportsOffline) {
+    const scheme = schemeOf(url);
+    if (cap.supportsOffline && cap.offlineSchemes.includes(scheme)) {
       return {
         id,
         rawLine,
         url,
         protocol,
         action: "offline",
-        reason: `${driveCap.label}云端离线下载`,
+        reason: `${cap.label}云端离线下载`,
         isValid: true,
       };
     }
+    const schemeLabel = scheme === "http" || scheme === "https" ? "HTTP 直链" : `${scheme.toUpperCase()} 链接`;
     return {
       id,
       rawLine,
       url,
       protocol,
       action: "unsupported_scheme",
-      reason: `【${driveCap.label}】不支持离线下载功能，推荐切换至 115网盘 或 123云盘`,
+      reason: cap.supportsOffline
+        ? `【${cap.label}】不支持${schemeLabel}离线，可用协议：${cap.offlineSchemes.join(" / ").toUpperCase()}`
+        : `【${cap.label}】不支持离线下载功能，推荐切换至 115网盘 或 123云盘`,
       isValid: false,
     };
   }
@@ -349,13 +325,18 @@ export interface BatchIngestResult {
 /**
  * 批量文本解析与策略评估
  */
-export function parseBatchIngestInput(input: string, currentProvider: string): BatchIngestResult {
+export function parseBatchIngestInput(
+  input: string,
+  currentProvider: string,
+  capability?: DriveIngestCapability,
+): BatchIngestResult {
   const lines = input
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l.length > 0 && !l.startsWith("#"));
 
-  const items = lines.map((line, idx) => evaluateIngestItem(line, currentProvider, idx));
+  const cap = capability ?? getDriveCapability(currentProvider);
+  const items = lines.map((line, idx) => evaluateIngestItem(line, currentProvider, idx, cap));
 
   let validCount = 0;
   let offlineCount = 0;
@@ -393,5 +374,27 @@ export function parseBatchIngestInput(input: string, currentProvider: string): B
     errorCount,
     hasUnsupported,
     summaryMessage,
+  };
+}
+
+/** 把服务端能力响应投影成本模块的视图（形状一致，避免两处各自定义）。 */
+export function capabilityFromServer(view: {
+  provider: string;
+  supportsOffline: boolean;
+  supportsTorrent: boolean;
+  supportsTorrentFile?: boolean;
+  supportsShareTransfer: boolean;
+  supportedShareBrands: string[];
+  schemes: string[];
+}): DriveIngestCapability {
+  return {
+    provider: view.provider,
+    label: getDriveCapability(view.provider).label,
+    supportsOffline: view.supportsOffline,
+    supportsTorrent: view.supportsTorrent,
+    supportsTorrentFile: view.supportsTorrentFile ?? false,
+    supportsShareTransfer: view.supportsShareTransfer,
+    supportedShareBrands: view.supportedShareBrands,
+    offlineSchemes: view.schemes,
   };
 }

@@ -1,8 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
+import { AppConfirmDialog } from "../../../components/ui/app-confirm-dialog";
 import { AlertTriangle, CheckCircle2, ChevronLeft, ChevronRight, Loader2, Sparkles, X } from "lucide-react";
-import type { PolicyDraft, PreviewOutcome } from "./subscription-policy-panel-model";
+import type { PolicyDraft, PresetKind } from "../core/policy-draft";
+import { previewHeadlineCopy, previewReasonCopy, type PreviewExcludeReason, type PreviewOutcome, type PreviewProgress } from "../core/policy-preview";
 import {
   PolicyFilterSection,
   SeasonSelectorSection,
@@ -34,16 +37,24 @@ export interface SubscriptionModalViewProps {
   drives: ConnectedDriveSummary[];
   selectedStorageId: string;
   onSelectStorageId: (id: string) => void;
-  activePreset: "4k" | "1080p" | "anime" | "custom";
+  activePreset: PresetKind;
   draft: PolicyDraft;
   preview: PreviewOutcome | null;
-  previewLoading: boolean;
+  previewProgress: PreviewProgress | null;
   previewError: string | null;
-  onApplyPreset: (preset: "4k" | "1080p" | "anime" | "custom") => void;
+  /** >0 = 预览被限流，剩余秒数；此时「预览效果」按钮禁用并显示倒计时。 */
+  previewThrottleSeconds: number;
+  validationIssues: { field: string; message: string }[];
+  /** 用户点过「继续」后才显示校验错误（不在打字途中报红）。 */
+  validationRequested: boolean;
+  /** 表单是否已被用户修改过（取消关闭时的守卫）。 */
+  isDirty: boolean;
+  onApplyPreset: (preset: PresetKind) => void;
   onToggleChip: (field: "mustContain" | "mustNotContain", chip: string) => void;
   onDraftChange: (patch: Partial<PolicyDraft>) => void;
   onMustContainChange: (value: string) => void;
   onMustNotContainChange: (value: string) => void;
+  onSaveAsTemplate: (draft: PolicyDraft) => unknown;
   runPreview: () => Promise<boolean>;
   errorMsg: string | null;
   isSubmitting: boolean;
@@ -52,24 +63,55 @@ export interface SubscriptionModalViewProps {
 }
 
 export function SubscriptionModalView(props: SubscriptionModalViewProps) {
+  const [confirmClose, setConfirmClose] = useState(false);
+
+  /** 脏表单守卫：Esc / 点背景 / ✕ 都不直接丢弃 3 步填写的内容。 */
+  const requestClose = () => {
+    if (props.isSubmitting) return;
+    if (props.isDirty) setConfirmClose(true);
+    else props.onClose();
+  };
+
+  useEffect(() => {
+    if (!props.isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !confirmClose && !props.isSubmitting) requestClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   if (!props.isOpen || !props.mounted) return null;
 
   return createPortal(
-    <div
-      className="acquiring-modal-backdrop"
-      onClick={() => { if (!props.isSubmitting) props.onClose(); }}
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="subscription-config-title"
-      style={{ zIndex: 9999 }}
-    >
-      <div className="acquiring-modal subscription-config-modal" onClick={(event) => event.stopPropagation()}>
-        <ModalHeader initialTracked={props.initialTracked} onClose={props.onClose} isSubmitting={props.isSubmitting} />
-        <SubscriptionStepper step={props.step} setStep={props.setStep} isSubmitting={props.isSubmitting} onBack={props.onBack} />
-        <ModalBody {...props} />
-        <ModalFooter {...props} />
+    <>
+      <div
+        className="acquiring-modal-backdrop"
+        onClick={requestClose}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="subscription-config-title"
+        style={{ zIndex: 9999 }}
+      >
+        <div className="acquiring-modal subscription-config-modal" onClick={(event) => event.stopPropagation()}>
+          <ModalHeader initialTracked={props.initialTracked} onClose={requestClose} isSubmitting={props.isSubmitting} />
+          <SubscriptionStepper step={props.step} setStep={props.setStep} isSubmitting={props.isSubmitting} onBack={props.onBack} />
+          <ModalBody {...props} />
+          <ModalFooter {...props} />
+        </div>
       </div>
-    </div>,
+      <AppConfirmDialog
+        spec={confirmClose ? {
+          title: "放弃未保存的订阅设置？",
+          description: "当前填写的筛选规则与选择的范围还没有保存，关闭后将丢失。",
+          confirmLabel: "放弃并关闭",
+          cancelLabel: "继续编辑",
+          isDanger: true,
+        } : null}
+        onConfirm={() => { setConfirmClose(false); props.onClose(); }}
+        onCancel={() => setConfirmClose(false)}
+      />
+    </>,
     document.body,
   );
 }
@@ -203,14 +245,21 @@ function PolicyStep(props: SubscriptionModalViewProps) {
         activePreset={props.activePreset}
         draft={props.draft}
         preview={props.preview}
-        previewLoading={props.previewLoading}
+        previewProgress={props.previewProgress}
+        previewError={props.previewError}
         onApplyPreset={props.onApplyPreset}
         onToggleChip={props.onToggleChip}
         onDraftChange={props.onDraftChange}
         onMustContainChange={props.onMustContainChange}
         onMustNotContainChange={props.onMustNotContainChange}
+        onSaveAsTemplate={props.onSaveAsTemplate}
         seasonNumbers={[...props.selectedSeasons]}
       />
+      {props.validationRequested && props.validationIssues.length > 0 ? (
+        <p className="subscription-config-error" role="alert">
+          <AlertTriangle size={14} aria-hidden /> {props.validationIssues[0]!.message}
+        </p>
+      ) : null}
       <p className="subscription-config-hint">每个已选季度可单独设置起始集与结束集；资源筛选规则仍由各季共用，追踪后也可在作品详情中分别修改。</p>
     </section>
   );
@@ -236,6 +285,7 @@ function ReviewSummary(props: SubscriptionModalViewProps) {
       <div><dt>保存位置</dt><dd>{props.drives.find((drive) => drive.id === props.selectedStorageId)?.label ?? "默认网盘"}</dd></div>
       <div><dt>包含条件</dt><dd>{props.draft.mustContain || "不限制"}</dd></div>
       <div><dt>排除条件</dt><dd>{props.draft.mustNotContain || "不限制"}</dd></div>
+      <div><dt>字幕</dt><dd>{props.draft.subtitleRequire ? "必须有中文字幕" : "中字优先（不强制）"}</dd></div>
       {props.isTv ? <div><dt>逐季起止集</dt><dd>{seasonRanges || "未选择季度"}</dd></div> : null}
       <div><dt>额外集数筛选</dt><dd>{props.draft.episodeFilter || "不限制"}</dd></div>
     </dl>
@@ -247,14 +297,24 @@ function ReviewResources(props: SubscriptionModalViewProps) {
     <div className="subscription-config-preview" aria-live="polite">
       <div className="subscription-config-preview-head">
         <h4>当前资源预览</h4>
-        <button type="button" onClick={() => void props.runPreview()} disabled={props.previewLoading}>
-          {props.previewLoading ? "搜索中…" : "重新预览"}
+        <button type="button" onClick={() => void props.runPreview()} disabled={props.previewProgress !== null}>
+          {props.previewProgress !== null ? "搜索中…" : "重新预览"}
         </button>
       </div>
-      {props.previewLoading ? <p>正在搜索候选资源并应用这套规则…</p> : null}
+      {props.previewProgress !== null ? (
+        <p>
+          正在检索 {props.previewProgress.done} / {props.previewProgress.total || "?"} 个关键词
+          {props.previewProgress.currentKeyword ? `（当前：${props.previewProgress.currentKeyword}）` : ""}
+        </p>
+      ) : null}
       {props.previewError ? <p className="subscription-config-error">{props.previewError}</p> : null}
+      {props.previewThrottleSeconds > 0 ? (
+        <p className="subscription-config-hint" role="status" aria-live="polite">
+          预览与手动检索共用 60 秒限速，{props.previewThrottleSeconds} 秒后可再试。
+        </p>
+      ) : null}
       {props.preview ? <PreviewResult preview={props.preview} /> : null}
-      {!props.preview && !props.previewLoading && !props.previewError ? <p>尚未生成预览。</p> : null}
+      {!props.preview && props.previewProgress === null && !props.previewError ? <p>尚未生成预览。</p> : null}
     </div>
   );
 }
@@ -274,26 +334,39 @@ function summarizeSeasonEpisodeRanges(seasons: Set<number>, ranges: NonNullable<
 function PreviewResult({ preview }: { preview: PreviewOutcome }) {
   return (
     <>
-      <p>命中 {preview.matchedCount} 个，排除 {preview.excludedCount} 个，共检索 {preview.total} 个候选。</p>
+      <p>{previewHeadlineCopy(preview)}</p>
       {preview.matched.length > 0 ? <ul>{preview.matched.slice(0, 5).map((name) => <li key={name}>{name}</li>)}</ul> : null}
       {preview.excluded.slice(0, 5).map((item) => (
         <p className="subscription-config-excluded" key={item.name}>
-          {item.name}<span>{item.reason === "excluded" ? "命中排除词" : item.reason === "missing_term" ? "缺少必须包含词" : "集数不在范围内"}</span>
+          {item.name}<span>{reasonLabel(item.reason)}</span>
         </p>
       ))}
+      {preview.matchedCount === 0 && preview.excludedByReason.wrong_title
+        ? <p className="subscription-config-hint">搜到的大多是别的作品，不是这部——换个更完整的片名、加年份或改用原名重搜。</p>
+        : null}
       {preview.total > 5 ? <small>列表仅显示前 5 项。</small> : null}
     </>
   );
 }
 
+/**
+ * 排除原因文案统一走 core/policy-preview 的 previewReasonCopy —— 向导与详情页
+ * 之前各写一份 switch，`wrong_title` 上线时只有一边被更新。
+ */
+function reasonLabel(reason: string): string {
+  return previewReasonCopy(reason as PreviewExcludeReason);
+}
+
 function ModalFooter(props: SubscriptionModalViewProps) {
+  const busy = props.isSubmitting || props.previewProgress !== null;
+  const previewBlocked = props.step === 1 && props.previewThrottleSeconds > 0;
   return (
     <div className="acquiring-modal-footer">
       <button
         type="button"
         className="secondary-button"
         onClick={props.onBack}
-        disabled={props.isSubmitting || props.previewLoading}
+        disabled={busy}
         style={{ padding: "6px 14px", fontSize: 13 }}
       >
         {props.step === 0 ? "取消" : <><ChevronLeft size={14} aria-hidden /> 上一步</>}
@@ -302,10 +375,10 @@ function ModalFooter(props: SubscriptionModalViewProps) {
         type="button"
         className="primary-button"
         onClick={props.onContinue}
-        disabled={props.isSubmitting || props.previewLoading || (props.step === 0 && props.isTv && props.selectedSeasons.size === 0)}
+        disabled={busy || previewBlocked || (props.step === 0 && props.isTv && props.selectedSeasons.size === 0)}
         style={{ padding: "6px 18px", fontSize: 13, display: "flex", alignItems: "center", gap: 6 }}
       >
-        {props.isSubmitting || props.previewLoading ? (
+        {busy ? (
           <Loader2 size={14} className="spin" aria-hidden />
         ) : props.step === 2 ? (
           <CheckCircle2 size={14} aria-hidden />
@@ -318,9 +391,11 @@ function ModalFooter(props: SubscriptionModalViewProps) {
 
 function footerLabel(props: SubscriptionModalViewProps): string {
   if (props.isSubmitting) return "正在保存…";
-  if (props.previewLoading) return "正在预览…";
+  if (props.previewProgress !== null) return "正在预览…";
   if (props.step === 0) return "继续配置策略";
-  if (props.step === 1) return "预览效果";
+  if (props.step === 1) {
+    return props.previewThrottleSeconds > 0 ? `请稍候 ${props.previewThrottleSeconds}s` : "预览效果";
+  }
   if (props.shouldQueueAcquisition && props.isTv) return "保存策略并获取所选季";
   if (props.shouldQueueAcquisition) return "保存并启动首次检索";
   return "保存策略";

@@ -23,6 +23,7 @@ jobs:
       - run: npm run lint
       # 架构门禁（S4.1）：L0 物理布局 / L1 依赖图与循环（存量基线接管）/ L2+L3 在 lint 内
       - run: npm run gate:layout
+      - run: npm run gate:fullscreen
       - run: npm run gate:deps
       - run: npm run typecheck
       - run: npx tsc -p apps/web/tsconfig.json --noEmit
