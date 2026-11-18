@@ -86,19 +86,36 @@ powershell -ExecutionPolicy Bypass -File scripts/deploy-remote.ps1 -PublicOnly
    npm run typecheck
    npm run gate
    ```
-2. **提交代码并推送 Tag**：
+2. **提交代码**：
    ```powershell
    git add .
    git commit -m "feat: your new feature"
-   git tag v2026.XX.XX
-   git push origin main --tags
    ```
-3. **等待 GitHub Actions 构建完成**（生成并发布 `ghcr.io/xixjohan/mediary-scout:latest`）。
-4. **触发远程生产环境拉取与重建**：
+3. **写发布说明并再提交一次（必须在打 Tag 之前）**：
+   ```powershell
+   # 文件名必须与 tag 完全一致：docs/release-notes/<tag>.md
+   # 内容必须至少有一行以「- 新增 / - 改进 / - 修复」开头，
+   # 否则 Release Desktop 的 preflight 会在 10 秒内失败、桌面端不产出任何安装包。
+   git add docs/release-notes/v2026.XX.XX.md
+   git commit -m "docs(release): 补 v2026.XX.XX 发布说明"
+   ```
+4. **打轻量 Tag 并推送**：
+   ```powershell
+   git tag v2026.XX.XX          # 指向说明所在的 HEAD；annotated tag（-a）会被 preflight 拒绝
+   git push origin mediary --tags
+   ```
+   > Tag 必须打在**说明提交**上：CI 检出的是 tag 指向的那棵树，
+   > 打在前一个提交上就看不到 `docs/release-notes/<tag>.md`。
+5. **等待 GitHub Actions 构建完成**（生成并发布 `ghcr.io/xixjohan/mediary-scout:latest`）。
+   > 一个 tag 会触发三个工作流：`CI`、`Release Docker`（生产镜像）、`Release Desktop`（macOS DMG + Windows 安装包）。
+   > 只做 Web 发版也必须写说明文件——Desktop 的 preflight 与 Web 无关，但会独立报红。
+6. **触发远程生产环境拉取与重建**：
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts/deploy-remote.ps1 -Mode Official
    ```
    > 脚本将自动拉取官方最新 Release 镜像、平滑重建 `mediary` 容器、探测 `/api/health` 就绪，并比对 `BUILD_COMMIT` 提交指纹。
+   > **健康探测 45 秒超时是已知误报**（Next.js + 启动迁移 + in-process worker 常超出该窗口）：
+   > 见到该警告先 `curl http://<host>:3000/api/health` 与 `docker ps` 复核，不要仅凭探测结论重复部署。
 
 ---
 
