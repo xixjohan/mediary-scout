@@ -5,7 +5,7 @@ import { ClientLoginRedirect } from "../../../features/auth/components/client-lo
 import Link from "next/link";
 import { connection } from "next/server";
 import { cache, type ReactNode } from "react";
-import { TriangleAlert } from "lucide-react";
+import { ShowNotFound } from "../../../features/catalog/components/show-not-found";
 import { isMovieUnreleased, type EpisodeDisplayState } from "@media-track/workflow";
 import { AcquiringPoller } from "../../../features/acquisition/components/acquiring-poller";
 import { AcquisitionLockProvider } from "../../../features/acquisition/components/acquisition-lock";
@@ -33,7 +33,7 @@ import { getDetailView, type MovieHubView, type TitleHubSeason, type TitleHubVie
 import { decidePageAccess, resolvePageAccess } from "../../../lib/page-permission-guard";
 import { PageAccessDenied } from "../../../features/auth/components/page-access-denied";
 import { nextPatrolLabel, readTitleMessages } from "../../../lib/user-message-server";
-import { resolveShowPageParams } from "../../../features/catalog/core/show-page-params";
+import { parseTmdbIdParam, resolveShowPageParams } from "../../../features/catalog/core/show-page-params";
 import { showsMessageCard } from "../../../lib/user-message-state";
 import {
   beijingDateTime, getActiveWorkspaceScope, getCurrentAccountId, getDailySweepTimes,
@@ -108,10 +108,13 @@ async function ShowContent({
     resolveShowPageParams(params0);
   const workspace = await resolveGlobalWorkspace(w);
   const { tmdbId: tmdbIdParam } = await params;
-  const tmdbId = Number(tmdbIdParam);
-  const view = Number.isInteger(tmdbId)
-    ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
-    : null;
+  // 解析（含 `> 0` 守卫）在纯函数里，页面只消费 null/数字两种结果。
+  const tmdbId = parseTmdbIdParam(tmdbIdParam);
+  const validTmdbId = tmdbId !== null;
+  const view =
+    tmdbId !== null
+      ? await getDetailView(tmdbId, workspace.connectedStorageId ?? undefined, typeHint)
+      : null;
 
   const backLabel = from === "search" ? "搜索" : from === "library" ? "订阅" : "返回";
   const backHref =
@@ -154,12 +157,7 @@ async function ShowContent({
           />
         )
       ) : (
-        <div className="quiet-state">
-          <BackLink label={backLabel} fallbackHref={backHref} />
-          <TriangleAlert size={24} aria-hidden />
-          <strong>没有找到这部影片</strong>
-          <span>回到搜索页重新查找。</span>
-        </div>
+        <ShowNotFound validTmdbId={validTmdbId} backLabel={backLabel} backHref={backHref} />
       )}
       <GitHubNameplate />
     </ShowShell>

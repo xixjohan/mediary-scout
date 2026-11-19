@@ -37,6 +37,7 @@ import { isFreeLlmPreset } from "../domain/agent-model.js";
 import type { TitleResearchOptions } from "../acquisition-v2/title-research.js";
 import { formatReportPushText } from "../domain/notification-report.js";
 import { isMovieUnreleased } from "../domain/domain.js";
+import { isTrackedTitleIdentity } from "../domain/tracked-identity.js";
 import {
   runMovieAcquisitionV2AndPersist,
   runSeriesInitializationV2AndPersist,
@@ -450,6 +451,10 @@ export async function runScheduledType3Monitoring(input: {
   for (const s of trackedStates) {
     // 订阅完成防重复运行：已入库电影、未上映预定电影、已完结剧集季不加入巡检队列
     if (s.title.type === "movie") {
+      // 无作品身份（站长投放的合成标题，tmdbId=0）不是作品：巡检若对它发起
+      // movie_init，会白烧一次 LLM + 搜索，且落一个 /show/0 的坏链接。
+      // 读取层已收口，这里是纵深防御——巡检是唯一花真钱的消费者。
+      if (!isTrackedTitleIdentity(s.title)) continue;
       if (s.episodes.some((e) => e.obtained)) continue;
       if (isMovieUnreleased(s.title.releaseDate, now())) continue;
     } else {

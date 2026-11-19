@@ -280,6 +280,12 @@ export async function queueMovieAcquisition(input: {
   now?: () => string;
   staleActiveRunTimeoutMs?: number;
 }): Promise<MovieAcquisitionRequestResult> {
+  // 无作品身份（合成标题，tmdbId=0）不是真实电影：在**排队那一刻**就拒绝，
+  // 而不是烧完一次 LLM + 搜索后让 /show/0 在渲染层炸。
+  // 错误信息带真实数值，便于定位是哪条记录漏了闸门。
+  if (!Number.isInteger(input.title.tmdbId) || input.title.tmdbId <= 0) {
+    throw new Error(`movie title tmdbId 必须是正整数，收到 ${String(input.title.tmdbId)}`);
+  }
   const now = input.now ?? (() => new Date().toISOString());
   const workflowRunId = input.createWorkflowRunId?.() ?? crypto.randomUUID();
   const queuedAt = now();

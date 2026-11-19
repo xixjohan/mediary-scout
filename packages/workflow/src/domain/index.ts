@@ -1,4 +1,5 @@
 export * from "./domain.js";
+export * from "./tracked-identity.js";
 export * from "./episode-code.js";
 export * from "./resource-source-health.js";
 export * from "./workflow-scope.js";

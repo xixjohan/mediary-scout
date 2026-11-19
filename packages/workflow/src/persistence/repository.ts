@@ -18,6 +18,7 @@ import {
   type WorkflowRunProgress,
   type WorkflowStatus,
 } from "../domain/domain.js";
+import { isTrackedTitleIdentity } from "../domain/tracked-identity.js";
 import { MAGNET_DEAD_LINK_TTL_MS } from "../acquisition-v2/dead-links.js";
 import type { DeadLink, DeadLinkStats, DeadLinkStore } from "../acquisition-v2/dead-links.js";
 import {
@@ -2087,6 +2088,10 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     if (!latestSnapshot) {
       return null;
     }
+    // 合成标题（投放记录，tmdbId=0）不是作品，见 isTrackedTitleIdentity 注释。
+    if (!isTrackedTitleIdentity(latestSnapshot.title)) {
+      return null;
+    }
 
     return cloneWorkflowValue({
       accountId: latestSnapshot.accountId ?? DEFAULT_ACCOUNT_ID,
@@ -2122,6 +2127,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
     }
 
     return Array.from(latestBySeason.values())
+      .filter((snapshot) => isTrackedTitleIdentity(snapshot.title))
       .map((snapshot) =>
         cloneWorkflowValue({
           accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,
@@ -2151,6 +2157,7 @@ export class InMemoryWorkflowRepository implements WorkflowRepository {
       }
     }
     return Array.from(latestBySeason.values())
+      .filter((snapshot) => isTrackedTitleIdentity(snapshot.title))
       .map((snapshot) =>
         cloneWorkflowValue({
           accountId: snapshot.accountId ?? DEFAULT_ACCOUNT_ID,

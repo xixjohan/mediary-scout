@@ -10,6 +10,20 @@
  */
 export type ShowMediaTypeHint = "movie" | "tv" | "anime";
 
+/**
+ * `/show/<段>` 解析成 TMDB id。**非法即 null**，不留半个 id 给下游。
+ *
+ * 为什么把 `> 0` 放进解析而不是留在页面里：`Number.isInteger(0)` 为真，页面若只判
+ * 整数，`/show/0` 会被当成一部电影走到底——渲染层最后在 `buildMovieCandidateId`
+ * 抛「movie candidate id 必须是正整数」，整页 500。这正是 2026-11-19 生产事故
+ * （投放的合成标题 tmdbId=0 被旧链接带进来）的落点。TMDB 没有 0 号，这里拒掉
+ * 不需要任何额外信息，也不会误伤任何真实作品。
+ */
+export function parseTmdbIdParam(raw: string): number | null {
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
 export interface ShowPageParams {
   /** 用户从哪个界面进来的（决定返回按钮的文案与去向）。 */
   from: "search" | "library" | null;

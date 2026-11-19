@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveShowPageParams } from "./show-page-params";
+import { parseTmdbIdParam, resolveShowPageParams } from "./show-page-params";
 
 /**
  * `/show/[tmdbId]` 的查询参数解析。
@@ -45,5 +45,26 @@ describe("resolveShowPageParams", () => {
       searchQuery: undefined,
       mediaTypeHint: undefined,
     });
+  });
+});
+
+/**
+ * `/show/<段>` → TMDB id 的解析。
+ *
+ * 事故原型（2026-11-19 生产实测）：`Number.isInteger(0)` 为真，页面只判整数时
+ * `/show/0` 会被当成一部电影走到底，最后在 `buildMovieCandidateId` 抛
+ * 「movie candidate id 必须是正整数」，整页 500。TMDB 没有 0 号，纯解析层
+ * 拒掉它不需要任何额外信息，也不会误伤真实作品。
+ */
+describe("parseTmdbIdParam", () => {
+  it("正整数 → 数字", () => {
+    expect(parseTmdbIdParam("95479")).toBe(95479);
+    expect(parseTmdbIdParam("1")).toBe(1);
+  });
+
+  it("0 / 负数 / 小数 / 非数字 / 空串 → null（哨兵值不是作品）", () => {
+    for (const bad of ["0", "-1", "1.5", "abc", "", "  ", "NaN", "Infinity"]) {
+      expect(parseTmdbIdParam(bad), `raw=${JSON.stringify(bad)}`).toBeNull();
+    }
   });
 });

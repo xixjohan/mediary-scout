@@ -46,6 +46,7 @@ import {
   isUserVisibleWorkflowKind,
   isEpisodePreservingWorkflowKind,
 } from "../domain/domain.js";
+import { isTrackedTitleIdentity } from "../domain/tracked-identity.js";
 import type {
   AgentDecision, AgentStep, EpisodeState, MediaTitle, NotificationEvent,
   ResourceSnapshot, TrackedSeason, TransferAttempt, WorkflowKind,
@@ -1328,7 +1329,10 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     if (!latest) {
       return null;
     }
-    return this.trackedSeasonStateFromRun(latest);
+    const state = this.trackedSeasonStateFromRun(latest);
+    // 合成标题（投放记录，tmdbId=0）不是作品：调用方按 tmdbId 语义用这个返回值
+    // （详情页/取消追踪/策略），把它当「已追踪」会让哨兵值漏到真实作品的位置。
+    return isTrackedTitleIdentity(state.title) ? state : null;
   }
 
   async listTrackedSeasonStates(scopeArg?: ScopeArg): Promise<TrackedSeasonState[]> {
@@ -1339,6 +1343,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
       ),
     )
       .map((row) => this.trackedSeasonStateFromRun(row))
+      .filter((state) => isTrackedTitleIdentity(state.title))
       .sort(compareTrackedSeasonStates);
   }
 
@@ -1346,6 +1351,7 @@ export class SqliteWorkflowRepository implements WorkflowRepository {
     // Cross-account (no scope filter): each state carries its own accountId/storage.
     return this.latestRunPerSeason(this.scopedRunRows())
       .map((row) => this.trackedSeasonStateFromRun(row))
+      .filter((state) => isTrackedTitleIdentity(state.title))
       .sort(compareTrackedSeasonStates);
   }
 
