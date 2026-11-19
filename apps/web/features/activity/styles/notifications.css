@@ -116,6 +116,9 @@
 .feed-icon.tone-blue { color: var(--info); background: rgba(83, 157, 245, 0.12); }
 .feed-icon.tone-amber { color: var(--warning); background: rgba(255, 164, 43, 0.12); }
 .feed-icon.tone-muted { color: var(--text-muted); }
+/* 智能体异常终止：比「暂无资源」更重的色阶。系统故障与内容事实必须在视觉上可分，
+   否则用户会继续把模型崩溃当成「这部片子确实没有」。 */
+.feed-icon.tone-red { color: var(--color-danger); background: var(--color-danger-subtle); }
 
 /* Body: the informative progress line(s), indented under the icon column. */
 .feed-card-lines {
@@ -157,6 +160,7 @@
 .feed-status-pill.tone-indigo { color: var(--info); background: rgba(83, 157, 245, 0.12); }
 .feed-status-pill.tone-amber { color: var(--warning); background: rgba(255, 164, 43, 0.12); }
 .feed-status-pill.tone-muted { color: var(--text-muted); background: var(--bg-raised); }
+.feed-status-pill.tone-red { color: var(--color-danger); background: var(--color-danger-subtle); }
 
 .feed-chip-group {
   display: flex;

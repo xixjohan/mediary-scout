@@ -17,6 +17,7 @@ import {
 import { buildReplacementReport, buildSeasonReport, buildSeriesReport, formatReportPushText } from "../domain/notification-report.js";
 import { classifyTransferBlock } from "./transfer-block.js";
 import { classifySearchSourceFault } from "./search-source-fault.js";
+import { classifyAgentFault } from "./agent-fault.js";
 import { searchFilterFailureReason } from "./search-filter-diagnostics.js";
 import type { RunAcquisitionV2WorkflowResult } from "./workflow-v2.js";
 
@@ -122,6 +123,11 @@ export function bridgeV2WorkflowToResult(input: {
   // 6 天。判定读 sandbox 写下的结构化审计事件,不猜(见 classifySearchSourceFault)。
   const sourceFault = classifySearchSourceFault(v2.auditEvents);
   const searchSourceFaultReason = nothingLanded && sourceFault ? sourceFault.reason : null;
+  // 第四种「不是资源的问题」：智能体循环异常终止（model_error）。2026-11-18 生产
+  // 实测——82 条候选准入 77 条、源健康，仅因模型第一步报错就报「暂未找到可用资源」，
+  // 而同一订阅在预览里能看到资源。判定同样是读取式，不猜。
+  const agentFault = classifyAgentFault(v2.auditEvents);
+  const agentFaultReason = nothingLanded && agentFault ? agentFault.reason : null;
 
   const notification = buildNotification({
     title,
@@ -130,6 +136,7 @@ export function bridgeV2WorkflowToResult(input: {
     status,
     transferBlockReason,
     searchSourceFaultReason,
+    agentFaultReason,
     searchFilterReason: searchFilterFailureReason(v2.auditEvents),
     newlyObtainedCodes,
     workflowRunId,
@@ -253,6 +260,27 @@ function resolveStatus(input: { missingBefore: string[]; stillMissing: string[] 
   return "no_coverage";
 }
 
+/**
+ * `report.status === "failed"` 的四种来源对应两个 kind：
+ *  - 智能体异常终止 → `agent_error`（模型/网关的问题，用户要去查 AI 配置或稍后重试）；
+ *  - 其余（转存受阻 / 搜索源故障 / 规则全排除）→ `transfer_failed`。
+ *
+ * 两者都不叫 `no_coverage` —— 通知页顶部的「N 项暂无资源」只数 no_coverage，
+ * 这就是「别甩锅」在 UI 上的落点。
+ */
+function failedKind(input: {
+  agentFaultReason?: string | null;
+  transferBlockReason?: string | null;
+  searchSourceFaultReason?: string | null;
+  searchFilterReason?: string | null;
+}): "agent_error" | "transfer_failed" {
+  // emptyRunOutcome 的优先级与此处一致：前三条任一生效时 agentFault 不会说话。
+  if (input.transferBlockReason?.trim() || input.searchSourceFaultReason?.trim() || input.searchFilterReason?.trim()) {
+    return "transfer_failed";
+  }
+  return input.agentFaultReason?.trim() ? "agent_error" : "transfer_failed";
+}
+
 function buildNotification(input: {
   title: MediaTitle;
   mode: V2BridgeMode;
@@ -261,6 +289,8 @@ function buildNotification(input: {
   /** Honest 转存失败 reason when transfers were systemically blocked (else null). */
   transferBlockReason?: string | null;
   searchSourceFaultReason?: string | null;
+  /** Honest 智能体异常终止 reason (else null) — 见 classifyAgentFault. */
+  agentFaultReason?: string | null;
   searchFilterReason?: string | null;
   newlyObtainedCodes: string[];
   workflowRunId: string;
@@ -283,12 +313,13 @@ function buildNotification(input: {
       newlyObtained: input.newlyObtainedCodes,
       transferBlockReason: input.transferBlockReason ?? null,
       searchSourceFaultReason: input.searchSourceFaultReason ?? null,
+      agentFaultReason: input.agentFaultReason ?? null,
       meta: titleMeta,
     });
     return {
       id: `notification_${workflowRunId}`,
       workflowRunId,
-      kind: report.status === "failed" ? "transfer_failed" : "replacement_done",
+      kind: report.status === "failed" ? failedKind(input) : "replacement_done",
       title: report.titleName,
       body: formatReportPushText(report),
       createdAt: input.now(),
@@ -304,6 +335,7 @@ function buildNotification(input: {
       noCoverage,
       transferBlockReason: input.transferBlockReason ?? null,
       searchSourceFaultReason: input.searchSourceFaultReason ?? null,
+      agentFaultReason: input.agentFaultReason ?? null,
       searchFilterReason: input.searchFilterReason ?? null,
       meta: titleMeta,
       ...sizeInput(input),
@@ -313,7 +345,7 @@ function buildNotification(input: {
       workflowRunId,
       // A systemic transfer block surfaces as report.status "failed" → use a
       // distinct kind so the leading icon + daily-digest don't count it as 暂无资源.
-      kind: report.status === "failed" ? "transfer_failed" : noCoverage ? "no_coverage" : "series_initialized",
+      kind: report.status === "failed" ? failedKind(input) : noCoverage ? "no_coverage" : "series_initialized",
       title: report.titleName,
       body: formatReportPushText(report),
       createdAt: input.now(),
@@ -336,6 +368,7 @@ function buildNotification(input: {
     noCoverage,
     transferBlockReason: input.transferBlockReason ?? null,
     searchSourceFaultReason: input.searchSourceFaultReason ?? null,
+    agentFaultReason: input.agentFaultReason ?? null,
     searchFilterReason: input.searchFilterReason ?? null,
     meta: titleMeta,
     ...sizeInput(input),
@@ -347,7 +380,7 @@ function buildNotification(input: {
       workflowRunId,
       kind:
         report.status === "failed"
-          ? "transfer_failed"
+          ? failedKind(input)
           : noCoverage
             ? "no_coverage"
             : report.status === "complete"
@@ -370,7 +403,7 @@ function buildNotification(input: {
   return {
     id: `notification_${workflowRunId}`,
     workflowRunId,
-    kind: report.status === "failed" ? "transfer_failed" : noCoverage ? "no_coverage" : "tracking_initialized",
+    kind: report.status === "failed" ? failedKind(input) : noCoverage ? "no_coverage" : "tracking_initialized",
     title: `${report.titleName} ${report.seasonLabel}`,
     body: formatReportPushText(report),
     createdAt: input.now(),

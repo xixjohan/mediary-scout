@@ -54,6 +54,8 @@ const kindIcon: Record<string, { tone: string; icon: typeof Bell }> = {
   already_current: { tone: "muted", icon: CheckCircle2 },
   no_coverage: { tone: "amber", icon: CircleSlash },
   transfer_failed: { tone: "amber", icon: XCircle },
+  // 智能体异常终止：与「暂无资源」必须视觉可分——前者是系统问题，后者是内容事实。
+  agent_error: { tone: "red", icon: TriangleAlert },
   replacement_done: { tone: "indigo", icon: Repeat },
   foreign_work_detected: { tone: "amber", icon: Film },
 };
@@ -250,6 +252,11 @@ function NotificationCard({
   }
 
   const status = statusMeta[report.status];
+  // 智能体异常终止在 report 层是 `failed`（与转存受阻同态），但用户要看的是
+  // 「AI 挂了，不是片子没有」——所以 pill 覆盖成更精确的一种，而不是笼统的「获取失败」。
+  const isAgentError = notification.kind === "agent_error";
+  const pillLabel = isAgentError ? "AI 异常" : status.label;
+  const pillTone = isAgentError ? "red" : status.tone;
   const StatusIcon = status.icon;
   const heading = report.seasonLabel
     ? `${report.titleName} ${report.seasonLabel}`
@@ -279,9 +286,9 @@ function NotificationCard({
           <KindIcon size={15} aria-hidden />
         </span>
         <strong className="feed-card-title">{heading}</strong>
-        <span className={`feed-status-pill tone-${status.tone}`}>
+        <span className={`feed-status-pill tone-${pillTone}`}>
           <StatusIcon size={11} aria-hidden />
-          {status.label}
+          {pillLabel}
         </span>
         <time className="feed-time" dateTime={notification.createdAt}>
           {timeLabel(notification.createdAt)}

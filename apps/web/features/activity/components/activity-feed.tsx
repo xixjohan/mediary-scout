@@ -233,8 +233,12 @@ function QueuedRow({ run }: { run: ActivityActiveRun }) {
   );
 }
 
-function completedPillLabel(status: ActivityCompletedItem["status"]): string {
-  switch (status) {
+/** 「AI 异常」与「获取失败」必须分开：前者是模型/网关的问题（去查 AI 配置或稍后
+ *  重试），后者通常是转存受阻。两者都归在 report.status = failed 下，只有
+ *  notification.kind 能区分——所以这里读 kind，不只读 status。 */
+function completedPillLabel(item: Pick<ActivityCompletedItem, "status" | "kind">): string {
+  if (item.kind === "agent_error") return "AI 异常";
+  switch (item.status) {
     case "no_coverage":
       return "暂无资源";
     case "partial":
@@ -263,7 +267,7 @@ function CompletedRow({ item }: { item: ActivityCompletedItem }) {
           {item.seasonLabel ? <span className="act-sub">{item.seasonLabel}</span> : null}
           <span className={`act-pill ${ok ? "tone-success" : "tone-warn"}`}>
             {ok ? <CheckCircle2 size={12} aria-hidden /> : <TriangleAlert size={12} aria-hidden />}
-            {completedPillLabel(item.status)}
+            {completedPillLabel(item)}
           </span>
           {item.sizeText ? <span className="act-sub">{item.sizeText}</span> : null}
           {failed ? <RetryButton runId={item.workflowRunId} title={item.title} /> : null}

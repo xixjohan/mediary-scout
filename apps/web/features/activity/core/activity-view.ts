@@ -62,6 +62,8 @@ export interface ActivityCompletedItem {
   title: string;
   seasonLabel: string | null;
   status: NotificationReportStatus;
+  /** 通知 kind。`report.status` 只有 failed，kind 才说得清「是账号被封锁还是 AI 崩了」。 */
+  kind: string;
   posterPath: string | null;
   /** "每集 约 410 MB" / "体积 1.4 GB"; null when unknown. */
   sizeText: string | null;
@@ -277,6 +279,7 @@ export async function getActivityView(input: {
       title: report.titleName,
       seasonLabel: report.seasonLabel,
       status: report.status,
+      kind: notification.kind,
       posterPath,
       sizeText: size ? `${size.label} ${size.value}` : null,
       createdAt: notification.createdAt,

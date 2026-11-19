@@ -17,6 +17,7 @@ import {
 import { buildMovieReport, buildReplacementReport, emptyRunOutcome, formatReportPushText } from "../domain/notification-report.js";
 import { classifyTransferBlock } from "../acquisition-v2/transfer-block.js";
 import { classifySearchSourceFault } from "../acquisition-v2/search-source-fault.js";
+import { classifyAgentFault } from "../acquisition-v2/agent-fault.js";
 import { searchFilterFailureReason } from "../acquisition-v2/search-filter-diagnostics.js";
 import type { ResourceProvider, StorageExecutor } from "../domain/ports.js";
 import type { DeadLinkStore } from "../acquisition-v2/dead-links.js";
@@ -284,12 +285,19 @@ function buildResult(input: {
       results: input.replacementResults ?? [],
       transferBlockReason: classifyTransferBlock(input.attempts)?.reason ?? null,
       searchSourceFaultReason: classifySearchSourceFault(input.auditEvents)?.reason ?? null,
+      agentFaultReason: classifyAgentFault(input.auditEvents)?.reason ?? null,
       meta,
     });
     const notification: NotificationEvent = {
       id: `notification_${input.request.workflowRunId}`,
       workflowRunId: input.request.workflowRunId,
-      kind: report.status === "failed" ? "transfer_failed" : "replacement_done",
+      kind:
+        report.status === "failed"
+          ? classifyTransferBlock(input.attempts)?.reason?.trim() ||
+            classifySearchSourceFault(input.auditEvents)?.reason?.trim()
+            ? "transfer_failed"
+            : "agent_error"
+          : "replacement_done",
       title: t.title,
       body: formatReportPushText(report),
       createdAt: input.now(),
@@ -327,14 +335,23 @@ function buildResult(input: {
           classifyTransferBlock(input.attempts)?.reason ?? null,
           classifySearchSourceFault(input.auditEvents)?.reason ?? null,
           searchFilterFailureReason(input.auditEvents),
+          classifyAgentFault(input.auditEvents)?.reason ?? null,
         ),
       };
   const notification: NotificationEvent = {
     id: `notification_${input.request.workflowRunId}`,
     workflowRunId: input.request.workflowRunId,
     // A systemic transfer block → report.status "failed" → distinct kind so the
-    // leading icon + daily-digest don't count it as 暂无资源.
-    kind: report.status === "failed" ? "transfer_failed" : input.kind,
+    // leading icon + daily-digest don't count it as 暂无资源. 智能体崩了单列
+    // `agent_error`：它的处置动作（查 AI 配置/稍后重试）与账号配额问题不同。
+    kind:
+      report.status === "failed"
+        ? classifyTransferBlock(input.attempts)?.reason?.trim() ||
+          classifySearchSourceFault(input.auditEvents)?.reason?.trim() ||
+          searchFilterFailureReason(input.auditEvents)?.trim()
+          ? "transfer_failed"
+          : "agent_error"
+        : input.kind,
     title: input.request.title.title,
     body: formatReportPushText(report),
     createdAt: input.now(),

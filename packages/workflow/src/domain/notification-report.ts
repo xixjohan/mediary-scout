@@ -84,6 +84,10 @@ export interface SeasonReportInput {
    *  「暂未找到可用资源」——源连不上不等于这部片子没有资源(别甩锅)。 */
   searchSourceFaultReason?: string | null;
   searchFilterReason?: string | null;
+  /** 智能体循环异常终止（见 classifyAgentFault）。与上面两条同一形制：只在
+   *  noCoverage 时有意义，存在则覆盖「暂未找到可用资源」——模型崩了不等于这部
+   *  片子没有资源（2026-11-18 生产实测：77 条候选在盘上，却报「暂未找到」）。 */
+  agentFaultReason?: string | null;
   /** Real landed video files: count + summed bytes. The card/push show the true
    *  per-episode size from these (总字节 / 文件数), not a claimed quality tag. */
   fileCount?: number;
@@ -111,6 +115,12 @@ export function emptyRunOutcome(
   transferBlockReason?: string | null,
   searchSourceFaultReason?: string | null,
   searchFilterReason?: string | null,
+  /**
+   * 智能体循环异常终止的原因（见 classifyAgentFault）。与前三条同一条教义：
+   * 模型崩了 ≠ 这部片子没有资源。放在最后一位是刻意的——能走到转存、或候选被
+   * 规则排除，说明资源确实找到了，那两条对用户更有行动价值。
+   */
+  agentFaultReason?: string | null,
 ): { status: NotificationReportStatus; lines: string[] } {
   if (transferBlockReason && transferBlockReason.trim()) {
     // 转存受阻优先于搜索源故障:能走到转存说明资源已经找到了,用户手上的问题是
@@ -125,6 +135,9 @@ export function emptyRunOutcome(
     return { status: "failed", lines: [searchSourceFaultReason.trim()] };
   }
   if (searchFilterReason?.trim()) return { status: "failed", lines: [searchFilterReason.trim()] };
+  // 智能体自己崩了（model_error）：同样不是「没有资源」。2026-11-18 生产实测：
+  // 82 条候选准入 77 条、源健康，仅因模型第一步报错就报「暂未找到可用资源」。
+  if (agentFaultReason?.trim()) return { status: "failed", lines: [agentFaultReason.trim()] };
   return { status: "no_coverage", lines: ["暂未找到可用资源 · 将持续尝试"] };
 }
 
@@ -145,7 +158,12 @@ export function buildSeasonReport(input: SeasonReportInput): NotificationReport 
     return {
       titleName: input.titleName,
       seasonLabel: label,
-      ...emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason, input.searchFilterReason),
+      ...emptyRunOutcome(
+        input.transferBlockReason,
+        input.searchSourceFaultReason,
+        input.searchFilterReason,
+        input.agentFaultReason,
+      ),
       newlyObtained: [],
       realMissing,
       ...(input.meta ?? {}),
@@ -204,6 +222,8 @@ export function buildSeriesReport(input: {
   /** See SeasonReportInput.searchSourceFaultReason — honest 搜索源故障. */
   searchSourceFaultReason?: string | null;
   searchFilterReason?: string | null;
+  /** See SeasonReportInput.agentFaultReason — honest 智能体异常终止. */
+  agentFaultReason?: string | null;
   meta?: NotificationTitleMeta;
   fileCount?: number;
   totalBytes?: number;
@@ -212,7 +232,12 @@ export function buildSeriesReport(input: {
     return {
       titleName: input.titleName,
       seasonLabel: null,
-      ...emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason, input.searchFilterReason),
+      ...emptyRunOutcome(
+        input.transferBlockReason,
+        input.searchSourceFaultReason,
+        input.searchFilterReason,
+        input.agentFaultReason,
+      ),
       newlyObtained: [],
       realMissing: [],
       ...(input.meta ?? {}),
@@ -282,6 +307,8 @@ export function buildReplacementReport(input: {
   newlyObtained?: string[];
   transferBlockReason?: string | null;
   searchSourceFaultReason?: string | null;
+  /** See SeasonReportInput.agentFaultReason — honest 智能体异常终止. */
+  agentFaultReason?: string | null;
   meta?: NotificationTitleMeta;
 }): NotificationReport {
   const replaced = input.results.filter((r) => r.outcome === "replaced").map((r) => r.episode);
@@ -298,7 +325,12 @@ export function buildReplacementReport(input: {
   };
   if (replaced.length === 0 && newlyObtained.length === 0) {
     // Nothing new landed: an honest block/source-fault reason beats "not found".
-    const outcome = emptyRunOutcome(input.transferBlockReason, input.searchSourceFaultReason);
+    const outcome = emptyRunOutcome(
+      input.transferBlockReason,
+      input.searchSourceFaultReason,
+      null,
+      input.agentFaultReason,
+    );
     if (outcome.status === "failed") return { ...base, ...outcome };
     return {
       ...base,
