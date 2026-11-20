@@ -405,7 +405,7 @@ describe("runQueuedReplaceRequest — web tools survive the replace path", () =>
     let system = "";
     const model = new MockLanguageModelV3({
       doGenerate: async (options) => {
-        system = JSON.stringify(options.prompt.find((m) => m.role === "system") ?? "");
+        system ||= JSON.stringify(options.prompt.find((m) => m.role === "system") ?? "");
         return text("done");
       },
     });

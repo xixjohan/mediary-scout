@@ -85,7 +85,7 @@ export function classifyAgentFault(
 
   const searchedCandidateCount = countAdmittedCandidates(auditEvents);
   return {
-    reason: faultCopy(searchedCandidateCount),
+    reason: faultCopy(searchedCandidateCount, auditEvents),
     searchedCandidateCount,
     steps,
   };
@@ -106,14 +106,16 @@ function countAdmittedCandidates(auditEvents: readonly AuditEvent[]): number {
   return total;
 }
 
-/**
- * 文案分两档，全部避开「没有资源」这种结论式措辞：
- *  - 有候选：资源一直在，给出去哪看；
- *  - 无候选：连检索结果都没进过评估。
- */
-function faultCopy(admitted: number): string {
+function faultCopy(admitted: number, auditEvents: readonly AuditEvent[]): string {
   if (admitted > 0) {
     return `AI 模型本轮异常终止，没有评估已找到的 ${admitted} 个候选。资源可能仍在，可在作品详情页「资源」里手动获取。`;
   }
-  return "AI 模型本轮没有产出任何可用步骤（上游空响应或报错），本次没有真正检索与评估资源。";
+  const searches = auditEvents.filter((event) => event.type === "resource_filter_applied");
+  if (searches.some((event) => Number(event.data?.["inputCount"]) > 0)) {
+    return "检索有命中，但没有候选通过筛选，AI 未完成补充检索与评估。";
+  }
+  if (searches.some((event) => event.data?.["sourceStatus"] === "healthy" && event.data["inputCount"] === 0)) {
+    return "预检索未命中，AI 未完成补充检索与评估。";
+  }
+  return "AI 模型本轮没有产出任何可用步骤，未完成资源评估。";
 }

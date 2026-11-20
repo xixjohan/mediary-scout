@@ -288,7 +288,7 @@ describe("run wiring", () => {
       let prompt = "";
       const model = new MockLanguageModelV3({
         doGenerate: async (options) => {
-          prompt = JSON.stringify(options.prompt.filter((m) => m.role === "user"));
+          prompt ||= JSON.stringify(options.prompt.filter((m) => m.role === "user"));
           return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
         },
       });
@@ -316,7 +316,7 @@ describe("run wiring", () => {
       let prompt = "";
       const model = new MockLanguageModelV3({
         doGenerate: async (options) => {
-          prompt = JSON.stringify(options.prompt.filter((m) => m.role === "user"));
+          prompt ||= JSON.stringify(options.prompt.filter((m) => m.role === "user"));
           return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
         },
       });
@@ -341,7 +341,7 @@ describe("run wiring", () => {
       let prompt = "";
       const model = new MockLanguageModelV3({
         doGenerate: async (options) => {
-          prompt = JSON.stringify(options.prompt.filter((m) => m.role === "user"));
+          prompt ||= JSON.stringify(options.prompt.filter((m) => m.role === "user"));
           return { content: [{ type: "text" as const, text: "done" }], finishReason: { unified: "stop" as const, raw: "stop" as const }, usage: USAGE, warnings: [] };
         },
       });

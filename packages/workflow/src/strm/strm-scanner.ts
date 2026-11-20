@@ -16,6 +16,14 @@ export interface StrmScanResult {
   protected: boolean;
   protectReason?: string;
   generatedPaths: string[];
+  /** 本轮被删除的 `.strm` 绝对路径。媒体服务器要据此刷新，否则条目要等下次
+   *  全库扫描才消失（期间用户点开是 404）。 */
+  removedPaths: string[];
+  /** 远端遍历失败时的错误（此时未生成、未删除任何文件）。 */
+  traversalError?: string;
+  /** 本轮跳过清理的原因（遍历失败 / 空盘保护 / 超过删除比例）。写进执行记录，
+   *  让 `removedCount: 0` 可解释——「没有孤儿」与「没跑清理」必须能区分。 */
+  cleanupSkippedReason?: string;
 }
 
 export interface StrmScanProgress {
@@ -36,12 +44,24 @@ export interface StrmScanOptions {
   onProgress?: (progress: StrmScanProgress) => Promise<void> | void;
 }
 
+/** 远端遍历的结果：**完整性与文件列表是一个整体**，不能拆成两件事。
+ *
+ *  缺陷原型（2026-11-19）：旧实现的 `catch { return [] }` 让「目录真的空了」与
+ *  「这次没看到」（令牌过期、网络抖动、目录被改名）完全不可区分。清理绑定在
+ *  full_sync 上时后果有限，一旦放开到所有模式，一次令牌过期就能清空整库。
+ *
+ *  因此失败必须显式表达为 `ok: false`，调用方据此**拒绝删除**——与
+ *  `classifySearchSourceFault` 同一条教义：不猜。 */
+export type RemoteTraversal =
+  | { ok: true; files: VerifiedFile[] }
+  | { ok: false; reason: "list_failed"; error: string };
+
 export class StrmScanner {
   private async fetchRemoteFiles(
     storage: StorageExecutor | DriveFileManager,
     folderId: string,
     maxDepth = 8,
-  ): Promise<VerifiedFile[]> {
+  ): Promise<RemoteTraversal> {
     if (typeof (storage as DriveFileManager).listDirectory === "function") {
       const results: VerifiedFile[] = [];
       const dfm = storage as DriveFileManager;
@@ -66,37 +86,50 @@ export class StrmScanner {
         }
       };
 
-      await walk(folderId, "", 1);
-      return results;
+      try {
+        await walk(folderId, "", 1);
+        return { ok: true, files: results };
+      } catch (error) {
+        // 任意一层目录失败 ⇒ 这份结果不能作为「哪些文件被删了」的依据。
+        return { ok: false, reason: "list_failed", error: error instanceof Error ? error.message : String(error) };
+      }
     }
 
     if (typeof (storage as StorageExecutor).listTree === "function") {
       try {
         const tree = await (storage as StorageExecutor).listTree({ directoryId: folderId, maxDepth });
         if (tree && tree.length > 0) {
-          return tree.map((f: PackageTreeFile) => ({
-            id: f.providerFileId,
-            storageDirectoryId: folderId,
-            name: path.basename(f.path),
-            sizeBytes: f.sizeBytes,
-            episodeCode: null,
-            providerFileId: f.providerFileId,
-            relativePath: f.path,
-          }));
+          return {
+            ok: true,
+            files: tree.map((f: PackageTreeFile) => ({
+              id: f.providerFileId,
+              storageDirectoryId: folderId,
+              name: path.basename(f.path),
+              sizeBytes: f.sizeBytes,
+              episodeCode: null,
+              providerFileId: f.providerFileId,
+              relativePath: f.path,
+            })),
+          };
         }
       } catch {
-        // non-blocking fallback
+        // listTree 失败不再「回落成空数组」——直接降级到 listVideoFiles 一次，
+        // 两者都失败才算遍历失败（下面统一处理）。
       }
     }
 
     try {
       const files = await (storage as StorageExecutor).listVideoFiles(folderId);
-      return files.map((f) => ({
-        ...f,
-        relativePath: f.name,
-      }));
-    } catch {
-      return [];
+      return {
+        ok: true,
+        files: files.map((f) => ({
+          ...f,
+          relativePath: f.name,
+        })),
+      };
+    } catch (error) {
+      // 曾经的 `return []` 把「失败」伪装成「没有文件」——正是删除路径最危险的输入。
+      return { ok: false, reason: "list_failed", error: error instanceof Error ? error.message : String(error) };
     }
   }
 
@@ -250,6 +283,7 @@ export class StrmScanner {
         try {
           await removeStrmFile(fullPath, true);
           result.removedCount++;
+          result.removedPaths.push(fullPath);
         } catch {
           // ignore unlink error
         }
@@ -257,19 +291,47 @@ export class StrmScanner {
     }
   }
 
+  /**
+   * 本轮孤儿清理的**告知性说明**（不拦截删除）。
+   *
+   * 为什么这里不像最初设想那样「删除比例 > 50% 就跳过」：那会把两件事混为一谈。
+   *
+   *  - **列表是否可信**：已由 `fetchRemoteFiles` 的 `ok: false` 严格回答——任意一层
+   *    目录列举失败就不允许删（见 runScan 的早退分支）。
+   *  - **变化是否很大**：这是镜像同步的**正常结果**，不是故障。生产实测「远端 38 /
+   *    本地 955」（96%）正是本缺陷要修的场景；用 50% 阈值挡掉，修复对真实问题就
+   *    完全无效。
+   *
+   * 所以这里只负责「把大额删除说出来」，让它出现在扫描记录里可审计：
+   * 一次删掉一半以上时返回一句说明，调用方照常删除并把说明写进记录。
+   * 真正的两道硬闸是：遍历失败（不删）+ 空盘（不删，除非显式强制）。
+   */
+  private largeDeletionNotice(input: {
+    validRemoteCount: number;
+    localStrmCount: number;
+  }): string | null {
+    if (input.localStrmCount < 4) return null;
+    const toRemove = Math.max(0, input.localStrmCount - input.validRemoteCount);
+    if (toRemove === 0) return null;
+    const ratio = toRemove / input.localStrmCount;
+    if (ratio <= 0.5) return null;
+    return `本轮将删除 ${toRemove}/${input.localStrmCount} 个 STRM（${Math.round(ratio * 100)}%，属大幅变动）。若远端只是暂时不可见，请立即用备份或「立即扫描」复核。`;
+  }
+
+  /**
+   * 空盘保护：远端 0 个有效媒体、本地却还有 STRM —— 极可能是故障（令牌过期、
+   * 目录被改名、网络中断），不是「用户删光了」。此时整轮跳过，不做任何写入与删除。
+   *
+   * 2026-11-19 起覆盖**所有扫描模式**：清理不再是 `full_sync` 专属，这条闸也必须
+   * 对所有模式生效，否则增量模式会变成「一次故障清空整库」的入口。
+   */
   private checkEmptyProtect(
-    task: StrmTask,
     validRemoteCount: number,
     localStrmCount: number,
     forceAllowEmptyCleanup: boolean,
   ): string | null {
-    if (
-      task.scanMode === "full_sync" &&
-      validRemoteCount === 0 &&
-      localStrmCount > 0 &&
-      !forceAllowEmptyCleanup
-    ) {
-      return `远端网盘返回0个有效媒体文件，但本地存在 ${localStrmCount} 个STRM文件，空保护已触发拦截清理。`;
+    if (validRemoteCount === 0 && localStrmCount > 0 && !forceAllowEmptyCleanup) {
+      return `远端网盘返回 0 个有效媒体文件，但本地存在 ${localStrmCount} 个 STRM 文件，空盘保护已拦截本轮同步（未生成、未删除）。确认远端确实为空后可强制执行。`;
     }
     return null;
   }
@@ -316,6 +378,7 @@ export class StrmScanner {
       removedCount: 0,
       protected: false,
       generatedPaths: [],
+      removedPaths: [],
     };
 
     await onProgress?.({
@@ -328,7 +391,25 @@ export class StrmScanner {
       message: "正在遍历远端网盘目录...",
     });
 
-    const remoteFiles = await this.fetchRemoteFiles(storage, task.remoteFolderId);
+    const traversal = await this.fetchRemoteFiles(storage, task.remoteFolderId);
+    // 遍历失败：**不做任何写入也不做任何删除**。旧实现把失败当成空数组，于是
+    // 「远端没了」与「这次没看到」不可区分——那是删除路径最危险的输入。
+    if (!traversal.ok) {
+      const message = `远端目录遍历失败，本轮跳过（未生成、未删除任何 STRM）：${traversal.error}`;
+      await onProgress?.({
+        phase: "completed",
+        percent: 100,
+        scannedCount: 0,
+        generatedCount: 0,
+        updatedCount: 0,
+        removedCount: 0,
+        message,
+      });
+      result.traversalError = traversal.error;
+      result.cleanupSkippedReason = message;
+      return result;
+    }
+    const remoteFiles = traversal.files;
     const validRemoteFiles = this.filterValidFiles(remoteFiles, task);
     result.scannedCount = validRemoteFiles.length;
 
@@ -357,7 +438,6 @@ export class StrmScanner {
     });
 
     const protectReason = this.checkEmptyProtect(
-      resolvedTask,
       validRemoteFiles.length,
       localStrmMap.size,
       forceAllowEmptyCleanup,
@@ -365,6 +445,7 @@ export class StrmScanner {
     if (protectReason) {
       result.protected = true;
       result.protectReason = protectReason;
+      result.cleanupSkippedReason = protectReason;
       await onProgress?.({
         phase: "completed",
         percent: 100,
@@ -386,7 +467,23 @@ export class StrmScanner {
       onProgress,
     );
 
-    if (task.scanMode === "full_sync") {
+    /**
+     * 孤儿清理**对所有模式生效**（2026-11-19 起）。
+     *
+     * 缺陷原型：它曾只挂在 `full_sync` 上，而 `incremental_missing` 是所有创建入口
+     * 的默认值——于是「远端删了、本地该跟着删」这条常规同步语义在默认配置下
+     * 永不发生（生产实测远端 38 / 本地 955）。「增量」被误读成「只增不删」，
+     * 但用户期待的是同步。
+     *
+     * 硬闸只有两道（都在前面）：遍历失败不删、空盘不删。这里不做「删除比例上限」——
+     * 大幅删除正是本缺陷要解决的问题本身（远端真的删了 96%，就该删 96%），
+     * 用阈值挡住等于修了个寂寞。大额删除只记一条说明，供审计。
+     */
+    if (localStrmMap.size > 0) {
+      const notice = this.largeDeletionNotice({
+        validRemoteCount: validRemoteFiles.length,
+        localStrmCount: localStrmMap.size,
+      });
       await onProgress?.({
         phase: "cleaning_orphans",
         percent: 90,
@@ -394,8 +491,9 @@ export class StrmScanner {
         generatedCount: result.generatedCount,
         updatedCount: result.updatedCount,
         removedCount: result.removedCount,
-        message: "正在清理远端已不存在的本地孤儿 STRM 文件...",
+        message: notice ?? "正在清理远端已不存在的本地孤儿 STRM 文件...",
       });
+      if (notice !== null) result.cleanupSkippedReason = notice;
       await this.cleanOrphanFiles(localStrmMap, expectedLocalRels, result);
     }
 

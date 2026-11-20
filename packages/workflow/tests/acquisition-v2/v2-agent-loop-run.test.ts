@@ -1,7 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockLanguageModelV3 } from "ai/test";
 import { runAcquisitionAgent } from "../../src/acquisition-v2/agent-loop.js";
 import { AgentContentFilterError } from "../../src/domain/agent-error.js";
+import { createAgentModel } from "../../src/domain/agent-model.js";
 import { isTransientAcquisitionError } from "../../src/acquisition-v2/transient-error.js";
 import { TaskSandbox } from "../../src/acquisition-v2/sandbox.js";
 import { FakeResourceProviderV2 } from "../../src/acquisition-v2/fake-provider.js";
@@ -46,6 +47,159 @@ async function setup(need: string[]) {
 }
 
 describe("runAcquisitionAgent — the real AI SDK tool-loop over the sandbox", () => {
+  it("audits the selected choice and only executes its call when alternatives reuse a call ID", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    await sandbox.primeRawSnapshot("lycoris recoil");
+    const view = vi.spyOn(sandbox, "viewResourceSnapshot");
+    const toolChoice = (index: number) => ({
+      index,
+      message: { role: "assistant", tool_calls: [{
+        id: "call_shared", type: "function", function: { name: "viewResourceSnapshot", arguments: "{}" },
+      }] },
+      finish_reason: "tool_calls",
+    });
+    const model = createAgentModel({
+      baseURL: "https://example.com/v1",
+      modelId: "mock",
+      fetch: async () => Response.json({ choices: [toolChoice(0), toolChoice(1)] }, { headers: { "x-request-id": "req_test123" } }),
+    });
+    const result = await runAcquisitionAgent({ sandbox, model, system: "test", prompt: "test", maxSteps: 1 });
+    expect(view).toHaveBeenCalledTimes(1);
+    expect(result.diagnosticEvents).toContainEqual(expect.objectContaining({
+      type: "agent_choice_selection",
+      data: {
+        choiceCount: 2, toolCallsByChoice: [1, 1], selectedPosition: 0, selectedIndex: 0,
+        reason: "primary", requestId: "req_test123",
+      },
+    }));
+  });
+
+  it.each(["viewResourceSnapshot", "transferCandidate"])(
+    "after HTTP 200 text without a finish reason, makes one recovery request even if the model asks for %s",
+    async (requestedTool) => {
+      const { sandbox } = await setup(["S01E01"]);
+      await sandbox.primeRawSnapshot("lycoris recoil");
+      const transfer = vi.spyOn(sandbox, "transferCandidate");
+      const view = vi.spyOn(sandbox, "viewResourceSnapshot");
+      let calls = 0;
+      const model = createAgentModel({
+        baseURL: "https://example.com/v1",
+        modelId: "mock",
+        fetch: async (_input, init) => {
+          calls += 1;
+          if (calls === 1) {
+            const textChoice = { index: 0, message: { role: "assistant", content: "No further action." } };
+            return Response.json({ choices: requestedTool === "viewResourceSnapshot"
+              ? [textChoice]
+              : [textChoice, { ...textChoice, index: 1 }],
+            });
+          }
+          expect(calls).toBe(2);
+          const body = JSON.parse(String(init?.body));
+          expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(["viewResourceSnapshot"]);
+          expect(body.tool_choice).toEqual({ type: "function", function: { name: "viewResourceSnapshot" } });
+          return Response.json({ choices: [{
+            index: 0,
+            message: { role: "assistant", tool_calls: [{
+              id: "recovery", type: "function", function: { name: requestedTool, arguments: "{}" },
+            }] },
+            finish_reason: "tool_calls",
+          }, { index: 1, message: { role: "assistant", content: "Alternative text" } }] });
+        },
+      });
+
+      const result = await runAcquisitionAgent({ sandbox, model, system: "test", prompt: "test" });
+      const observed = requestedTool === "viewResourceSnapshot";
+      expect(calls).toBe(2);
+      expect(transfer).not.toHaveBeenCalled();
+      expect(view).toHaveBeenCalledTimes(observed ? 1 : 0);
+      expect(result.stopReason).toBe("model_error");
+      expect(result.diagnosticEvents?.filter((event) => event.type === "agent_choice_selection")
+        .map((event) => event.data?.["reason"])).toEqual(
+        observed ? ["primary"] : ["no_tool_alternative", "primary"],
+      );
+      expect(result.diagnosticEvents).toContainEqual(expect.objectContaining({
+        type: "agent_model_diagnostic",
+        data: expect.objectContaining({ category: "no_terminal_action", textProduced: true, toolCalls: 0 }),
+      }));
+      expect(result.diagnosticEvents).toContainEqual(expect.objectContaining({
+        type: "agent_read_only_recovery",
+        data: expect.objectContaining({ outcome: observed ? "snapshot_observed" : "no_tool_result" }),
+      }));
+    },
+  );
+
+  it("bounds the recovery request with one deadline and records a timeout without retrying", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const deadline = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => originalTimeout(ms === 15_000 ? 25 : ms));
+    let calls = 0;
+    try {
+      const model = createAgentModel({
+        baseURL: "https://example.com/v1",
+        modelId: "mock",
+        fetch: async (_input, init) => {
+          calls += 1;
+          if (calls === 1) {
+            return Response.json({ choices: [{ index: 0, message: { role: "assistant", content: "Text only." } }] });
+          }
+          return new Promise<Response>((_resolve, reject) => {
+            const signal = init?.signal;
+            if (signal?.aborted) reject(signal.reason);
+            else signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+          });
+        },
+      });
+      const result = await runAcquisitionAgent({ sandbox, model, system: "test", prompt: "test" });
+      expect(calls).toBe(2);
+      expect(deadline).toHaveBeenCalledWith(15_000);
+      expect(result.diagnosticEvents).toContainEqual(expect.objectContaining({
+        type: "agent_read_only_recovery",
+        data: expect.objectContaining({ outcome: "timed_out", deadlineMs: 15_000 }),
+      }));
+    } finally {
+      deadline.mockRestore();
+    }
+  });
+
+  it("does not run first-turn recovery after the acquisition already executed a tool", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    const model = scriptedModel([
+      { tool: "viewResourceSnapshot", input: {} },
+      { text: "Stopped after viewing the snapshot." },
+    ]);
+    const result = await runAcquisitionAgent({ sandbox, model, system: "test", prompt: "test" });
+    expect(result.steps).toBe(2);
+    expect(result.stopReason).toBe("model_error");
+    expect(result.diagnosticEvents?.map((event) => event.type)).toEqual(["agent_model_diagnostic"]);
+  });
+
+  it("keeps only safe diagnostics when the gateway resolves an error choice", async () => {
+    const { sandbox } = await setup(["S01E01"]);
+    const secret = "sk-test-super-secret-12345";
+    const model = createAgentModel({
+      baseURL: "https://example.com/v1",
+      modelId: "mock",
+      source: "db",
+      fetch: async () => Response.json({
+        id: "gen-test-123",
+        error: { code: 503, message: "https://example.com/?key=" + secret },
+        choices: [{ index: 0, message: { role: "assistant", content: null }, finish_reason: "error" }],
+      }),
+    });
+    const result = await runAcquisitionAgent({ sandbox, model, system: "test", prompt: "test" });
+    expect(result.stopReason).toBe("model_error");
+    expect(result.diagnosticEvents).toContainEqual(expect.objectContaining({
+      type: "agent_model_diagnostic",
+      data: expect.objectContaining({
+        category: "upstream_unavailable", phase: "returned", finishReason: "other",
+        rawFinishReason: "error", steps: 1, toolResults: 0, upstreamStatus: 503,
+        configSource: "db", requestId: "gen-test-123",
+      }),
+    }));
+    expect(JSON.stringify(result.diagnosticEvents)).not.toContain(secret);
+  });
+
   it("resumes once after a content-filter interruption and lets a landed movie finish", async () => {
     const storage = new Storage115Simulator({
       packs: { movie: { files: [{ path: "Wrapper/movie.mkv", sizeBytes: 100 }] } },

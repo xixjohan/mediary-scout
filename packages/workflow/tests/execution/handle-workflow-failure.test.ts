@@ -4,6 +4,7 @@ import type { PersistedWorkflowRunSnapshot, PersistWorkflowRunSnapshotInput } fr
 import { QuarkAuthError } from "../../src/storage/quark-cookie-client.js";
 import { attachStagingLeaks } from "../../src/acquisition-v2/directory-lifecycle.js";
 import { FREE_LLM_PRESET } from "../../src/domain/agent-model.js";
+import { rememberAgentModelDiagnostics } from "../../src/domain/agent-model-diagnostics.js";
 import {
   FREE_LLM_MODEL_GONE_LINE,
   FREE_LLM_POOL_FAILURE_LINE,
@@ -62,6 +63,25 @@ function snapshot(run: Partial<WorkflowRun> = {}): PersistedWorkflowRunSnapshot 
 const now = () => "2026-06-21T05:30:00.000Z";
 
 describe("handleWorkflowRunFailure", () => {
+  it("persists diagnostic fields and retry decision without leaking a thrown model response", async () => {
+    const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
+    const secret = "sk-test-super-secret-12345";
+    const error = new Error("fetch failed: https://example.com/path?q=" + secret);
+    rememberAgentModelDiagnostics(error, [{
+      type: "agent_model_diagnostic",
+      message: "AI 模型调用诊断",
+      data: { category: "transport_error", phase: "thrown" },
+    }]);
+    await handleWorkflowRunFailure({ claimed: snapshot(), error, repository: { saveWorkflowRunSnapshot: save }, now });
+    const saved = save.mock.calls[0]![0];
+    expect(saved.workflowRun.status).toBe("queued");
+    expect(saved.workflowRun.auditEvents).toContainEqual(expect.objectContaining({
+      type: "agent_model_diagnostic",
+      data: { category: "transport_error", phase: "thrown", queueDecision: "requeued" },
+    }));
+    expect(JSON.stringify(saved)).not.toContain(secret);
+  });
+
   it("shows actionable guidance for a missing 115 write scope without retrying", async () => {
     const save = vi.fn(async (_input: PersistWorkflowRunSnapshotInput) => {});
     const out = await handleWorkflowRunFailure({

@@ -59,7 +59,10 @@ async function finishScanSuccess(
         id: recordId,
         status: "succeeded",
         currentProgressPercent: 100,
-        currentStepMessage: scanResult.protectReason ?? "扫描同步完成",
+        // 优先展示「本轮为什么没删」——`removedCount: 0` 若没有解释，用户无法
+        // 区分「没有孤儿」与「没跑清理」。
+        currentStepMessage:
+          scanResult.cleanupSkippedReason ?? scanResult.protectReason ?? "扫描同步完成",
         scannedCount: scanResult.scannedCount,
         generatedCount: scanResult.generatedCount,
         updatedCount: scanResult.updatedCount,
@@ -69,8 +72,11 @@ async function finishScanSuccess(
       .catch(() => {});
   }
 
-  if (scanResult.generatedPaths.length > 0) {
-    getMediaServerCoordinator().notifyFilesChanged(accountId, scanResult.generatedPaths);
+  // 生成与删除都要通知媒体服务器。只通知生成时，被删掉的条目要等下一次全库
+  // 扫描才消失——期间用户点开是 404（这正是本缺陷的用户可见症状）。
+  const changedPaths = [...scanResult.generatedPaths, ...scanResult.removedPaths];
+  if (changedPaths.length > 0) {
+    getMediaServerCoordinator().notifyFilesChanged(accountId, changedPaths);
   }
 }
 

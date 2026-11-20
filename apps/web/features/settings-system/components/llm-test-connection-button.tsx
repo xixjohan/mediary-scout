@@ -5,9 +5,7 @@ import { testLlmConnectionAction } from "../../../app/actions/settings-system-ac
 import { runAction } from "../../../lib/run-action";
 
 /**
- * Settings → AI 模型 的「测试连接」:对**已保存**的 LLM 配置真发一发最小请求,通/
- * 不通当场显示。杜绝「存了错值却不自知、点获取才崩、反怪自己 key 错」的大误会。
- * 镜像网盘的 TestConnectionButton。先保存,再测试。
+ * 验证已保存的模型设置及两轮工具调用。先保存，再测试。
  */
 export function LlmTestConnectionButton() {
   const [pending, startTransition] = useTransition();

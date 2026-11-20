@@ -132,7 +132,7 @@ describe("StrmScanner with Progress Tracking", () => {
     });
 
     expect(result.protected).toBe(true);
-    expect(result.protectReason).toContain("空保护已触发");
+    expect(result.protectReason).toContain("空盘保护");
     // File must NOT be deleted
     expect(fs.existsSync(path.join(tmpDir, "Existing.Movie.strm"))).toBe(true);
 

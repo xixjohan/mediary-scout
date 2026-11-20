@@ -1,5 +1,6 @@
 import type { AuditEvent, ResourceSnapshot } from "../domain.js";
 import type { ResourceProvider } from "../domain/ports.js";
+import { AUTH_ERROR_PREFIX, PanSouAuthError, classifySourceFailure } from "../domain/resource-source-health.js";
 import { resourceFingerprintMatches } from "../user-requests.js";
 import type { CandidateRegistry } from "./candidate-registry.js";
 import { deadLinkKey, type DeadLinkStore } from "./dead-links.js";
@@ -79,9 +80,9 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
   private readonly linkHistory: ReadonlyMap<string, string> | undefined;
   private readonly policyFilter: RealResourceProviderV2Options["policyFilter"];
   private readonly observedSnapshots = new Map<string, ResourceSnapshot>();
-  private readonly filterEvents: AuditEvent[] = [];
+  private readonly searchEvents: AuditEvent[] = [];
 
-  auditTrail(): AuditEvent[] { return [...this.filterEvents]; }
+  auditTrail(): AuditEvent[] { return [...this.searchEvents]; }
   /** real snapshot id → `sN`. Content-addressed providers repeat a snapshot id
    *  across keywords; the same snapshot keeps the same alias. */
   private readonly snapshotAliases = new Map<string, string>();
@@ -102,8 +103,23 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
     return [...this.observedSnapshots.values()];
   }
 
+  private async searchSource(keyword: string): Promise<ResourceSnapshot> {
+    try {
+      return await this.provider.search({ keyword, workflowRunId: this.workflowRunId });
+    } catch (error) {
+      const authError = error instanceof PanSouAuthError ||
+        (error instanceof Error && error.message.startsWith(AUTH_ERROR_PREFIX));
+      this.searchEvents.push({
+        type: "search_source_failed",
+        message: "搜索源未返回快照",
+        data: authError ? { source: "PanSou", status: "auth_error" } : { status: classifySourceFailure(error) },
+      });
+      throw error;
+    }
+  }
+
   async search(keyword: string): Promise<ResourceSnapshotV2> {
-    const snapshot = await this.provider.search({ keyword, workflowRunId: this.workflowRunId });
+    const snapshot = await this.searchSource(keyword);
     // A dead-link read error fails the search. Filtering nothing instead would show
     // every link already proven dead — and let the agent transfer it again. Only the
     // rejected list below fails open (best effort by design).
@@ -147,7 +163,7 @@ export class RealResourceProviderV2 implements ResourceProviderV2 {
     });
     const filterSummary = { inputCount: snapshot.candidates.length, keptCount: kept.length,
       deadLinkDropped: deadDropped, userRejectedDropped: rejectedDropped, policyDropped, policyReasons };
-    this.filterEvents.push(filterAuditEvent(snapshot, keyword, filterSummary));
+    this.searchEvents.push(filterAuditEvent(snapshot, keyword, filterSummary));
     if (this.policyFilter?.rank) {
       kept.sort((a, b) =>
         this.policyFilter!.rank!({ name: a.title, episodeCode: null }) - this.policyFilter!.rank!({ name: b.title, episodeCode: null }) ||

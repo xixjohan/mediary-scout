@@ -1104,7 +1104,7 @@ describe("runScheduledType3Monitoring (V2 engine)", () => {
     expect(outcomes[0]).toMatchObject({
       trackedSeasonId: broken.season.id,
       status: "failed",
-      errorMessage: "agent model unavailable",
+      errorMessage: "AI 模型调用失败：模型请求失败，请检查接口和模型设置",
     });
     expect(outcomes[1]).toMatchObject({ trackedSeasonId: healthy.season.id, status: "ran", workflowStatus: "succeeded" });
     const failed = await repository.getWorkflowRunSnapshot("run_multi_1");
@@ -2122,7 +2122,7 @@ describe("runScheduledType3Monitoring — transient retry & failure logging", ()
           trackedSeasonId: season.id,
           status: "failed",
           workflowRunId: "run_patrol_log_fail",
-          errorMessage: "agent model unavailable",
+          errorMessage: "AI 模型调用失败：模型请求失败，请检查接口和模型设置",
         },
       ]);
       expect(logSpy).toHaveBeenCalledWith(

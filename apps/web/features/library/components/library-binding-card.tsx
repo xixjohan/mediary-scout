@@ -181,7 +181,7 @@ export function LibraryBindingCard({
         <span style={{ color: "var(--border, #444)" }}>|</span>
 
         <span>
-          模式: <strong style={{ color: "var(--text, #f4f4f5)" }}>{b.scanMode === "incremental_missing" ? "增量补缺" : "全量深扫"}</strong>
+          模式: <strong style={{ color: "var(--text, #f4f4f5)" }}>{b.scanMode === "incremental_missing" ? "增量同步" : "全量深扫"}</strong>
         </span>
 
         <span style={{ color: "var(--border, #444)" }}>|</span>

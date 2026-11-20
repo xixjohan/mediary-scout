@@ -1,5 +1,6 @@
 import { createOpenAICompatible, type OpenAICompatibleProviderSettings } from "@ai-sdk/openai-compatible";
 import type { LanguageModel } from "ai";
+import { agentChoiceAudit, modelConfigSources, requestIdentifier } from "./agent-model-diagnostics.js";
 
 /**
  * The live acquisition agent model factory — a bare OpenAI-compatible
@@ -46,6 +47,7 @@ export interface AgentModelOptions {
   modelId?: string;
   providerName?: string;
   fetch?: typeof fetch;
+  source?: "db" | "env" | "free-preset";
 }
 
 /**
@@ -95,7 +97,94 @@ function extractEmbeddedErrorStatus(parsed: unknown): number | null {
   return 502;
 }
 
-function createErrorEnvelopeNormalizingFetch(baseFetch: typeof fetch = globalThis.fetch): typeof fetch {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function isTextOnlyChoice(choice: unknown): boolean {
+  const entry = asRecord(choice);
+  const message = asRecord(entry?.["message"]);
+  const reason = entry?.["finish_reason"];
+  if (message?.["role"] !== "assistant" || (reason != null && reason !== "stop")) return false;
+  const calls = message["tool_calls"];
+  return typeof message["content"] === "string" && message["content"].trim() !== "" &&
+    message["function_call"] == null && (calls == null || (Array.isArray(calls) && calls.length === 0));
+}
+
+function hasAdvertisedTools(calls: unknown[], body: BodyInit | null | undefined): boolean {
+  if (typeof body !== "string") return false;
+  try {
+    const request = asRecord(JSON.parse(body));
+    const tools = request?.["tools"];
+    if (request?.["stream"] === true || request?.["tool_choice"] !== "auto" || !Array.isArray(tools)) return false;
+    const advertised = new Set(tools.map((tool: unknown) => asRecord(asRecord(tool)?.["function"])?.["name"]));
+    const seenIds = new Set<string>();
+    return calls.every((call) => {
+      const record = asRecord(call);
+      const fn = asRecord(record?.["function"]);
+      const name = fn?.["name"];
+      const id = record?.["id"];
+      if (record?.["type"] !== "function" || typeof id !== "string" || id.trim() === "" || seenIds.has(id)) {
+        return false;
+      }
+      seenIds.add(id);
+      return typeof name === "string" && advertised.has(name) && typeof fn?.["arguments"] === "string";
+    });
+  } catch {
+    return false;
+  }
+}
+
+function toolCallsOf(choice: unknown): unknown[] {
+  const calls = asRecord(asRecord(choice)?.["message"])?.["tool_calls"];
+  return Array.isArray(calls) ? calls : [];
+}
+
+function choosePosition(choices: unknown[], body: BodyInit | null | undefined) {
+  if (!isTextOnlyChoice(choices[0])) return { position: 0, reason: "primary" };
+  let position = 0;
+  for (let index = 1; index < choices.length; index += 1) {
+    if (toolCallsOf(choices[index]).length === 0) continue;
+    if (position !== 0) return { position: 0, reason: "ambiguous" };
+    position = index;
+  }
+  if (position === 0) return { position: 0, reason: "no_tool_alternative" };
+  const selected = asRecord(choices[position]);
+  if (selected?.["finish_reason"] !== "tool_calls" || asRecord(selected?.["message"])?.["role"] !== "assistant" ||
+    !hasAdvertisedTools(toolCallsOf(selected), body)) {
+    return { position: 0, reason: "ineligible_alternative" };
+  }
+  return { position, reason: "selected_later" };
+}
+
+function selectToolChoice(parsed: unknown, body: BodyInit | null | undefined, headers: Headers): Record<string, unknown> | undefined {
+  const response = asRecord(parsed);
+  const choices = response?.["choices"];
+  if (response?.["error"] != null || !Array.isArray(choices) || choices.length < 2) return undefined;
+  const { position, reason } = choosePosition(choices, body);
+  const selected = choices[position];
+  const index = asRecord(selected)?.["index"];
+  const requestId = requestIdentifier(undefined, headers.get("x-request-id") ?? headers.get("request-id"));
+  agentChoiceAudit.getStore()?.({
+    type: "agent_choice_selection",
+    message: "AI 工具调用选项判定",
+    data: {
+      choiceCount: choices.length,
+      toolCallsByChoice: choices.slice(0, 32).map((choice) => toolCallsOf(choice).length),
+      selectedPosition: position,
+      ...(typeof index === "number" && Number.isSafeInteger(index) && index >= 0 ? { selectedIndex: index } : {}),
+      reason,
+      ...(requestId === undefined ? {} : { requestId }),
+    },
+  });
+  // The SDK decodes choices[0]. Give it one complete choice and leave its
+  // tool argument parsing, schema validation and execution unchanged.
+  return position === 0 ? undefined : { ...response, choices: [selected] };
+}
+
+function createChatResponseNormalizingFetch(baseFetch: typeof fetch = globalThis.fetch): typeof fetch {
   return async (input, init) => {
     const response = await baseFetch(input, init);
     if (!response.ok) {
@@ -122,14 +211,20 @@ function createErrorEnvelopeNormalizingFetch(baseFetch: typeof fetch = globalThi
       return response;
     }
     const status = extractEmbeddedErrorStatus(parsed);
-    if (status === null) {
-      return response;
+    if (status !== null) {
+      return new Response(text, {
+        status,
+        statusText: response.statusText || "Upstream Error",
+        headers: response.headers,
+      });
     }
-    return new Response(text, {
-      status,
-      statusText: response.statusText || "Upstream Error",
-      headers: response.headers,
-    });
+    const selected = selectToolChoice(parsed, init?.body, response.headers);
+    if (!selected) return response;
+    const headers = new Headers(response.headers);
+    for (const name of ["content-length", "content-encoding", "etag", "content-md5", "digest", "content-digest"]) {
+      headers.delete(name);
+    }
+    return new Response(JSON.stringify(selected), { status: response.status, statusText: response.statusText, headers });
   };
 }
 
@@ -181,7 +276,7 @@ export function createAgentProviderConfig(options: AgentModelOptions = {}): {
   const providerSettings: OpenAICompatibleProviderSettings = {
     name: options.providerName ?? DEFAULT_PROVIDER_NAME,
     baseURL: options.baseURL!.trim(),
-    fetch: createErrorEnvelopeNormalizingFetch(options.fetch),
+    fetch: createChatResponseNormalizingFetch(options.fetch),
     ...(key ? { apiKey: key, headers: { "api-key": key } } : {}),
   };
   return { providerSettings, modelId: options.modelId!.trim() };
@@ -192,7 +287,9 @@ export function createAgentProviderConfig(options: AgentModelOptions = {}): {
  *  error when baseURL/modelId are missing. */
 export function createAgentModel(options: AgentModelOptions = {}): LanguageModel {
   const { providerSettings, modelId } = createAgentProviderConfig(options);
-  return createOpenAICompatible(providerSettings)(modelId);
+  const model = createOpenAICompatible(providerSettings)(modelId);
+  if (options.source) modelConfigSources.set(model, options.source);
+  return model;
 }
 
 /** An env value counts as「没配置」when it is unset OR blank — the shipped
@@ -231,7 +328,7 @@ export function createAgentModelFromEnv(env: NodeJS.ProcessEnv = process.env): L
   const baseURL = pickEnvValue(env.AGENT_MODEL_BASE_URL, env.XIAOMI_MIMO_BASE_URL);
   const modelId = pickEnvValue(env.AGENT_MODEL_ID, env.XIAOMI_MIMO_MODEL_ID);
   if (isBlankEnvValue(apiKey) && isBlankEnvValue(baseURL) && isBlankEnvValue(modelId)) {
-    return createAgentModel(FREE_LLM_PRESET);
+    return createAgentModel({ ...FREE_LLM_PRESET, source: "free-preset" });
   }
   const options: AgentModelOptions = {};
   if (apiKey !== undefined) options.apiKey = apiKey;
@@ -244,8 +341,7 @@ export function createAgentModelFromEnv(env: NodeJS.ProcessEnv = process.env): L
   // 本工厂服务直接读 env 的调用方（worker 直连 / CLI / §6a 脚本），不能只靠
   // web 层防护。回落分支无需处理 —— FREE_LLM_PRESET 本身无 key。
   if (isFreeLlmPreset(options)) delete options.apiKey;
-  const { providerSettings, modelId: id } = createAgentProviderConfig(options);
-  return createOpenAICompatible(providerSettings)(id);
+  return createAgentModel({ ...options, source: "env" });
 }
 
 /**

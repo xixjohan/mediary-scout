@@ -72,10 +72,17 @@ describe("agent_error 端到端接线", () => {
     expect(lines).toContain("77");
   });
 
-  it("model_error 且零候选 → 仍是 failed / agent_error，文案说「没有产出任何可用步骤」", () => {
+  it("健康预检索零命中时说明搜索已经执行", () => {
+    const result = bridge([filterApplied(0), loopStopped("model_error", 1)]);
+    expect(result.notification.kind).toBe("agent_error");
+    expect(result.notification.report!.lines.join("")).toContain("预检索未命中");
+    expect(result.notification.report!.lines.join("")).not.toContain("没有真正检索");
+  });
+
+  it("搜索有命中但没有候选通过筛选时保留筛选证据", () => {
     const result = bridge([filterApplied(0, 82), loopStopped("model_error", 1)]);
     expect(result.notification.kind).toBe("agent_error");
-    expect(result.notification.report!.lines.join("")).toContain("没有产出任何可用步骤");
+    expect(result.notification.report!.lines.join("")).toContain("没有候选通过筛选");
   });
 
   it("series 模式同样接线", () => {

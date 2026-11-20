@@ -14,9 +14,11 @@ export interface StrmTaskCardProps {
 }
 
 function resolveScanModeLabel(mode: StrmScanMode): string {
-  if (mode === "incremental_missing") return "增量补缺";
+  // 三种模式自 2026-11-19 起都会清理孤儿（远端删了本地跟着删），文案必须体现——
+  // 旧文案「增量补缺」会让用户以为本地永远只增不减。
+  if (mode === "incremental_missing") return "增量同步";
   if (mode === "full_sync") return "全量镜像";
-  return "增量更新";
+  return "增量同步 + 覆盖";
 }
 
 function DeliveryModeBadge({ deliveryMode }: { deliveryMode?: StrmDeliveryMode | undefined }) {

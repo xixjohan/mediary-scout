@@ -34,6 +34,34 @@ describe("classifySearchSourceFault", () => {
     expect(fault!.reason).not.toContain("暂未找到");
   });
 
+  it("reports authentication failure when the provider throws before producing a snapshot", () => {
+    const failure: AuditEvent = {
+      type: "search_source_failed",
+      message: "搜索源未返回快照",
+      data: { source: "PanSou", status: "auth_error" },
+    };
+    expect(classifySearchSourceFault([failure])).toMatchObject({
+      status: "auth_error",
+      sources: ["PanSou"],
+      reason: expect.stringContaining("搜索认证失败"),
+    });
+  });
+
+  it.each(["healthy", "degraded"])("keeps a later %s empty snapshot usable", (sourceStatus) => {
+    expect(classifySearchSourceFault([
+      { type: "search_source_failed", message: "搜索源未返回快照", data: { status: "auth_error" } },
+      { type: "resource_filter_applied", message: "候选准入结果", data: { sourceStatus, keptCount: 0 } },
+    ])).toBeNull();
+  });
+
+  it("reports an unusable snapshot even if the agent never reported no coverage", () => {
+    expect(classifySearchSourceFault([{
+      type: "resource_filter_applied",
+      message: "候选准入结果",
+      data: { sourceStatus: "protocol_error", unhealthySources: ["PanSou"] },
+    }])).toMatchObject({ status: "protocol_error", sources: ["PanSou"] });
+  });
+
   it("does NOT classify a lone mid-run unhealthy warning as a source fault", () => {
     // One flaky search that later succeeded is not a source outage — the agent
     // may well have found candidates afterwards. Only a refused report proves

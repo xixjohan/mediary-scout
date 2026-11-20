@@ -208,7 +208,7 @@ describe("runQueuedType2Workflow (V2 engine)", () => {
     expect(result).toMatchObject({
       status: "failed",
       workflowRunId: "run_failing_type2",
-      errorMessage: "agent model unavailable",
+      errorMessage: "AI 模型调用失败：模型请求失败，请检查接口和模型设置",
     });
     await expect(repository.getWorkflowRunSnapshot("run_failing_type2")).resolves.toMatchObject({
       workflowRun: {
@@ -217,6 +217,7 @@ describe("runQueuedType2Workflow (V2 engine)", () => {
           { type: "workflow_reserved" },
           { type: "tracking_request_queued" },
           { type: "workflow_claimed" },
+          { type: "agent_model_diagnostic", data: { category: "unknown", phase: "thrown", queueDecision: "failed" } },
           { type: "workflow_failed" },
         ],
       },

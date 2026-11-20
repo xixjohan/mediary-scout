@@ -34,6 +34,7 @@ import {
   summarizeErrorForNotification,
 } from "../domain/agent-error.js";
 import { isFreeLlmPreset } from "../domain/agent-model.js";
+import { agentModelDiagnosticsOf, diagnosedAgentErrorMessage } from "../domain/agent-model-diagnostics.js";
 import type { TitleResearchOptions } from "../acquisition-v2/title-research.js";
 import { formatReportPushText } from "../domain/notification-report.js";
 import { isMovieUnreleased } from "../domain/domain.js";
@@ -965,8 +966,7 @@ async function patrolTrackedState(args: {
         workflowStatus: result.status,
       };
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Workflow failed";
+      const errorMessage = diagnosedAgentErrorMessage(error) ?? (error instanceof Error ? error.message : "Workflow failed");
       console.log(
         `[workflow] run ${workflowRunId} type3_monitor failed` +
           ` (storage ${state.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
@@ -988,7 +988,7 @@ async function patrolTrackedState(args: {
               type: "type3_scheduled",
               message: "Scheduled Type 3 monitoring reserved",
             },
-            ...stagingFailureAuditEvents(error),
+            ...stagingFailureAuditEvents(error).concat(agentModelDiagnosticsOf(error)),
             { type: "workflow_failed", message: errorMessage },
           ],
         },
@@ -1174,8 +1174,7 @@ async function patrolMovie(args: {
       workflowStatus: result.status,
     };
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : "Workflow failed";
+    const errorMessage = diagnosedAgentErrorMessage(error) ?? (error instanceof Error ? error.message : "Workflow failed");
     console.log(
       `[workflow] run ${workflowRunId} movie_init failed` +
         ` (storage ${state.connectedStorageId ?? "-"}): ${summarizeErrorForNotification(errorMessage)}`,
@@ -1197,7 +1196,7 @@ async function patrolMovie(args: {
             type: "movie_patrol_scheduled",
             message: "Scheduled movie patrol reserved",
           },
-          ...stagingFailureAuditEvents(error),
+          ...stagingFailureAuditEvents(error).concat(agentModelDiagnosticsOf(error)),
           { type: "workflow_failed", message: errorMessage },
         ],
       },

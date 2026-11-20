@@ -204,9 +204,9 @@ export function StrmCreateTaskModal({
                 onChange={(e) => setForm({ ...form, scanMode: e.target.value as StrmScanMode })}
                 style={{ width: "100%", padding: "0.5rem", borderRadius: "6px", background: "#222", border: "1px solid #444", color: "#fff" }}
               >
-                <option value="incremental_missing">增量补缺（仅补全新增）</option>
-                <option value="incremental_update">增量更新（覆盖修改）</option>
-                <option value="full_sync">全量同步（含空盘保护清空）</option>
+                <option value="incremental_missing">增量同步（补新增 + 清已删除）</option>
+                <option value="incremental_update">增量同步（补新增 + 覆盖 + 清已删除）</option>
+                <option value="full_sync">全量镜像（强制对齐，含空盘保护）</option>
               </select>
             </div>
             <div>

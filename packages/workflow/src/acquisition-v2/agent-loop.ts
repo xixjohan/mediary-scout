@@ -1,6 +1,8 @@
 import { AGENT_MEMORY_WRITE_KINDS, fenceMemory, stripMemoryFence } from "../domain/agent-memory.js";
 import { AgentContentFilterError } from "../domain/agent-error.js";
+import type { AuditEvent } from "../domain/domain.js";
 import { generateText, stepCountIs, type LanguageModel, type ToolSet } from "ai";
+import { createAgentTurnDiagnostics, peakInputTokensOf } from "./agent-turn-diagnostics.js";
 import { z } from "zod";
 import type { SearchHistoryEntry, TaskSandbox } from "./sandbox.js";
 import { readSkillSection, SKILL_SECTION_NAMES } from "./skill.js";
@@ -44,28 +46,6 @@ async function asEvidence(run: () => Promise<unknown>): Promise<unknown> {
   } catch (error) {
     return { error: error instanceof Error ? error.message : String(error) };
   }
-}
-
-/** Peak single-request input usage across every step in one generateText turn. */
-function peakInputTokensOf(turn: unknown): number | undefined {
-  if (!turn || typeof turn !== "object") return undefined;
-  const record = turn as {
-    usage?: { inputTokens?: unknown };
-    steps?: unknown;
-  };
-  const values: number[] = [];
-  const add = (value: unknown) => {
-    if (typeof value === "number" && Number.isFinite(value)) values.push(value);
-  };
-  add(record.usage?.inputTokens);
-  if (Array.isArray(record.steps)) {
-    for (const step of record.steps) {
-      if (step && typeof step === "object") {
-        add((step as { usage?: { inputTokens?: unknown } }).usage?.inputTokens);
-      }
-    }
-  }
-  return values.length > 0 ? Math.max(...values) : undefined;
 }
 
 /** The video-acquisition surface: searching for and transferring new resources.
@@ -368,6 +348,7 @@ export interface AcquisitionAgentResult {
   coverage: { coverageMet: boolean; obtained: string[]; missing: string[]; subtitleFallback: boolean };
   /** Why the loop ended (业务停止原因, separate from the SDK finishReason). */
   stopReason: LoopStopReason;
+  diagnosticEvents?: AuditEvent[];
 }
 
 /** Run the strong agent's self-driven loop over the sandbox tools. */
@@ -389,12 +370,15 @@ export async function runAcquisitionAgent(
       : {}),
   });
   const maxSteps = request.maxSteps ?? DEFAULT_MAX_STEPS;
+  const diagnostics = createAgentTurnDiagnostics(request.model);
+  const { diagnosticEvents } = diagnostics;
   const generateAgentTurn = (system: string, prompt: string, toolSet: ToolSet, stepLimit: number) =>
-    generateText({
+    diagnostics.runTurn(() => generateText({
       model: request.model,
       system,
       prompt,
       tools: toolSet,
+      onStepFinish: diagnostics.observeStep,
       // Five stops: step cap (cost/runaway), repetition (agent crazy), systemic
       // transfer block (account quota/auth — every candidate will fail, stop grinding),
       // successful reportNoCoverage (terminal declaration — no second report), and
@@ -432,7 +416,7 @@ export async function runAcquisitionAgent(
           ...(activeTools ? { activeTools } : {}),
         };
       },
-    });
+    }));
 
   const sanitizedSystem = injectSafetyPreamble(request.system);
   const sanitizedPrompt = sanitizePromptText(request.prompt);
@@ -458,6 +442,7 @@ export async function runAcquisitionAgent(
             steps: 1,
             coverage: await request.sandbox.finish(),
             stopReason: "coverage_met",
+            diagnosticEvents,
           };
         }
         throw retryError;
@@ -477,9 +462,12 @@ export async function runAcquisitionAgent(
             steps: 1,
             coverage: await request.sandbox.finish(),
             stopReason: "coverage_met",
+            diagnosticEvents,
           };
         }
-        throw new AgentContentFilterError();
+        const blocked = new AgentContentFilterError();
+        diagnostics.rememberFailure(blocked);
+        throw blocked;
       }
     } else {
       throw error;
@@ -489,12 +477,15 @@ export async function runAcquisitionAgent(
   let steps = Math.max(result.steps?.length ?? 0, result.finishReason === "content-filter" ? 1 : 0);
   let totalUsageTokens = result.totalUsage?.totalTokens;
   let peakInputTokens = peakInputTokensOf(result);
+  let diagnosedResult: typeof result | undefined;
   // A provider content filter can terminate a model response after it has already
   // transferred a resource and inspected the landing point (the Guangya movie
   // incident). One fresh turn gets the live sandbox state and a chance to perform
   // the mandatory flatten/mark/finish sequence. Never loop this recovery: a second
   // content filter remains an honest incomplete run rather than burning calls.
   if (result.finishReason === "content-filter") {
+    diagnostics.recordReturnedDiagnostic(result);
+    diagnosedResult = result;
     // The finish-only recovery below can only tidy up what already landed. With no
     // transfer attempted at all it has nothing to finish and could only end in a
     // false no-coverage (《出入平安》) — so fail loud and name the model instead.
@@ -508,9 +499,12 @@ export async function runAcquisitionAgent(
           steps,
           coverage: await request.sandbox.finish(),
           stopReason: "coverage_met",
+          diagnosticEvents,
         };
       }
-      throw new AgentContentFilterError();
+      const blocked = new AgentContentFilterError();
+      diagnostics.rememberFailure(blocked);
+      throw blocked;
     }
     const remainingSteps = maxSteps - steps;
     if (remainingSteps > 0) {
@@ -575,17 +569,20 @@ export async function runAcquisitionAgent(
     );
   }
   const apiCallsSpent = request.apiCallCount?.();
+  const stopReason = deriveLoopStopReason({
+    steps: result.steps ?? [],
+    ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason }),
+    stepLimit: maxSteps,
+    ...(typeof apiCallsSpent === "number" ? { apiCallsSpent } : {}),
+    ...(typeof request.hardBudget === "number" ? { hardBudget: request.hardBudget } : {}),
+  });
+  await diagnostics.recordFinalResult(result, stopReason, diagnosedResult, tools.viewResourceSnapshot);
   return {
     text: result.text,
     steps,
     coverage: await request.sandbox.finish(),
-    stopReason: deriveLoopStopReason({
-      steps: result.steps ?? [],
-      ...(result.finishReason === undefined ? {} : { finishReason: result.finishReason }),
-      stepLimit: maxSteps,
-      ...(typeof apiCallsSpent === "number" ? { apiCallsSpent } : {}),
-      ...(typeof request.hardBudget === "number" ? { hardBudget: request.hardBudget } : {}),
-    }),
+    stopReason,
+    ...(diagnosticEvents.length > 0 ? { diagnosticEvents } : {}),
   };
 }
 

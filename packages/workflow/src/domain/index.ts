@@ -18,6 +18,7 @@ export * from "./native-require.js";
 export * from "./fetch-with-timeout.js";
 export * from "./agent-error.js";
 export * from "./agent-model.js";
+export * from "./agent-model-probe.js";
 export * from "./agent-memory.js";
 export * from "./agent-step-view.js";
 export * from "./agent-step-redaction.js";

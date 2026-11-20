@@ -18,6 +18,7 @@ import {
   summarizeErrorForNotification,
 } from "../domain/agent-error.js";
 import { isFreeLlmPreset } from "../domain/agent-model.js";
+import { agentModelDiagnosticsOf, diagnosedAgentErrorMessage } from "../domain/agent-model-diagnostics.js";
 import { formatReportPushText } from "../domain/notification-report.js";
 import { maybeFreezeOnBrandAuthError } from "../storage/storage-auth-error.js";
 
@@ -97,11 +98,17 @@ function buildFailureOutcome(
   priorCount: number,
   llmConfig?: { baseURL?: string; modelId?: string },
 ) {
-  const leakEvents = stagingFailureAuditEvents(error);
+  const failureEvents = [
+    ...stagingFailureAuditEvents(error),
+    ...agentModelDiagnosticsOf(error).map((event) => ({
+      ...event,
+      data: { ...event.data, queueDecision: willRetry ? "requeued" : "failed" },
+    })),
+  ];
   const claimedRun =
-    leakEvents.length === 0
+    failureEvents.length === 0
       ? claimed.workflowRun
-      : { ...claimed.workflowRun, auditEvents: [...claimed.workflowRun.auditEvents, ...leakEvents] };
+      : { ...claimed.workflowRun, auditEvents: [...claimed.workflowRun.auditEvents, ...failureEvents] };
 
   if (willRetry) {
     const workflowRun = requeueWorkflowRunForRetry(claimedRun, errorMessage, nowIso);
@@ -177,7 +184,7 @@ export async function handleWorkflowRunFailure(input: {
 }): Promise<{ status: "auto_requeued" | "failed"; workflowRunId: string; errorMessage: string }> {
   const { claimed, error, repository } = input;
   const nowIso = input.now();
-  const errorMessage = describeAgentRunError(error);
+  const errorMessage = diagnosedAgentErrorMessage(error) ?? describeAgentRunError(error);
   const priorCount = claimed.workflowRun.autoRequeueCount ?? 0;
   const transient = isTransientForRun(error, input.llmConfig);
   const willRetry = transient && priorCount < AUTO_REQUEUE_MAX;

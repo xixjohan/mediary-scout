@@ -25,6 +25,7 @@ jobs:
       - run: npm run gate:layout
       - run: npm run gate:fullscreen
       - run: npm run gate:deps
+      - run: npm run gate:blame-free
       - run: npm run typecheck
       - run: npx tsc -p apps/web/tsconfig.json --noEmit
       - run: npx tsc -p apps/desktop/tsconfig.json --noEmit

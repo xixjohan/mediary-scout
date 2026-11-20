@@ -138,7 +138,7 @@ export async function getAgentModel(repository: {
       throw new Error(configError);
     }
   }
-  const signature = `${adapter}|${baseURL ?? ""}|${modelId ?? ""}|${apiKey ?? ""}`;
+  const signature = `${adapter}|${resolved.source}|${baseURL ?? ""}|${modelId ?? ""}|${apiKey ?? ""}`;
   let model = agentModelCache.get(signature);
   if (!model) {
     model = adapter === "vercel-ai" ? createAgentModel(resolved) : createStubAcquisitionModel();

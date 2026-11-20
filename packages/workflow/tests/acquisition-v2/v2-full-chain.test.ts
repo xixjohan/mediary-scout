@@ -4,6 +4,9 @@ import {
   FakeResourceProvider,
   FakeStorageExecutor,
   InMemoryWorkflowRepository,
+  PanSouAuthError,
+  PanSouResourceProvider,
+  createAgentModel,
   queueMovieAcquisition,
   queueTrackingInitialization,
   runQueuedMovieAcquisition,
@@ -173,7 +176,7 @@ describe("full chain: enqueue → worker drains → terminal → 获取中 relea
     expect(await repository.listActiveWorkflowRuns()).toHaveLength(0); // released
   });
 
-  it("tv type2: enqueue → run reaches no_coverage → placeholder still releases", async () => {
+  it.each(["genuine miss", "model failure", "PanSou authentication failure"] as const)("tv type2: queue reaches terminal state after %s", async (scenario) => {
     const repository = new InMemoryWorkflowRepository();
     const title: MediaTitle = {
       id: "tmdb_tv_100",
@@ -206,11 +209,24 @@ describe("full chain: enqueue → worker drains → terminal → 获取中 relea
     });
     expect(await repository.listActiveWorkflowRuns()).toHaveLength(1);
 
+    const model = scenario !== "model failure" ? noCoverageModel() : createAgentModel({
+      baseURL: "https://example.com/v1",
+      modelId: "mock",
+      fetch: async () => Response.json({
+        error: { code: 503, message: "sk-test-super-secret-12345" },
+        choices: [{ index: 0, message: { role: "assistant", content: null }, finish_reason: "error" }],
+      }),
+    });
     const result = await runQueuedType2Workflow({
       repository,
-      resourceProvider: emptyProvider(),
+      resourceProvider: scenario === "PanSou authentication failure"
+        ? new PanSouResourceProvider({
+          baseURL: "https://example.com",
+          fetchJson: async () => { throw new PanSouAuthError("HTTP 401 sk-test-super-secret-12345"); },
+        })
+        : emptyProvider(),
       storage: new FakeStorageExecutor(),
-      model: noCoverageModel(),
+      model,
       storageParentDirectoryId: "tv_root",
       now,
     });
@@ -218,5 +234,33 @@ describe("full chain: enqueue → worker drains → terminal → 获取中 relea
     expect(result).toMatchObject({ status: "ran", workflowStatus: "no_coverage" });
     // Even on no_coverage the run is terminal → the placeholder releases.
     expect(await repository.listActiveWorkflowRuns()).toHaveLength(0);
+    const saved = await repository.getWorkflowRunSnapshot("run_tv");
+    if (scenario === "model failure") {
+      expect(saved?.workflowRun.auditEvents).toContainEqual(expect.objectContaining({
+        type: "agent_model_diagnostic",
+        data: expect.objectContaining({ category: "upstream_unavailable", upstreamStatus: 503 }),
+      }));
+      expect(saved?.notifications[0]).toMatchObject({
+        kind: "agent_error",
+        body: expect.stringContaining("预检索未命中"),
+      });
+      expect(JSON.stringify(saved)).not.toContain("sk-test-super-secret-12345");
+    } else if (scenario === "PanSou authentication failure") {
+      expect(saved?.resourceSnapshots).toEqual([]);
+      expect(saved?.workflowRun.auditEvents).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: "search_source_failed", data: { source: "PanSou", status: "auth_error" } }),
+      ]));
+      expect(saved?.notifications[0]).toMatchObject({
+        kind: "transfer_failed",
+        report: { status: "failed" },
+        body: expect.stringContaining("PanSou 搜索认证失败"),
+      });
+      expect(saved?.notifications[0]?.body).not.toContain("暂未找到可用资源");
+      expect(saved?.workflowRun.auditEvents.some(event => event.type === "no_coverage_reported")).toBe(false);
+      expect(JSON.stringify(saved)).not.toContain("sk-test-super-secret-12345");
+    } else {
+      expect(saved?.notifications[0]?.kind).toBe("no_coverage");
+      expect(saved?.workflowRun.auditEvents.some(event => event.type === "agent_model_diagnostic")).toBe(false);
+    }
   });
 });

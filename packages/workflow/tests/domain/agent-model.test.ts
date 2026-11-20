@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { generateText, tool } from "ai";
+import { z } from "zod";
 import {
   FREE_LLM_PRESET,
   createAgentModel,
@@ -9,6 +11,98 @@ import {
   normalizeLlmBaseUrl,
   sanitizeLlmApiKey,
 } from "../../src/domain/agent-model.js";
+
+describe("agent-model — non-streaming gateway response choices", () => {
+  const textChoice = { index: 0, message: { role: "assistant", content: "Text before the tool choice." } };
+  const callChoice = (index: number, value: string, name = "inspect") => ({
+    index,
+    message: {
+      role: "assistant",
+      tool_calls: [{ id: `call_${index}`, type: "function", function: { name, arguments: value } }],
+    },
+    finish_reason: "tool_calls",
+  });
+
+  async function generate(choices: object[], withTools = true, toolChoice: "auto" | "none" = "auto") {
+    const seen: string[] = [];
+    const model = createAgentModel({
+      baseURL: "https://example.test/v1",
+      modelId: "mock",
+      fetch: async () => Response.json({ id: "gen-response-id", choices }),
+    });
+    const result = await generateText({
+      model,
+      prompt: "Inspect the snapshot.",
+      toolChoice,
+      ...(withTools ? { tools: { inspect: tool({
+        inputSchema: z.object({ id: z.string() }),
+        execute: async ({ id }) => { seen.push(id); return { ok: true }; },
+      }) } } : {}),
+    });
+    return { result, seen };
+  }
+
+  it("uses just the sole tool-bearing alternative after a text-only first choice", async () => {
+    const picked = callChoice(1, '{"id":"observed"}');
+    const followup = callChoice(3, '{"id":"confirmed"}');
+    picked.message.tool_calls.push(...followup.message.tool_calls);
+    const { result, seen } = await generate([textChoice, picked, { ...textChoice, index: 2 }]);
+    expect(result.finishReason).toBe("tool-calls");
+    expect(result.response.id).toBe("gen-response-id");
+    expect(seen.sort()).toEqual(["confirmed", "observed"]);
+    expect(result.response.body).toMatchObject({ choices: [picked] });
+  });
+
+  it("uses the first choice when it already has a tool call", async () => {
+    const { seen } = await generate([callChoice(0, '{"id":"primary"}'), callChoice(1, '{"id":"alternative"}')]);
+    expect(seen).toEqual(["primary"]);
+  });
+
+  it("preserves the first choice when the gateway returns multiple tool alternatives", async () => {
+    const alternate = callChoice(2, '{"id":"b"}');
+    alternate.message.tool_calls[0]!.id = "call_1";
+    const { result, seen } = await generate([textChoice, callChoice(1, '{"id":"a"}'), alternate]);
+    expect(seen).toEqual([]);
+    expect(result.text).toBe(textChoice.message.content);
+  });
+
+  it("refuses to promote an alternative with duplicate call IDs", async () => {
+    const picked = callChoice(1, '{"id":"write-once"}');
+    picked.message.tool_calls.push({ ...picked.message.tool_calls[0]! });
+    const { seen, result } = await generate([textChoice, picked]);
+    expect(seen).toEqual([]);
+    expect(result.text).toBe(textChoice.message.content);
+  });
+
+  it("leaves the selected arguments for the SDK's schema validation", async () => {
+    const { result, seen } = await generate([textChoice, callChoice(1, '{"id":42}')]);
+    expect(seen).toEqual([]);
+    expect(result.content).toContainEqual(expect.objectContaining({ type: "tool-error", toolName: "inspect" }));
+  });
+
+  it("preserves text-only responses and never selects an unadvertised tool", async () => {
+    for (const { choices, withTools } of [
+      { choices: [textChoice, { ...textChoice, index: 1 }], withTools: true },
+      { choices: [textChoice, callChoice(1, '{"id":"a"}', "other")], withTools: true },
+      { choices: [textChoice, callChoice(1, '{"id":"a"}')], withTools: false },
+    ]) {
+      const { result, seen } = await generate(choices, withTools);
+      expect(seen).toEqual([]);
+      expect(result.text).toBe(textChoice.message.content);
+    }
+  });
+
+  it("leaves a no-tool request and protocol failure responses unchanged", async () => {
+    const laterTool = callChoice(1, '{"id":"not-called"}');
+    const noTool = await generate([textChoice, laterTool], true, "none");
+    expect(noTool.seen).toEqual([]);
+    expect(noTool.result.text).toBe(textChoice.message.content);
+
+    const filtered = await generate([{ ...textChoice, finish_reason: "content_filter" }, laterTool]);
+    expect(filtered.seen).toEqual([]);
+    expect(filtered.result.finishReason).toBe("content-filter");
+  });
+});
 
 /**
  * The live vercel-ai model factory — RESTORED after Phase 8 (764ae19) deleted it

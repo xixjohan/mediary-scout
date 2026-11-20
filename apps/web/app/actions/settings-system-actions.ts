@@ -295,22 +295,16 @@ export async function testLlmConnectionAction(): Promise<{ ok: boolean; message:
     const accountId = await getCurrentAccountId();
     // Resolve EXACTLY as the worker does (account-scoped → env → 出厂免费预设回落).
     const cfg = await resolveAgentModelConfig(getAccountScopedSettings(accountId));
-    const { createAgentModel, llmConfigError } = await import("@media-track/workflow");
+    const { createAgentModel, llmConfigError, probeAgentModel } = await import("@media-track/workflow");
     // BYO + agnostic: baseURL + 模型 are required; API Key is optional (keyless
     // local LLM). Surface the same actionable, model-agnostic message the agent uses.
     const configError = llmConfigError(cfg);
     if (configError) {
       return { ok: false, message: configError };
     }
-    const { generateText } = await import("ai");
-    const model = createAgentModel(cfg);
-    // A tiny real call — proves the base_url/model (and key, if any) actually work,
-    // killing the "stored a wrong value silently" 大误会.
-    await generateText({ model, prompt: "ping" });
-    return { ok: true, message: `连接正常 · ${cfg.modelId}` };
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    return { ok: false, message: `连接失败：${msg.slice(0, 200)}` };
+    return await probeAgentModel(createAgentModel(cfg));
+  } catch {
+    return { ok: false, message: "连接测试未能启动，请检查 AI 模型设置后重试。" };
   }
 }
 

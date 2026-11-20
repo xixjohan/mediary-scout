@@ -743,7 +743,7 @@ export async function runAcquisitionV2(request: RunAcquisitionV2Request): Promis
     outcome: { resourceSnapshots, decisions, transferAttempts },
     auditEvents: [
       ...sandbox.auditTrail(),
-      ...provider.auditTrail(),
+      ...provider.auditTrail().concat(result.diagnosticEvents ?? []),
       // Durable business stop reason (研究文档 §11.1): rides the existing audit
       // channel into the snapshot — no new schema. SDK finishReason stays separate.
       {
