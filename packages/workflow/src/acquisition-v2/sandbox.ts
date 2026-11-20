@@ -10,6 +10,7 @@ import type { ResourceProviderV2, ResourceSnapshotV2 } from "./fake-provider.js"
 import type { SimTreeFile, StorageV2, TransferAttemptResult } from "./storage-115-simulator.js";
 import { parseMediaFileName } from "../providers/media-title-parser.js";
 import { episodeCodeFromFileName } from "../domain/episode-code.js";
+import { validateCrossSeasonMoves, standardizeMovedSeasonFiles, evaluatePolicyFiles, throwPolicyFileRejection, assertPolicyFilesInTargets, sameLinkError, sameLinkNote, type SubmissionState } from "./season-move-pipeline.js";
 import { isSystemicTransferBlockMessage } from "./transfer-block.js";
 import { isExtraVideoName, movieCandidateRejection } from "./movie-admission.js";
 import { animeSearchTabooWarnings, type SearchProfile } from "./search-profile.js";
@@ -260,10 +261,6 @@ export interface TransferEvidence {
   outcome?: TransferOutcome;
 }
 
-/** What became of a submission: still running, files landed, or answered with
- *  nothing landed (a miss, a refusal, or a throw whose side effect is unknown). */
-type SubmissionState = "in_flight" | "landed" | "unresolved";
-
 export class TaskSandbox {
   private readonly provider: ResourceProviderV2;
   private readonly searchBudget: number;
@@ -454,39 +451,30 @@ export class TaskSandbox {
   /** Validate every video before it can become library content, and un-mark the
    *  episode it backs so a rejected file cannot leave a false markObtained. */
   private rejectedPolicyFiles(files: readonly SimTreeFile[]): Array<{ file: SimTreeFile; reason: PolicyRejectReason }> {
-    if (!this.policyFileValidator) return [];
-    const rejected: Array<{ file: SimTreeFile; reason: PolicyRejectReason }> = [];
-    for (const file of files) {
-      if (!file.isVideo) continue;
-      const reason = this.policyFileValidator({ name: file.path, episodeCode: file.parsed?.episodeCode ?? null });
-      if (!reason) continue;
-      rejected.push({ file, reason });
-      const blockedCode = this.isMovieRun() ? "MOVIE" : file.parsed?.episodeCode ?? "POLICY_UNKNOWN_FILE";
-      if (blockedCode === "POLICY_UNKNOWN_FILE") this.obtainedCodes.clear();
-      else this.obtainedCodes.delete(blockedCode);
-    }
-    return rejected;
-  }
-
-  private throwPolicyFileRejection(rejected: readonly { file: SimTreeFile; reason: PolicyRejectReason }[]): never {
-    const details = rejected
-      .slice(0, 8)
-      .map(({ file, reason }) => `${file.parsed?.episodeCode ?? "集数未知"} ${file.path} (${reason})`)
-      .join("; ");
-    const more = rejected.length > 8 ? `; 另有 ${rejected.length - 8} 个文件` : "";
-    throw new Error(
-      `SUBSCRIPTION_POLICY_FILE_REJECTED: configured policy rejects ${rejected.length} video file(s): ${details}${more}. Do not mark these episodes; remove rejected files from staging or select compliant files, then retry.`,
-    );
+    return evaluatePolicyFiles({
+      files,
+      policyFileValidator: this.policyFileValidator,
+      isMovieRun: this.isMovieRun(),
+      onBlockEpisode: (code) => {
+        if (code === "POLICY_UNKNOWN_FILE") this.obtainedCodes.clear();
+        else this.obtainedCodes.delete(code);
+      },
+    });
   }
 
   private async assertPolicyFilesInTargets(): Promise<void> {
-    if (!this.policyFileValidator || !this.storage) return;
-    const rejected: Array<{ file: SimTreeFile; reason: PolicyRejectReason }> = [];
-    for (const directoryId of this.allTargetDirIds()) {
-      const files = await this.listTreeOf(directoryId);
-      rejected.push(...this.rejectedPolicyFiles(files.filter((file) => this.materializedBy.has(file.id))));
-    }
-    if (rejected.length > 0) this.throwPolicyFileRejection(rejected);
+    await assertPolicyFilesInTargets({
+      policyFileValidator: this.policyFileValidator,
+      storage: this.storage,
+      targetDirIds: this.allTargetDirIds(),
+      listTreeOf: (id) => this.listTreeOf(id),
+      materializedBy: this.materializedBy,
+      isMovieRun: this.isMovieRun(),
+      onBlockEpisode: (code) => {
+        if (code === "POLICY_UNKNOWN_FILE") this.obtainedCodes.clear();
+        else this.obtainedCodes.delete(code);
+      },
+    });
   }
 
   /** Remember which candidate materialized which files this run (reportReplacement
@@ -537,25 +525,6 @@ export class TaskSandbox {
       const hold = this.submissionHold.get(key);
       if (hold?.owner === candidateId) hold.state = landed ? "landed" : "unresolved";
     }
-  }
-
-  private sameLinkWhy(hold: { owner: string; state: SubmissionState }): string {
-    if (hold.state === "landed") {
-      return "whose files already landed this run — inspect them instead of transferring again";
-    }
-    if (hold.state === "in_flight") {
-      return "which is being transferred right now — wait for that result and inspect it instead of transferring again";
-    }
-    return "which was already submitted this run and left nothing landed (未决 / unresolved) — read the landing point instead of transferring again";
-  }
-
-  private sameLinkError(candidateId: string, hold: { owner: string; state: SubmissionState }): string {
-    return `SANDBOX_SAME_LINK: ${candidateId} is the same link as ${hold.owner}, ${this.sameLinkWhy(hold)}`;
-  }
-
-  private sameLinkNote(hold: { owner: string; state: SubmissionState }): string {
-    if (hold.state === "landed") return `same link as ${hold.owner} already landed this run`;
-    return `same link as ${hold.owner}, ${this.sameLinkWhy(hold)}`;
   }
 
   /** Movie-only admission: a disc image or a multi-film pack can never be the one
@@ -956,7 +925,7 @@ export class TaskSandbox {
     }
     this.assertMovieAdmission([candidate]);
     const held = this.reserveSubmission(input.candidateId);
-    if (held) throw new Error(this.sameLinkError(input.candidateId, held));
+    if (held) throw new Error(sameLinkError(input.candidateId, held));
     this.transferAttempted = true;
     let attempt;
     try {
@@ -1051,7 +1020,7 @@ export class TaskSandbox {
       }
       const held = this.reserveSubmission(candidateId);
       if (held) {
-        attempts.push({ candidateId, status: "failed", materializedFileIds: [], providerMessage: this.sameLinkNote(held) });
+        attempts.push({ candidateId, status: "failed", materializedFileIds: [], providerMessage: sameLinkNote(held) });
         // An UNRESOLVED hold means the drive may still be writing this resource:
         // stop the whole batch, not just this alias, so a late copy plus the next
         // candidate cannot land the film twice. A landed hold is safe to skip.
@@ -1170,7 +1139,7 @@ export class TaskSandbox {
       .map((fileId) => stagingTree.find((file) => file.id === fileId))
       .filter((file): file is SimTreeFile => file !== undefined && file.isVideo);
     const rejected = this.rejectedPolicyFiles(selectedVideoFiles);
-    if (rejected.length > 0) this.throwPolicyFileRejection(rejected);
+    if (rejected.length > 0) throwPolicyFileRejection(rejected);
     // Hold every validated id before the first move. A throw on season 1 must not
     // leave season 2's files unmarked — the loop never reaches them.
     for (const fileId of resolved.flatMap((move) => move.fileIds)) {
@@ -1181,6 +1150,12 @@ export class TaskSandbox {
     // files did not move. The agent otherwise marks the episodes obtained and the
     // only copies sit in staging (2026-09-27, 14 episodes).
     for (const move of resolved) {
+      validateCrossSeasonMoves({
+        season: move.season,
+        fileIds: move.fileIds,
+        stagingTree,
+      });
+
       // null = moveFiles threw before any list. A returned list, even a short one,
       // is the ids already in the season; only the rest are still only in staging.
       let landed: readonly string[] | null = null;
@@ -1196,6 +1171,15 @@ export class TaskSandbox {
         for (const fileId of move.fileIds) {
           this.unmovedFileIds.delete(fileId);
         }
+
+        await standardizeMovedSeasonFiles({
+          storage: this.storage,
+          targetDir: move.targetDir,
+          movedFileIds: moved.moved,
+          stagingTree,
+          showTitle: this.titleTerms[0],
+          season: move.season,
+        });
       } catch (error) {
         const landedIds = new Set(landed ?? []);
         for (const fileId of move.fileIds) {
@@ -1422,7 +1406,7 @@ export class TaskSandbox {
       (file) => (file.isVideo || file.isSubtitle) && file.path.includes("/") && !this.protectedFiles.has(file.id),
     );
     const rejected = this.rejectedPolicyFiles(nested.filter((file) => file.isVideo));
-    if (rejected.length > 0) this.throwPolicyFileRejection(rejected);
+    if (rejected.length > 0) throwPolicyFileRejection(rejected);
     // 115 answers ok:false with { moved: [] }. Those files are still inside the
     // wrapper; deleting the wrapper would delete the film.
     const moved = nested.length === 0

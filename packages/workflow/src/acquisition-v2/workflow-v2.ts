@@ -21,6 +21,7 @@ import type { AgentToolEvent } from "./activity.js";
 import { runAcquisitionV2, type AcquisitionV2Outcome, type RunAcquisitionV2Request, type RunAcquisitionV2Result } from "./orchestrator.js";
 import type { JevJudge } from "../providers/jev-judge.js";
 import { syncSeasonNeed } from "./sync-need.js";
+import { episodeCodeFromFileName } from "../domain/episode-code.js";
 import { RunStateMachine, type Compensation, type RunState } from "./run-state-machine.js";
 import type { AcquisitionOperationsSession } from "./operations-session.js";
 import type { SearchProfile } from "./search-profile.js";
@@ -206,9 +207,33 @@ export async function runAcquisitionV2Workflow(
     seasonNumber: season.seasonNumber,
     latestAiredEpisode: season.latestAiredEpisode,
   }));
-  const priorObtained = request.priorObtained ?? [];
+  const priorObtained = [...(request.priorObtained ?? [])];
 
-  // 7b — sync the need from the DB marks (应有 − 实有). No 115 scan, no parser.
+  // Pre-flight probe: scan actual season directories to discover existing episodes
+  // so already-landed episodes are never re-downloaded or duplicated across runs.
+  if (directories.seasonDirectoryIds && !request.stagingRecovery) {
+    for (const season of request.seasons) {
+      const seasonDirId = directories.seasonDirectoryIds[season.seasonNumber];
+      if (seasonDirId) {
+        try {
+          const files = await request.executor.listVideoFiles(seasonDirId);
+          for (const f of files) {
+            const size = f.sizeBytes ?? 0;
+            if (size <= 0) continue;
+            const epCode = f.episodeCode ?? episodeCodeFromFileName(f.name, season.seasonNumber);
+            const expectedPrefix = `S${String(season.seasonNumber).padStart(2, "0")}E`;
+            if (epCode && epCode.startsWith(expectedPrefix) && !priorObtained.includes(epCode)) {
+              priorObtained.push(epCode);
+            }
+          }
+        } catch {
+          // Live probe is best-effort; fall back to DB priorObtained on error
+        }
+      }
+    }
+  }
+
+  // 7b — sync the need from merged disk + DB marks (应有 − 实有).
   const before = syncSeasonNeed({ seasons: seasonsForSync, obtained: priorObtained });
   // A user request runs the agent even on a complete library: the episodes to
   // replace are obtained (the old file is there), so they are never "missing".

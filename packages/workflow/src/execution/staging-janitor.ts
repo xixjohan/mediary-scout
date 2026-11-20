@@ -8,6 +8,7 @@ import {
 } from "../domain/media-library-folder.js";
 import { drivePacer, realtimeDriveClock, type DriveClock } from "../storage/drive-pacer.js";
 import { JANITOR_LIST_DEPTH } from "./staging-depth.js";
+import { isJunkFile, isVideoFile } from "./version-ranker.js";
 import type { MayStartRun } from "./worker.js";
 
 /** Every kind. `blockIfTitleHasActiveRun` ignores staging_recovery so a user
@@ -238,8 +239,10 @@ async function sweepDrive(
         // can be requeued on this id while the provider walks the tree.
         const again = await repository.getWorkflowRunSnapshot(runId, drive.accountId);
         if (runCameBack(snapshot, again)) continue;
-        // No files anywhere in the walk, wrapper folders included.
-        if (tree.length === 0) {
+        // No files anywhere in the walk, or only junk/non-video remnants.
+        const hasVideos = tree.some((file) => isVideoFile(file.path));
+        const allJunk = tree.every((file) => isJunkFile(file.path.split("/").pop() ?? ""));
+        if (tree.length === 0 || allJunk || !hasVideos) {
           const result = await pace(() => executor.removeDirectory(child.id));
           if (result.removed) removed += 1;
           else notRemoved += 1;
