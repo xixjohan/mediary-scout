@@ -1,11 +1,19 @@
 import type Database from "better-sqlite3";
 import { BaseSqliteModule, type SqliteDbContext } from "../sqlite-context.js";
+import {
+  SqliteMediaLibraryReconciler,
+  type ReconcileBindingEpisodesInput,
+  type ReconcileBindingEpisodesResult,
+} from "./sqlite-media-library-reconcile.js";
+
+export type { ReconcileBindingEpisodesInput, ReconcileBindingEpisodesResult };
 import type {
   MediaLibrary,
   LibraryPathBinding,
   LibraryMediaItem,
   LibrarySeason,
   LibraryEpisode,
+  LibraryEpisodeStatus,
   LibraryScanSnapshot,
   MediaLibraryType,
   LibraryDeliveryMode,
@@ -108,6 +116,9 @@ export interface UpsertLibraryEpisodeInput {
   durationSeconds?: number | null | undefined;
   subtitles?: SubtitleTrackInfo[] | undefined;
   relativePath?: string | null | undefined;
+  status?: LibraryEpisodeStatus | undefined;
+  missingSince?: string | null | undefined;
+  lastSeenAt?: string | null | undefined;
 }
 
 export interface MediaItemListQuery {
@@ -145,15 +156,20 @@ function fallbackVal<T>(val: T | undefined | null, def: T): T {
 }
 
 export class SqliteMediaLibraryRepository extends BaseSqliteModule {
+  private readonly reconciler: SqliteMediaLibraryReconciler;
+
   constructor(ctxOrDb: SqliteDbContext | Database.Database) {
     if ("db" in ctxOrDb) {
       super(ctxOrDb);
+      this.reconciler = new SqliteMediaLibraryReconciler(ctxOrDb);
     } else {
-      super({
+      const ctx = {
         db: ctxOrDb,
         now: () => new Date().toISOString(),
         transaction: <T>(fn: () => T) => ctxOrDb.transaction(fn),
-      });
+      };
+      super(ctx);
+      this.reconciler = new SqliteMediaLibraryReconciler(ctx);
     }
   }
 
@@ -446,70 +462,7 @@ export class SqliteMediaLibraryRepository extends BaseSqliteModule {
    * 2. 全局层面：清理悬空分集、悬空季度与悬空主条目
    */
   purgeOrphanedLibraryItems(libraryId?: string): { deletedEpisodes: number; deletedSeasons: number; deletedItems: number } {
-    return this.db.transaction(() => {
-      let deletedEpisodes = 0;
-      let deletedSeasons = 0;
-      let deletedItems = 0;
-
-      if (libraryId) {
-        const bindings = this.listPathBindings(libraryId);
-        if (bindings.length === 0) {
-          const epRes = this.db
-            .prepare(
-              `DELETE FROM library_episodes
-               WHERE season_id IN (
-                 SELECT s.id FROM library_seasons s
-                 JOIN library_media_items m ON s.media_item_id = m.id
-                 WHERE m.library_id = ?
-               )`,
-            )
-            .run(libraryId);
-          deletedEpisodes += epRes.changes;
-
-          const sRes = this.db
-            .prepare(
-              `DELETE FROM library_seasons
-               WHERE media_item_id IN (
-                 SELECT id FROM library_media_items WHERE library_id = ?
-               )`,
-            )
-            .run(libraryId);
-          deletedSeasons += sRes.changes;
-
-          const mRes = this.db.prepare(`DELETE FROM library_media_items WHERE library_id = ?`).run(libraryId);
-          deletedItems += mRes.changes;
-
-          return { deletedEpisodes, deletedSeasons, deletedItems };
-        }
-      }
-
-      // 全局无源孤儿清理
-      const epClean = this.db
-        .prepare(
-          `DELETE FROM library_episodes
-           WHERE binding_id != '' AND binding_id NOT IN (SELECT id FROM library_path_bindings)`,
-        )
-        .run();
-      deletedEpisodes += epClean.changes;
-
-      const sClean = this.db
-        .prepare(
-          `DELETE FROM library_seasons
-           WHERE id NOT IN (SELECT DISTINCT season_id FROM library_episodes)`,
-        )
-        .run();
-      deletedSeasons += sClean.changes;
-
-      const mClean = this.db
-        .prepare(
-          `DELETE FROM library_media_items
-           WHERE id NOT IN (SELECT DISTINCT media_item_id FROM library_seasons)`,
-        )
-        .run();
-      deletedItems += mClean.changes;
-
-      return { deletedEpisodes, deletedSeasons, deletedItems };
-    })();
+    return this.reconciler.purgeOrphanedLibraryItems(libraryId);
   }
 
   // ==================== 影视条目 LibraryMediaItem ====================
@@ -760,6 +713,13 @@ export class SqliteMediaLibraryRepository extends BaseSqliteModule {
     return rows.map(this.mapEpisodeRow);
   }
 
+  listEpisodesByBinding(bindingId: string): LibraryEpisode[] {
+    const rows = this.db
+      .prepare(`SELECT * FROM library_episodes WHERE binding_id = ? ORDER BY episode_number ASC`)
+      .all(bindingId) as Array<Record<string, unknown>>;
+    return rows.map(this.mapEpisodeRow);
+  }
+
   getEpisode(id: string): LibraryEpisode | null {
     const row = this.db
       .prepare(`SELECT * FROM library_episodes WHERE id = ?`)
@@ -795,6 +755,9 @@ export class SqliteMediaLibraryRepository extends BaseSqliteModule {
       durationSeconds: fallbackVal(input.durationSeconds, null),
       subtitles: fallbackVal(input.subtitles, []),
       relativePath: fallbackVal(input.relativePath, null),
+      status: fallbackVal(input.status, fallbackVal(existing?.status, "active")),
+      missingSince: fallbackVal(input.missingSince, fallbackVal(existing?.missingSince, null)),
+      lastSeenAt: fallbackVal(input.lastSeenAt, now),
       createdAt: existing ? existing.createdAt : now,
       updatedAt: now,
     };
@@ -804,8 +767,9 @@ export class SqliteMediaLibraryRepository extends BaseSqliteModule {
         `INSERT INTO library_episodes (
            id, season_id, binding_id, episode_number, episode_name, storage_id, file_id,
            file_name, version_tag, is_default_version, pick_code, size_bytes, video_codec,
-           resolution, duration_seconds, subtitles_json, relative_path, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           resolution, duration_seconds, subtitles_json, relative_path, status, missing_since,
+           last_seen_at, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            binding_id = CASE WHEN excluded.binding_id != '' THEN excluded.binding_id ELSE library_episodes.binding_id END,
            episode_number = excluded.episode_number,
@@ -820,6 +784,9 @@ export class SqliteMediaLibraryRepository extends BaseSqliteModule {
            duration_seconds = excluded.duration_seconds,
            subtitles_json = excluded.subtitles_json,
            relative_path = excluded.relative_path,
+           status = excluded.status,
+           missing_since = excluded.missing_since,
+           last_seen_at = excluded.last_seen_at,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -840,6 +807,9 @@ export class SqliteMediaLibraryRepository extends BaseSqliteModule {
         item.durationSeconds,
         JSON.stringify(item.subtitles),
         item.relativePath,
+        item.status ?? "active",
+        item.missingSince ?? null,
+        item.lastSeenAt ?? now,
         item.createdAt,
         item.updatedAt,
       );
@@ -851,6 +821,13 @@ export class SqliteMediaLibraryRepository extends BaseSqliteModule {
     this.db
       .prepare(`UPDATE library_episodes SET file_name = ?, updated_at = ? WHERE id = ?`)
       .run(newFileName, this.now(), id);
+  }
+
+  /**
+   * 基于内存临时表与差集运算的影视库孤儿分集比对与清理引擎
+   */
+  reconcileBindingEpisodes(input: ReconcileBindingEpisodesInput): ReconcileBindingEpisodesResult {
+    return this.reconciler.reconcileBindingEpisodes(input);
   }
 
   // ==================== 增量快照 LibraryScanSnapshot ====================
@@ -994,6 +971,9 @@ export class SqliteMediaLibraryRepository extends BaseSqliteModule {
       durationSeconds: row.duration_seconds ? Number(row.duration_seconds) : null,
       subtitles,
       relativePath: row.relative_path ? String(row.relative_path) : null,
+      status: (row.status as LibraryEpisodeStatus) || "active",
+      missingSince: row.missing_since ? String(row.missing_since) : null,
+      lastSeenAt: row.last_seen_at ? String(row.last_seen_at) : null,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };

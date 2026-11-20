@@ -100,6 +100,7 @@ export type {
   LibrarySeason,
   SubtitleTrackInfo,
   LibraryEpisode,
+  LibraryEpisodeStatus,
   LibraryScanSnapshot,
   ScanStepStage,
   LibraryScanProgressEvent,

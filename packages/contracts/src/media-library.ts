@@ -84,6 +84,8 @@ export interface SubtitleTrackInfo {
   fileId?: string;
 }
 
+export type LibraryEpisodeStatus = "active" | "missing" | "tombstoned";
+
 export interface LibraryEpisode {
   id: string;
   seasonId: string;
@@ -102,6 +104,9 @@ export interface LibraryEpisode {
   durationSeconds?: number | null | undefined;
   subtitles: SubtitleTrackInfo[];
   relativePath?: string | null | undefined;
+  status?: LibraryEpisodeStatus | undefined;
+  missingSince?: string | null | undefined;
+  lastSeenAt?: string | null | undefined;
   createdAt: string;
   updatedAt: string;
 }
@@ -146,6 +151,8 @@ export type ScanStepStage =
   | "PARSING_FILENAMES"
   | "SCRAPING_METADATA"
   | "PERSISTING"
+  | "DIFFING"
+  | "RECONCILING"
   | "COMPLETED"
   | "FAILED"
   | "ABORTED";
@@ -159,6 +166,8 @@ export interface LibraryScanProgressEvent {
   processedCount: number;
   percent: number;
   currentTitle?: string | undefined;
+  removedCount?: number | undefined;
+  prunedItems?: number | undefined;
   error?: string | undefined;
   timestamp: string;
 }

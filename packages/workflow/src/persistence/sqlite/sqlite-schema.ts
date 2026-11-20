@@ -541,6 +541,9 @@ ${LIBRARY_SCAN_JOBS_SCHEMA_SQL}
     duration_seconds integer,
     subtitles_json text NOT NULL DEFAULT '[]',
     relative_path text,
+    status text NOT NULL DEFAULT 'active',
+    missing_since text,
+    last_seen_at text,
     created_at text NOT NULL,
     updated_at text NOT NULL
   );
@@ -550,6 +553,8 @@ ${LIBRARY_SCAN_JOBS_SCHEMA_SQL}
     ON library_episodes (season_id, episode_number, is_default_version DESC);
   CREATE INDEX IF NOT EXISTS idx_library_episodes_binding
     ON library_episodes (binding_id);
+  CREATE INDEX IF NOT EXISTS idx_library_episodes_binding_status
+    ON library_episodes (binding_id, status);
   CREATE INDEX IF NOT EXISTS idx_library_episodes_storage_file
     ON library_episodes (storage_id, file_id);
 
@@ -576,17 +581,14 @@ ${LIBRARY_SCAN_JOBS_SCHEMA_SQL}
  */
 export function upgradeMediaLibraryShape(db: Database.Database): void {
   // 如果已有老旧的 library_episodes 表，先增量补全字段，避免后续创建索引报错
-  const epCols = db.pragma("table_info(library_episodes)") as Array<{ name: string }>;
-  if (epCols.length > 0) {
-    if (!epCols.some((c) => c.name === "binding_id")) {
-      db.exec("ALTER TABLE library_episodes ADD COLUMN binding_id text NOT NULL DEFAULT ''");
-    }
-    if (!epCols.some((c) => c.name === "version_tag")) {
-      db.exec("ALTER TABLE library_episodes ADD COLUMN version_tag text DEFAULT ''");
-    }
-    if (!epCols.some((c) => c.name === "is_default_version")) {
-      db.exec("ALTER TABLE library_episodes ADD COLUMN is_default_version integer NOT NULL DEFAULT 0");
-    }
+  const epCols = new Set((db.pragma("table_info(library_episodes)") as Array<{ name: string }>).map((c) => c.name));
+  if (epCols.size > 0) {
+    if (!epCols.has("binding_id")) db.exec("ALTER TABLE library_episodes ADD COLUMN binding_id text NOT NULL DEFAULT ''");
+    if (!epCols.has("version_tag")) db.exec("ALTER TABLE library_episodes ADD COLUMN version_tag text DEFAULT ''");
+    if (!epCols.has("is_default_version")) db.exec("ALTER TABLE library_episodes ADD COLUMN is_default_version integer NOT NULL DEFAULT 0");
+    if (!epCols.has("status")) db.exec("ALTER TABLE library_episodes ADD COLUMN status text NOT NULL DEFAULT 'active'");
+    if (!epCols.has("missing_since")) db.exec("ALTER TABLE library_episodes ADD COLUMN missing_since text");
+    if (!epCols.has("last_seen_at")) db.exec("ALTER TABLE library_episodes ADD COLUMN last_seen_at text");
   }
 
   db.exec(`
@@ -684,6 +686,9 @@ export function upgradeMediaLibraryShape(db: Database.Database): void {
       duration_seconds integer,
       subtitles_json text NOT NULL DEFAULT '[]',
       relative_path text,
+      status text NOT NULL DEFAULT 'active',
+      missing_since text,
+      last_seen_at text,
       created_at text NOT NULL,
       updated_at text NOT NULL
     );
@@ -693,6 +698,8 @@ export function upgradeMediaLibraryShape(db: Database.Database): void {
       ON library_episodes (season_id, episode_number, is_default_version DESC);
     CREATE INDEX IF NOT EXISTS idx_library_episodes_binding
       ON library_episodes (binding_id);
+    CREATE INDEX IF NOT EXISTS idx_library_episodes_binding_status
+      ON library_episodes (binding_id, status);
     CREATE INDEX IF NOT EXISTS idx_library_episodes_storage_file
       ON library_episodes (storage_id, file_id);
 
@@ -716,40 +723,24 @@ export function upgradeMediaLibraryShape(db: Database.Database): void {
  * 补上早于 last_taken_at 的库缺的列。
  */
 export function upgradeSubscriptionPolicyShape(db: Database.Database): void {
-  const cols = db.pragma("table_info(subscription_policies)") as Array<{ name: string }>;
-  if (cols.length === 0) return;
-  if (!cols.some((c) => c.name === "last_taken_at")) {
-    db.exec("ALTER TABLE subscription_policies ADD COLUMN last_taken_at text");
-  }
-  if (!cols.some((c) => c.name === "custom_keywords")) {
-    db.exec("ALTER TABLE subscription_policies ADD COLUMN custom_keywords text NOT NULL DEFAULT '[]'");
-  }
-  if (!cols.some((c) => c.name === "priority_groups")) {
-    db.exec("ALTER TABLE subscription_policies ADD COLUMN priority_groups text NOT NULL DEFAULT '[]'");
-  }
-  if (!cols.some((c) => c.name === "season_episode_ranges")) {
-    db.exec("ALTER TABLE subscription_policies ADD COLUMN season_episode_ranges text NOT NULL DEFAULT '[]'");
-  }
+  const cols = new Set((db.pragma("table_info(subscription_policies)") as Array<{ name: string }>).map((c) => c.name));
+  if (cols.size === 0) return;
+  if (!cols.has("last_taken_at")) db.exec("ALTER TABLE subscription_policies ADD COLUMN last_taken_at text");
+  if (!cols.has("custom_keywords")) db.exec("ALTER TABLE subscription_policies ADD COLUMN custom_keywords text NOT NULL DEFAULT '[]'");
+  if (!cols.has("priority_groups")) db.exec("ALTER TABLE subscription_policies ADD COLUMN priority_groups text NOT NULL DEFAULT '[]'");
+  if (!cols.has("season_episode_ranges")) db.exec("ALTER TABLE subscription_policies ADD COLUMN season_episode_ranges text NOT NULL DEFAULT '[]'");
 }
 
 /**
  * 补上早于 delivery_mode 的库缺的列。
  */
 export function upgradeStrmTasksShape(db: Database.Database): void {
-  const cols = db.pragma("table_info(strm_tasks)") as Array<{ name: string }>;
-  if (cols.length === 0) return;
-  if (!cols.some((c) => c.name === "delivery_mode")) {
-    db.exec("ALTER TABLE strm_tasks ADD COLUMN delivery_mode text DEFAULT 'redirect'");
-  }
-  if (!cols.some((c) => c.name === "media_server_id")) {
-    db.exec("ALTER TABLE strm_tasks ADD COLUMN media_server_id text");
-  }
-  if (!cols.some((c) => c.name === "media_library_id")) {
-    db.exec("ALTER TABLE strm_tasks ADD COLUMN media_library_id text");
-  }
-  if (!cols.some((c) => c.name === "media_library_name")) {
-    db.exec("ALTER TABLE strm_tasks ADD COLUMN media_library_name text");
-  }
+  const cols = new Set((db.pragma("table_info(strm_tasks)") as Array<{ name: string }>).map((c) => c.name));
+  if (cols.size === 0) return;
+  if (!cols.has("delivery_mode")) db.exec("ALTER TABLE strm_tasks ADD COLUMN delivery_mode text DEFAULT 'redirect'");
+  if (!cols.has("media_server_id")) db.exec("ALTER TABLE strm_tasks ADD COLUMN media_server_id text");
+  if (!cols.has("media_library_id")) db.exec("ALTER TABLE strm_tasks ADD COLUMN media_library_id text");
+  if (!cols.has("media_library_name")) db.exec("ALTER TABLE strm_tasks ADD COLUMN media_library_name text");
 }
 
 /**

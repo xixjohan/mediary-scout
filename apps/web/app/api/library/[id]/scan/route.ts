@@ -68,6 +68,8 @@ interface RunScanJobOptions {
   jobId: string;
   bindings: LibraryPathBinding[];
   forceFullScan: boolean;
+  forceAllowEmptyCleanup?: boolean | undefined;
+  reconcileStrategy?: "strict_purge" | "soft_delete" | undefined;
   scanner: MediaLibraryScanner;
   signal: AbortSignal;
 }
@@ -117,6 +119,8 @@ async function runScanJob(options: RunScanJobOptions): Promise<void> {
 
       await scanner.scanBinding(binding.id, {
         forceFullScan,
+        forceAllowEmptyCleanup: options.forceAllowEmptyCleanup,
+        reconcileStrategy: options.reconcileStrategy,
         signal,
         onProgress: (progress) => {
           // 进度落库：断线、刷新页面、多实例均可从 GET 恢复。
@@ -154,6 +158,28 @@ async function runScanJob(options: RunScanJobOptions): Promise<void> {
   }
 }
 
+function resolveScanBindings(
+  store: ReturnType<typeof getWorkflowRepository>["mediaLibraryStore"],
+  libraryId: string,
+  bindingId?: string,
+): LibraryPathBinding[] {
+  if (bindingId) {
+    const binding = store.getPathBinding(bindingId);
+    return binding ? [binding] : [];
+  }
+  return store.listPathBindings(libraryId);
+}
+
+function parseScanRequestBody(raw: unknown) {
+  const b = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  return {
+    bindingId: typeof b.bindingId === "string" ? b.bindingId : undefined,
+    forceFullScan: Boolean(b.forceFullScan),
+    forceAllowEmptyCleanup: Boolean(b.forceAllowEmptyCleanup),
+    reconcileStrategy: b.reconcileStrategy === "soft_delete" ? ("soft_delete" as const) : ("strict_purge" as const),
+  };
+}
+
 export async function POST(request: NextRequest, { params }: RouteParams) {
   const gate = await requirePermission(request, "library:manage");
   if (gate instanceof Response) return gate;
@@ -164,10 +190,8 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 
   const { id } = await params;
-  const body = (await request.json().catch(() => null)) as {
-    bindingId?: string;
-    forceFullScan?: boolean;
-  } | null;
+  const rawBody = await request.json().catch(() => null);
+  const body = parseScanRequestBody(rawBody);
 
   const store = getWorkflowRepository().mediaLibraryStore;
   const scanJobs = createLibraryScanJobStore(store);
@@ -185,9 +209,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ jobId: active.id, status: active.status, deduplicated: true });
   }
 
-  const bindings = body?.bindingId
-    ? [store.getPathBinding(body.bindingId)].filter((b): b is LibraryPathBinding => Boolean(b))
-    : store.listPathBindings(id);
+  const bindings = resolveScanBindings(store, id, body.bindingId);
 
   if (bindings.length === 0) {
     return NextResponse.json({ error: "当前影视库尚未绑定任何网盘路径" }, { status: 400 });
@@ -204,7 +226,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       libraryId: id,
       accountId,
       bindingIds: bindings.map((b) => b.id),
-      forceFullScan: body?.forceFullScan ?? false,
+      forceFullScan: body.forceFullScan,
     });
   } catch (err) {
     runningControllers.delete(jobId);
@@ -217,7 +239,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   void runScanJob({
     jobId,
     bindings,
-    forceFullScan: body?.forceFullScan ?? false,
+    forceFullScan: body.forceFullScan,
+    forceAllowEmptyCleanup: body.forceAllowEmptyCleanup,
+    reconcileStrategy: body.reconcileStrategy,
     scanner,
     signal: controller.signal,
   });

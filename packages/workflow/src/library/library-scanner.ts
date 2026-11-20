@@ -36,6 +36,23 @@ export interface LibraryScannerDependencies {
   } | null>;
 }
 
+export interface ScanBindingOptions {
+  forceFullScan?: boolean | undefined;
+  forceAllowEmptyCleanup?: boolean | undefined;
+  reconcileStrategy?: ("strict_purge" | "soft_delete") | undefined;
+  maxDeleteRate?: number | undefined;
+  onProgress?: ((event: LibraryScanProgressEvent) => void) | undefined;
+  signal?: AbortSignal | undefined;
+}
+
+export interface ScanBindingResult {
+  scannedFiles: number;
+  ingestedEpisodes: number;
+  removedEpisodes: number;
+  prunedItems: number;
+  cleanupSkippedReason?: string;
+}
+
 export class MediaLibraryScanner {
   private readonly runningBindings = new Set<string>();
 
@@ -47,12 +64,8 @@ export class MediaLibraryScanner {
 
   async scanBinding(
     bindingId: string,
-    options?: {
-      forceFullScan?: boolean;
-      onProgress?: (event: LibraryScanProgressEvent) => void;
-      signal?: AbortSignal;
-    },
-  ): Promise<{ scannedFiles: number; ingestedEpisodes: number }> {
+    options?: ScanBindingOptions,
+  ): Promise<ScanBindingResult> {
     if (this.runningBindings.has(bindingId)) {
       throw new Error(`BINDING_ALREADY_SCANNING: 路径绑定 ${bindingId} 正在扫描中，请勿重复触发`);
     }
@@ -75,7 +88,7 @@ export class MediaLibraryScanner {
       message: string,
       percent: number,
       currentTitle?: string,
-      extra?: { total?: number; processed?: number; error?: string },
+      extra?: { total?: number; processed?: number; error?: string; removedCount?: number; prunedItems?: number },
     ) => {
       const event: LibraryScanProgressEvent = {
         libraryId: library.id,
@@ -90,6 +103,12 @@ export class MediaLibraryScanner {
       if (currentTitle !== undefined) {
         event.currentTitle = currentTitle;
       }
+      if (extra?.removedCount !== undefined) {
+        event.removedCount = extra.removedCount;
+      }
+      if (extra?.prunedItems !== undefined) {
+        event.prunedItems = extra.prunedItems;
+      }
       if (extra?.error !== undefined) {
         event.error = extra.error;
       }
@@ -98,6 +117,7 @@ export class MediaLibraryScanner {
 
     let totalDiscovered = 0;
     let ingestedEpisodes = 0;
+    let traversalErrors = 0;
 
     try {
       emit("DISCOVERING_FOLDERS", `正在连接网盘存储驱动 ${binding.storageId}...`, 5);
@@ -148,7 +168,7 @@ export class MediaLibraryScanner {
         if (options?.signal?.aborted) {
           emit("ABORTED", "扫描已被用户中止", 100);
           this.deps.repo.updatePathBinding(bindingId, { lastScanStatus: "idle" });
-          return { scannedFiles: totalDiscovered, ingestedEpisodes };
+          return { scannedFiles: totalDiscovered, ingestedEpisodes, removedEpisodes: 0, prunedItems: 0 };
         }
 
         const current = queue.shift()!;
@@ -156,6 +176,12 @@ export class MediaLibraryScanner {
         try {
           listing = await fileManager.listDirectory(current.folderId);
         } catch (err) {
+          if (current.depth === 0) {
+            throw new Error(
+              `STORAGE_ROOT_LIST_FAILED: 无法访问网盘根目录 (${current.folderId}): ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+          traversalErrors++;
           console.warn(`[MediaLibraryScanner] 读取网盘目录失败 (${current.folderId}):`, err);
           continue;
         }
@@ -177,23 +203,8 @@ export class MediaLibraryScanner {
           }
         }
 
-        // 增量快照计算
-        const currentHash = `${listing.items.length}_${listing.items.map((i) => i.id).join("_")}`.slice(0, 64);
-        const snapshot = this.deps.repo.getScanSnapshot(bindingId, current.folderId);
-
-        // 如果是增量扫描，且当前目录快照未发生任何变动，且非根目录
-        if (
-          isIncremental &&
-          current.depth > 0 &&
-          snapshot &&
-          snapshot.lastModifiedHash === currentHash &&
-          snapshot.fileCount === listing.items.length
-        ) {
-          // 目录无变动，跳过进一步递归下潜
-          continue;
-        }
-
         // 保存/更新该目录的快照
+        const currentHash = `${listing.items.length}_${listing.items.map((i) => i.id).join("_")}`.slice(0, 64);
         this.deps.repo.saveScanSnapshot({
           id: `snap_${bindingId}_${current.folderId}`,
           bindingId,
@@ -265,11 +276,32 @@ export class MediaLibraryScanner {
         if (options?.signal?.aborted) {
           emit("ABORTED", "扫描已被用户中止", 100);
           this.deps.repo.updatePathBinding(bindingId, { lastScanStatus: "idle" });
-          return { scannedFiles: totalDiscovered, ingestedEpisodes };
+          return { scannedFiles: totalDiscovered, ingestedEpisodes, removedEpisodes: 0, prunedItems: 0 };
         }
 
         const entry = discoveredVideoFiles[i]!;
         const { file, parentDirName, grandParentDirName, relativePath, subtitles, seriesDirName } = entry;
+
+        // 优先检查：数据库是否已存在该 storageId + fileId 的分集（增量快速命中，避免重复 TMDB 刮削）
+        const existingEpisode = this.deps.repo.findEpisodeByStorageFile(binding.storageId, file.id);
+        if (existingEpisode && !options?.forceFullScan) {
+          const nameChanged = existingEpisode.fileName !== file.name;
+          const pathChanged = Boolean(relativePath && existingEpisode.relativePath !== relativePath);
+          if (nameChanged || pathChanged || existingEpisode.status !== "active") {
+            this.deps.repo.upsertEpisode({
+              ...existingEpisode,
+              fileName: file.name,
+              relativePath: relativePath || existingEpisode.relativePath,
+              sizeBytes: file.sizeBytes,
+              pickCode: file.pickCode ?? existingEpisode.pickCode,
+              status: "active",
+              missingSince: null,
+              lastSeenAt: new Date().toISOString(),
+            });
+          }
+          ingestedEpisodes++;
+          continue;
+        }
 
         // 若为剧集类且拥有一级剧集目录名，优先解析该一级容器作为剧集权威元数据
         let identifiedSeries = null;
@@ -429,17 +461,62 @@ export class MediaLibraryScanner {
         ingestedEpisodes++;
       }
 
-      emit("COMPLETED", `扫描完成！成功入库 ${ingestedEpisodes} 部/集影视文件`, 100, undefined, {
+      // 阶段：比对与孤儿清理 (Reconciliation Phase)
+      let removedEpisodes = 0;
+      let prunedItems = 0;
+      let cleanupSkippedReason: string | undefined;
+
+      emit("DIFFING", "正在比对网盘与媒体库差异，检查已删除与变动文件...", 95, undefined, {
         total: discoveredVideoFiles.length,
         processed: discoveredVideoFiles.length,
       });
+
+      if (traversalErrors > 0) {
+        cleanupSkippedReason = `TRAVERSAL_PARTIAL_ERROR: 遍历过程中有 ${traversalErrors} 个目录读取失败，为防止误删保全退出，跳过清理步骤`;
+      } else {
+        const discoveredFileIds = discoveredVideoFiles.map((d) => d.file.id);
+        const reconcileRes = this.deps.repo.reconcileBindingEpisodes({
+          bindingId,
+          libraryId: library.id,
+          discoveredFileIds,
+          strategy: options?.reconcileStrategy ?? "strict_purge",
+          ...(options?.maxDeleteRate !== undefined ? { maxDeleteRate: options.maxDeleteRate } : {}),
+          ...(options?.forceAllowEmptyCleanup !== undefined ? { forceAllowEmptyCleanup: options.forceAllowEmptyCleanup } : {}),
+        });
+
+        if (reconcileRes.status === "circuit_broken") {
+          cleanupSkippedReason = reconcileRes.reason;
+        } else if (reconcileRes.status === "reconciled") {
+          removedEpisodes = reconcileRes.purgedEpisodesCount;
+          prunedItems = reconcileRes.purgedItemsCount;
+        }
+      }
+
+      emit(
+        "COMPLETED",
+        `扫描完成！发现 ${totalDiscovered} 个视频，入库/更新 ${ingestedEpisodes} 部/集${removedEpisodes > 0 ? `，清理 ${removedEpisodes} 个失效分集` : ""}${prunedItems > 0 ? `，修剪 ${prunedItems} 个空剧目` : ""}${cleanupSkippedReason ? ` (清理跳过: ${cleanupSkippedReason})` : ""}`,
+        100,
+        undefined,
+        {
+          total: discoveredVideoFiles.length,
+          processed: discoveredVideoFiles.length,
+          removedCount: removedEpisodes,
+          prunedItems,
+        },
+      );
 
       this.deps.repo.updatePathBinding(bindingId, {
         lastScanAt: new Date().toISOString(),
         lastScanStatus: "success",
       });
 
-      return { scannedFiles: totalDiscovered, ingestedEpisodes };
+      return {
+        scannedFiles: totalDiscovered,
+        ingestedEpisodes,
+        removedEpisodes,
+        prunedItems,
+        ...(cleanupSkippedReason ? { cleanupSkippedReason } : {}),
+      };
     } catch (err: unknown) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       emit("FAILED", `扫描失败: ${errorMsg}`, 100, undefined, { error: errorMsg });
