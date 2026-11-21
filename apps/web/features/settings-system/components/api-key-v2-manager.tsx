@@ -18,6 +18,7 @@ import {
   type ApiKeyPermissionModule,
   type ApiKeyV2Entity,
 } from "@media-track/shared";
+import { copyText } from "../../../lib/copy-text";
 import { CreateApiKeyModal } from "./create-api-key-modal";
 import { UserActionConfirmDialog } from "./user-action-confirm-dialog";
 import { ApiKeyGuideModal, type ApiKeyGuideTarget } from "./api-key-guide-modal";
@@ -108,7 +109,8 @@ export function ApiKeyV2Manager() {
   };
 
   const copyToClipboard = (text: string) => {
-    void navigator.clipboard.writeText(text).then(() => {
+    void copyText(text).then((ok) => {
+      if (!ok) return flashMessage("复制失败，请手动全选复制", true);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -323,35 +325,16 @@ export function ApiKeyV2Manager() {
         const origin = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
         const mcpUrl = `${origin}/api/mcp`;
 
-        const cursorJson = JSON.stringify(
-          {
-            mcpServers: {
-              "mediary-scout": {
-                url: mcpUrl,
-                headers: {
-                  Authorization: `Bearer ${revealedKey}`,
-                },
-              },
+        const baseMcpServer = {
+          mcpServers: {
+            "mediary-scout": {
+              url: mcpUrl,
+              headers: { Authorization: `Bearer ${revealedKey}` },
             },
           },
-          null,
-          2
-        );
-
-        const claudeJson = JSON.stringify(
-          {
-            mcpServers: {
-              "mediary-scout": {
-                url: mcpUrl,
-                headers: {
-                  Authorization: `Bearer ${revealedKey}`,
-                },
-              },
-            },
-          },
-          null,
-          2
-        );
+        };
+        const cursorJson = JSON.stringify(baseMcpServer, null, 2);
+        const claudeJson = cursorJson;
 
         const clineJson = JSON.stringify(
           {

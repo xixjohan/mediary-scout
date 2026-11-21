@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Lock, Copy, Check, X, AlertTriangle, ShieldAlert, KeyRound, LoaderCircle } from "lucide-react";
+import { copyText } from "../../../lib/copy-text";
 import { checkAccountHasPasswordAction, revealStorageCredentialAction } from "../../../app/actions/storage-drives-actions";
 import type { RevealedCredentials } from "@media-track/workflow";
 
@@ -324,11 +325,11 @@ export function StorageCredentialsModal({
   }
 
   async function copyToClipboard(key: string, text: string) {
-    try {
-      await navigator.clipboard.writeText(text);
+    const success = await copyText(text);
+    if (success) {
       setCopiedKey(key);
       setTimeout(() => setCopiedKey(null), 2000);
-    } catch {
+    } else {
       setError("复制到剪贴板失败，请手动全选复制");
     }
   }

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import type { ActionCardPayload, ToolCallItem } from "../../../lib/chat-agent-service";
 import { MarkdownContent } from "../../../components/ui/markdown-content";
+import { copyText } from "../../../lib/copy-text";
 
 export interface ChatMessage {
   id: string;
@@ -96,11 +97,12 @@ export function MessageActionsToolbar({
   const [copied, setCopied] = useState(false);
 
   const handleCopy = useCallback(() => {
-    if (navigator.clipboard?.writeText) {
-      void navigator.clipboard.writeText(content);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
+    void copyText(content).then((success) => {
+      if (success) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
+    });
   }, [content]);
 
   return (

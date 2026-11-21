@@ -16,6 +16,7 @@ import { OrganizeUnrecognizedPrompt } from "./storage/organize-unrecognized-prom
 import { useFolderOrganize } from "./storage/use-folder-organize";
 import { VideoPreviewModal } from "./storage/video-preview-modal";
 import { formatProviderLabel, StorageTopBar } from "./storage/storage-top-bar";
+import { copyText } from "../../../lib/copy-text";
 
 export { formatProviderLabel };
 
@@ -368,9 +369,13 @@ export function StorageManagerView({
 
   const handleCopyPlayLink = (item: DriveFileItem) => {
     const url = `${window.location.origin}/api/strm/play/${selectedStorageId}/${item.id}?name=${encodeURIComponent(item.name)}`;
-    void navigator.clipboard.writeText(url).then(() => {
-      setSuccessMessage(`已复制播放链: ${item.name}`);
-      setTimeout(() => setSuccessMessage(null), 3000);
+    void copyText(url).then((success) => {
+      if (success) {
+        setSuccessMessage(`已复制播放链: ${item.name}`);
+        setTimeout(() => setSuccessMessage(null), 3000);
+      } else {
+        setError(`复制失败，请手动全选复制`);
+      }
     });
   };
 

@@ -7,6 +7,7 @@ import type {
   ResourceLinkResponse,
 } from "../contracts/acquisition-types";
 import type { CandidateLinkState } from "../components/resource-candidate-row";
+import { copyText } from "../../../lib/copy-text";
 
 interface UseCandidateActionsParams {
   tmdbId: number;
@@ -193,16 +194,12 @@ export function useCandidateActions({
   );
 
   const handleCopyLink = useCallback(async (candidateId: string, text: string) => {
-    try {
-      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(text);
-      }
+    const success = await copyText(text);
+    if (success) {
       setCopiedId(candidateId);
       setTimeout(() => {
         setCopiedId((curr) => (curr === candidateId ? null : curr));
       }, 2000);
-    } catch {
-      // ignore
     }
   }, []);
 

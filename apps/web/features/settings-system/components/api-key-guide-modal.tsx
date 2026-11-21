@@ -14,6 +14,7 @@ import {
   Terminal,
   X,
 } from "lucide-react";
+import { copyText } from "../../../lib/copy-text";
 
 export interface ApiKeyGuideTarget {
   name: string;
@@ -145,9 +146,11 @@ curl -X GET "${origin}/api/titles?limit=10" \\
   }
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(currentSnippet).then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+    void copyText(currentSnippet).then((success) => {
+      if (success) {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      }
     });
   };
 

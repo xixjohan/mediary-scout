@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "../../../lib/use-router";
 import { Check, Copy, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { copyText } from "../../../lib/copy-text";
 
 /**
  * S5.5 设置页 API Key 面板（客户端交互部分）。
@@ -85,13 +86,14 @@ export function ApiKeyPanel({
 
   const copy = () => {
     if (!freshKey) return;
-    void navigator.clipboard
-      .writeText(freshKey)
-      .then(() => {
+    void copyText(freshKey).then((success) => {
+      if (success) {
         setCopied(true);
         setTimeout(() => setCopied(false), 2000);
-      })
-      .catch(() => flash("❌ 复制失败，请手动选中复制"));
+      } else {
+        flash("❌ 复制失败，请手动选中复制");
+      }
+    });
   };
 
   return (
