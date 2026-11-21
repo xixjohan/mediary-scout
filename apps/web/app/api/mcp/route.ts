@@ -9,6 +9,34 @@ import {
 import { executeDiscoverMedia } from "../../../features/assistant/core/chat-discover";
 import { getAccountDriveFileManager } from "../../../lib/workflow-runtime";
 import { triggerManualSubscriptionSearch } from "../../../features/acquisition/application/manual-subscription-search-service";
+import {
+  MCP_REGISTERED_TOOLS,
+  TOOL_TO_PERMISSION_MAP,
+} from "./tools";
+import {
+  executeGetMediaDetail,
+  executeGetTrendingMedia,
+  executeSearchResources,
+  executeScrapeResourceMetadata,
+  executeListSubscriptions,
+  executeGetSubscriptionDetail,
+  executeUpdateSubscription,
+  executeDeleteSubscription,
+  executeGetStorageDrives,
+  executeCheckDriveQuota,
+  executeSearchDriveFiles,
+  executeGetDriveDownloadUrl,
+  executeListStrmTasks,
+  executeCreateStrmTask,
+  executeTriggerStrmSync,
+  executeListMediaServers,
+  executeSyncMediaServerLibrary,
+  executeTestMediaServerConnection,
+  executeListExtensions,
+  executeToggleExtension,
+} from "./executor";
+
+export { MCP_REGISTERED_TOOLS, TOOL_TO_PERMISSION_MAP };
 
 interface McpJsonRpcRequest {
   jsonrpc: "2.0";
@@ -17,130 +45,15 @@ interface McpJsonRpcRequest {
   params?: Record<string, unknown>;
 }
 
-export const MCP_REGISTERED_TOOLS = [
-  {
-    name: "discoverMedia",
-    description: "在 TMDB 实时数据库中按年份、分类类型（如科幻、动作、动画等）发现、推荐和筛选电影或剧集",
-    inputSchema: {
-      type: "object",
-      properties: {
-        genre: { type: "string", description: "题材分类，例如：科幻、动作、动画、喜剧、悬疑等" },
-        year: { type: "number", description: "上映年份，例如：2026、2025 等" },
-        type: { type: "string", enum: ["movie", "tv"], description: "媒体类型：movie（电影）或 tv（剧集）" },
-        sortBy: { type: "string", enum: ["popularity", "rating", "release_date"], description: "排序方式" },
-      },
-    },
-  },
-  {
-    name: "searchMedia",
-    description: "在 TMDB 检索电影或剧集基本信息",
-    inputSchema: {
-      type: "object",
-      required: ["query"],
-      properties: {
-        query: { type: "string", description: "影片名称或关键词" },
-      },
-    },
-  },
-  {
-    name: "queryStatus",
-    description: "查询当前后台正在进行的获取、转存、整理等任务进度",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
-    name: "queryLibrary",
-    description: "查询当前用户已订阅和追踪的影视列表",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
-    name: "subscribeMedia",
-    description: "添加或更新影视剧作品的追更订阅与自动入库策略",
-    inputSchema: {
-      type: "object",
-      required: ["tmdbId"],
-      properties: {
-        tmdbId: { type: "number", description: "TMDB 作品 ID" },
-        type: { type: "string", enum: ["movie", "tv"], description: "媒体类型（电影或剧集）" },
-        seasonNumber: { type: "number", description: "剧集季号（可选，默认第一季）" },
-      },
-    },
-  },
-  {
-    name: "listStorageFiles",
-    description: "浏览或列举用户已绑定的网盘目录文件树",
-    inputSchema: {
-      type: "object",
-      properties: {
-        storageId: { type: "string", description: "存储盘 ID（可选，默认主网盘）" },
-        dirId: { type: "string", description: "目录 ID（可选，默认根目录）" },
-      },
-    },
-  },
-  {
-    name: "submitOfflineTask",
-    description: "向已挂载的网盘提交磁力链接或 HTTP 下载链接离线转存任务",
-    inputSchema: {
-      type: "object",
-      required: ["urls"],
-      properties: {
-        urls: {
-          type: "array",
-          items: { type: "string" },
-          description: "磁力链接 (magnet:?xt=...) 或下载直链 URL 列表",
-        },
-        storageId: { type: "string", description: "目标存储网盘 ID（可选）" },
-        directoryId: { type: "string", description: "存储目标文件夹 ID（可选）" },
-      },
-    },
-  },
-  {
-    name: "triggerAcquisition",
-    description: "为已追踪的电影或指定季度创建一次按当前订阅策略执行的缺失资源搜索任务",
-    inputSchema: {
-      type: "object",
-      required: ["tmdbId", "type"],
-      properties: {
-        tmdbId: { type: "number", description: "TMDB 作品 ID" },
-        type: { type: "string", enum: ["movie", "tv", "anime"], description: "媒体类型" },
-        seasonNumber: { type: "number", description: "剧集季号（可选）" },
-        storageId: { type: "string", description: "目标网盘工作区 ID（可选，默认主网盘）" },
-      },
-    },
-  },
-  {
-    name: "getSystemHealth",
-    description: "获取巡影当前实例就绪状态、存储挂载与连通性探针",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-];
-
-export const TOOL_TO_PERMISSION_MAP: Record<string, string> = {
-  discoverMedia: "media:detail",
-  searchMedia: "media:search",
-  queryStatus: "workflow:status",
-  queryLibrary: "media:detail",
-  subscribeMedia: "media:subscribe",
-  listStorageFiles: "storage:list",
-  submitOfflineTask: "storage:transfer",
-  triggerAcquisition: "workflow:trigger",
-  getSystemHealth: "system:health",
-};
-
 async function dispatchToolExecution(
   toolName: string,
   toolArgs: Record<string, unknown>,
   accountId: string
 ): Promise<unknown> {
   switch (toolName) {
+    // 1. 影视搜索
+    case "searchMedia":
+      return executeSearchMedia(String(toolArgs.query || ""));
     case "discoverMedia":
       return executeDiscoverMedia({
         genre: typeof toolArgs.genre === "string" ? toolArgs.genre : undefined,
@@ -151,12 +64,22 @@ async function dispatchToolExecution(
             ? toolArgs.sortBy
             : undefined,
       });
-    case "searchMedia":
-      return executeSearchMedia(String(toolArgs.query || ""));
-    case "queryStatus":
-      return executeQueryStatus(accountId);
-    case "queryLibrary":
-      return executeQueryLibrary(accountId);
+    case "getMediaDetail":
+      return executeGetMediaDetail(toolArgs, accountId);
+    case "getTrendingMedia":
+      return executeGetTrendingMedia(toolArgs);
+
+    // 2. 资源查询与刮削
+    case "searchResources":
+      return executeSearchResources(toolArgs, accountId);
+    case "scrapeResourceMetadata":
+      return executeScrapeResourceMetadata(toolArgs);
+
+    // 3. 订阅管理
+    case "listSubscriptions":
+      return executeListSubscriptions(toolArgs);
+    case "getSubscriptionDetail":
+      return executeGetSubscriptionDetail(toolArgs);
     case "subscribeMedia": {
       const tmdbId = Number(toolArgs.tmdbId);
       if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
@@ -171,6 +94,16 @@ async function dispatchToolExecution(
         status: "subscribed",
       };
     }
+    case "updateSubscription":
+      return executeUpdateSubscription(accountId, toolArgs);
+    case "deleteSubscription":
+      return executeDeleteSubscription(toolArgs);
+
+    // 4. 网盘管理
+    case "getStorageDrives":
+      return executeGetStorageDrives(accountId);
+    case "checkDriveQuota":
+      return executeCheckDriveQuota(accountId, toolArgs);
     case "listStorageFiles": {
       const storageId = typeof toolArgs.storageId === "string" ? toolArgs.storageId : undefined;
       const dirId = typeof toolArgs.dirId === "string" ? toolArgs.dirId : undefined;
@@ -181,6 +114,8 @@ async function dispatchToolExecution(
       const listing = await fileManager.listDirectory(dirId);
       return { ok: true, listing };
     }
+    case "searchDriveFiles":
+      return executeSearchDriveFiles(accountId, toolArgs);
     case "submitOfflineTask": {
       const rawUrls = Array.isArray(toolArgs.urls)
         ? (toolArgs.urls as unknown[]).filter((u): u is string => typeof u === "string")
@@ -196,6 +131,36 @@ async function dispatchToolExecution(
         status: "queued",
       };
     }
+    case "getDriveDownloadUrl":
+      return executeGetDriveDownloadUrl(accountId, toolArgs);
+
+    // 5. STRM 管理
+    case "listStrmTasks":
+      return executeListStrmTasks(accountId);
+    case "createStrmTask":
+      return executeCreateStrmTask(accountId, toolArgs);
+    case "triggerStrmSync":
+      return executeTriggerStrmSync(accountId, toolArgs);
+
+    // 6. 第三方媒体库
+    case "listMediaServers":
+      return executeListMediaServers(accountId);
+    case "syncMediaServerLibrary":
+      return executeSyncMediaServerLibrary(accountId, toolArgs);
+    case "testMediaServerConnection":
+      return executeTestMediaServerConnection(accountId, toolArgs);
+
+    // 7. 动态扩展与插件
+    case "listExtensions":
+      return executeListExtensions();
+    case "toggleExtension":
+      return executeToggleExtension(toolArgs);
+
+    // 8. 辅助状态与探针
+    case "queryStatus":
+      return executeQueryStatus(accountId);
+    case "queryLibrary":
+      return executeQueryLibrary(accountId);
     case "triggerAcquisition": {
       const tmdbId = Number(toolArgs.tmdbId);
       if (!Number.isInteger(tmdbId) || tmdbId <= 0) {
@@ -265,7 +230,7 @@ async function handleToolsCall(
     });
   }
 
-  // 权限卡口强校验
+  // 权限卡口强校验：当前安全上下文必须包含该工具所需权限
   if (!sec.isMaster && !sec.permissions.has("*") && !sec.permissions.has(requiredPerm)) {
     return NextResponse.json({
       jsonrpc: "2.0",

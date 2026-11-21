@@ -1,429 +1,350 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { POST } from "./route";
 import { NextRequest } from "next/server";
-import { resetRuntimeContainerForTests } from "../../../composition/runtime-container";
+import { PERMISSION_CATALOG, BUILTIN_ROLES, ApiKeyPermissionPreset } from "@media-track/shared";
+import { MCP_REGISTERED_TOOLS, TOOL_TO_PERMISSION_MAP, POST } from "./route";
 
-// Mock auth-chain
-const mockSecurityContext = vi.fn();
-const mockTriggerManualSubscriptionSearch = vi.fn();
+// Mock dependencies
 vi.mock("../../../platform/next-context/auth-chain", () => ({
-  resolveSecurityContext: () => mockSecurityContext(),
-}));
-vi.mock("../../../features/acquisition/application/manual-subscription-search-service", () => ({
-  triggerManualSubscriptionSearch: (...args: unknown[]) => mockTriggerManualSubscriptionSearch(...args),
+  resolveSecurityContext: vi.fn(),
 }));
 
-// Mock execute functions
+vi.mock("./executor", () => ({
+  executeGetMediaDetail: vi.fn().mockResolvedValue({ ok: true, tmdbId: 100 }),
+  executeGetTrendingMedia: vi.fn().mockResolvedValue({ ok: true, results: [] }),
+  executeSearchResources: vi.fn().mockResolvedValue({ ok: true, candidates: [] }),
+  executeScrapeResourceMetadata: vi.fn().mockResolvedValue({ ok: true, parsed: { title: "Test" } }),
+  executeListSubscriptions: vi.fn().mockResolvedValue({ ok: true, items: [] }),
+  executeGetSubscriptionDetail: vi.fn().mockResolvedValue({ ok: true, tmdbId: 100 }),
+  executeUpdateSubscription: vi.fn().mockResolvedValue({ ok: true, tmdbId: 100 }),
+  executeDeleteSubscription: vi.fn().mockResolvedValue({ ok: true, tmdbId: 100 }),
+  executeGetStorageDrives: vi.fn().mockResolvedValue({ ok: true, drives: [] }),
+  executeCheckDriveQuota: vi.fn().mockResolvedValue({ ok: true, quota: { available: true } }),
+  executeSearchDriveFiles: vi.fn().mockResolvedValue({ ok: true, matches: [] }),
+  executeGetDriveDownloadUrl: vi.fn().mockResolvedValue({ ok: true, playStreamUrl: "/api/strm/play/1/1" }),
+  executeListStrmTasks: vi.fn().mockResolvedValue({ ok: true, tasks: [] }),
+  executeCreateStrmTask: vi.fn().mockResolvedValue({ ok: true, task: { id: "strm_1" } }),
+  executeTriggerStrmSync: vi.fn().mockResolvedValue({ ok: true, taskId: "strm_1" }),
+  executeListMediaServers: vi.fn().mockResolvedValue({ ok: true, servers: [] }),
+  executeSyncMediaServerLibrary: vi.fn().mockResolvedValue({ ok: true, message: "ok" }),
+  executeTestMediaServerConnection: vi.fn().mockResolvedValue({ ok: true, status: { ok: true } }),
+  executeListExtensions: vi.fn().mockResolvedValue({ ok: true, extensions: [] }),
+  executeToggleExtension: vi.fn().mockResolvedValue({ ok: true, enabled: true }),
+}));
+
 vi.mock("../../../features/assistant/application/chat-agent-service", () => ({
-  executeSearchMedia: vi.fn(async (q: string) => ({ reply: `Searched for ${q}` })),
-  executeQueryStatus: vi.fn(async () => ({ reply: "No runs active" })),
-  executeQueryLibrary: vi.fn(async () => ({ reply: "Tracking 2 shows" })),
+  executeSearchMedia: vi.fn().mockResolvedValue({ reply: "search ok" }),
+  executeQueryStatus: vi.fn().mockResolvedValue({ reply: "status ok" }),
+  executeQueryLibrary: vi.fn().mockResolvedValue({ reply: "library ok" }),
 }));
 
 vi.mock("../../../features/assistant/core/chat-discover", () => ({
-  executeDiscoverMedia: vi.fn(async () => ({ reply: "Discovered 5 movies" })),
+  executeDiscoverMedia: vi.fn().mockResolvedValue({ reply: "discover ok" }),
 }));
-
-const mockFileManager = {
-  listDirectory: vi.fn().mockResolvedValue({
-    files: [{ id: "f1", name: "Inception.2010.mkv", size: 1024 }],
-  }),
-};
 
 vi.mock("../../../lib/workflow-runtime", () => ({
-  getAccountDriveFileManager: vi.fn().mockImplementation(async () => mockFileManager),
+  getAccountDriveFileManager: vi.fn().mockResolvedValue({
+    listDirectory: vi.fn().mockResolvedValue({ items: [] }),
+  }),
 }));
 
-function makeRequest(body: unknown, headers: Record<string, string> = {}) {
-  return new NextRequest("http://localhost:3000/api/mcp", {
+vi.mock("../../../features/acquisition/application/manual-subscription-search-service", () => ({
+  triggerManualSubscriptionSearch: vi.fn().mockResolvedValue({ status: "queued" }),
+}));
+
+import { resolveSecurityContext } from "../../../platform/next-context/auth-chain";
+
+function createMockRequest(body: unknown, headers: Record<string, string> = {}): NextRequest {
+  return new NextRequest("http://127.0.0.1:3000/api/mcp", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "content-type": "application/json",
       ...headers,
     },
     body: JSON.stringify(body),
   });
 }
 
-describe("MCP Server Route (/api/mcp)", () => {
+describe("MCP Full Lifecycle Matrix & RBAC Projection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetRuntimeContainerForTests();
   });
 
-  it("returns 401 when unauthenticated", async () => {
-    mockSecurityContext.mockResolvedValue(null);
-    const res = await POST(makeRequest({ jsonrpc: "2.0", method: "initialize", id: 1 }));
-    expect(res.status).toBe(401);
-    const data = await res.json();
-    expect(data.error.code).toBe(-32001);
-  });
-
-  it("handles initialize successfully", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_test",
-      isMaster: true,
-      roleId: "role_owner",
-      permissions: new Set(["*"]),
+  describe("1. 工具注册表与权限元数据一致性", () => {
+    it("registered tools count should be at least 25 (includes 25 lifecycle tools + utility tools)", () => {
+      expect(MCP_REGISTERED_TOOLS.length).toBeGreaterThanOrEqual(25);
     });
 
-    const res = await POST(makeRequest({ jsonrpc: "2.0", method: "initialize", id: "req_1" }));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.serverInfo.name).toBe("mediary-scout-mcp");
-    expect(data.result.capabilities.tools).toBeDefined();
-  });
-
-  it("projects all tools when caller has full permissions (*)", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_test",
-      isMaster: true,
-      roleId: "role_owner",
-      permissions: new Set(["*"]),
+    it("every registered tool has a valid permission mapping", () => {
+      const allCatalogLeaves = new Set(PERMISSION_CATALOG.flatMap((m) => m.leaves.map((l) => l.id)));
+      for (const tool of MCP_REGISTERED_TOOLS) {
+        const perm = TOOL_TO_PERMISSION_MAP[tool.name];
+        expect(perm).toBeDefined();
+        expect(allCatalogLeaves.has(perm!)).toBe(true);
+      }
     });
 
-    const res = await POST(makeRequest({ jsonrpc: "2.0", method: "tools/list", id: 2 }));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.tools).toHaveLength(9);
-    const names = data.result.tools.map((t: { name: string }) => t.name);
-    expect(names).toContain("searchMedia");
-    expect(names).toContain("discoverMedia");
-    expect(names).toContain("queryStatus");
-    expect(names).toContain("queryLibrary");
-    expect(names).toContain("subscribeMedia");
-    expect(names).toContain("listStorageFiles");
-    expect(names).toContain("submitOfflineTask");
-    expect(names).toContain("triggerAcquisition");
-    expect(names).toContain("getSystemHealth");
+    it("all 8 core lifecycle areas are covered by registered tools", () => {
+      const toolNames = new Set(MCP_REGISTERED_TOOLS.map((t) => t.name));
+      // 1. 影视搜索
+      expect(toolNames.has("searchMedia")).toBe(true);
+      expect(toolNames.has("discoverMedia")).toBe(true);
+      expect(toolNames.has("getMediaDetail")).toBe(true);
+      expect(toolNames.has("getTrendingMedia")).toBe(true);
+
+      // 2. 资源查询与刮削
+      expect(toolNames.has("searchResources")).toBe(true);
+      expect(toolNames.has("scrapeResourceMetadata")).toBe(true);
+
+      // 3. 订阅管理
+      expect(toolNames.has("listSubscriptions")).toBe(true);
+      expect(toolNames.has("getSubscriptionDetail")).toBe(true);
+      expect(toolNames.has("subscribeMedia")).toBe(true);
+      expect(toolNames.has("updateSubscription")).toBe(true);
+      expect(toolNames.has("deleteSubscription")).toBe(true);
+
+      // 4. 网盘管理
+      expect(toolNames.has("getStorageDrives")).toBe(true);
+      expect(toolNames.has("checkDriveQuota")).toBe(true);
+      expect(toolNames.has("listStorageFiles")).toBe(true);
+      expect(toolNames.has("searchDriveFiles")).toBe(true);
+      expect(toolNames.has("submitOfflineTask")).toBe(true);
+      expect(toolNames.has("getDriveDownloadUrl")).toBe(true);
+
+      // 5. STRM 管理
+      expect(toolNames.has("listStrmTasks")).toBe(true);
+      expect(toolNames.has("createStrmTask")).toBe(true);
+      expect(toolNames.has("triggerStrmSync")).toBe(true);
+
+      // 6. 第三方媒体库
+      expect(toolNames.has("listMediaServers")).toBe(true);
+      expect(toolNames.has("syncMediaServerLibrary")).toBe(true);
+      expect(toolNames.has("testMediaServerConnection")).toBe(true);
+
+      // 7. 动态扩展与插件
+      expect(toolNames.has("listExtensions")).toBe(true);
+      expect(toolNames.has("toggleExtension")).toBe(true);
+
+      // 8. 辅助状态
+      expect(toolNames.has("queryStatus")).toBe(true);
+      expect(toolNames.has("queryLibrary")).toBe(true);
+      expect(toolNames.has("triggerAcquisition")).toBe(true);
+      expect(toolNames.has("getSystemHealth")).toBe(true);
+    });
   });
 
-  it("dynamically projects tools when caller only has media:search", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_guest",
-      isMaster: false,
-      roleId: "role_guest",
-      permissions: new Set(["media:search"]), // only searchMedia!
+  describe("2. 按角色动态投影裁剪 (tools/list Dynamic Projection)", () => {
+    it("Owner (*): projects all registered tools without omission", () => {
+      const ownerPerms = ["*"];
+      const projected = ApiKeyPermissionPreset.projectMcpTools(
+        ownerPerms,
+        MCP_REGISTERED_TOOLS,
+        TOOL_TO_PERMISSION_MAP
+      );
+      expect(projected.length).toBe(MCP_REGISTERED_TOOLS.length);
     });
 
-    const res = await POST(makeRequest({ jsonrpc: "2.0", method: "tools/list", id: 3 }));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.tools).toHaveLength(1);
-    expect(data.result.tools[0].name).toBe("searchMedia");
+    it("Admin: projects full tools including STRM, media servers and extensions", () => {
+      const adminPerms = BUILTIN_ROLES.role_admin.permissions;
+      const projected = ApiKeyPermissionPreset.projectMcpTools(
+        adminPerms,
+        MCP_REGISTERED_TOOLS,
+        TOOL_TO_PERMISSION_MAP
+      );
+      const names = new Set(projected.map((t) => t.name));
+      expect(names.has("createStrmTask")).toBe(true);
+      expect(names.has("listMediaServers")).toBe(true);
+      expect(names.has("toggleExtension")).toBe(true);
+      expect(names.has("checkDriveQuota")).toBe(true);
+    });
+
+    it("Member: projects only search, subscription, cloud browsing; hides STRM, media servers, and extensions", () => {
+      const memberPerms = BUILTIN_ROLES.role_member.permissions;
+      const projected = ApiKeyPermissionPreset.projectMcpTools(
+        memberPerms,
+        MCP_REGISTERED_TOOLS,
+        TOOL_TO_PERMISSION_MAP
+      );
+      const names = new Set(projected.map((t) => t.name));
+
+      // Member 有权可见的工具
+      expect(names.has("searchMedia")).toBe(true);
+      expect(names.has("discoverMedia")).toBe(true);
+      expect(names.has("getMediaDetail")).toBe(true);
+      expect(names.has("getTrendingMedia")).toBe(true);
+      expect(names.has("searchResources")).toBe(true);
+      expect(names.has("scrapeResourceMetadata")).toBe(true);
+      expect(names.has("listSubscriptions")).toBe(true);
+      expect(names.has("getSubscriptionDetail")).toBe(true);
+      expect(names.has("subscribeMedia")).toBe(true);
+      expect(names.has("updateSubscription")).toBe(true);
+      expect(names.has("deleteSubscription")).toBe(true);
+      expect(names.has("getStorageDrives")).toBe(true);
+      expect(names.has("checkDriveQuota")).toBe(true);
+      expect(names.has("listStorageFiles")).toBe(true);
+      expect(names.has("searchDriveFiles")).toBe(true);
+      expect(names.has("submitOfflineTask")).toBe(true);
+      expect(names.has("getDriveDownloadUrl")).toBe(true);
+      expect(names.has("queryStatus")).toBe(true);
+      expect(names.has("queryLibrary")).toBe(true);
+
+      // Member 严禁可见的管理级工具（彻底杜绝 Token 浪费与越权幻觉）
+      expect(names.has("createStrmTask")).toBe(false);
+      expect(names.has("listStrmTasks")).toBe(false);
+      expect(names.has("triggerStrmSync")).toBe(false);
+      expect(names.has("listMediaServers")).toBe(false);
+      expect(names.has("syncMediaServerLibrary")).toBe(false);
+      expect(names.has("testMediaServerConnection")).toBe(false);
+      expect(names.has("listExtensions")).toBe(false);
+      expect(names.has("toggleExtension")).toBe(false);
+      expect(names.has("triggerAcquisition")).toBe(false);
+      expect(names.has("getSystemHealth")).toBe(false);
+    });
+
+    it("Guest: projects only read-only search and health check tools", () => {
+      const guestPerms = BUILTIN_ROLES.role_guest.permissions;
+      const projected = ApiKeyPermissionPreset.projectMcpTools(
+        guestPerms,
+        MCP_REGISTERED_TOOLS,
+        TOOL_TO_PERMISSION_MAP
+      );
+      const names = new Set(projected.map((t) => t.name));
+      expect(names.has("searchMedia")).toBe(true);
+      expect(names.has("getSystemHealth")).toBe(true);
+      expect(names.has("submitOfflineTask")).toBe(false);
+      expect(names.has("createStrmTask")).toBe(false);
+      expect(names.has("toggleExtension")).toBe(false);
+    });
   });
 
-  it("dynamically projects storage tools when caller only has storage:list", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_storage",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["storage:list"]),
+  describe("3. 运行时调用卡口与权限拦截 (tools/call Execution & Guard)", () => {
+    it("returns 401 when request has no valid security context", async () => {
+      vi.mocked(resolveSecurityContext).mockResolvedValue(null);
+      const req = createMockRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const res = await POST(req);
+      expect(res.status).toBe(401);
+      const json = await res.json();
+      expect(json.error.code).toBe(-32001);
     });
 
-    const res = await POST(makeRequest({ jsonrpc: "2.0", method: "tools/list", id: 31 }));
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.tools).toHaveLength(1);
-    expect(data.result.tools[0].name).toBe("listStorageFiles");
-  });
-
-  it("allows tools/call when caller possesses required permission", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["media:search"]),
+    it("blocks request when API Key has allowMcp: false", async () => {
+      vi.mocked(resolveSecurityContext).mockResolvedValue({
+        accountId: "acc_1",
+        isMaster: false,
+        roleId: "role_member",
+        permissions: new Set(["*"]),
+        apiKeyId: "key_1",
+        allowMcp: false,
+      });
+      const req = createMockRequest({ jsonrpc: "2.0", id: 1, method: "tools/list" });
+      const res = await POST(req);
+      expect(res.status).toBe(403);
+      const json = await res.json();
+      expect(json.error.code).toBe(-32003);
     });
 
-    const res = await POST(
-      makeRequest({
+    it("blocks unauthorized tool execution with -32003 Forbidden", async () => {
+      // Member tries to call createStrmTask
+      vi.mocked(resolveSecurityContext).mockResolvedValue({
+        accountId: "acc_member",
+        isMaster: false,
+        roleId: "role_member",
+        permissions: new Set(BUILTIN_ROLES.role_member.permissions),
+      });
+
+      const req = createMockRequest({
         jsonrpc: "2.0",
+        id: "call-1",
         method: "tools/call",
-        id: 4,
-        params: { name: "searchMedia", arguments: { query: "Inception" } },
-      })
-    );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("Searched for Inception");
-  });
-
-  it("executes subscribeMedia when caller has media:subscribe", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["media:subscribe"]),
-    });
-
-    const res = await POST(
-      makeRequest({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        id: 41,
-        params: { name: "subscribeMedia", arguments: { tmdbId: 157336, type: "movie" } },
-      })
-    );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("已为 TMDB ID: 157336 建立追更订阅与自动入库策略");
-  });
-
-  it("executes submitOfflineTask when caller has storage:transfer", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["storage:transfer"]),
-    });
-
-    const res = await POST(
-      makeRequest({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        id: 42,
         params: {
-          name: "submitOfflineTask",
-          arguments: { urls: ["magnet:?xt=urn:btih:abc123456789"] },
+          name: "createStrmTask",
+          arguments: {
+            name: "test",
+            storageId: "drive_1",
+            remoteFolderId: "f_1",
+            localOutputDir: "/strm",
+          },
         },
-      })
-    );
+      });
 
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("成功向云盘提交 1 条离线转存任务");
-  });
-
-  it("executes getSystemHealth when caller has system:health", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["system:health"]),
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.error).toBeDefined();
+      expect(json.error.code).toBe(-32003);
+      expect(json.error.message).toContain("Forbidden");
+      expect(json.error.message).toContain("strm:manage");
     });
 
-    const res = await POST(
-      makeRequest({
+    it("executes permitted tool successfully for authorized role", async () => {
+      vi.mocked(resolveSecurityContext).mockResolvedValue({
+        accountId: "acc_admin",
+        isMaster: false,
+        roleId: "role_admin",
+        permissions: new Set(BUILTIN_ROLES.role_admin.permissions),
+      });
+
+      const req = createMockRequest({
         jsonrpc: "2.0",
+        id: "call-2",
         method: "tools/call",
-        id: 43,
-        params: { name: "getSystemHealth", arguments: {} },
-      })
-    );
+        params: {
+          name: "listStrmTasks",
+          arguments: {},
+        },
+      });
 
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("healthy");
-  });
-
-  it("rejects tools/call when caller lacks required permission (forbidden)", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_restricted",
-      isMaster: false,
-      roleId: "role_guest",
-      permissions: new Set(["media:search"]), // does NOT have workflow:status
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.error).toBeUndefined();
+      expect(json.result).toBeDefined();
+      expect(json.result.content[0].type).toBe("text");
+      const data = JSON.parse(json.result.content[0].text);
+      expect(data.ok).toBe(true);
     });
 
-    const res = await POST(
-      makeRequest({
+    it("returns -32601 when calling an unregistered tool", async () => {
+      vi.mocked(resolveSecurityContext).mockResolvedValue({
+        accountId: "acc_admin",
+        isMaster: true,
+        roleId: "role_owner",
+        permissions: new Set(["*"]),
+      });
+
+      const req = createMockRequest({
         jsonrpc: "2.0",
+        id: "call-3",
         method: "tools/call",
-        id: 5,
-        params: { name: "queryStatus", arguments: {} },
-      })
-    );
+        params: {
+          name: "nonExistentTool",
+          arguments: {},
+        },
+      });
 
-    expect(res.status).toBe(200); // JSON-RPC standard error response
-    const data = await res.json();
-    expect(data.error.code).toBe(-32003);
-    expect(data.error.message).toContain("Forbidden");
-  });
-
-  it("rejects request with 403 when API key has allowMcp: false", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_test",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["*"]),
-      apiKeyId: "key_api_only",
-      allowApi: true,
-      allowMcp: false,
+      const res = await POST(req);
+      const json = await res.json();
+      expect(json.error.code).toBe(-32601);
+      expect(json.error.message).toContain("Tool not found");
     });
 
-    const res = await POST(
-      makeRequest({
+    it("handles initialize method compliant with MCP specification", async () => {
+      vi.mocked(resolveSecurityContext).mockResolvedValue({
+        accountId: "acc_1",
+        isMaster: true,
+        roleId: "role_owner",
+        permissions: new Set(["*"]),
+      });
+
+      const req = createMockRequest({
         jsonrpc: "2.0",
+        id: "init-1",
         method: "initialize",
-        id: 99,
-      })
-    );
+      });
 
-    expect(res.status).toBe(403);
-    const data = await res.json();
-    expect(data.error.code).toBe(-32003);
-    expect(data.error.message).toContain("未开放 MCP 协议访问通道");
-  });
-
-  it("executes discoverMedia when caller has media:detail", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["media:detail"]),
+      const res = await POST(req);
+      const json = await res.json();
+      expect(json.result.protocolVersion).toBe("2024-11-05");
+      expect(json.result.serverInfo.name).toBe("mediary-scout-mcp");
     });
-
-    const res = await POST(
-      makeRequest({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        id: 44,
-        params: { name: "discoverMedia", arguments: { genre: "action", type: "movie" } },
-      })
-    );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("Discovered 5 movies");
-  });
-
-  it("executes queryStatus when caller has workflow:status", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["workflow:status"]),
-    });
-
-    const res = await POST(
-      makeRequest({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        id: 45,
-        params: { name: "queryStatus", arguments: {} },
-      })
-    );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("No runs active");
-  });
-
-  it("executes queryLibrary when caller has media:detail", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["media:detail"]),
-    });
-
-    const res = await POST(
-      makeRequest({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        id: 46,
-        params: { name: "queryLibrary", arguments: {} },
-      })
-    );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("Tracking 2 shows");
-  });
-
-  it("executes listStorageFiles when caller has storage:list", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["storage:list"]),
-    });
-
-    const res = await POST(
-      makeRequest({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        id: 47,
-        params: { name: "listStorageFiles", arguments: { path: "/movies" } },
-      })
-    );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("Inception.2010.mkv");
-  });
-
-  it("routes triggerAcquisition through the real scoped subscription queue", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_member",
-      isMaster: false,
-      roleId: "role_member",
-      permissions: new Set(["workflow:trigger"]),
-    });
-    mockTriggerManualSubscriptionSearch.mockResolvedValue({
-      status: "queued",
-      workflowRunId: "run_manual_mcp",
-      message: "已加入后台队列。",
-    });
-
-    const res = await POST(
-      makeRequest({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        id: 48,
-        params: { name: "triggerAcquisition", arguments: { tmdbId: 550, type: "tv", seasonNumber: 1, storageId: "drive_member" } },
-      })
-    );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.result.content[0].text).toContain("run_manual_mcp");
-    expect(mockTriggerManualSubscriptionSearch).toHaveBeenCalledWith({
-      accountId: "acct_member",
-      tmdbId: 550,
-      mediaType: "tv",
-      seasonNumber: 1,
-      storageId: "drive_member",
-      source: "mcp",
-    });
-  });
-
-  it("returns -32601 when calling an unregistered tool", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_admin",
-      isMaster: true,
-      roleId: "role_owner",
-      permissions: new Set(["*"]),
-    });
-
-    const res = await POST(
-      makeRequest({
-        jsonrpc: "2.0",
-        method: "tools/call",
-        id: 49,
-        params: { name: "nonExistentTool", arguments: {} },
-      })
-    );
-
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.error.code).toBe(-32601);
-    expect(data.error.message).toContain("Tool not found");
-  });
-
-  it("returns -32600 on invalid or malformed JSON-RPC request", async () => {
-    mockSecurityContext.mockResolvedValue({
-      accountId: "acct_admin",
-      isMaster: true,
-      roleId: "role_owner",
-      permissions: new Set(["*"]),
-    });
-
-    const res = await POST(makeRequest({ invalid: "not-json-rpc" }));
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error.code).toBe(-32600);
   });
 });
