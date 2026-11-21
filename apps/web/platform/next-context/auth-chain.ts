@@ -38,6 +38,7 @@ async function resolveDirectV2KeyContext(
 ): Promise<{
   accountId: string;
   apiKeyId: string;
+  isMaster: boolean;
   permissions: Set<string>;
   roleId: string;
   allowApi: boolean;
@@ -80,12 +81,14 @@ async function resolveDirectV2KeyContext(
     if (!isActive) return null;
 
     // 运行时动态交集求值 (定理四：双保险防御)
-    const role = await userSvc.getUserRole(accountId);
+    const isAccountOwner = await resolveAccountIsOwner(accountId);
+    const role = await userSvc.getUserRole(accountId, isAccountOwner);
     const effectivePerms = calculateEffectivePermissions(keyEntity.permissions, role.permissions);
 
     return {
       accountId,
       apiKeyId: keyEntity.id,
+      isMaster: isAccountOwner && keyEntity.permissions.includes("*"),
       roleId: role.id,
       permissions: new Set(effectivePerms),
       allowApi: keyEntity.allowApi !== false,

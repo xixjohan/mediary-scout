@@ -35,6 +35,12 @@ import {
   executeListExtensions,
   executeToggleExtension,
 } from "./executor";
+import {
+  executeScanDriveMedia,
+  executeAdoptDriveMedia,
+  executePlanOrganizeMedia,
+  executeExecuteOrganizeMedia,
+} from "./drive-media-executor";
 
 export { MCP_REGISTERED_TOOLS, TOOL_TO_PERMISSION_MAP };
 
@@ -133,6 +139,14 @@ async function dispatchToolExecution(
     }
     case "getDriveDownloadUrl":
       return executeGetDriveDownloadUrl(accountId, toolArgs);
+    case "scanDriveMedia":
+      return executeScanDriveMedia(accountId, toolArgs);
+    case "adoptDriveMedia":
+      return executeAdoptDriveMedia(accountId, toolArgs);
+    case "planOrganizeMedia":
+      return executePlanOrganizeMedia(accountId, toolArgs);
+    case "executeOrganizeMedia":
+      return executeExecuteOrganizeMedia(accountId, toolArgs);
 
     // 5. STRM 管理
     case "listStrmTasks":

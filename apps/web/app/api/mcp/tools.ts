@@ -211,6 +211,62 @@ export const MCP_REGISTERED_TOOLS = [
       },
     },
   },
+  {
+    name: "scanDriveMedia",
+    description: "递归扫描网盘待纳管影视目录，识别片名、类型与 TMDB 匹配候选",
+    inputSchema: {
+      type: "object",
+      properties: {
+        storageId: { type: "string", description: "存储盘 ID（可选，默认主网盘）" },
+        folderId: { type: "string", description: "扫描起始目录 ID（可选，默认根目录）" },
+        depth: { type: "number", description: "遍历深度（默认 2）" },
+      },
+    },
+  },
+  {
+    name: "adoptDriveMedia",
+    description: "将网盘中已存在的影视目录认领纳管至影视库并建立追更订阅",
+    inputSchema: {
+      type: "object",
+      required: ["folderId", "tmdbId"],
+      properties: {
+        folderId: { type: "string", description: "网盘目标影视目录 ID" },
+        storageId: { type: "string", description: "存储盘 ID（可选）" },
+        tmdbId: { type: "number", description: "TMDB 作品 ID" },
+        type: { type: "string", enum: ["movie", "tv", "anime"], description: "媒体类别（默认 tv）" },
+        seasonNumber: { type: "number", description: "指定季号（剧集/动漫可选，默认第 1 季）" },
+      },
+    },
+  },
+  {
+    name: "planOrganizeMedia",
+    description: "生成网盘影视规范化命名、季集归位、多版本归档与临时目录清理计划 (Dry-Run)",
+    inputSchema: {
+      type: "object",
+      required: ["tmdbId"],
+      properties: {
+        tmdbId: { type: "number", description: "TMDB 作品 ID" },
+        seasonNumber: { type: "number", description: "指定季号（可选）" },
+        storageId: { type: "string", description: "存储盘 ID（可选）" },
+        directoryId: { type: "string", description: "待整理目录 ID（可选）" },
+      },
+    },
+  },
+  {
+    name: "executeOrganizeMedia",
+    description: "物理执行网盘影视规范整理、多版本软归档与 safe staging 临时目录清理",
+    inputSchema: {
+      type: "object",
+      required: ["tmdbId"],
+      properties: {
+        tmdbId: { type: "number", description: "TMDB 作品 ID" },
+        seasonNumber: { type: "number", description: "指定季号（可选）" },
+        storageId: { type: "string", description: "存储盘 ID（可选）" },
+        cleanStaging: { type: "boolean", description: "是否清理残留空临时目录（默认 true）" },
+        dedupeVersions: { type: "boolean", description: "是否软归档重复版本（默认 true）" },
+      },
+    },
+  },
 
   // ── 5. STRM 管理 ─────────────────────────────────────────────────────────────
   {
@@ -362,13 +418,17 @@ export const TOOL_TO_PERMISSION_MAP: Record<string, string> = {
   updateSubscription: "media:subscribe",
   deleteSubscription: "media:subscribe",
 
-  // 4. 网盘管理
+  // 4. 网盘管理与整理
   getStorageDrives: "storage:list",
   checkDriveQuota: "storage:quota",
   listStorageFiles: "storage:list",
   searchDriveFiles: "storage:list",
   submitOfflineTask: "storage:transfer",
   getDriveDownloadUrl: "storage:list",
+  scanDriveMedia: "storage:adopt",
+  adoptDriveMedia: "storage:adopt",
+  planOrganizeMedia: "storage:organize",
+  executeOrganizeMedia: "storage:organize",
 
   // 5. STRM 管理
   listStrmTasks: "strm:read",

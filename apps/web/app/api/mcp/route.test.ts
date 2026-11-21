@@ -31,6 +31,13 @@ vi.mock("./executor", () => ({
   executeToggleExtension: vi.fn().mockResolvedValue({ ok: true, enabled: true }),
 }));
 
+vi.mock("./drive-media-executor", () => ({
+  executeScanDriveMedia: vi.fn().mockResolvedValue({ ok: true, candidates: [] }),
+  executeAdoptDriveMedia: vi.fn().mockResolvedValue({ ok: true, adopted: true, tmdbId: 100 }),
+  executePlanOrganizeMedia: vi.fn().mockResolvedValue({ ok: true, planKind: "deterministic", moves: [] }),
+  executeExecuteOrganizeMedia: vi.fn().mockResolvedValue({ ok: true, status: "organized" }),
+}));
+
 vi.mock("../../../features/assistant/application/chat-agent-service", () => ({
   executeSearchMedia: vi.fn().mockResolvedValue({ reply: "search ok" }),
   executeQueryStatus: vi.fn().mockResolvedValue({ reply: "status ok" }),
@@ -102,13 +109,17 @@ describe("MCP Full Lifecycle Matrix & RBAC Projection", () => {
       expect(toolNames.has("updateSubscription")).toBe(true);
       expect(toolNames.has("deleteSubscription")).toBe(true);
 
-      // 4. 网盘管理
+      // 4. 网盘管理与存量整理
       expect(toolNames.has("getStorageDrives")).toBe(true);
       expect(toolNames.has("checkDriveQuota")).toBe(true);
       expect(toolNames.has("listStorageFiles")).toBe(true);
       expect(toolNames.has("searchDriveFiles")).toBe(true);
       expect(toolNames.has("submitOfflineTask")).toBe(true);
       expect(toolNames.has("getDriveDownloadUrl")).toBe(true);
+      expect(toolNames.has("scanDriveMedia")).toBe(true);
+      expect(toolNames.has("adoptDriveMedia")).toBe(true);
+      expect(toolNames.has("planOrganizeMedia")).toBe(true);
+      expect(toolNames.has("executeOrganizeMedia")).toBe(true);
 
       // 5. STRM 管理
       expect(toolNames.has("listStrmTasks")).toBe(true);
@@ -184,10 +195,14 @@ describe("MCP Full Lifecycle Matrix & RBAC Projection", () => {
       expect(names.has("searchDriveFiles")).toBe(true);
       expect(names.has("submitOfflineTask")).toBe(true);
       expect(names.has("getDriveDownloadUrl")).toBe(true);
+      expect(names.has("scanDriveMedia")).toBe(true);
+      expect(names.has("adoptDriveMedia")).toBe(true);
       expect(names.has("queryStatus")).toBe(true);
       expect(names.has("queryLibrary")).toBe(true);
 
       // Member 严禁可见的管理级工具（彻底杜绝 Token 浪费与越权幻觉）
+      expect(names.has("planOrganizeMedia")).toBe(false);
+      expect(names.has("executeOrganizeMedia")).toBe(false);
       expect(names.has("createStrmTask")).toBe(false);
       expect(names.has("listStrmTasks")).toBe(false);
       expect(names.has("triggerStrmSync")).toBe(false);
@@ -301,6 +316,57 @@ describe("MCP Full Lifecycle Matrix & RBAC Projection", () => {
       expect(json.result.content[0].type).toBe("text");
       const data = JSON.parse(json.result.content[0].text);
       expect(data.ok).toBe(true);
+    });
+
+    it("executes scanDriveMedia successfully for role with storage:adopt permission", async () => {
+      vi.mocked(resolveSecurityContext).mockResolvedValue({
+        accountId: "acc_member",
+        isMaster: false,
+        roleId: "role_member",
+        permissions: new Set(BUILTIN_ROLES.role_member.permissions),
+      });
+
+      const req = createMockRequest({
+        jsonrpc: "2.0",
+        id: "scan-1",
+        method: "tools/call",
+        params: {
+          name: "scanDriveMedia",
+          arguments: { folderId: "f_root" },
+        },
+      });
+
+      const res = await POST(req);
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.error).toBeUndefined();
+      const data = JSON.parse(json.result.content[0].text);
+      expect(data.ok).toBe(true);
+    });
+
+    it("blocks organize tools when role lacks storage:organize permission", async () => {
+      vi.mocked(resolveSecurityContext).mockResolvedValue({
+        accountId: "acc_member",
+        isMaster: false,
+        roleId: "role_member",
+        permissions: new Set(BUILTIN_ROLES.role_member.permissions),
+      });
+
+      const req = createMockRequest({
+        jsonrpc: "2.0",
+        id: "plan-1",
+        method: "tools/call",
+        params: {
+          name: "planOrganizeMedia",
+          arguments: { tmdbId: 100 },
+        },
+      });
+
+      const res = await POST(req);
+      const json = await res.json();
+      expect(json.error).toBeDefined();
+      expect(json.error.code).toBe(-32003);
+      expect(json.error.message).toContain("storage:organize");
     });
 
     it("returns -32601 when calling an unregistered tool", async () => {
