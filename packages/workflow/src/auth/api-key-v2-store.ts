@@ -19,6 +19,14 @@ export interface CreateApiKeyV2Input {
   ownerSecurityVersion?: number | undefined;
 }
 
+export interface UpdateApiKeyV2Input {
+  name?: string | undefined;
+  permissions?: string[] | undefined;
+  allowApi?: boolean | undefined;
+  allowMcp?: boolean | undefined;
+  expiresAt?: number | null | undefined;
+}
+
 export class ApiKeyV2Store {
   // 高性能前缀内存索引缓存 (TTL 30 秒)
   private readonly _prefixCache = new Map<string, { entity: ApiKeyV2Entity; cachedAt: number }>();
@@ -94,6 +102,70 @@ export class ApiKeyV2Store {
       entity,
       plainTextKey: key,
     };
+  }
+
+  private _validateUpdateInput(
+    target: ApiKeyV2Entity,
+    input: UpdateApiKeyV2Input,
+    actorPermissions?: string[] | undefined
+  ): { nextAllowApi: boolean; nextAllowMcp: boolean } {
+    if (target.revokedAt !== null) {
+      throw new Error("已吊销的 API Key 无法编辑权限");
+    }
+
+    if (input.permissions && actorPermissions) {
+      const boundaryCheck = validateDelegationBoundary(actorPermissions, input.permissions);
+      if (!boundaryCheck.allowed) {
+        throw new Error(
+          `权限越界：您的角色无权分配未拥有的功能权限 [${boundaryCheck.violations.join(", ")}]`
+        );
+      }
+    }
+
+    const nextAllowApi = input.allowApi !== undefined ? input.allowApi : target.allowApi !== false;
+    const nextAllowMcp = input.allowMcp !== undefined ? input.allowMcp : target.allowMcp !== false;
+    if (!nextAllowApi && !nextAllowMcp) {
+      throw new Error("必须至少启用 REST API 或 MCP 中的一个访问通道");
+    }
+
+    return { nextAllowApi, nextAllowMcp };
+  }
+
+  public async updateKey(
+    id: string,
+    input: UpdateApiKeyV2Input,
+    actorPermissions?: string[] | undefined,
+  ): Promise<ApiKeyV2Entity> {
+    const keys = await this.listKeys();
+    const target = keys.find((k) => k.id === id);
+    if (!target) {
+      throw new Error("Key not found");
+    }
+
+    const { nextAllowApi, nextAllowMcp } = this._validateUpdateInput(target, input, actorPermissions);
+
+    if (input.name && input.name.trim()) {
+      target.name = input.name.trim();
+    }
+    if (input.permissions) {
+      target.permissions = [...input.permissions];
+    }
+    target.allowApi = nextAllowApi;
+    target.allowMcp = nextAllowMcp;
+    if (input.expiresAt !== undefined) {
+      target.expiresAt = input.expiresAt;
+    }
+    target.updatedAt = Date.now();
+    target.version = (target.version || 1) + 1;
+
+    await this._repo.setSetting(API_KEYS_V2_SETTING_KEY, JSON.stringify(keys));
+
+    // 精准驱逐前缀缓存
+    if (target.keyPrefix) {
+      this._prefixCache.delete(target.keyPrefix);
+    }
+
+    return target;
   }
 
   public async revokeKey(id: string): Promise<boolean> {

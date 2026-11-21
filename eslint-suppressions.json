@@ -143,14 +143,6 @@
       "count": 1
     }
   },
-  "apps/web/features/settings-system/components/api-key-v2-manager.tsx": {
-    "complexity": {
-      "count": 1
-    },
-    "max-lines": {
-      "count": 1
-    }
-  },
   "apps/web/features/settings-system/components/frp-tunnel-manager-view.tsx": {
     "complexity": {
       "count": 1

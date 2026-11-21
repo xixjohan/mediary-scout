@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { GET as getCatalog } from "./catalog/route";
 import { GET as listKeys, POST as createKey } from "./route";
-import { GET as getKey, DELETE as deleteKey } from "./[id]/route";
+import { GET as getKey, DELETE as deleteKey, PATCH as updateKey } from "./[id]/route";
 import { POST as revokeKey } from "./[id]/revoke/route";
 import {
   setApiKeyV2StoreForTest,
@@ -207,5 +207,68 @@ describe("API Keys V2 Management API Routes", () => {
     const apiData = await resApiOnly.json();
     expect(apiData.entity.allowApi).toBe(true);
     expect(apiData.entity.allowMcp).toBe(false);
+  });
+
+  it("updates existing API key in-place via PATCH", async () => {
+    // 1. Create initial key
+    const createRes = await createKey(
+      new NextRequest("http://localhost:3000/api/settings/api-keys", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Initial Key",
+          permissions: ["media:search"],
+        }),
+      })
+    );
+    expect(createRes.status).toBe(201);
+    const keyData = await createRes.json();
+    const keyId = keyData.entity.id;
+
+    // 2. PATCH key
+    const patchRes = await updateKey(
+      new NextRequest(`http://localhost:3000/api/settings/api-keys/${keyId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: "Updated Key",
+          permissions: ["media:search", "media:detail", "strm:read"],
+          allowMcp: false,
+        }),
+      }),
+      { params: Promise.resolve({ id: keyId }) }
+    );
+    expect(patchRes.status).toBe(200);
+    const patchData = await patchRes.json();
+    expect(patchData.ok).toBe(true);
+    expect(patchData.entity.name).toBe("Updated Key");
+    expect(patchData.entity.permissions).toEqual(["media:search", "media:detail", "strm:read"]);
+    expect(patchData.entity.allowMcp).toBe(false);
+    expect(patchData.entity.version).toBe(2);
+    expect(patchData.entity.keyHash).toBeUndefined(); // no sensitive hash returned
+  });
+
+  it("rejects non-owner PATCHing another user's key", async () => {
+    // Create key owned by acct_other
+    const created = await keyStore.createKey({
+      name: "Other User Key",
+      permissions: ["media:search"],
+      userId: "acct_other",
+    });
+
+    state.owner = false;
+    state.user = "acct_hacker";
+
+    const patchRes = await updateKey(
+      new NextRequest(`http://localhost:3000/api/settings/api-keys/${created.entity.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: "Hacked Key",
+        }),
+      }),
+      { params: Promise.resolve({ id: created.entity.id }) }
+    );
+
+    expect(patchRes.status).toBe(403);
+    const data = await patchRes.json();
+    expect(data.error).toContain("无权修改其他用户的 API Key");
   });
 });

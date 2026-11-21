@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   PERMISSION_CATALOG,
   ApiKeyPermissionPreset,
+  ApiKeyMutationStrategy,
   generateApiKeyV2,
   hashApiKeyV2,
   verifyApiKeyV2Hash,
@@ -120,5 +121,16 @@ describe("ApiKeyMatrix & Presets", () => {
     expect(isForbiddenApiKeyPath("/api/titles/resources")).toBe(false);
     expect(isForbiddenApiKeyPath("/api/storage/files")).toBe(false);
     expect(isForbiddenApiKeyPath("/api/health")).toBe(false);
+  });
+
+  it("calculates permission mutation diff and flags dangerous escalation", () => {
+    const prev = ["media:search", "media:detail", "storage:list"];
+    const next = ["media:search", "storage:list", "storage:delete"];
+
+    const diff = ApiKeyMutationStrategy.calculateDiff(prev, next);
+    expect(diff.retained).toEqual(["media:search", "storage:list"]);
+    expect(diff.removed).toEqual(["media:detail"]);
+    expect(diff.added).toEqual(["storage:delete"]);
+    expect(diff.riskEscalated).toBe(true); // storage:delete is Dangerous
   });
 });

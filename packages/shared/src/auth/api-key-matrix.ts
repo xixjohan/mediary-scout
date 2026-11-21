@@ -305,9 +305,43 @@ export interface ApiKeyV2Entity {
   allowApi?: boolean | undefined; // 协议通道：是否允许 REST API 访问 (默认 true)
   allowMcp?: boolean | undefined; // 协议通道：是否允许 MCP 协议访问 (默认 true)
   createdAt: number;
+  updatedAt?: number | undefined; // 上次就地编辑更新时间戳
+  version?: number | undefined; // 乐观并发控制版本号 (自增)
   expiresAt: number | null; // null = never expires
   lastUsedAt: number | null;
   revokedAt: number | null;
+}
+
+export interface PermissionMutationDiff {
+  added: string[];
+  removed: string[];
+  retained: string[];
+  riskEscalated: boolean;
+}
+
+export class ApiKeyMutationStrategy {
+  /**
+   * 策略模式：计算权限变异差异与风险定级
+   */
+  public static calculateDiff(
+    previousPermissions: string[],
+    newPermissions: string[],
+    catalog: ApiKeyPermissionModule[] = PERMISSION_CATALOG
+  ): PermissionMutationDiff {
+    const prevSet = new Set(previousPermissions);
+    const newSet = new Set(newPermissions);
+
+    const added = newPermissions.filter((p) => !prevSet.has(p));
+    const removed = previousPermissions.filter((p) => !newSet.has(p));
+    const retained = newPermissions.filter((p) => prevSet.has(p));
+
+    const allLeaves = catalog.flatMap((m) => m.leaves);
+    const leafMap = new Map(allLeaves.map((l) => [l.id, l]));
+
+    const riskEscalated = added.some((id) => leafMap.get(id)?.riskLevel === "Dangerous");
+
+    return { added, removed, retained, riskEscalated };
+  }
 }
 
 /**
