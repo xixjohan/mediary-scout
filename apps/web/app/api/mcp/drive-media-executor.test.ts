@@ -4,6 +4,8 @@ import {
   executeAdoptDriveMedia,
   executePlanOrganizeMedia,
   executeExecuteOrganizeMedia,
+  executeCleanStagingDirectories,
+  executeDedupeSeasonVersions,
 } from "./drive-media-executor";
 
 // Mock dependencies
@@ -175,7 +177,7 @@ describe("drive-media-executor", () => {
   });
 
   describe("executeExecuteOrganizeMedia", () => {
-    it("delegates to handleTvOrganize and returns organized status", async () => {
+    it("delegates to handleTvOrganize synchronously when asyncExecution is false", async () => {
       mockListTrackedSeasonStates.mockResolvedValue([
         {
           title: { id: "t_1", tmdbId: 100, title: "Test TV", type: "tv" },
@@ -193,7 +195,11 @@ describe("drive-media-executor", () => {
           }),
       });
 
-      const result = (await executeExecuteOrganizeMedia("acc_1", { tmdbId: 100 })) as {
+      const result = (await executeExecuteOrganizeMedia("acc_1", {
+        tmdbId: 100,
+        directoryId: "dir_custom",
+        asyncExecution: false,
+      })) as {
         ok: boolean;
         status: string;
         copy: string;
@@ -203,6 +209,69 @@ describe("drive-media-executor", () => {
       expect(result.status).toBe("organized");
       expect(result.copy).toContain("剧集整理完成");
       expect(mockHandleTvOrganize).toHaveBeenCalled();
+    });
+
+    it("launches async background organize run when asyncExecution is true (default)", async () => {
+      mockListTrackedSeasonStates.mockResolvedValue([
+        {
+          title: { id: "t_1", tmdbId: 100, title: "Test TV", type: "tv" },
+          season: { id: "s_1", seasonNumber: 1, storageDirectoryId: "dir_tv_1" },
+          connectedStorageId: "storage_1",
+        },
+      ]);
+
+      const result = (await executeExecuteOrganizeMedia("acc_1", { tmdbId: 100 })) as {
+        ok: boolean;
+        mode: string;
+        status: string;
+        taskId: string;
+      };
+
+      expect(result.ok).toBe(true);
+      expect(result.mode).toBe("async");
+      expect(result.status).toBe("running");
+      expect(result.taskId).toContain("organize_100");
+    });
+  });
+
+  describe("executeCleanStagingDirectories", () => {
+    it("cleans staging directories under show directory", async () => {
+      mockListTrackedSeasonStates.mockResolvedValue([
+        {
+          title: { id: "t_1", tmdbId: 100, title: "Test TV", type: "tv" },
+          season: { id: "s_1", seasonNumber: 1, storageDirectoryId: "dir_tv_1" },
+          connectedStorageId: "storage_1",
+        },
+      ]);
+
+      const result = (await executeCleanStagingDirectories("acc_1", { tmdbId: 100 })) as {
+        ok: boolean;
+        removed: string[];
+      };
+
+      expect(result.ok).toBe(true);
+      expect(Array.isArray(result.removed)).toBe(true);
+    });
+  });
+
+  describe("executeDedupeSeasonVersions", () => {
+    it("scans and dedupes season versions", async () => {
+      mockListTrackedSeasonStates.mockResolvedValue([
+        {
+          title: { id: "t_1", tmdbId: 100, title: "Test TV", type: "tv" },
+          season: { id: "s_1", seasonNumber: 1, storageDirectoryId: "dir_tv_1" },
+          connectedStorageId: "storage_1",
+        },
+      ]);
+
+      const result = (await executeDedupeSeasonVersions("acc_1", { tmdbId: 100 })) as {
+        ok: boolean;
+        seasonsScanned: number;
+        archivedCount: number;
+      };
+
+      expect(result.ok).toBe(true);
+      expect(typeof result.seasonsScanned).toBe("number");
     });
   });
 });

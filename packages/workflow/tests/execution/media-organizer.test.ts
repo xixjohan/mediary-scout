@@ -222,4 +222,63 @@ describe("MediaOrganizer", () => {
     // Staging was removed
     expect(stagingRemoved).toBe(true);
   });
+
+  describe("cleanupStagingDirectories", () => {
+    it("safely removes empty staging directories and directories with only safe metadata/junk remnants", async () => {
+      const removedDirs: string[] = [];
+      const mockStorage: Partial<StorageExecutor> = {
+        listChildDirectories: vi.fn(async (dirId: string) => {
+          if (dirId === "show_root") {
+            return [
+              { id: "stg_empty", name: "staging-empty-123" },
+              { id: "stg_junk", name: "staging-junk-456" },
+              { id: "stg_has_video", name: "staging-has-video-789" },
+              { id: "season_1", name: "Season 01" },
+            ];
+          }
+          return [];
+        }),
+        listTree: vi.fn(async ({ directoryId }: { directoryId: string }) => {
+          if (directoryId === "stg_empty") {
+            return [];
+          }
+          if (directoryId === "stg_junk") {
+            return [
+              { providerFileId: "j1", path: "download.url", sizeBytes: 150 },
+              { providerFileId: "j2", path: "poster.jpg", sizeBytes: 250000 },
+              { providerFileId: "j3", path: "info.nfo", sizeBytes: 1200 },
+              { providerFileId: "j4", path: "sub.ass", sizeBytes: 80000 },
+            ];
+          }
+          if (directoryId === "stg_has_video") {
+            return [
+              { providerFileId: "v1", path: "Episode_01.mp4", sizeBytes: 500_000_000 },
+            ];
+          }
+          return [];
+        }),
+        removeDirectory: vi.fn(async (id: string) => {
+          removedDirs.push(id);
+          return { removed: true };
+        }),
+      };
+
+      const organizer = new MediaOrganizer({
+        storage: mockStorage as StorageExecutor,
+        archiveAdapter: {} as StorageArchiveAdapter,
+      });
+
+      const res = await organizer.cleanupStagingDirectories({ showDirectoryId: "show_root" });
+
+      // 空目录和纯杂质/元数据目录均被安全清理
+      expect(res.removed).toContain("staging-empty-123");
+      expect(res.removed).toContain("staging-junk-456");
+      expect(removedDirs).toContain("stg_empty");
+      expect(removedDirs).toContain("stg_junk");
+
+      // 包含真实视频文件的 staging 目录被严正保留
+      expect(res.remaining).toContain("staging-has-video-789");
+      expect(removedDirs).not.toContain("stg_has_video");
+    });
+  });
 });

@@ -35,6 +35,25 @@ function toText(value: unknown): string {
   return "";
 }
 
+function hasListingFileMarkers(item: RawListingItem): boolean {
+  if (Boolean(item.fid ?? item.file_id)) return true;
+  const raw = item as Record<string, unknown>;
+  if (Boolean(raw.pc ?? raw.pick_code ?? raw.pickcode ?? raw.sha1)) return true;
+  return /\.[a-z0-9]{2,8}$/i.test(toText(item.name ?? item.n).trim());
+}
+
+function hasListingFolderMarkers(item: RawListingItem): boolean {
+  const raw = item as Record<string, unknown>;
+  if (raw.ico === "folder" || raw.dir === 1 || raw.dir === "1" || raw.dir === true) return true;
+  return item.fc === "0" || item.fc === 0 || (item.fc !== undefined && item.fc !== "" && item.fc !== null);
+}
+
+export function isPan115DirectoryItem(item: RawListingItem): boolean {
+  if (item.isDirectory !== undefined) return item.isDirectory;
+  if (hasListingFileMarkers(item)) return false;
+  return hasListingFolderMarkers(item);
+}
+
 function toNumber(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {

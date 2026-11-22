@@ -11,7 +11,7 @@ import type {
 } from "../domain/domain.js";
 import { episodeCodeFromFileName } from "../domain/episode-code.js";
 import { isExtensionlessVideoName } from "../execution/extensionless-video.js";
-import { collectLandedVideos, normalizeLandedExtensions } from "./landed-media.js";
+import { collectLandedVideos, isPan115DirectoryItem, normalizeLandedExtensions } from "./landed-media.js";
 import { infoHashFromMagnet, isOfflineTaskCandidate, isOfflineTaskUrl } from "./pan115-offline-task.js";
 import { isPan115AuthError } from "./pan115-cookie-client.js";
 import { isSystemicTransferBlockMessage } from "../acquisition-v2/transfer-block.js";
@@ -1805,12 +1805,7 @@ function verifiedFileFromItem(
   };
 }
 
-function isDirectory(item: Pan115Item): boolean {
-  if (item.isDirectory !== undefined) return item.isDirectory;
-  if (Boolean(item.fid ?? item.file_id)) return false;
-  if (item.fc === "0" || item.fc === 0) return true;
-  return item.cid !== undefined;
-}
+const isDirectory = isPan115DirectoryItem;
 
 function directoryIdFromItem(item: Pan115Item): string {
   return stringValue(item.cid ?? item.id);

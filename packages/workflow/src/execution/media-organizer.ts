@@ -6,6 +6,7 @@ import {
   rankTvCandidates,
   isVideoFile,
   isJunkFile,
+  isSafeStagingRemnant,
   type MediaCandidateItem,
 } from "./version-ranker.js";
 import {
@@ -81,13 +82,17 @@ export interface CleanupStagingResult {
  */
 function isSafeToRemoveStaging(tree: PackageTreeFile[]): boolean {
   if (tree.length === 0) return true;
-  const allJunk = tree.every((file) => {
+  const hasVideo = tree.some((file) => isVideoFile(file.path));
+  if (hasVideo) return false;
+
+  const allRemnantsSafe = tree.every((file) => {
     const name = file.path.split("/").filter(Boolean).pop() ?? "";
-    return isJunkFile(name);
+    return isSafeStagingRemnant(name, file.sizeBytes);
   });
-  if (!allJunk) return false;
+  if (!allRemnantsSafe) return false;
+
   const totalBytes = tree.reduce((sum, file) => sum + (file.sizeBytes ?? 0), 0);
-  return totalBytes < 50 * 1024 * 1024;
+  return totalBytes < 100 * 1024 * 1024;
 }
 
 export class MediaOrganizer {

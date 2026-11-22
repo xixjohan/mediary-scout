@@ -53,6 +53,29 @@ export function isJunkFile(fileName: string): boolean {
   return ext !== undefined && JUNK_EXTENSIONS.has(ext);
 }
 
+const SAFE_REMNANT_EXTENSIONS = new Set([
+  ...JUNK_EXTENSIONS,
+  "jpg", "jpeg", "png", "webp", "gif", "bmp",
+  "srt", "ass", "ssa", "vtt", "sub", "idx",
+  "sfv", "md5", "sha1", "sha256", "xml", "json",
+  "part", "aria2", "td", "xltd",
+]);
+
+export function isSafeStagingRemnant(fileName: string, sizeBytes?: number): boolean {
+  if (isVideoFile(fileName)) return false;
+  const ext = fileName.split(".").pop()?.toLowerCase();
+  if (ext !== undefined && SAFE_REMNANT_EXTENSIONS.has(ext)) {
+    return sizeBytes === undefined || sizeBytes <= 50 * 1024 * 1024;
+  }
+  if (isExtraOrSample(fileName, sizeBytes)) {
+    return true;
+  }
+  if (sizeBytes !== undefined && sizeBytes > 0 && sizeBytes < 10 * 1024 * 1024) {
+    return true;
+  }
+  return false;
+}
+
 export function isExtraOrSample(fileName: string, sizeBytes?: number): boolean {
   const lower = fileName.toLowerCase();
   if (EXTRA_KEYWORDS.some((kw) => lower.includes(kw))) return true;

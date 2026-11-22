@@ -120,6 +120,8 @@ describe("MCP Full Lifecycle Matrix & RBAC Projection", () => {
       expect(toolNames.has("adoptDriveMedia")).toBe(true);
       expect(toolNames.has("planOrganizeMedia")).toBe(true);
       expect(toolNames.has("executeOrganizeMedia")).toBe(true);
+      expect(toolNames.has("cleanStagingDirectories")).toBe(true);
+      expect(toolNames.has("dedupeSeasonVersions")).toBe(true);
 
       // 5. STRM 管理
       expect(toolNames.has("listStrmTasks")).toBe(true);

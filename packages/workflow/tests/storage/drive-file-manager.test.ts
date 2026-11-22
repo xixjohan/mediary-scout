@@ -259,6 +259,45 @@ describe("drive-file-manager", () => {
       expect(dirItem.isFolder).toBe(true);
       expect(dirItem.type).toBe("folder");
     });
+
+    it("correctly identifies files when 115 returns cid without fid (e.g. offline transfer / staging items)", async () => {
+      const { Pan115FileManagerAdapter } = await import("../../src/storage/drive-file-manager.js");
+      const adapter = new Pan115FileManagerAdapter({
+        storageId: "cs_115",
+        provider: "pan115",
+        cookie: "test_cookie",
+      });
+      (adapter as any).client.listItemsWithBreadcrumbs = async () => ({
+        items: [
+          // 115 异化返回：无 fid/file_id，但有 id, cid, 视频后缀以及 pick_code
+          { id: "raw_12345", cid: "staging_dir_id", n: "DarkTorch_S01E01.mp4", s: 512000000, pc: "pick_abc" },
+          // 无 fid，无 pick_code，但有 id, cid, 宣传 url 垃圾文件
+          { id: "raw_promo", cid: "staging_dir_id", n: "download_from_pan.url", s: 120 },
+          // 文件夹：明确为 ico="folder" 或 dir=1
+          { id: "raw_season", cid: "staging_dir_id", n: "Season 01", ico: "folder", fc: 12 },
+        ],
+        breadcrumbs: [{ cid: "staging_dir_id", name: "staging-hex123" }],
+      });
+
+      const listing = await adapter.listDirectory("staging_dir_id");
+      expect(listing.items).toHaveLength(3);
+
+      const videoItem = listing.items.find((i) => i.name === "DarkTorch_S01E01.mp4")!;
+      expect(videoItem).toBeDefined();
+      expect(videoItem.isFolder).toBe(false);
+      expect(videoItem.type).toBe("video");
+      expect(videoItem.id).toBe("raw_12345");
+      expect(videoItem.sizeBytes).toBe(512000000);
+
+      const urlItem = listing.items.find((i) => i.name === "download_from_pan.url")!;
+      expect(urlItem).toBeDefined();
+      expect(urlItem.isFolder).toBe(false);
+
+      const seasonFolder = listing.items.find((i) => i.name === "Season 01")!;
+      expect(seasonFolder).toBeDefined();
+      expect(seasonFolder.isFolder).toBe(true);
+      expect(seasonFolder.type).toBe("folder");
+    });
   });
 });
 

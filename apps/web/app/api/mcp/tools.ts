@@ -254,7 +254,7 @@ export const MCP_REGISTERED_TOOLS = [
   },
   {
     name: "executeOrganizeMedia",
-    description: "物理执行网盘影视规范整理、多版本软归档与 safe staging 临时目录清理",
+    description: "物理执行网盘影视规范整理、多版本软归档与 safe staging 临时目录清理（支持后台异步或即时同步）",
     inputSchema: {
       type: "object",
       required: ["tmdbId"],
@@ -262,8 +262,38 @@ export const MCP_REGISTERED_TOOLS = [
         tmdbId: { type: "number", description: "TMDB 作品 ID" },
         seasonNumber: { type: "number", description: "指定季号（可选）" },
         storageId: { type: "string", description: "存储盘 ID（可选）" },
+        directoryId: { type: "string", description: "待整理的作品主目录或源目录 ID（强烈建议传入，避免全盘回退遍历）" },
         cleanStaging: { type: "boolean", description: "是否清理残留空临时目录（默认 true）" },
         dedupeVersions: { type: "boolean", description: "是否软归档重复版本（默认 true）" },
+        asyncExecution: { type: "boolean", description: "是否异步后台执行（默认 true，避免 MCP 客户端 30s 超时；可通过 queryStatus 轮询状态）" },
+      },
+    },
+  },
+  {
+    name: "cleanStagingDirectories",
+    description: "轻量安全清理指定作品下已完成或残留的空 staging 临时目录及非视频杂质（秒级完成，杜绝超时）",
+    inputSchema: {
+      type: "object",
+      required: ["tmdbId"],
+      properties: {
+        tmdbId: { type: "number", description: "TMDB 作品 ID" },
+        directoryId: { type: "string", description: "作品主目录 ID（可选）" },
+        storageId: { type: "string", description: "存储盘 ID（可选）" },
+        seasonNumber: { type: "number", description: "季号（可选）" },
+      },
+    },
+  },
+  {
+    name: "dedupeSeasonVersions",
+    description: "对指定作品季目录执行多版本重复视频文件识别与规范化软归档，不触发 staging 重构（轻量秒级完成）",
+    inputSchema: {
+      type: "object",
+      required: ["tmdbId"],
+      properties: {
+        tmdbId: { type: "number", description: "TMDB 作品 ID" },
+        seasonNumber: { type: "number", description: "指定季号（可选，默认扫描全部季）" },
+        storageId: { type: "string", description: "存储盘 ID（可选）" },
+        directoryId: { type: "string", description: "作品主目录 ID（可选）" },
       },
     },
   },
@@ -429,6 +459,8 @@ export const TOOL_TO_PERMISSION_MAP: Record<string, string> = {
   adoptDriveMedia: "storage:adopt",
   planOrganizeMedia: "storage:organize",
   executeOrganizeMedia: "storage:organize",
+  cleanStagingDirectories: "storage:organize",
+  dedupeSeasonVersions: "storage:organize",
 
   // 5. STRM 管理
   listStrmTasks: "strm:read",

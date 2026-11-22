@@ -40,6 +40,8 @@ import {
   executeAdoptDriveMedia,
   executePlanOrganizeMedia,
   executeExecuteOrganizeMedia,
+  executeCleanStagingDirectories,
+  executeDedupeSeasonVersions,
 } from "./drive-media-executor";
 
 export { MCP_REGISTERED_TOOLS, TOOL_TO_PERMISSION_MAP };
@@ -147,6 +149,10 @@ async function dispatchToolExecution(
       return executePlanOrganizeMedia(accountId, toolArgs);
     case "executeOrganizeMedia":
       return executeExecuteOrganizeMedia(accountId, toolArgs);
+    case "cleanStagingDirectories":
+      return executeCleanStagingDirectories(accountId, toolArgs);
+    case "dedupeSeasonVersions":
+      return executeDedupeSeasonVersions(accountId, toolArgs);
 
     // 5. STRM 管理
     case "listStrmTasks":

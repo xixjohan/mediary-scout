@@ -148,6 +148,34 @@ export class QuarkFileManagerAdapter implements DriveFileManager {
   }
 }
 
+function isKnownMediaExtension(ext: string): boolean {
+  return (
+    VIDEO_EXTENSIONS.has(ext) ||
+    SUBTITLE_EXTENSIONS.has(ext) ||
+    AUDIO_EXTENSIONS.has(ext) ||
+    ARCHIVE_EXTENSIONS.has(ext) ||
+    IMAGE_EXTENSIONS.has(ext)
+  );
+}
+
+function hasPan115FileIdentity(r: Record<string, unknown>, name: string, pickCode?: string): boolean {
+  if (Boolean(r.fid ?? r.file_id ?? r.sha1) || Boolean(pickCode)) return true;
+  const ext = inferExtension(name);
+  if (ext !== "" && isKnownMediaExtension(ext)) return true;
+  return /\.(nfo|txt|url|html|torrent|sfv|md5|sha1|json|xml|part|aria2|td|xltd)$/i.test(name);
+}
+
+function hasPan115FolderIdentity(r: Record<string, unknown>): boolean {
+  if (r.ico === "folder" || r.dir === 1 || r.dir === "1" || r.dir === true) return true;
+  return r.fc === 0 || r.fc === "0" || (r.fc !== undefined && r.fc !== "" && r.fc !== null);
+}
+
+function isPan115RecordFolder(r: Record<string, unknown>, name: string, pickCode?: string): boolean {
+  if (typeof r.isDirectory === "boolean") return r.isDirectory;
+  if (hasPan115FileIdentity(r, name, pickCode)) return false;
+  return hasPan115FolderIdentity(r);
+}
+
 export class Pan115FileManagerAdapter implements DriveFileManager {
   private readonly client: Pan115CookieClient;
   private readonly opts: DriveFileManagerOptions;
@@ -161,17 +189,11 @@ export class Pan115FileManagerAdapter implements DriveFileManager {
     const targetDir = directoryId || this.opts.rootCid || "0";
     const res = await this.client.listItemsWithBreadcrumbs({ directoryId: targetDir });
     const items: DriveFileItem[] = res.items.map((r) => {
-      const hasFileId = Boolean(r.fid ?? r.file_id);
-      const isFolder =
-        !hasFileId &&
-        (r.fc === 0 ||
-          r.fc === "0" ||
-          (r as { ico?: string }).ico === "folder" ||
-          (r.cid !== undefined && !hasFileId));
-      const id = String(isFolder ? (r.cid ?? r.id) : (r.fid ?? r.file_id ?? r.id));
       const name = String(r.name ?? r.n ?? "");
-      const sizeBytes = Number(r.size ?? r.s ?? 0);
       const pickCode = readPickCode(r);
+      const isFolder = isPan115RecordFolder(r as Record<string, unknown>, name, pickCode);
+      const id = String(isFolder ? (r.cid ?? r.id) : (r.fid ?? r.file_id ?? r.id));
+      const sizeBytes = Number(r.size ?? r.s ?? 0);
       return {
         id,
         name,
